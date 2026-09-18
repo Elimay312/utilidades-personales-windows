@@ -93,7 +93,20 @@ Dicho de otro modo: aunque alguien modificara el dock para llamar a
 - Guardar, transmitir o analizar la imagen capturada.
 - Hooks de ningún tipo.
 - Actuar sobre apps que no estén en `dock.json`.
-- Modificar el estado de otro proceso más allá de minimizar, restaurar y enfocar.
+- Modificar el estado de otro proceso más allá de minimizar, restaurar, enfocar y lo
+  que se detalla justo debajo.
+
+### Apéndice — desactivar la transición de minimizado
+
+El efecto genio necesita una cosa más, y se anota aquí porque la lista de arriba no la
+cubría: antes de minimizar se pone `DWMWA_TRANSITIONS_FORCEDISABLED` en la ventana de
+destino, para que Windows no reproduzca SU animación de minimizar encima de la nuestra.
+
+- Es un atributo **visual** de DWM, no de comportamiento ni de seguridad.
+- Se **restaura inmediatamente** después. La ventana no queda alterada.
+- Se midió que hace falta: sin él, a los 25 ms de pedir el minimizado la ventana sigue
+  encogiéndose en pantalla; con él, ya ha desaparecido.
+- Sigue atado a la misma condición: solo tras un clic del usuario sobre ese icono.
 
 ## Corolarios de diseño
 

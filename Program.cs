@@ -90,6 +90,7 @@ internal static class Program
     {
         IconsSelfCheck.Run();
         MagnifySelfCheck.Run();
+        GenieSelfCheck.Run();
 
         DockConfig config = DockConfig.Load(DockConfig.DefaultPath);
         Console.WriteLine($"[check] dock.json: {config.Apps.Count} apps validas");

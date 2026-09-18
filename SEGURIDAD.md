@@ -1,0 +1,127 @@
+# Superficie de riesgo — documento vinculante
+
+Este documento gobierna todo el desarrollo del dock. Si una función futura necesita
+algo de la tabla de prohibiciones, **la función se rediseña o se descarta**. No se
+piden excepciones de palabra: se enmienda este documento por escrito, con su
+justificación, y queda en el historial de git.
+
+El objetivo es concreto: que ningún antivirus tenga un motivo razonable para marcar
+este binario. El referente visual del proyecto, MyDockFinder, carga un driver de
+kernel para leer sensores y por eso Defender lo marca. Aquí no se hace nada parecido.
+
+## Lo que este programa NO va a hacer, nunca
+
+| # | Prohibido | Por qué es la regla |
+|---|---|---|
+| 1 | Driver de kernel (`.sys`), servicio de Windows, tarea programada, o cualquier componente elevado | Es exactamente lo que hace que Defender marque a MyDockFinder. La app corre siempre como usuario normal, con `requestedExecutionLevel` `asInvoker`. |
+| 2 | Leer sensores de hardware: temperaturas, voltajes, RPM, acceso a puertos I/O, MSR, SMBus | Requiere driver. No existe forma en modo usuario. El dock no muestra sensores: no es una feature ausente, es una prohibición. |
+| 3 | `SetWindowsHookEx` global (`WH_KEYBOARD_LL`, `WH_MOUSE_LL`, `WH_CBT`, `WH_SHELL`) y `SetWinEventHook` | Un hook global carga la DLL en otros procesos o instala un callback de bajo nivel: firma clásica de keylogger. El dock recibe ratón solo en su propia ventana. |
+| 4 | `CreateRemoteThread`, `WriteProcessMemory`, `VirtualAllocEx`, `NtMapViewOfSection`, o cualquier código dentro de `explorer.exe` | Inyección de proceso. Bandera roja inmediata de EDR/AV. |
+| 5 | Reemplazo del shell (`Winlogon\Shell`), parcheo de binarios del sistema, IFEO, AppInit_DLLs | Persistencia de malware por definición. |
+| 6 | **Cualquier** llamada de red: sin telemetría, sin updater, sin check de versión, sin analytics, sin crash reporting | La app es 100% offline. No se enlaza ninguna librería HTTP. Verificable con `netstat` durante la ejecución. |
+| 7 | Persistencia oculta | El autoarranque va en `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, visible en el Administrador de tareas, y se pregunta antes de escribirlo. Nada de `schtasks`, servicios ni carpeta Startup oculta. |
+| 8 | Ofuscación, packers (UPX, Themida), compresión del ejecutable, cifrado de strings, single-file comprimido | Bandera roja #1 de las heurísticas: un ejecutable con alta entropía y sin secciones legibles es indistinguible de un dropper. Se compila con PDB y secciones normales. |
+| 9 | Descarga o generación de código en runtime: `Assembly.Load(byte[])`, `Reflection.Emit`, descarga de plugins | Ejecutar código no firmado en runtime es comportamiento de loader. Sin sistema de plugins. |
+| 10 | Lectura de datos de usuario fuera de lo necesario: navegadores, credenciales, documentos, portapapeles | El dock lee su propio JSON y los iconos de las apps que el usuario configuró. Nada más. |
+| 11 | Manipular ventanas ajenas **fuera del consentimiento explícito del usuario** | Ver la enmienda de abajo. |
+
+## Enmienda 1 — ventanas ajenas (2026-09-18)
+
+### Qué decía antes
+
+> **11.** Enumerar o manipular ventanas ajenas más allá de lo mínimo. No `EnumWindows`
+> para espiar, no `SetForegroundWindow` sobre terceros, no minimizar/cerrar ventanas
+> ajenas.
+
+### Qué dice ahora
+
+> **11.** Enumerar o manipular ventanas ajenas **fuera del consentimiento explícito del
+> usuario**. El dock solo actúa sobre ventanas que cumplen **las dos** condiciones:
+> pertenecen a una app que el usuario puso en `dock.json`, **y** el usuario acaba de
+> hacer clic en ese icono. Nunca por iniciativa propia, nunca en segundo plano, nunca
+> sobre una app que no esté en el dock.
+
+### Por qué se enmienda
+
+Dos funciones lo pedían, y una de ellas es la que más se echa de menos a diario:
+
+- **Clic en una app ya abierta debería traerla al frente**, no lanzar otra instancia.
+  Es lo que hace la barra de tareas de Windows y lo que hace el Dock de macOS.
+- **El efecto genio** al minimizar: deformar la ventana hacia su icono exige leer sus
+  píxeles y luego minimizarla.
+
+### Por qué sigue siendo defendible
+
+Lo que separa lo legítimo de lo sospechoso no es *qué API se llama*, sino **quién
+inicia la acción y sobre qué**. `SetForegroundWindow` sobre la ventana de la app en la
+que el usuario acaba de hacer clic es literalmente lo que hace la barra de tareas al
+pulsar su botón. Lo que un antivirus busca es lo contrario: enumeración en segundo
+plano, sin interacción, sobre ventanas arbitrarias, y lectura de su contenido.
+
+Tres cortafuegos que se sostienen en el código, no en la buena voluntad:
+
+1. **Nunca se actúa sin un clic inmediatamente anterior sobre un icono.** No existe
+   ningún camino de código que toque una ventana ajena desde un temporizador, un hilo
+   de fondo o un evento del sistema. La única excepción de lectura es comprobar si un
+   proceso está vivo, para pintar el punto de "app abierta", y eso no mira ventanas.
+2. **Ninguna captura se guarda ni sale del proceso.** Los píxeles van directos a una
+   superficie del compositor y se liberan al terminar la animación. Sin disco, sin red
+   — la regla 6 no se toca.
+3. **Sigue sin haber ningún hook.** Se consideró `SetWinEventHook` con
+   `EVENT_SYSTEM_MINIMIZESTART` para detectar minimizados en todo el sistema y se
+   **descartó**: el dock no observa el sistema, reacciona a sus propios clics. La
+   regla 3 se amplía explícitamente para dejarlo cerrado.
+
+### El propio Windows impone esta regla
+
+No es solo una promesa de este documento. `SetForegroundWindow` **la ignora Windows**
+salvo que el proceso que llama cumpla alguna condición, y la que cumple el dock es
+haber **recibido el último evento de entrada**: el clic del usuario sobre el icono.
+
+Se comprobó por accidente al implementarlo. La primera versión de la prueba
+automatizada mandaba el clic con `PostMessage` en vez de pinchar de verdad, y el foco
+no cambiaba nunca — porque sin clic real el sistema no concede el permiso. El código
+era correcto; lo que faltaba era el consentimiento.
+
+Dicho de otro modo: aunque alguien modificara el dock para llamar a
+`SetForegroundWindow` desde un temporizador, **no funcionaría**.
+
+### Lo que la enmienda NO autoriza
+
+- Cerrar ventanas ajenas.
+- Enumerar ventanas para algo que no sea localizar la app del icono clicado.
+- Guardar, transmitir o analizar la imagen capturada.
+- Hooks de ningún tipo.
+- Actuar sobre apps que no estén en `dock.json`.
+- Modificar el estado de otro proceso más allá de minimizar, restaurar y enfocar.
+
+## Corolarios de diseño
+
+- **Sin single-file comprimido.** `EnableCompressionInSingleFile` produce exactamente
+  el perfil de entropía que dispara heurísticas.
+- **Sin `PublishTrimmed` agresivo ni ofuscación de IL.** El binario debe ser legible
+  por un analizador estático.
+- **La config vive en texto plano legible** junto al ejecutable. Nada de formato
+  binario propietario.
+- **Lanzar apps** se hace con `Process.Start` + `UseShellExecute = true`, que delega en
+  el shell. No `CreateProcess` con flags raros.
+
+## Cómo se audita
+
+```sh
+# Prohibiciones 1 a 5. No debe devolver nada.
+git ls-files | xargs grep -riE "\.sys\b|WinRing0|SetWindowsHookEx|SetWinEventHook|CreateRemoteThread|WriteProcessMemory|VirtualAllocEx"
+
+# Regla 6: sin red.
+git ls-files '*.cs' | xargs grep -rinE "HttpClient|WebClient|Socket|WebRequest|Dns\."
+
+# Regla 7: la única escritura en el registro es el autoarranque, en HKCU\...\Run.
+git ls-files '*.cs' | xargs grep -rn "SetValue\|DeleteValue\|CreateSubKey"
+
+# Regla 11: toda llamada que toque una ventana ajena tiene que salir de un clic.
+git ls-files '*.cs' | xargs grep -rn "SetForegroundWindow\|ShowWindow\|PrintWindow"
+```
+
+La lista completa y cerrada de P/Invokes está en `NativeMethods.txt`, que es el fichero
+de entrada de CsWin32 y por tanto **no puede desviarse de lo que el binario realmente
+usa**: si una función no está ahí, no se genera, y el código no compila.

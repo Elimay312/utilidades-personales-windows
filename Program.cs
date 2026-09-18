@@ -29,7 +29,7 @@ internal static class Program
             return;
         }
 
-        Console.WriteLine("Dock M5 - clic derecho sobre el dock para salir");
+        Console.WriteLine("Dock - clic derecho sobre el dock para salir");
         Console.WriteLine();
 
         DockConfig config = DockConfig.Load(DockConfig.DefaultPath);

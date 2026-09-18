@@ -92,3 +92,18 @@ AttachConsole
 // --- Deteccion de apps abiertas (fase 1 de extras) ---
 OpenProcess
 GetPackageFamilyName
+
+// --- Localizar y gobernar la ventana de la app clicada (enmienda 1 de SEGURIDAD.md) ---
+// Solo se usan tras un clic del usuario sobre un icono del dock. Nunca en segundo plano.
+EnumWindows
+GetWindowThreadProcessId
+IsWindowVisible
+IsIconic
+GetWindow
+GetWindowTextLengthW
+FindWindowExW
+GetClassNameW
+DwmGetWindowAttribute
+SetForegroundWindow
+AttachThreadInput
+GetCurrentThreadId

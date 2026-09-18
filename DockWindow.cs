@@ -114,8 +114,9 @@ internal sealed unsafe class DockWindow : IDisposable
     /// separadores, que no tienen app detrás.
     private List<(DockApp App, IconBitmap? Icon)> _loaded = [];
 
-    /// Qué apps están abiertas. Se recalcula fuera del hilo de UI.
-    private bool[] _running = [];
+    /// Estado de cada app: si corre y dónde está su ventana. Se recalcula fuera del
+    /// hilo de UI porque resolver las MSIX obliga a recorrer procesos y ventanas.
+    private AppState[] _state = [];
     private bool _checkingRunning;
 
     /// Curva vigente, con la que se invierte el cursor y se hace el hit-test. Tiene
@@ -480,7 +481,7 @@ internal sealed unsafe class DockWindow : IDisposable
                 return new LRESULT(0);
 
             case WM_APP_RUNNING:
-                if (self is not null) self._visuals?.SetRunning(self._running);
+                if (self is not null) self._visuals?.SetRunning([.. self._state.Select(entry => entry.IsRunning)]);
                 return new LRESULT(0);
 
             case WM_MOUSEMOVE:
@@ -645,7 +646,7 @@ internal sealed unsafe class DockWindow : IDisposable
         {
             try
             {
-                _running = Running.Check(apps);
+                _state = Running.Check(apps);
                 PInvoke.PostMessage(hwnd, WM_APP_RUNNING, default, default);
             }
             finally
@@ -756,9 +757,29 @@ internal sealed unsafe class DockWindow : IDisposable
         DockApp app = _loaded[index].App;
         if (app.Separator) return;
 
-        // El rebote arranca ya, sin esperar a que la app abra: es acuse de recibo del
-        // clic. Corre en el compositor, así que ni le afecta lo que tarde ShellExecute.
+        // Tres estados, como la barra de tareas de Windows. Esto es lo que autoriza la
+        // enmienda 1 de SEGURIDAD.md: se toca una ventana ajena SOLO aquí, como
+        // respuesta directa a un clic sobre su icono, y nunca desde ningún otro sitio.
+        AppState state = index < _state.Length ? _state[index] : default;
+
+        if (state.HasWindow && WindowActions.IsForeground(state.MainWindow))
+        {
+            // Ya la estabas mirando: el segundo clic la esconde. Aquí entrará el genio.
+            WindowActions.Minimize(state.MainWindow);
+            Console.WriteLine($"[dock] minimizada '{app.Name}'");
+            return;
+        }
+
+        // El rebote arranca ya, sin esperar: es acuse de recibo del clic. Corre en el
+        // compositor, así que no le afecta lo que tarde nada de lo de abajo.
         _visuals?.Bounce(index, Scale(_config.IconSize) * 0.35f);
+
+        if (state.HasWindow)
+        {
+            WindowActions.BringToFront(state.MainWindow);
+            Console.WriteLine($"[dock] al frente '{app.Name}'");
+            return;
+        }
 
         // Lanzar fuera de este hilo: Process.Start con UseShellExecute acaba en
         // ShellExecuteEx, que puede bloquear varios segundos, y este hilo es el que

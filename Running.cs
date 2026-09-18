@@ -1,61 +1,126 @@
 using System.Diagnostics;
+using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
 using Windows.Win32.Foundation;
-using Microsoft.Win32.SafeHandles;
+using Windows.Win32.Graphics.Dwm;
 using Windows.Win32.System.Threading;
+using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Dock;
 
+/// <summary>Estado de una app del dock: si corre, y cuál es su ventana principal.</summary>
+internal readonly record struct AppState(bool IsRunning, HWND MainWindow)
+{
+    public bool HasWindow => !MainWindow.IsNull;
+}
+
 /// <summary>
-/// Si las apps del dock están abiertas, para pintarles el punto debajo.
+/// Averigua qué apps del dock están abiertas y dónde está su ventana.
 ///
-/// Solo LEE: pregunta qué procesos hay y a qué paquete pertenecen. No enumera ni toca
-/// ventanas ajenas, que es lo que prohíbe la Fase 2. Saber que Paint está abierto no
-/// requiere mirar sus ventanas.
+/// Lo primero (el puntito de "abierta") solo mira PROCESOS, nunca ventanas. Lo segundo
+/// sí enumera ventanas, y por eso está sujeto a la enmienda 1 de SEGURIDAD.md: solo se
+/// usa para localizar la app del icono que el usuario acaba de clicar, el resultado se
+/// usa y se tira, y no se inventaría nada.
 /// </summary>
 internal static class Running
 {
     private const uint ProcessQueryLimitedInformation = 0x1000;
 
+    /// <summary>DWMWA_CLOAKED: si DWM tiene la ventana oculta aunque sea "visible".</summary>
+    private const uint DwmwaCloaked = 14;
+
+    /// <summary>Las apps UWP no son dueñas de su ventana: la hospeda este marco.</summary>
+    private const string UwpFrameClass = "ApplicationFrameWindow";
+
+    /// <summary>Dentro del marco UWP, la ventana que sí pertenece a la app.</summary>
+    private const string UwpCoreClass = "Windows.UI.Core.CoreWindow";
+
     /// <summary>
     /// Resuelve de una pasada el estado de todas las apps. De una pasada y no una por
-    /// una porque el caso MSIX obliga a recorrer la lista de procesos, y hacerlo una
+    /// una porque tanto los procesos como las ventanas se recorren enteros: hacerlo una
     /// vez por icono sería tirar el trabajo.
     /// </summary>
-    public static bool[] Check(IReadOnlyList<DockApp> apps)
+    public static AppState[] Check(IReadOnlyList<DockApp> apps)
     {
-        bool[] result = new bool[apps.Count];
+        AppState[] result = new AppState[apps.Count];
 
-        // Las apps normales se resuelven por nombre de ejecutable, que es barato.
-        for (int i = 0; i < apps.Count; i++)
+        // PID -> índice de app, para poder cruzar después con las ventanas.
+        Dictionary<uint, int> owners = MapProcessesToApps(apps);
+
+        foreach (int index in owners.Values)
         {
-            if (apps[i].Separator || apps[i].IsShellItem) continue;
-
-            string name = Path.GetFileNameWithoutExtension(apps[i].Target);
-            result[i] = Process.GetProcessesByName(name).Length > 0;
+            result[index] = new AppState(true, default);
         }
 
-        // Las MSIX no tienen un .exe deducible desde el AppUserModelID, así que se
-        // comparan por nombre de familia del paquete: la parte anterior al '!'.
-        List<int> packaged = [];
-        for (int i = 0; i < apps.Count; i++)
+        foreach ((HWND window, uint pid) in TopLevelWindows())
         {
-            if (!apps[i].Separator && apps[i].IsShellItem) packaged.Add(i);
-        }
+            if (!owners.TryGetValue(pid, out int index)) continue;
+            if (result[index].HasWindow) continue;
 
-        if (packaged.Count == 0) return result;
-
-        HashSet<string> familias = RunningPackageFamilies();
-        foreach (int i in packaged)
-        {
-            string? family = FamilyOf(apps[i].Target);
-            if (family is not null) result[i] = familias.Contains(family);
+            result[index] = new AppState(true, window);
         }
 
         return result;
     }
 
-    /// <summary>De "shell:AppsFolder\Familia!App" saca "Familia".</summary>
+    /// <summary>
+    /// Qué proceso pertenece a qué app del dock. Las apps normales se reconocen por el
+    /// nombre del ejecutable; las MSIX no tienen un .exe deducible desde el
+    /// AppUserModelID, así que se comparan por nombre de familia del paquete: la parte
+    /// anterior al signo de admiración del AUMID.
+    /// </summary>
+    private static Dictionary<uint, int> MapProcessesToApps(IReadOnlyList<DockApp> apps)
+    {
+        Dictionary<string, int> byExeName = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, int> byFamily = new(StringComparer.OrdinalIgnoreCase);
+
+        for (int i = 0; i < apps.Count; i++)
+        {
+            if (apps[i].Separator) continue;
+
+            if (apps[i].IsShellItem)
+            {
+                if (FamilyOf(apps[i].Target) is string family) byFamily[family] = i;
+            }
+            else
+            {
+                byExeName[Path.GetFileNameWithoutExtension(apps[i].Target)] = i;
+            }
+        }
+
+        Dictionary<uint, int> owners = [];
+
+        foreach (Process process in Process.GetProcesses())
+        {
+            try
+            {
+                uint pid = (uint)process.Id;
+
+                if (byExeName.TryGetValue(process.ProcessName, out int direct))
+                {
+                    owners[pid] = direct;
+                    continue;
+                }
+
+                if (byFamily.Count == 0) continue;
+                if (FamilyOfProcess(pid) is string family && byFamily.TryGetValue(family, out int packaged))
+                    owners[pid] = packaged;
+            }
+            catch
+            {
+                // Un proceso que no se deja consultar no es un error: simplemente no es
+                // ninguna de nuestras apps.
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
+
+        return owners;
+    }
+
+    /// <summary>Del target de un elemento del shell saca el nombre de familia.</summary>
     private static string? FamilyOf(string target)
     {
         int slash = target.LastIndexOf('\\');
@@ -66,42 +131,84 @@ internal static class Running
         return bang > 0 ? aumid[..bang] : null;
     }
 
-    private static HashSet<string> RunningPackageFamilies()
+    private static string? FamilyOfProcess(uint pid)
     {
-        HashSet<string> families = new(StringComparer.OrdinalIgnoreCase);
+        using SafeFileHandle handle = PInvoke.OpenProcess_SafeHandle(
+            (PROCESS_ACCESS_RIGHTS)ProcessQueryLimitedInformation, false, pid);
+        if (handle.IsInvalid) return null;
 
-        foreach (Process process in Process.GetProcesses())
+        // Primera llamada solo para saber el tamaño. Un proceso que no está empaquetado
+        // devuelve APPMODEL_ERROR_NO_PACKAGE y se descarta solo.
+        uint length = 0;
+        if (PInvoke.GetPackageFamilyName(handle, ref length, default) != WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER)
+            return null;
+
+        Span<char> buffer = new char[length];
+        return PInvoke.GetPackageFamilyName(handle, ref length, buffer) == WIN32_ERROR.ERROR_SUCCESS
+            ? new string(buffer[..((int)length - 1)])
+            : null;
+    }
+
+    /// <summary>
+    /// Ventanas candidatas a ser "la ventana" de una app, con el PID de quien de verdad
+    /// las posee. Se descartan las invisibles, las que tienen dueño (diálogos y
+    /// flotantes), las sin título y las que DWM tiene encubiertas, que es como el shell
+    /// deja ventanas fantasma por ahí.
+    /// </summary>
+    private static unsafe List<(HWND Window, uint Pid)> TopLevelWindows()
+    {
+        List<(HWND, uint)> found = [];
+
+        PInvoke.EnumWindows((window, _) =>
         {
-            try
-            {
-                using SafeFileHandle handle = PInvoke.OpenProcess_SafeHandle(
-                    (PROCESS_ACCESS_RIGHTS)ProcessQueryLimitedInformation, false, (uint)process.Id);
-                if (handle.IsInvalid) continue;
+            if (!PInvoke.IsWindowVisible(window)) return true;
+            if (!PInvoke.GetWindow(window, GET_WINDOW_CMD.GW_OWNER).IsNull) return true;
+            if (PInvoke.GetWindowTextLength(window) == 0) return true;
 
-                // Primera llamada solo para saber el tamaño. Un proceso que no está
-                // empaquetado devuelve APPMODEL_ERROR_NO_PACKAGE y se salta solo.
-                uint length = 0;
-                if (PInvoke.GetPackageFamilyName(handle, ref length, default)
-                    != WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER)
-                {
-                    continue;
-                }
+            int cloaked = 0;
+            PInvoke.DwmGetWindowAttribute(window, (DWMWINDOWATTRIBUTE)DwmwaCloaked, &cloaked, sizeof(int));
+            if (cloaked != 0) return true;
 
-                Span<char> buffer = new char[length];
-                if (PInvoke.GetPackageFamilyName(handle, ref length, buffer) == WIN32_ERROR.ERROR_SUCCESS)
-                    families.Add(new string(buffer[..((int)length - 1)]));
-            }
-            catch
-            {
-                // Un proceso que no se deja abrir no es un error: simplemente no es
-                // ninguna de nuestras apps.
-            }
-            finally
-            {
-                process.Dispose();
-            }
+            uint pid = 0;
+            PInvoke.GetWindowThreadProcessId(window, &pid);
+            if (pid == 0) return true;
+
+            found.Add((window, RealOwnerOf(window, pid)));
+            return true;
+        }, default);
+
+        return found;
+    }
+
+    /// <summary>
+    /// El PID de quien de verdad es dueño de la ventana.
+    ///
+    /// Las apps UWP no poseen su propia ventana: la visible es un ApplicationFrameWindow
+    /// de ApplicationFrameHost.exe, y la app real vive en una ventana hija. Sin este
+    /// rodeo, la Calculadora parecería pertenecer al host y nunca cruzaría con su icono.
+    /// </summary>
+    private static unsafe uint RealOwnerOf(HWND window, uint hostPid)
+    {
+        if (ClassNameOf(window) != UwpFrameClass) return hostPid;
+
+        fixed (char* child = UwpCoreClass)
+        {
+            HWND core = PInvoke.FindWindowEx(window, default, new PCWSTR(child), default);
+            if (core.IsNull) return hostPid;
+
+            uint pid = 0;
+            PInvoke.GetWindowThreadProcessId(core, &pid);
+            return pid == 0 ? hostPid : pid;
         }
+    }
 
-        return families;
+    private static unsafe string ClassNameOf(HWND window)
+    {
+        Span<char> buffer = stackalloc char[64];
+        fixed (char* p = buffer)
+        {
+            int length = PInvoke.GetClassName(window, p, buffer.Length);
+            return length > 0 ? new string(buffer[..length]) : string.Empty;
+        }
     }
 }

@@ -33,7 +33,15 @@ internal sealed unsafe class DockWindow : IDisposable
     private const uint WM_LBUTTONUP = 0x0202;
     private const uint WM_RBUTTONUP = 0x0205;
     private const uint WM_MOUSELEAVE = 0x02A3;
+    private const uint WM_TIMER = 0x0113;
+    private const uint WM_WINDOWPOSCHANGING = 0x0046;
     private const uint WM_DPICHANGED = 0x02E0;
+
+    /// HWND_TOPMOST: primera posición de la banda de ventanas siempre encima.
+    private static readonly HWND HwndTopmost = (HWND)(nint)(-1);
+
+    /// Identificador del temporizador que vigila el z-order.
+    private const nuint TopmostTimerId = 1;
 
 
     /// Los iconos terminaron de extraerse en background. WM_APP + 1.
@@ -149,6 +157,14 @@ internal sealed unsafe class DockWindow : IDisposable
         // Composition pasa a ser dueña del contenido de la ventana. Lo que no pinte
         // queda transparente y deja ver el material acrílico de DWM.
         _visuals = new DockVisuals(_hwnd);
+
+        // Vigilancia del z-order. No es animación (eso va en el compositor): es una
+        // comprobación de 1 vez por segundo de que seguimos arriba.
+        //
+        // Hace falta porque WM_WINDOWPOSCHANGING solo cubre los casos en que Windows
+        // nos avisa. Cuando otro proceso se inserta por encima, a nosotros no llega
+        // ningún mensaje y nos quedamos hundidos para siempre.
+        PInvoke.SetTimer(_hwnd, TopmostTimerId, 1000, null);
 
         StartIconLoad();
     }
@@ -287,6 +303,23 @@ internal sealed unsafe class DockWindow : IDisposable
             case WM_NCCALCSIZE:
                 return new LRESULT(0);
 
+            // Windows saca la ventana de la banda topmost cuando se activan otras
+            // aplicaciones, y lo hace SIN quitar el estilo WS_EX_TOPMOST: el bit
+            // sigue puesto pero la ventana ya está por debajo. Ése era el bug de "el
+            // dock desaparece": no dejaba de pintarse, se hundía detrás de la ventana
+            // maximizada de turno y no volvía nunca.
+            //
+            // Reafirmarlo aquí, antes de que el cambio se aplique, evita tener que
+            // sondear con un timer. Verificado con WindowFromPoint: la ventana que lo
+            // tapaba ni siquiera era topmost.
+            case WM_WINDOWPOSCHANGING:
+                ((WINDOWPOS*)lParam.Value)->hwndInsertAfter = HwndTopmost;
+                break;
+
+            case WM_TIMER when wParam.Value == TopmostTimerId:
+                self?.EnsureTopmost();
+                return new LRESULT(0);
+
             case WM_APP_ICONS_READY:
                 self?.OnIconsReady();
                 return new LRESULT(0);
@@ -321,6 +354,14 @@ internal sealed unsafe class DockWindow : IDisposable
         return PInvoke.DefWindowProc(hwnd, msg, wParam, lParam);
     }
 
+    /// <summary>Reafirma la posición en la banda topmost. Barato y sin efecto si ya estamos.</summary>
+    private void EnsureTopmost()
+    {
+        PInvoke.SetWindowPos(_hwnd, HwndTopmost, 0, 0, 0, 0,
+            SET_WINDOW_POS_FLAGS.SWP_NOMOVE | SET_WINDOW_POS_FLAGS.SWP_NOSIZE
+                | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
+    }
+
     private static short LoWord(LPARAM lParam) => (short)(lParam.Value & 0xFFFF);
 
     private static short HiWord(LPARAM lParam) => (short)((lParam.Value >> 16) & 0xFFFF);
@@ -348,15 +389,22 @@ internal sealed unsafe class DockWindow : IDisposable
         if (index < 0 || index >= _loaded.Count) return;
 
         DockApp app = _loaded[index].App;
-        try
+
+        // Lanzar fuera de este hilo: Process.Start con UseShellExecute acaba en
+        // ShellExecuteEx, que puede bloquear varios segundos, y este hilo es el que
+        // atiende el ratón y el que tiene la DispatcherQueue del compositor.
+        Task.Run(() =>
         {
-            app.Launch();
-            Console.WriteLine($"[dock] lanzada '{app.Name}'");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[dock] no se pudo lanzar '{app.Name}': {ex.Message}");
-        }
+            try
+            {
+                app.Launch();
+                Console.WriteLine($"[dock] lanzada '{app.Name}'");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[dock] no se pudo lanzar '{app.Name}': {ex.Message}");
+            }
+        });
     }
 
     private void OnDpiChanged(WPARAM wParam, LPARAM lParam)
@@ -395,6 +443,7 @@ internal sealed unsafe class DockWindow : IDisposable
     public void Dispose()
     {
         if (_hwnd.IsNull) return;
+        PInvoke.KillTimer(_hwnd, TopmostTimerId);
         _visuals?.Dispose();
         PInvoke.DestroyWindow(_hwnd);
         _hwnd = default;

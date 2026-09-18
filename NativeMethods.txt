@@ -81,3 +81,5 @@ PostMessageW
 IsWindowVisible
 GetWindowLongPtrW
 WINDOWPOS
+SetTimer
+KillTimer

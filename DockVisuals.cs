@@ -90,18 +90,15 @@ internal sealed unsafe class DockVisuals : IDisposable
     {
         if (_graphics is not null) return _graphics;
 
-        // HARDWARE, y no WARP, aunque este device solo suba los pixeles de los iconos
-        // una vez y nunca renderice un frame.
+        // HARDWARE: DWM tiene que muestrear estas superficies, asi que lo prudente es
+        // que esten en el mismo adaptador que el compositor.
         //
-        // Con WARP el dock se volvia invisible (contenido sin pintar, aunque la
-        // ventana siguiera visible, topmost y sin encubrir) en cuanto se cerraba una
-        // app que usa GPU, Paint entre ellas: las superficies de WARP viven en memoria
-        // de sistema y DWM deja de poder muestrearlas al recrear su device. Con
-        // hardware comparten adaptador y el problema desaparece. Verificado con un
-        // repro automatico de captura de pantalla, ida y vuelta.
-        //
-        // Cuesta memoria (~57 MB mas de working set total), pero el working set
-        // PRIVADO se queda en ~22 MB, muy por debajo del limite de 60.
+        // WARP tambien funciona y gasta menos (working set privado ~13 MB frente a
+        // ~22 MB), porque este device solo sube los pixeles una vez y nunca renderiza
+        // un frame. Llegue a culparlo de que el dock se volviera invisible, pero la
+        // causa real era otra (el z-order, ver DockWindow.EnsureTopmost) y con WARP
+        // nunca se reprobo el bug aislado. Queda como posible ahorro si la memoria
+        // llega a apretar; los dos valores estan muy por debajo del limite de 60 MB.
         //
         // BGRA_SUPPORT es obligatorio para poder interoperar con Direct2D.
         PInvoke.D3D11CreateDevice(

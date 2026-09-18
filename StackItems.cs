@@ -5,7 +5,7 @@ using Windows.Win32.UI.Shell;
 namespace Dock;
 
 /// <summary>Un elemento de dentro de una carpeta del dock.</summary>
-internal sealed record StackItem(string Name, string Target, IconBitmap? Icon);
+internal sealed record StackItem(string Name, string Target, IconBitmap? Icon, bool IsFolder);
 
 /// <summary>
 /// Lo que hay dentro de una carpeta del dock.
@@ -26,9 +26,23 @@ internal static unsafe class StackItems
     /// Lee la carpeta y extrae los iconos. <b>Va en segundo plano</b>: extraer un icono
     /// del shell puede tardar decenas de milisegundos y aquí se hacen veinte.
     /// </summary>
-    public static List<StackItem> Read(string folder)
+    /// <param name="back">
+    /// Carpeta a la que vuelve la primera entrada, o null si esta es la raíz.
+    /// </param>
+    public static List<StackItem> Read(string folder, string? back = null)
     {
         List<StackItem> items = [];
+
+        // La entrada para volver, si venimos de otra carpeta. Va la primera y con el
+        // icono de la carpeta padre, que es lo que hace obvio a dónde lleva.
+        if (back is not null)
+        {
+            IconBitmap? arriba = null;
+            try { arriba = Icons.Extract(back); }
+            catch { /* sin icono: se sigue */ }
+
+            items.Add(new StackItem("Atrás", back, arriba, true));
+        }
 
         Guid itemId = typeof(IShellItem).GUID;
         object root;
@@ -71,8 +85,15 @@ internal static unsafe class StackItems
             try { icon = Icons.Extract(path); }
             catch { /* sin icono: se dibuja el hueco y se sigue */ }
 
-            items.Add(new StackItem(name, path, icon));
+            items.Add(new StackItem(name, path, icon, Directory.Exists(path)));
         }
+
+        // Las carpetas primero, como el Explorador: al entrar en una suele quererse
+        // seguir bajando. La entrada de volver se queda fuera del orden, la primera.
+        int desde = back is null ? 0 : 1;
+        items.Sort(desde, items.Count - desde, Comparer<StackItem>.Create((a, b) => a.IsFolder == b.IsFolder
+            ? string.Compare(a.Name, b.Name, StringComparison.CurrentCultureIgnoreCase)
+            : b.IsFolder.CompareTo(a.IsFolder)));
 
         return items;
     }

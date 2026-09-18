@@ -32,6 +32,9 @@ internal sealed unsafe class StackOverlay : IDisposable
     private const uint WM_MOUSELEAVE = 0x02A3;
     private const uint WM_TIMER = 0x0113;
     private const nuint CloseTimerId = 1;
+
+    /// Ya se leyó la carpeta a la que se entró y se puede redibujar. WM_APP + 1.
+    private const uint WM_APP_RELOAD = 0x8001;
     private const int MA_NOACTIVATE = 3;
 
     /// IDC_ARROW = MAKEINTRESOURCE(32512)
@@ -50,12 +53,23 @@ internal sealed unsafe class StackOverlay : IDisposable
     private readonly DesktopWindowTarget _target;
     private readonly ContainerVisual _root;
     private readonly DockVisuals _owner;
-    private readonly List<StackItem> _items;
+    private List<StackItem> _items;
 
     private SpriteVisual? _hot;
     private int _hotIndex = -1;
     private float _cell;
     private int _columns;
+
+    /// <summary>Por dónde se ha ido bajando, para poder volver.</summary>
+    private readonly List<string> _history = [];
+
+    /// <summary>Lo leído en segundo plano, esperando a dibujarse.</summary>
+    private List<StackItem>? _pending;
+
+    private float _scale;
+    private float _anchorX;
+    private int _dockTop;
+    private RECT _monitor;
     private HWND _hwnd;
     private bool _trackingMouse;
     private bool _disposed;
@@ -65,6 +79,7 @@ internal sealed unsafe class StackOverlay : IDisposable
         _owner = owner;
         _compositor = owner.Compositor;
         _items = items;
+        _scale = scale;
         _cell = LogicalCell * scale;
 
         EnsureClassRegistered();
@@ -110,18 +125,7 @@ internal sealed unsafe class StackOverlay : IDisposable
     {
         if (items.Count == 0) return null;
 
-        float cell = LogicalCell * scale;
-        float pad = LogicalPad * scale;
-
-        int columns = Math.Min(5, items.Count);
-        int rows = (items.Count + columns - 1) / columns;
-
-        int w = (int)MathF.Ceiling(columns * cell + pad * 2f);
-        int h = (int)MathF.Ceiling(rows * cell + pad * 2f);
-
-        // Centrada sobre el icono, justo encima del dock, y sin salirse del monitor.
-        int x = (int)Math.Clamp(anchorX - w * 0.5f, monitor.left + 8, monitor.right - w - 8);
-        int y = Math.Max(monitor.top + 8, dockTop - h - 8);
+        (int columns, int w, int h, int x, int y) = Layout(items.Count, scale, anchorX, dockTop, monitor);
 
         StackOverlay overlay;
         try
@@ -130,6 +134,9 @@ internal sealed unsafe class StackOverlay : IDisposable
             {
                 Folder = folder,
                 _columns = columns,
+                _anchorX = anchorX,
+                _dockTop = dockTop,
+                _monitor = monitor,
             };
         }
         catch (Exception ex)
@@ -138,9 +145,79 @@ internal sealed unsafe class StackOverlay : IDisposable
             return null;
         }
 
+        overlay._history.Add(folder);
         overlay.Build(scale, new Vector2(w, h));
         PInvoke.ShowWindow(overlay._hwnd, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
         return overlay;
+    }
+
+    /// <summary>
+    /// Cuántas columnas y qué tamaño y sitio le toca a una rejilla de ese número de
+    /// elementos. Se calcula igual al abrir que al entrar en una subcarpeta.
+    /// </summary>
+    private static (int Columns, int W, int H, int X, int Y) Layout(
+        int count, float scale, float anchorX, int dockTop, RECT monitor)
+    {
+        float cell = LogicalCell * scale;
+        float pad = LogicalPad * scale;
+
+        int columns = Math.Min(5, count);
+        int rows = (count + columns - 1) / columns;
+
+        int w = (int)MathF.Ceiling(columns * cell + pad * 2f);
+        int h = (int)MathF.Ceiling(rows * cell + pad * 2f);
+
+        // Centrada sobre el icono, justo encima del dock, y sin salirse del monitor.
+        int x = (int)Math.Clamp(anchorX - w * 0.5f, monitor.left + 8, monitor.right - w - 8);
+        int y = Math.Max(monitor.top + 8, dockTop - h - 8);
+
+        return (columns, w, h, x, y);
+    }
+
+    /// <summary>
+    /// Entra en una subcarpeta, o vuelve a la de arriba. La lectura va en segundo plano
+    /// como la primera: son otros veinte iconos del shell.
+    /// </summary>
+    private void Navigate(string folder, bool back)
+    {
+        HWND hwnd = _hwnd;
+        string? parent = back ? Parent(folder) : _history[^1];
+
+        if (back) _history.RemoveAt(_history.Count - 1);
+        else _history.Add(folder);
+
+        Task.Run(() =>
+        {
+            List<StackItem> items = StackItems.Read(folder, _history.Count > 1 ? parent : null);
+            _pending = items;
+            PInvoke.PostMessage(hwnd, WM_APP_RELOAD, default, default);
+        });
+    }
+
+    private static string? Parent(string folder)
+    {
+        try { return Path.GetDirectoryName(folder); }
+        catch { return null; }
+    }
+
+    /// <summary>Redibuja con el contenido de la carpeta en la que se acaba de entrar.</summary>
+    private void Reload()
+    {
+        if (_pending is not List<StackItem> items || items.Count == 0) return;
+        _pending = null;
+
+        _items = items;
+        (int columns, int w, int h, int x, int y) = Layout(items.Count, _scale, _anchorX, _dockTop, _monitor);
+        _columns = columns;
+        Folder = _history[^1];
+
+        PInvoke.SetWindowPos(_hwnd, default, x, y, w, h,
+            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER);
+
+        _root.Children.RemoveAll();
+        _hot = null;
+        _hotIndex = -1;
+        Build(_scale, new Vector2(w, h));
     }
 
     private void Build(float scale, Vector2 size)
@@ -276,6 +353,10 @@ internal sealed unsafe class StackOverlay : IDisposable
                 self?.OnClick(lParam);
                 return new LRESULT(0);
 
+            case WM_APP_RELOAD:
+                self?.Reload();
+                return new LRESULT(0);
+
             case WM_DESTROY:
                 Instances.Remove((nint)hwnd.Value);
                 return new LRESULT(0);
@@ -308,7 +389,19 @@ internal sealed unsafe class StackOverlay : IDisposable
         int index = HitTest((short)(lParam.Value & 0xFFFF), (short)(lParam.Value >> 16));
         if (index < 0) return;
 
-        string target = _items[index].Target;
+        StackItem item = _items[index];
+
+        // Una carpeta se recorre aquí dentro, que es de lo que va esto: mirar sin tener
+        // que abrir el Explorador entero.
+        if (item.IsFolder)
+        {
+            bool volviendo = item.Name == "Atrás";
+            Console.WriteLine($"[stack] {(volviendo ? "vuelve a" : "entra en")} {item.Target}");
+            Navigate(item.Target, volviendo);
+            return;
+        }
+
+        string target = item.Target;
         Console.WriteLine($"[stack] abre {target}");
 
         // Igual que al lanzar desde el dock: fuera del hilo que atiende el ratón.

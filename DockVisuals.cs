@@ -54,6 +54,15 @@ internal sealed unsafe class DockVisuals : IDisposable
     /// <summary>La zona de "soltar aquí para añadir". Solo se ve durante un arrastre.</summary>
     private ContainerVisual? _addZone;
 
+    /// <summary>Etiqueta con el nombre de cada elemento. Null en los separadores.</summary>
+    private readonly List<SpriteVisual?> _labels = [];
+
+    /// <summary>Cuál se está viendo ahora mismo, o -1.</summary>
+    private int _labelShown = -1;
+
+    /// <summary>Escala del monitor, para que el texto no salga borroso a 125%.</summary>
+    private float _scale = 1f;
+
     /// Un visual por ranura: icono o separador.
     private readonly List<SpriteVisual> _items = [];
 
@@ -229,6 +238,7 @@ internal sealed unsafe class DockVisuals : IDisposable
     public void Build(
         in DockCurve curve,
         IReadOnlyList<IconBitmap?> items,
+        IReadOnlyList<string> names,
         float windowWidth,
         float windowHeight,
         float padding,
@@ -238,7 +248,9 @@ internal sealed unsafe class DockVisuals : IDisposable
         _root.Children.RemoveAll();
         _items.Clear();
         _dots.Clear();
+        _labels.Clear();
         _dropTarget = -1;
+        _labelShown = -1;
 
         // Los subtérminos compartidos de la curva, calculados una sola vez.
         DockExpressions.Setup(_compositor, _props, curve, windowWidth);
@@ -250,6 +262,7 @@ internal sealed unsafe class DockVisuals : IDisposable
         BuildBar(padding, barTop, barHeight);
         BuildAddZone(padding, barTop, barHeight);
 
+        _scale = iconSize / 48f;
         float dotSize = MathF.Max(4f, padding * 0.4f);
         float dotTop = windowHeight - padding + (padding - dotSize) * 0.5f;
 
@@ -302,6 +315,7 @@ internal sealed unsafe class DockVisuals : IDisposable
             if (items[i] is null)
             {
                 _dots.Add(null);
+                _labels.Add(null);
                 continue;
             }
 
@@ -322,6 +336,12 @@ internal sealed unsafe class DockVisuals : IDisposable
             dot.StartAnimation("Offset", center);
             _root.Children.InsertAtTop(dot);
             _dots.Add(dot);
+
+            // La etiqueta con el nombre, encima del icono magnificado. Se crea una por
+            // elemento en vez de una compartida que se redibuje: así la posición la
+            // gobierna una expresión, como todo lo demás, y sigue al icono cuando se
+            // magnifica o cuando se arrastra.
+            _labels.Add(BuildLabel(curve, i, names[i], padding, iconSize, windowHeight, visual));
         }
     }
 
@@ -329,7 +349,12 @@ internal sealed unsafe class DockVisuals : IDisposable
     /// El rebote al lanzar. Sube y baja un par de veces, cada vez menos, que es lo que
     /// hace el Dock. Corre entero en el compositor: el hilo de UI solo lo dispara.
     /// </summary>
-    public void Bounce(int index, float height)
+    /// <param name="forever">
+    /// Que siga botando hasta que se le diga que pare. Es el icono de una app que se
+    /// está abriendo: macOS bota hasta que la ventana aparece, y ese es justo el aviso
+    /// que hace falta cuando una app tarda cinco segundos en arrancar.
+    /// </param>
+    public void Bounce(int index, float height, bool forever = false)
     {
         if (index < 0 || index >= _items.Count) return;
 
@@ -341,7 +366,18 @@ internal sealed unsafe class DockVisuals : IDisposable
         jump.InsertKeyFrame(1f, 0f);
         jump.Duration = TimeSpan.FromMilliseconds(680);
 
+        if (forever) jump.IterationBehavior = AnimationIterationBehavior.Forever;
+
         _items[index].Properties.StartAnimation("Bounce", jump);
+    }
+
+    /// <summary>Para el rebote y deja el icono en su sitio.</summary>
+    public void StopBounce(int index)
+    {
+        if (index < 0 || index >= _items.Count) return;
+
+        _items[index].Properties.StopAnimation("Bounce");
+        _items[index].Properties.InsertScalar("Bounce", 0f);
     }
 
     /// <summary>
@@ -398,6 +434,93 @@ internal sealed unsafe class DockVisuals : IDisposable
         fade.InsertKeyFrame(1f, lifted ? 0.85f : 1f);
         fade.Duration = TimeSpan.FromMilliseconds(120);
         _items[index].StartAnimation("Opacity", fade);
+    }
+
+    /// <summary>
+    /// La etiqueta con el nombre, colgada encima del icono. Nace invisible.
+    /// </summary>
+    private SpriteVisual? BuildLabel(
+        in DockCurve curve, int index, string name, float padding, float iconSize, float windowHeight,
+        SpriteVisual icon)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+
+        Vector2 size = Labels.Measure(name, _scale);
+
+        SpriteVisual label = _compositor.CreateSpriteVisual();
+        label.Size = size;
+        label.Opacity = 0f;
+        label.Brush = CreateLabelBrush(name, size);
+
+        // Justo encima de donde llega el icono cuando está del todo magnificado, que es
+        // el hueco que LogicalLabelRoom reserva en la ventana.
+        float top = windowHeight - padding - iconSize * _curve.MaxScale - size.Y - padding * 0.4f;
+
+        // El "I" de la expresión es el visual del ICONO, no el de la etiqueta: así
+        // sigue su desplazamiento al arrastrarlo, igual que hace el puntito.
+        ExpressionAnimation place = _compositor.CreateExpressionAnimation(
+            DockExpressions.ItemCenter(curve, index, size.X, top, "I.Shift"));
+        place.SetReferenceParameter(DockExpressions.Props, _props);
+        place.SetReferenceParameter("I", icon);
+        label.StartAnimation("Offset", place);
+
+        _root.Children.InsertAtTop(label);
+        return label;
+    }
+
+    private CompositionSurfaceBrush CreateLabelBrush(string name, Vector2 size)
+    {
+        CompositionDrawingSurface surface = EnsureGraphicsDevice().CreateDrawingSurface(
+            new global::Windows.Foundation.Size(size.X, size.Y),
+            DirectXPixelFormat.B8G8R8A8UIntNormalized,
+            DirectXAlphaMode.Premultiplied);
+
+        ICompositionDrawingSurfaceInterop interop = surface.As<ICompositionDrawingSurfaceInterop>();
+        Guid iid = typeof(ID2D1DeviceContext).GUID;
+
+        System.Drawing.Point offset;
+        interop.BeginDraw(null, &iid, out object contextObject, &offset);
+        try
+        {
+            var context = (ID2D1DeviceContext)contextObject;
+
+            // Igual que con los iconos: el contexto nace con el DPI del escritorio y
+            // aquí se trabaja en píxeles, no en DIPs.
+            context.SetDpi(96, 96);
+
+            D2D1_COLOR_F transparent = default;
+            context.Clear(&transparent);
+
+            Labels.Draw(context, name, _scale, size, offset);
+        }
+        finally
+        {
+            interop.EndDraw();
+        }
+
+        return _compositor.CreateSurfaceBrush(surface);
+    }
+
+    /// <summary>
+    /// Enseña la etiqueta del icono que hay bajo el cursor y esconde la anterior.
+    /// </summary>
+    public void SetLabel(int index)
+    {
+        if (index == _labelShown) return;
+
+        Fade(_labelShown, 0f);
+        _labelShown = index;
+        Fade(index, 1f);
+    }
+
+    private void Fade(int index, float target)
+    {
+        if (index < 0 || index >= _labels.Count || _labels[index] is not SpriteVisual label) return;
+
+        ScalarKeyFrameAnimation fade = _compositor.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(1f, target);
+        fade.Duration = TimeSpan.FromMilliseconds(target > 0f ? 140 : 90);
+        label.StartAnimation("Opacity", fade);
     }
 
     /// <summary>

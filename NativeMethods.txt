@@ -152,3 +152,18 @@ PKEY_AppUserModel_ID
 IShellLinkW
 ShellLink
 IPersistFile
+
+// --- Texto de las etiquetas, sobre nuestra propia superficie de dibujo ---
+DWriteCreateFactory
+IDWriteFactory
+IDWriteTextFormat
+IDWriteTextLayout
+DWRITE_FACTORY_TYPE
+DWRITE_TEXT_ALIGNMENT
+DWRITE_PARAGRAPH_ALIGNMENT
+DWRITE_TEXT_METRICS
+DWRITE_FONT_WEIGHT
+DWRITE_FONT_STYLE
+DWRITE_FONT_STRETCH
+D2D1_ROUNDED_RECT
+D2D1_DRAW_TEXT_OPTIONS

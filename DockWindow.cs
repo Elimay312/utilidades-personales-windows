@@ -26,6 +26,11 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Franja que asoma cuando el dock está escondido, en unidades lógicas.
     private const int LogicalRevealStrip = 3;
 
+    /// Hueco por encima del icono magnificado para la etiqueta con el nombre. La
+    /// ventana medía exactamente lo que el icono más grande, así que sin esto la
+    /// etiqueta caería fuera y no se vería.
+    private const int LogicalLabelRoom = 30;
+
     /// Margen antes de esconderse al salir el ratón. Sin él, rozar el dock de paso
     /// lo haría parpadear.
     private const uint HideDelayMs = 450;
@@ -80,6 +85,19 @@ internal sealed unsafe class DockWindow : IDisposable
 
     /// Identificador del temporizador que vigila el z-order y la pantalla completa.
     private const nuint TopmostTimerId = 1;
+
+    /// Cada cuánto se reafirma el z-order.
+    ///
+    /// Era un segundo, y se notaba: cuando la barra de tareas se revela se pone por
+    /// encima del dock, y quedarse debajo un segundo entero es justo lo que se veía en
+    /// la captura del usuario. Bajarlo NO evita que la barra salga —eso se midió a 200
+    /// y a 60 ms y sale igual—, pero recupera el sitio enseguida.
+    private const uint WatchdogMs = 250;
+
+    /// Un latido de cada cuántos mira qué apps están abiertas. Reafirmar el z-order es
+    /// una llamada; recorrer procesos y ventanas no, y no hace falta cinco veces por
+    /// segundo.
+    private const int RunningEveryTicks = 4;
 
     /// Identificador del temporizador de un disparo que esconde el dock.
     private const nuint HideTimerId = 2;
@@ -141,6 +159,15 @@ internal sealed unsafe class DockWindow : IDisposable
     /// hilo de UI porque resolver las MSIX obliga a recorrer procesos y ventanas.
     private AppState[] _state = [];
     private bool _checkingRunning;
+    private int _watchdogTicks;
+
+    /// <summary>
+    /// Icono que está botando porque su app se está abriendo, y hasta cuándo. El tope
+    /// existe porque no toda app acaba teniendo ventana: si se le lanza un instalador o
+    /// algo que no abre nada, el icono no puede quedarse botando para siempre.
+    /// </summary>
+    private int _launchingIndex = -1;
+    private DateTime _launchingUntil;
 
     /// Curva vigente, con la que se invierte el cursor y se hace el hit-test. Tiene
     /// que ser la MISMA que generó las expresiones, o el icono que se resalta no
@@ -327,7 +354,7 @@ internal sealed unsafe class DockWindow : IDisposable
         // Hace falta porque WM_WINDOWPOSCHANGING solo cubre los casos en que Windows
         // nos avisa. Cuando otro proceso se inserta por encima, a nosotros no llega
         // ningún mensaje y nos quedamos hundidos para siempre.
-        PInvoke.SetTimer(_hwnd, TopmostTimerId, 1000, null);
+        PInvoke.SetTimer(_hwnd, TopmostTimerId, WatchdogMs, null);
 
         StartIconLoad();
     }
@@ -385,7 +412,8 @@ internal sealed unsafe class DockWindow : IDisposable
         // crece hacia arriba. Lo que se ve moverse es la barra de fondo, no la ventana.
         float padding = Scale(LogicalPadding);
         int w = info.rcWork.right - info.rcWork.left;
-        int h = (int)MathF.Ceiling(Scale(_config.IconSize) * MaxScale + padding * 2f);
+        int h = (int)MathF.Ceiling(
+            Scale(_config.IconSize) * MaxScale + padding * 2f + Scale(LogicalLabelRoom));
 
         RECT work = info.rcWork;
         int x = work.left;
@@ -467,6 +495,7 @@ internal sealed unsafe class DockWindow : IDisposable
         _visuals.Build(
             _curve,
             [.. _loaded.Select(entry => entry.Icon)],
+            [.. _loaded.Select(entry => entry.App.Name)],
             _windowWidth,
             _windowHeight,
             Scale(LogicalPadding),
@@ -581,6 +610,7 @@ internal sealed unsafe class DockWindow : IDisposable
                 {
                     self._visuals?.SetRunning([.. self._state.Select(entry => entry.HasWindow)]);
                     self.DropDeadShots();
+                    self.StopBounceIfOpened();
                 }
                 return new LRESULT(0);
 
@@ -600,6 +630,7 @@ internal sealed unsafe class DockWindow : IDisposable
                     {
                         self._hovering = false;
                         self._visuals?.SetHover(false);
+                        self._visuals?.SetLabel(-1);
                         self.ScheduleHide();
                     }
                 }
@@ -727,6 +758,7 @@ internal sealed unsafe class DockWindow : IDisposable
         if (_hidden || !_config.AutoHide) return;
 
         _hidden = true;
+        _visuals?.SetLabel(-1);
         _visuals?.SetHidden(true, HiddenOffset);
     }
 
@@ -744,6 +776,10 @@ internal sealed unsafe class DockWindow : IDisposable
         }
 
         EnsureTopmost();
+
+        if (++_watchdogTicks < RunningEveryTicks) return;
+
+        _watchdogTicks = 0;
         RefreshRunning();
     }
 
@@ -751,6 +787,18 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Mira qué apps están abiertas, FUERA del hilo de UI: resolver las MSIX obliga a
     /// recorrer la lista de procesos y eso no puede bloquear el ratón.
     /// </summary>
+    /// <summary>Deja de botar en cuanto la app abre su ventana, o al agotarse el tope.</summary>
+    private void StopBounceIfOpened()
+    {
+        if (_launchingIndex < 0) return;
+
+        bool abierta = _launchingIndex < _state.Length && _state[_launchingIndex].HasWindow;
+        if (!abierta && DateTime.UtcNow < _launchingUntil) return;
+
+        _visuals?.StopBounce(_launchingIndex);
+        _launchingIndex = -1;
+    }
+
     /// <summary>
     /// Suelta los fotogramas de ventanas que ya no existen. Sin esto, minimizar algo
     /// con el genio y luego cerrarlo dejaría su captura (varios MB) ahí para siempre.
@@ -832,9 +880,17 @@ internal sealed unsafe class DockWindow : IDisposable
     /// <summary>Reafirma la posición en la banda topmost. Barato y sin efecto si ya estamos.</summary>
     private void EnsureTopmost()
     {
-        PInvoke.SetWindowPos(_hwnd, HwndTopmost, 0, 0, 0, 0,
+        const SET_WINDOW_POS_FLAGS quieto =
             SET_WINDOW_POS_FLAGS.SWP_NOMOVE | SET_WINDOW_POS_FLAGS.SWP_NOSIZE
-                | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
+                | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE;
+
+        // Dos llamadas y hacen cosas distintas. HWND_TOPMOST devuelve la ventana a la
+        // banda de las siempre-encima, que es de donde Windows la echa a veces dejando
+        // el bit de estilo puesto. HWND_TOP la sube al principio de esa banda, que es
+        // lo que hace falta cuando otra ventana de la misma banda -la barra de tareas
+        // al revelarse- se ha puesto delante.
+        PInvoke.SetWindowPos(_hwnd, HwndTopmost, 0, 0, 0, 0, quieto);
+        PInvoke.SetWindowPos(_hwnd, HWND.Null, 0, 0, 0, 0, quieto);
     }
 
     private static short LoWord(LPARAM lParam) => (short)(lParam.Value & 0xFFFF);
@@ -878,6 +934,10 @@ internal sealed unsafe class DockWindow : IDisposable
         // oscilando (ancho 352 -> 529 -> 500 sin ejecutar nosotros una instrucción).
         _lastRest = _curve.Invert(LoWord(lParam), _windowWidth);
         _visuals.SetCursor(_lastRest);
+
+        // El nombre del icono de debajo. Mientras se arrastra no: ahí el icono ya no
+        // está donde dice la curva y la etiqueta se quedaría señalando al hueco.
+        _visuals.SetLabel(_dragging || _hidden ? -1 : _visuals.HitTest(_lastRest));
 
         if (_pressedIndex >= 0) OnDragMove(LoWord(lParam), HiWord(lParam));
     }
@@ -1402,6 +1462,12 @@ internal sealed unsafe class DockWindow : IDisposable
             Console.WriteLine($"[dock] al frente '{app.Name}'{(genie ? " con genio" : "")}");
             return;
         }
+
+        // Y sigue botando hasta que la app tenga ventana, como en macOS: es el único
+        // aviso de que el clic llegó cuando una app tarda en arrancar.
+        _visuals?.Bounce(index, Scale(_config.IconSize) * 0.35f, forever: true);
+        _launchingIndex = index;
+        _launchingUntil = DateTime.UtcNow.AddSeconds(20);
 
         // Lanzar fuera de este hilo: Process.Start con UseShellExecute acaba en
         // ShellExecuteEx, que puede bloquear varios segundos, y este hilo es el que

@@ -25,7 +25,20 @@ internal static unsafe class Labels
     private const float PaddingY = 5f;
 
     private static IDWriteFactory? _factory;
-    private static IDWriteTextFormat? _format;
+
+    /// <summary>
+    /// Un formato por escala, y no uno solo.
+    ///
+    /// Era un campo único que se creaba con la escala del PRIMER dock que pintase una
+    /// etiqueta y se reutilizaba en todos. Con pantallas de DPI distinto —aquí hay al
+    /// 100%, al 125% y al 175%— la segunda medía y dibujaba con el tamaño de letra de
+    /// la primera: pastilla mal dimensionada y texto cortado. La fábrica sí puede ser
+    /// única, que no depende del DPI.
+    ///
+    /// Sin candado a propósito: todos los docks viven en el mismo hilo, el que tiene la
+    /// DispatcherQueue de Composition.
+    /// </summary>
+    private static readonly Dictionary<float, IDWriteTextFormat> Formats = [];
 
     /// <summary>
     /// Mide el texto y devuelve el tamaño de la pastilla que lo contiene.
@@ -97,24 +110,27 @@ internal static unsafe class Labels
 
     private static IDWriteTextLayout LayoutOf(string text, float scale)
     {
-        EnsureFormat(scale);
+        IDWriteTextFormat format = FormatFor(scale);
 
         fixed (char* value = text)
         {
-            _factory!.CreateTextLayout(new PCWSTR(value), (uint)text.Length, _format!, 1000f, 100f, out IDWriteTextLayout layout);
+            _factory!.CreateTextLayout(new PCWSTR(value), (uint)text.Length, format, 1000f, 100f, out IDWriteTextLayout layout);
             return layout;
         }
     }
 
-    private static void EnsureFormat(float scale)
+    private static IDWriteTextFormat FormatFor(float scale)
     {
-        if (_format is not null) return;
+        if (Formats.TryGetValue(scale, out IDWriteTextFormat? cached)) return cached;
 
-        Guid iid = typeof(IDWriteFactory).GUID;
-        PInvoke.DWriteCreateFactory(DWRITE_FACTORY_TYPE.DWRITE_FACTORY_TYPE_SHARED, &iid, out object factory)
-            .ThrowOnFailure();
+        if (_factory is null)
+        {
+            Guid iid = typeof(IDWriteFactory).GUID;
+            PInvoke.DWriteCreateFactory(DWRITE_FACTORY_TYPE.DWRITE_FACTORY_TYPE_SHARED, &iid, out object factory)
+                .ThrowOnFailure();
 
-        _factory = (IDWriteFactory)factory;
+            _factory = (IDWriteFactory)factory;
+        }
 
         // Segoe UI Variable es la de Windows 11; si no está, DirectWrite cae a la de
         // sistema por su cuenta y no hay que hacer nada.
@@ -129,7 +145,10 @@ internal static unsafe class Labels
                 DWRITE_FONT_STRETCH.DWRITE_FONT_STRETCH_NORMAL,
                 FontSize * scale,
                 new PCWSTR(locale),
-                out _format);
+                out IDWriteTextFormat format);
+
+            Formats[scale] = format;
+            return format;
         }
     }
 }

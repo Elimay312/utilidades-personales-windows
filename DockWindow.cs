@@ -66,6 +66,7 @@ internal sealed unsafe class DockWindow : IDisposable
     // Mensajes que manejamos. Se declaran aquí para no arrastrar cientos de
     // constantes desde la metadata del SDK.
     private const uint WM_DESTROY = 0x0002;
+    private const uint WM_DISPLAYCHANGE = 0x007E;
     private const uint WM_MOUSEACTIVATE = 0x0021;
     private const uint WM_NCCALCSIZE = 0x0083;
     private const uint WM_NCACTIVATE = 0x0086;
@@ -126,6 +127,13 @@ internal sealed unsafe class DockWindow : IDisposable
 
     /// Ya se leyó el contenido de una carpeta y se puede desplegar. WM_APP + 5.
     private const uint WM_APP_STACK = 0x8005;
+
+    /// <summary>
+    /// Cambió el conjunto de pantallas. WM_APP + 6, y va al HILO, no a una ventana:
+    /// atenderlo implica destruir docks, y hacerlo dentro del WndProc de uno de ellos
+    /// sería destruir la ventana cuyo mensaje se está despachando.
+    /// </summary>
+    private const uint WM_APP_DISPLAYS = 0x8006;
 
     // IDC_ARROW = MAKEINTRESOURCE(32512)
     private const int IdcArrow = 32512;
@@ -693,9 +701,21 @@ internal sealed unsafe class DockWindow : IDisposable
                 self?.OnDpiChanged(wParam, lParam);
                 return new LRESULT(0);
 
+            case WM_DISPLAYCHANGE:
+                // Llega a las tres ventanas; el rebote deja una sola reconstrucción.
+                if (!_displaysPending)
+                {
+                    _displaysPending = true;
+                    PInvoke.PostMessage(HWND.Null, WM_APP_DISPLAYS, default, default);
+                }
+                return new LRESULT(0);
+
             case WM_DESTROY:
                 Instances.Remove((nint)hwnd.Value);
-                PInvoke.PostQuitMessage(0);
+
+                // Solo el último apaga la luz. Con un dock daba igual; con uno por
+                // pantalla, cualquier DestroyWindow inesperado se llevaba los tres.
+                if (Instances.Count == 0) PInvoke.PostQuitMessage(0);
                 return new LRESULT(0);
         }
 
@@ -708,6 +728,24 @@ internal sealed unsafe class DockWindow : IDisposable
     /// que tiene la DispatcherQueue.
     /// </summary>
     public void RequestReload() => PInvoke.PostMessage(_hwnd, WM_APP_RELOAD, default, default);
+
+    /// <summary>
+    /// Avisa a los demás docks de que la superposición local acaba de cambiar.
+    ///
+    /// El vigilante de ficheros no sirve para esto: filtra por <c>dock.json</c> exacto,
+    /// a propósito, para que escribir <c>dock.local.json</c> no provoque una recarga en
+    /// bucle. La consecuencia con varias pantallas era que reordenar en una dejaba a
+    /// las otras con el orden viejo hasta reiniciar. Se avisa directamente, sin pasar
+    /// por el disco: cada hermano vuelve a leer y aplica la superposición recién
+    /// guardada.
+    /// </summary>
+    private void ReloadSiblings()
+    {
+        foreach (DockWindow sibling in Instances.Values)
+        {
+            if (sibling != this) sibling.RequestReload();
+        }
+    }
 
     private void OnReload()
     {
@@ -948,6 +986,16 @@ internal sealed unsafe class DockWindow : IDisposable
     /// </summary>
     private bool IsFullscreenAppRunning()
     {
+        HWND foreground = PInvoke.GetForegroundWindow();
+        if (foreground.IsNull || foreground == _hwnd) return false;
+
+        // SHQueryUserNotificationState es GLOBAL, y esa era la trampa: un juego a
+        // pantalla completa en una pantalla escondía los docks de las TRES. La ventana
+        // en primer plano es la que puso al sistema en ese estado, así que solo cuenta
+        // si está en NUESTRO monitor.
+        if (PInvoke.MonitorFromWindow(foreground, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST) != _monitor)
+            return false;
+
         if (PInvoke.SHQueryUserNotificationState(out QUERY_USER_NOTIFICATION_STATE state).Succeeded
             && state is QUERY_USER_NOTIFICATION_STATE.QUNS_RUNNING_D3D_FULL_SCREEN
                 or QUERY_USER_NOTIFICATION_STATE.QUNS_PRESENTATION_MODE
@@ -955,9 +1003,6 @@ internal sealed unsafe class DockWindow : IDisposable
         {
             return true;
         }
-
-        HWND foreground = PInvoke.GetForegroundWindow();
-        if (foreground.IsNull || foreground == _hwnd) return false;
 
         // Una ventana MAXIMIZADA no es pantalla completa. Con la barra de tareas en
         // autoocultar el área de trabajo es la pantalla entera, así que comparar solo
@@ -1117,6 +1162,7 @@ internal sealed unsafe class DockWindow : IDisposable
         Console.WriteLine($"[dock] quitada '{fuera.Name}'");
 
         DockLocal.Save(_config.BaseApps, apps);
+        ReloadSiblings();
         _config = _config with { Apps = apps };
 
         PInvoke.SetTimer(_hwnd, PuffTimerId, 200, null);
@@ -1259,6 +1305,7 @@ internal sealed unsafe class DockWindow : IDisposable
         }
 
         DockLocal.Save(_config.BaseApps, apps);
+        ReloadSiblings();
 
         // Reconstruir con el orden nuevo. Los Shift vuelven a cero al crearse los
         // visuales, y como ya estaban donde toca, no se ve ningún salto.
@@ -1535,6 +1582,7 @@ internal sealed unsafe class DockWindow : IDisposable
         if (!changed) return;
 
         DockLocal.Save(_config.BaseApps, apps);
+        ReloadSiblings();
         _config = _config with { Apps = apps };
 
         StartIconLoad();
@@ -1617,9 +1665,19 @@ internal sealed unsafe class DockWindow : IDisposable
         float thin = size * 0.10f;
         Box target = new(left, middle - thin, right, middle + thin);
 
+        // La superposición tiene que cubrir la ventana Y el icono, y con varias
+        // pantallas eso no es un solo monitor: GetWindowRect da coordenadas del
+        // escritorio virtual, así que una ventana en la pantalla de al lado quedaba
+        // fuera de la superposición y la malla salía recortada o no salía.
+        RECT area = info.rcMonitor;
+        area.left = Math.Min(area.left, (int)MathF.Floor(source.Left));
+        area.top = Math.Min(area.top, (int)MathF.Floor(source.Top));
+        area.right = Math.Max(area.right, (int)MathF.Ceiling(source.Right));
+        area.bottom = Math.Max(area.bottom, (int)MathF.Ceiling(source.Bottom));
+
         return GenieOverlay.Play(
             _visuals.Compositor,
-            info.rcMonitor,
+            area,
             _visuals.CreateBitmapBrush(shot),
             new Vector2(shot.Width, shot.Height),
             new GenieCurve(source, target, GenieOverlay.Slices),
@@ -1725,11 +1783,27 @@ internal sealed unsafe class DockWindow : IDisposable
         Console.WriteLine($"[dpi] WM_DPICHANGED -> recalculado a {_dpi} DPI ({_dpi * 100 / 96}%), {w}x{h} en ({x},{y})");
     }
 
+    /// <summary>
+    /// Qué hacer cuando cambian las pantallas. Lo pone Program, que es quien tiene la
+    /// lista de docks y por tanto el único que puede crearlos y destruirlos.
+    /// </summary>
+    public static Action? DisplaysChanged;
+
+    private static bool _displaysPending;
+
     public static void RunMessageLoop()
     {
         MSG msg;
         while (PInvoke.GetMessage(&msg, default, 0, 0).Value > 0)
         {
+            // Un mensaje de hilo no tiene ventana, así que DispatchMessage lo tiraría.
+            if (msg.hwnd.IsNull && msg.message == WM_APP_DISPLAYS)
+            {
+                _displaysPending = false;
+                DisplaysChanged?.Invoke();
+                continue;
+            }
+
             PInvoke.TranslateMessage(&msg);
             PInvoke.DispatchMessage(&msg);
         }

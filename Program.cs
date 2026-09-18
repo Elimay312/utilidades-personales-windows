@@ -51,11 +51,20 @@ internal static class Program
 
         // Un dock por pantalla.
         List<DockWindow> docks = [];
-        foreach (var monitor in DockWindow.AllMonitors())
-            docks.Add(new DockWindow(monitor, config));
+        Rebuild(docks, config);
 
-        Console.WriteLine($"[dock] {docks.Count} monitor(es)");
-        foreach (DockWindow dock in docks) dock.Show();
+        // Enchufar o quitar una pantalla se atiende tirando los docks y volviendolos a
+        // crear. Es bruto, pero un cambio de pantallas invalida los HMONITOR y ya es de
+        // por si un momento visualmente aparatoso; hacerlo fino exigiria una identidad
+        // de monitor que todavia no existe. Los iconos no se vuelven a extraer: la
+        // cache la comparten todos los docks.
+        DockWindow.DisplaysChanged = () =>
+        {
+            Console.WriteLine("[dock] cambiaron las pantallas, reconstruyendo");
+            foreach (DockWindow dock in docks) dock.Dispose();
+            docks.Clear();
+            Rebuild(docks, config);
+        };
 
         using FileSystemWatcher watcher = WatchConfig(docks);
         DockWindow.RunMessageLoop();
@@ -66,6 +75,16 @@ internal static class Program
         PInvoke.OleUninitialize();
 
         Console.WriteLine("[dock] salida limpia");
+    }
+
+    /// <summary>Crea un dock por pantalla y los muestra.</summary>
+    private static void Rebuild(List<DockWindow> docks, DockConfig config)
+    {
+        foreach (var monitor in DockWindow.AllMonitors())
+            docks.Add(new DockWindow(monitor, config));
+
+        Console.WriteLine($"[dock] {docks.Count} monitor(es)");
+        foreach (DockWindow dock in docks) dock.Show();
     }
 
     /// <summary>

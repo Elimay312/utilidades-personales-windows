@@ -33,11 +33,20 @@ internal sealed unsafe class DockVisuals : IDisposable
     /// queda sin cola de despacho en este hilo.
     private static object? _dispatcherQueueController;
 
+    /// <summary>
+    /// Un solo Compositor y un solo device para todo el proceso, no uno por pantalla.
+    ///
+    /// Un Compositor admite varios DesktopWindowTarget, que es como cualquier app con
+    /// varias ventanas lo hace. Cada dock creaba el suyo con su propio device D3D11
+    /// hardware detras: con tres monitores eran tres adaptadores abiertos y unos 22 MB
+    /// cada uno, para dibujar los mismos siete iconos.
+    /// </summary>
+    private static Compositor? _sharedCompositor;
+    private static CompositionGraphicsDevice? _graphics;
+
     private readonly Compositor _compositor;
     private readonly DesktopWindowTarget _target;
     private readonly ContainerVisual _root;
-
-    private CompositionGraphicsDevice? _graphics;
 
     /// <summary>
     /// La ÚNICA entrada de la animación. Todo el dock son expresiones en forma
@@ -76,7 +85,7 @@ internal sealed unsafe class DockVisuals : IDisposable
     {
         EnsureDispatcherQueue();
 
-        _compositor = new Compositor();
+        _compositor = _sharedCompositor ??= new Compositor();
 
         // El puente Win32 -> Composition. CsWin32 marshala el puntero COM
         // directamente al tipo proyectado.
@@ -823,11 +832,14 @@ internal sealed unsafe class DockVisuals : IDisposable
     /// </summary>
     public int HitTest(float restPosition) => _curve.SlotAt(restPosition);
 
+    /// <summary>
+    /// Suelta lo de ESTA pantalla. El Compositor y el device no: son del proceso y los
+    /// comparten los demas docks, que siguen vivos.
+    /// </summary>
     public void Dispose()
     {
         _target.Root = null;
         _root.Dispose();
         _target.Dispose();
-        _compositor.Dispose();
     }
 }

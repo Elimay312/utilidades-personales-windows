@@ -154,6 +154,13 @@ internal static class DockExpressions
         => $"Vector2({TotalWidth} + {F(padding * 2f)}, {F(height)})";
 
     /// <summary>
+    /// La zona del "+", pegada al borde derecho de la barra y siguiéndola cuando se
+    /// ensancha al magnificarse.
+    /// </summary>
+    public static string AddZoneOffset(float padding, float gap, float top)
+        => $"Vector3({Origin} + {TotalWidth} + {F(padding + gap)}, {F(top)}, 0)";
+
+    /// <summary>
     /// Solo el ancho, para la geometría del recorte redondeado, que lleva su propio
     /// Size y tiene que seguir al de la barra.
     /// </summary>

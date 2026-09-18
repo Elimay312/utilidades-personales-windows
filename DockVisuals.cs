@@ -51,6 +51,9 @@ internal sealed unsafe class DockVisuals : IDisposable
     /// <summary>Icono levantado ahora mismo porque se va a soltar algo encima, o -1.</summary>
     private int _dropTarget = -1;
 
+    /// <summary>La zona de "soltar aquí para añadir". Solo se ve durante un arrastre.</summary>
+    private ContainerVisual? _addZone;
+
     /// Un visual por ranura: icono o separador.
     private readonly List<SpriteVisual> _items = [];
 
@@ -245,6 +248,7 @@ internal sealed unsafe class DockVisuals : IDisposable
         float iconTop = windowHeight - padding - iconSize;
 
         BuildBar(padding, barTop, barHeight);
+        BuildAddZone(padding, barTop, barHeight);
 
         float dotSize = MathF.Max(4f, padding * 0.4f);
         float dotTop = windowHeight - padding + (padding - dotSize) * 0.5f;
@@ -394,6 +398,90 @@ internal sealed unsafe class DockVisuals : IDisposable
         fade.InsertKeyFrame(1f, lifted ? 0.85f : 1f);
         fade.Duration = TimeSpan.FromMilliseconds(120);
         _items[index].StartAnimation("Opacity", fade);
+    }
+
+    /// <summary>
+    /// Enseña o esconde la zona del "+". Solo tiene sentido mientras se arrastra algo
+    /// por encima: el resto del tiempo el dock no debe tener botones de más.
+    /// </summary>
+    public void SetAddZone(bool visible)
+    {
+        if (_addZone is null) return;
+
+        ScalarKeyFrameAnimation fade = _compositor.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(1f, visible ? 1f : 0f);
+        fade.Duration = TimeSpan.FromMilliseconds(140);
+        _addZone.StartAnimation("Opacity", fade);
+    }
+
+    /// <summary>Resalta la zona del "+" cuando el cursor está justo encima.</summary>
+    public void SetAddZoneHot(bool hot)
+    {
+        if (_addZone is null) return;
+
+        SpringScalarNaturalMotionAnimation grow = _compositor.CreateSpringScalarAnimation();
+        grow.DampingRatio = 0.7f;
+        grow.Period = TimeSpan.FromMilliseconds(50);
+        grow.FinalValue = hot ? 1.18f : 1f;
+        _addZone.StartAnimation("Scale.X", grow);
+        _addZone.StartAnimation("Scale.Y", grow);
+    }
+
+    /// <summary>
+    /// El "+" al que se arrastra algo para añadirlo al dock.
+    ///
+    /// Un cuadrado con las esquinas redondeadas y dos barritas cruzadas. Se dibuja con
+    /// visuals y no con texto porque el dock no tiene nada que renderice texto, y para
+    /// un signo de más no merece la pena traerlo.
+    /// </summary>
+    private void BuildAddZone(float padding, float barTop, float barHeight)
+    {
+        float size = barHeight * 0.58f;
+        float top = barTop + (barHeight - size) * 0.5f;
+
+        ContainerVisual zone = _compositor.CreateContainerVisual();
+        zone.Size = new Vector2(size, size);
+        zone.CenterPoint = new Vector3(size * 0.5f, size * 0.5f, 0f);
+        zone.Opacity = 0f;
+        Animate(zone, "Offset", DockExpressions.AddZoneOffset(padding, size * 0.35f, top));
+
+        // Mismo material que la barra, y por un motivo concreto: un chip blanco
+        // translúcido con un "+" blanco es invisible sobre un fondo claro, y el primer
+        // sitio donde se probó fue encima de una página web en blanco. Con el acrílico
+        // debajo se lee sobre lo que sea, y además parece un trocito del propio dock.
+        CompositionRoundedRectangleGeometry round = _compositor.CreateRoundedRectangleGeometry();
+        round.Size = new Vector2(size, size);
+        round.CornerRadius = new Vector2(size * 0.28f);
+        zone.Clip = _compositor.CreateGeometricClip(round);
+
+        SpriteVisual material = _compositor.CreateSpriteVisual();
+        material.RelativeSizeAdjustment = Vector2.One;
+        material.Brush = CreateAcrylicBrush();
+        zone.Children.InsertAtBottom(material);
+
+        SpriteVisual tint = _compositor.CreateSpriteVisual();
+        tint.RelativeSizeAdjustment = Vector2.One;
+        tint.Brush = _compositor.CreateColorBrush(Color.FromArgb(48, 255, 255, 255));
+        zone.Children.InsertAtTop(tint);
+
+        float thick = MathF.Max(2f, size * 0.1f);
+        float arm = size * 0.46f;
+        CompositionColorBrush ink = _compositor.CreateColorBrush(Color.FromArgb(255, 255, 255, 255));
+
+        SpriteVisual across = _compositor.CreateSpriteVisual();
+        across.Size = new Vector2(arm, thick);
+        across.Offset = new Vector3((size - arm) * 0.5f, (size - thick) * 0.5f, 0f);
+        across.Brush = ink;
+        zone.Children.InsertAtTop(across);
+
+        SpriteVisual down = _compositor.CreateSpriteVisual();
+        down.Size = new Vector2(thick, arm);
+        down.Offset = new Vector3((size - thick) * 0.5f, (size - arm) * 0.5f, 0f);
+        down.Brush = ink;
+        zone.Children.InsertAtTop(down);
+
+        _root.Children.InsertAtTop(zone);
+        _addZone = zone;
     }
 
     /// <summary>

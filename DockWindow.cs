@@ -41,6 +41,10 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Cuánto hay que subir por encima de la barra para que soltar signifique quitar.
     private const int LogicalPullOffDistance = 40;
 
+    /// Ancho de la zona del "+" a la derecha de la barra, en unidades lógicas. Tiene
+    /// que casar con lo que dibuja DockVisuals.BuildAddZone.
+    private const float AddZoneFraction = 0.58f;
+
     /// Radio de influencia del cursor, medido en ranuras. Junto con MaxScale son los
     /// dos mandos que gobiernan el tacto de la magnificación, y los únicos números de
     /// aquí que piden ajustarse a ojo.
@@ -189,7 +193,13 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Lo último que se soltó, esperando a lanzarse fuera de IDropTarget.Drop. Lanzar
     /// ahí dentro bloquearía el hilo que el Explorador está esperando.
     /// </summary>
-    private (int Slot, string[] Paths) _pendingDrop = (-1, []);
+    private DroppedItem[] _pendingDrop = [];
+
+    /// <summary>Qué significaría soltar en el punto por el que va el arrastre.</summary>
+    private enum DropKind { None, Open, Add }
+
+    private DropKind _dropKind;
+    private int _dropSlot = -1;
 
     /// <summary>
     /// El último fotograma de cada ventana que el dock minimizó, para poder reproducir
@@ -1047,7 +1057,11 @@ internal sealed unsafe class DockWindow : IDisposable
         int half = (int)MathF.Ceiling(widest * 0.5f + Scale(LogicalPadding)) + 2;
         int center = (int)(_windowWidth * 0.5f);
 
-        HRGN region = PInvoke.CreateRectRgn(center - half, 0, center + half, (int)_windowHeight);
+        // Por la derecha, además, la zona del "+": si se queda fuera de la región no
+        // llegan los eventos de arrastre ahí y no habría dónde soltar para añadir.
+        int extra = (int)MathF.Ceiling(BarHeight * AddZoneFraction * 1.4f) + 4;
+
+        HRGN region = PInvoke.CreateRectRgn(center - half, 0, center + half + extra, (int)_windowHeight);
 
         if (_config.AutoHide)
         {
@@ -1088,33 +1102,71 @@ internal sealed unsafe class DockWindow : IDisposable
         return _visuals.HitTest(rest);
     }
 
-    /// <summary>El HWND, para el ayudante que dibuja la miniatura de arrastre.</summary>
-    public HWND Handle => _hwnd;
-
     /// <summary>
-    /// Si en ese punto de pantalla hay un icono que sepa abrir ficheros, y de paso lo
-    /// levanta para que se vea cuál va a recibir la suelta.
+    /// Decide qué significaría soltar en ese punto de pantalla, y lo enseña: levanta el
+    /// icono que recibiría el fichero, o resalta el "+". Devuelve false si ahí no se
+    /// puede soltar nada, que es lo que le cambia el cursor al usuario.
     /// </summary>
     public bool AcceptsDropAt(int screenX, int screenY)
     {
-        int slot = SlotAtScreen(screenX, screenY);
-        bool ok = slot >= 0 && slot < _loaded.Count && _loaded[slot].App.IsApp;
+        (_dropKind, _dropSlot) = KindAt(screenX, screenY);
 
-        // Un documento o un separador no abren nada, así que ni se levantan.
-        _visuals?.SetDropTarget(ok ? slot : -1, Scale(_config.IconSize) * 0.25f);
-        return ok;
+        _visuals?.SetDropTarget(_dropKind == DropKind.Open ? _dropSlot : -1, Scale(_config.IconSize) * 0.25f);
+        _visuals?.SetAddZone(true);
+        _visuals?.SetAddZoneHot(_dropKind == DropKind.Add);
+        return _dropKind != DropKind.None;
     }
+
+    private (DropKind Kind, int Slot) KindAt(int screenX, int screenY)
+    {
+        if (_visuals is null || _curve.Count == 0) return (DropKind.None, -1);
+
+        int y = screenY - _windowTop;
+        if (y < _windowHeight - BarHeight || y > _windowHeight) return (DropKind.None, -1);
+
+        // Mientras se arrastra algo por encima, el dock tiene que estar a la vista: si
+        // no, no habría dónde soltarlo.
+        Reveal();
+
+        float x = screenX - _windowLeft;
+        _lastRest = _curve.Invert(x, _windowWidth);
+        _visuals.SetCursor(_lastRest);
+
+        (float addLeft, float addRight) = AddZoneBounds();
+        if (x >= addLeft && x <= addRight) return (DropKind.Add, -1);
+
+        (float left, float right) = BarBounds();
+        if (x < left || x > right) return (DropKind.None, -1);
+
+        int slot = _visuals.HitTest(_lastRest);
+        bool app = slot >= 0 && slot < _loaded.Count && _loaded[slot].App.IsApp;
+
+        // Un separador o un documento no abren nada: ni se levantan ni aceptan.
+        return app ? (DropKind.Open, slot) : (DropKind.None, -1);
+    }
+
+    /// <summary>Extremos de la zona del "+", pegada al borde derecho de la barra.</summary>
+    private (float Left, float Right) AddZoneBounds()
+    {
+        float padding = Scale(LogicalPadding);
+        float size = BarHeight * AddZoneFraction;
+        float barRight = _curve.Project(_curve.RestWidth, _windowWidth, _lastRest) + padding;
+        float gap = size * 0.35f;
+        return (barRight + gap, barRight + gap + size);
+    }
+
+    /// <summary>El HWND, para el ayudante que dibuja la miniatura de arrastre.</summary>
+    public HWND Handle => _hwnd;
 
     /// <summary>
     /// Apunta lo soltado y se quita de en medio. El trabajo de verdad va por mensaje:
     /// mientras estemos dentro de Drop, el Explorador está esperando a que volvamos.
     /// </summary>
-    public void QueueDrop(int slot, string[] paths)
+    public void QueueDrop(DroppedItem[] items)
     {
-        Console.WriteLine($"[drop] soltado: icono={slot} ficheros={paths.Length}");
-        if (slot < 0 || paths.Length == 0) return;
+        if (_dropKind == DropKind.None || items.Length == 0) return;
 
-        _pendingDrop = (slot, paths);
+        _pendingDrop = items;
         PInvoke.PostMessage(_hwnd, WM_APP_DROP, default, default);
     }
 
@@ -1122,21 +1174,31 @@ internal sealed unsafe class DockWindow : IDisposable
     public void OnDragOutside()
     {
         _visuals?.SetDropTarget(-1, 0f);
+        _visuals?.SetAddZone(false);
+        _visuals?.SetAddZoneHot(false);
         ScheduleHide();
     }
 
-    /// <summary>Ya fuera del arrastre: abrir lo soltado con la app del icono.</summary>
+    /// <summary>Ya fuera del arrastre: abrir lo soltado, o añadirlo al dock.</summary>
     private void OnDropped()
     {
-        (int slot, string[] paths) = _pendingDrop;
-        _pendingDrop = (-1, []);
+        DroppedItem[] items = _pendingDrop;
+        _pendingDrop = [];
 
-        if (slot < 0 || slot >= _loaded.Count || paths.Length == 0) return;
+        if (items.Length == 0) return;
 
-        DockApp app = _loaded[slot].App;
+        if (_dropKind == DropKind.Add) { AddToDock(items); return; }
+        if (_dropSlot < 0 || _dropSlot >= _loaded.Count) return;
+
+        DockApp app = _loaded[_dropSlot].App;
         if (!app.IsApp) return;
 
-        _visuals?.Bounce(slot, Scale(_config.IconSize) * 0.35f);
+        // Solo lo que tenga fichero de verdad: a una app no se le puede pasar un objeto
+        // virtual que no existe en disco.
+        string[] paths = [.. items.Select(i => i.FilePath).OfType<string>()];
+        if (paths.Length == 0) return;
+
+        _visuals?.Bounce(_dropSlot, Scale(_config.IconSize) * 0.35f);
         Console.WriteLine($"[dock] '{app.Name}' abre {string.Join(", ", paths)}");
 
         // Fuera del hilo de UI, como al lanzar: ShellExecuteEx puede tardar segundos.
@@ -1145,6 +1207,49 @@ internal sealed unsafe class DockWindow : IDisposable
             try { app.OpenWith(paths); }
             catch (Exception ex) { Console.WriteLine($"[dock] falló abrir con '{app.Name}': {ex.Message}"); }
         });
+    }
+
+    /// <summary>Mete lo soltado en el dock, al final, y lo guarda.</summary>
+    private void AddToDock(DroppedItem[] items)
+    {
+        List<DockApp> apps = [.. _loaded.Select(entry => entry.App)];
+        bool changed = false;
+
+        foreach (DroppedItem item in items)
+        {
+            string target = item.Target.Replace('/', '\\');
+
+            int existing = apps.FindIndex(a =>
+                !a.Separator && a.Target.Equals(target, StringComparison.OrdinalIgnoreCase));
+
+            if (existing >= 0)
+            {
+                // Ya estaba: se rebota el que hay en vez de duplicarlo. Más barato que
+                // un diálogo y se entiende solo.
+                _visuals?.Bounce(existing, Scale(_config.IconSize) * 0.35f);
+                Console.WriteLine($"[dock] '{item.Name}' ya estaba en el dock");
+                continue;
+            }
+
+            apps.Add(new DockApp { Name = item.Name, Target = target });
+            Console.WriteLine($"[dock] añadida '{item.Name}' -> {target}");
+            changed = true;
+        }
+
+        if (!changed) return;
+
+        DockLocal.Save(_config.BaseApps, apps);
+        _config = new DockConfig
+        {
+            IconSize = _config.IconSize,
+            IconSpacing = _config.IconSpacing,
+            AutoHide = _config.AutoHide,
+            AutoStart = _config.AutoStart,
+            BaseApps = _config.BaseApps,
+            Apps = apps,
+        };
+
+        StartIconLoad();
     }
 
     /// <summary>Deshace un arrastre a medias y devuelve todo a su sitio.</summary>

@@ -1,7 +1,9 @@
 using System.Drawing;
+using System.Runtime.InteropServices;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.Com;
+using Windows.Win32.System.Com.StructuredStorage;
 using Windows.Win32.System.Ole;
 using Windows.Win32.System.SystemServices;
 using Windows.Win32.UI.Shell;
@@ -43,7 +45,6 @@ internal sealed unsafe class DockDropTarget(DockWindow dock) : IDropTarget
     public void DragEnter(IDataObject pDataObj, MODIFIERKEYS_FLAGS grfKeyState, POINTL pt, DROPEFFECT* pdwEffect)
     {
         *pdwEffect = Effect(pt);
-        Console.WriteLine($"[drop] DragEnter ({pt.x},{pt.y}) efecto={*pdwEffect}");
 
         Point p = new(pt.x, pt.y);
         try { _helper?.DragEnter(_dock.Handle, pDataObj, &p, DROPEFFECT.DROPEFFECT_COPY); }
@@ -68,7 +69,7 @@ internal sealed unsafe class DockDropTarget(DockWindow dock) : IDropTarget
 
     public void Drop(IDataObject pDataObj, MODIFIERKEYS_FLAGS grfKeyState, POINTL pt, DROPEFFECT* pdwEffect)
     {
-        int slot = _dock.SlotAtScreen(pt.x, pt.y);
+        _dock.AcceptsDropAt(pt.x, pt.y);
         *pdwEffect = DROPEFFECT.DROPEFFECT_NONE;
 
         Point p = new(pt.x, pt.y);
@@ -78,7 +79,7 @@ internal sealed unsafe class DockDropTarget(DockWindow dock) : IDropTarget
         // AQUÍ y no después: la documentación dice que los data objects pasados a
         // IDropTarget dejan de ser válidos en cuanto termina la suelta. Lo que no se
         // saque antes de retornar, ya no se puede sacar.
-        _dock.QueueDrop(slot, PathsOf(pDataObj));
+        _dock.QueueDrop(ItemsOf(pDataObj));
         _dock.OnDragOutside();
     }
 
@@ -86,14 +87,14 @@ internal sealed unsafe class DockDropTarget(DockWindow dock) : IDropTarget
         => _dock.AcceptsDropAt(pt.x, pt.y) ? DROPEFFECT.DROPEFFECT_COPY : DROPEFFECT.DROPEFFECT_NONE;
 
     /// <summary>
-    /// Las rutas de lo soltado.
+    /// Qué se ha soltado, ya resuelto.
     ///
     /// Se usa <c>SHCreateShellItemArrayFromDataObject</c> en vez de leer los formatos a
     /// mano porque entiende de una vez tanto <c>CF_HDROP</c> (rutas) como
     /// <c>CFSTR_SHELLIDLIST</c> (PIDLs), que es lo que llevan los objetos sin ruta de
-    /// disco. Es lo que Microsoft recomienda explícitamente sobre leer los formatos.
+    /// disco, como las apps de la Store. Es lo que Microsoft recomienda explícitamente.
     /// </summary>
-    private static string[] PathsOf(IDataObject data)
+    private static DroppedItem[] ItemsOf(IDataObject data)
     {
         Guid iid = typeof(IShellItemArray).GUID;
         if (PInvoke.SHCreateShellItemArrayFromDataObject(
@@ -107,27 +108,105 @@ internal sealed unsafe class DockDropTarget(DockWindow dock) : IDropTarget
         var items = (IShellItemArray)obj;
         items.GetCount(out uint count);
 
-        List<string> paths = [];
+        List<DroppedItem> result = [];
         for (uint i = 0; i < count; i++)
         {
             items.GetItemAt(i, out IShellItem item);
+            if (Resolve(item) is DroppedItem resolved) result.Add(resolved);
+        }
 
-            // Un objeto virtual (una app de la Store, por ejemplo) no tiene ruta de
-            // disco y esto falla. Aquí da igual: para abrir un fichero con una app hace
-            // falta un fichero, así que se descarta.
+        return [.. result];
+    }
+
+    /// <summary>
+    /// De un elemento del shell a lo que el dock guardaría de él.
+    ///
+    /// El orden importa: <b>primero el AppUserModelID</b>. Un acceso directo del menú
+    /// Inicio puede llevar el AUMID dentro, y ese gana sobre su ruta, porque es lo que
+    /// identifica a la app de verdad. Solo si no lo lleva se mira la ruta.
+    /// </summary>
+    private static DroppedItem? Resolve(IShellItem item)
+    {
+        string name = Display(item, SIGDN.SIGDN_NORMALDISPLAY) ?? "";
+
+        if (item is IShellItem2 item2)
+        {
             try
             {
-                item.GetDisplayName(SIGDN.SIGDN_FILESYSPATH, out PWSTR name);
-                paths.Add(name.ToString());
-                System.Runtime.InteropServices.Marshal.FreeCoTaskMem((nint)name.Value);
+                PROPERTYKEY key = PInvoke.PKEY_AppUserModel_ID;
+                PWSTR aumid;
+                item2.GetString(&key, &aumid);
+                string id = aumid.ToString();
+                Marshal.FreeCoTaskMem((nint)aumid.Value);
+
+                if (!string.IsNullOrEmpty(id))
+                    return new DroppedItem(@"shell:AppsFolder\" + id, name, null);
             }
             catch
             {
-                // sin ruta de disco: no sirve para esto
+                // No es una app: sigue por la ruta.
             }
         }
 
-        return [.. paths];
+        if (Display(item, SIGDN.SIGDN_FILESYSPATH) is not string path) return null;
+
+        // Un acceso directo se guarda por su destino, no por el .lnk: el fichero puede
+        // desaparecer o moverse y lo que el usuario quería era la app.
+        string target = path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)
+            ? TargetOfShortcut(path) ?? path
+            : path;
+
+        return new DroppedItem(target, name, path);
+    }
+
+    private static string? Display(IShellItem item, SIGDN kind)
+    {
+        try
+        {
+            item.GetDisplayName(kind, out PWSTR value);
+            string text = value.ToString();
+            Marshal.FreeCoTaskMem((nint)value.Value);
+            return string.IsNullOrEmpty(text) ? null : text;
+        }
+        catch
+        {
+            // Un objeto virtual no tiene ruta de disco, y eso no es un error.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// A dónde apunta un acceso directo.
+    ///
+    /// Solo se LEE, nunca se escribe: <c>IPersistFile::Save</c> está prohibido por la
+    /// enmienda 2 de SEGURIDAD.md, porque escribir accesos directos es persistencia.
+    ///
+    /// Sin <c>Resolve</c>: su comportamiento por defecto busca el destino por
+    /// subdirectorios y volúmenes y, si no lo encuentra, <b>abre un diálogo modal</b>.
+    /// En un dock eso es inaceptable.
+    /// </summary>
+    private static string? TargetOfShortcut(string path)
+    {
+        try
+        {
+            var link = (IShellLinkW)new ShellLink();
+            fixed (char* file = path)
+            {
+                ((IPersistFile)link).Load(new PCWSTR(file), STGM.STGM_READ);
+            }
+
+            Span<char> buffer = stackalloc char[260];
+            fixed (char* text = buffer)
+            {
+                link.GetPath(new PWSTR(text), buffer.Length, null, 0);
+                string target = new PWSTR(text).ToString();
+                return string.IsNullOrEmpty(target) ? null : target;
+            }
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static IDropTargetHelper? CreateHelper()
@@ -147,5 +226,13 @@ internal sealed unsafe class DockDropTarget(DockWindow dock) : IDropTarget
             return null;
         }
     }
-
 }
+
+/// <summary>Algo que el usuario soltó sobre el dock, ya resuelto.</summary>
+/// <param name="Target">Lo que iría en la configuración: una ruta o un shell:AppsFolder.</param>
+/// <param name="Name">Nombre visible.</param>
+/// <param name="FilePath">
+/// Su ruta en disco, o null si es un objeto virtual. Es lo que se le pasa a una app al
+/// abrirlo: para eso hace falta un fichero de verdad.
+/// </param>
+internal readonly record struct DroppedItem(string Target, string Name, string? FilePath);

@@ -89,6 +89,11 @@ internal static class Running
         {
             if (apps[i].Separator) continue;
 
+            // Un documento o una carpeta no pueden estar "abiertos": no tienen proceso
+            // propio. Sin este corte, un notas.txt en el dock se indexaría por el nombre
+            // "notas" y cruzaría con cualquier proceso que se llame así.
+            if (!apps[i].IsApp) continue;
+
             if (apps[i].IsShellItem)
             {
                 if (FamilyOf(apps[i].Target) is string family) byFamily[family] = i;

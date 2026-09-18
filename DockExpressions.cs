@@ -101,15 +101,26 @@ internal static class DockExpressions
     /// que el icono salta hacia arriba sin pelearse con la ExpressionAnimation que ya
     /// es dueña de Offset.
     /// </param>
-    public static string IconOffset(in DockCurve curve, int index, float restTop, string bounce)
-        => $"Vector3({Origin} + {Transfer(curve, curve.RestLeft(index))}, {F(restTop)} - {bounce}, 0)";
+    /// <param name="shift">
+    /// Lo mismo en horizontal, para arrastrar y reordenar. Va sumando DESPUÉS del
+    /// Transfer, o sea en píxeles de pantalla y no en coordenadas de reposo. Meterlo
+    /// dentro obligaría a que Transfer operase sobre una u variable, y eso arrastra el
+    /// término entero de la curva G a la expresión: justo el límite de longitud que ya
+    /// mordió en M3 y en G2.
+    /// </param>
+    public static string IconOffset(in DockCurve curve, int index, float restTop, string bounce, string shift)
+        => $"Vector3({Origin} + {Transfer(curve, curve.RestLeft(index))} + {shift}, {F(restTop)} - {bounce}, 0)";
 
-    /// <summary>Centro horizontal del elemento, para colgarle el punto de "abierta".</summary>
-    public static string ItemCenter(in DockCurve curve, int index, float dotSize, float top)
+    /// <summary>
+    /// Centro horizontal del elemento, para colgarle el punto de "abierta".
+    /// Lleva el mismo desplazamiento que el icono, o al arrastrarlo el punto se
+    /// quedaría atrás, huérfano, en el hueco que el icono acaba de dejar.
+    /// </summary>
+    public static string ItemCenter(in DockCurve curve, int index, float dotSize, float top, string shift)
     {
         string left = Transfer(curve, curve.RestLeft(index));
         string right = Transfer(curve, curve.RestRight(index));
-        return $"Vector3({Origin} + ({left} + {right})*0.5 - {F(dotSize * 0.5f)}, {F(top)}, 0)";
+        return $"Vector3({Origin} + ({left} + {right})*0.5 - {F(dotSize * 0.5f)} + {shift}, {F(top)}, 0)";
     }
 
     /// <summary>

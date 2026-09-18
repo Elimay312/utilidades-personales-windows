@@ -33,6 +33,14 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Escala máxima del icono justo bajo el cursor.
     private const float MaxScale = 2.0f;
 
+    /// Lo que hay que mover el ratón con el botón pulsado para que deje de ser un clic
+    /// y pase a ser un arrastre, en unidades lógicas. Por debajo de esto, un pulso con
+    /// mano temblorosa seguiría lanzando la app, que es lo que se espera.
+    private const int LogicalDragThreshold = 6;
+
+    /// Cuánto hay que subir por encima de la barra para que soltar signifique quitar.
+    private const int LogicalPullOffDistance = 40;
+
     /// Radio de influencia del cursor, medido en ranuras. Junto con MaxScale son los
     /// dos mandos que gobiernan el tacto de la magnificación, y los únicos números de
     /// aquí que piden ajustarse a ojo.
@@ -48,7 +56,9 @@ internal sealed unsafe class DockWindow : IDisposable
     private const uint WM_NCCALCSIZE = 0x0083;
     private const uint WM_NCACTIVATE = 0x0086;
     private const uint WM_MOUSEMOVE = 0x0200;
+    private const uint WM_LBUTTONDOWN = 0x0201;
     private const uint WM_LBUTTONUP = 0x0202;
+    private const uint WM_CAPTURECHANGED = 0x0215;
     private const uint WM_RBUTTONUP = 0x0205;
     private const uint WM_MOUSELEAVE = 0x02A3;
     private const uint WM_TIMER = 0x0113;
@@ -69,6 +79,10 @@ internal sealed unsafe class DockWindow : IDisposable
 
     /// Identificador del temporizador de un disparo que esconde el dock.
     private const nuint HideTimerId = 2;
+
+    /// Espera a que se vea desvanecerse el icono que se acaba de sacar del dock,
+    /// porque reconstruir borra el arbol de visuals y se comeria la animacion.
+    private const nuint PuffTimerId = 3;
 
 
     /// Los iconos terminaron de extraerse en background. WM_APP + 1.
@@ -144,6 +158,28 @@ internal sealed unsafe class DockWindow : IDisposable
     /// X de pantalla del borde izquierdo de la ventana.
     private int _windowLeft;
     private int _windowTop;
+
+    // --- Arrastre de iconos ---------------------------------------------------
+    //
+    // El botón pulsado no basta para saber si esto es un clic o un arrastre, así que
+    // se apunta dónde empezó y no se captura el ratón hasta pasar el umbral: hasta
+    // entonces el clic tiene que seguir comportándose exactamente como siempre.
+
+    /// <summary>Icono bajo el cursor cuando se pulsó, o -1.</summary>
+    private int _pressedIndex = -1;
+
+    /// <summary>Punto de cliente donde se pulsó.</summary>
+    private int _pressX;
+    private int _pressY;
+
+    /// <summary>Ya se pasó el umbral: esto es un arrastre y tenemos la captura.</summary>
+    private bool _dragging;
+
+    /// <summary>
+    /// El orden en el que están los iconos ahora mismo, como índices de <c>_loaded</c>.
+    /// Se va permutando mientras se arrastra y al soltar es lo que se persiste.
+    /// </summary>
+    private List<int> _dragOrder = [];
 
     /// <summary>
     /// El último fotograma de cada ventana que el dock minimizó, para poder reproducir
@@ -481,6 +517,11 @@ internal sealed unsafe class DockWindow : IDisposable
                 self?.OnWatchdogTick();
                 return new LRESULT(0);
 
+            case WM_TIMER when wParam.Value == PuffTimerId:
+                PInvoke.KillTimer(hwnd, PuffTimerId);
+                self?.StartIconLoad();
+                return new LRESULT(0);
+
             case WM_TIMER when wParam.Value == HideTimerId:
                 self?.Hide();
                 return new LRESULT(0);
@@ -509,14 +550,31 @@ internal sealed unsafe class DockWindow : IDisposable
                 if (self is not null)
                 {
                     self._trackingMouse = false;
-                    self._hovering = false;
-                    self._visuals?.SetHover(false);
-                    self.ScheduleHide();
+
+                    // Con la captura tomada el raton puede salirse de la ventana sin
+                    // que el arrastre haya terminado. Esconder el dock justo entonces
+                    // seria quitarle al usuario lo que esta manipulando.
+                    if (!self._dragging)
+                    {
+                        self._hovering = false;
+                        self._visuals?.SetHover(false);
+                        self.ScheduleHide();
+                    }
                 }
                 return new LRESULT(0);
 
+            case WM_LBUTTONDOWN:
+                self?.OnLeftDown(lParam);
+                return new LRESULT(0);
+
             case WM_LBUTTONUP:
-                self?.OnLeftClick(lParam);
+                self?.OnLeftUp(lParam);
+                return new LRESULT(0);
+
+            case WM_CAPTURECHANGED:
+                // Windows nos ha quitado la captura por su cuenta (un Alt+Tab, un
+                // diálogo). Sin esto el dock se quedaría con un icono a medio arrastrar.
+                self?.CancelDrag();
                 return new LRESULT(0);
 
             case WM_RBUTTONUP:
@@ -778,6 +836,169 @@ internal sealed unsafe class DockWindow : IDisposable
         // oscilando (ancho 352 -> 529 -> 500 sin ejecutar nosotros una instrucción).
         _lastRest = _curve.Invert(LoWord(lParam), _windowWidth);
         _visuals.SetCursor(_lastRest);
+
+        if (_pressedIndex >= 0) OnDragMove(LoWord(lParam), HiWord(lParam));
+    }
+
+    /// <summary>
+    /// Apunta dónde se pulsó, y nada más. <b>No</b> captura el ratón todavía: hasta
+    /// saber si esto va a ser un clic o un arrastre, capturar sería cambiar el
+    /// comportamiento del camino más usado del dock.
+    /// </summary>
+    private void OnLeftDown(LPARAM lParam)
+    {
+        if (_visuals is null || _curve.Count == 0) return;
+
+        _pressedIndex = _visuals.HitTest(_lastRest);
+        _pressX = LoWord(lParam);
+        _pressY = HiWord(lParam);
+        _dragging = false;
+    }
+
+    /// <summary>Un clic que nunca llegó a ser arrastre sigue siendo un clic.</summary>
+    private void OnLeftUp(LPARAM lParam)
+    {
+        if (!_dragging)
+        {
+            _pressedIndex = -1;
+            OnLeftClick(lParam);
+            return;
+        }
+
+        // ReleaseCapture manda un WM_CAPTURECHANGED, y CancelDrag limpiaría lo que
+        // acabamos de decidir. Por eso se consuma ANTES de soltar la captura.
+        FinishDrag(HiWord(lParam));
+        PInvoke.ReleaseCapture();
+    }
+
+    /// <summary>
+    /// El arrastre en sí. Arranca al pasar el umbral y desde ahí mueve el icono y va
+    /// apartando a los vecinos.
+    /// </summary>
+    private void OnDragMove(int x, int y)
+    {
+        if (_visuals is null) return;
+
+        if (!_dragging)
+        {
+            // El umbral mira las DOS direcciones. Mirando solo la X, sacar un icono
+            // del dock tirando de el recto hacia arriba no llegaba a contar como
+            // arrastre nunca, porque la X no cambiaba ni un pixel.
+            float moved = MathF.Max(MathF.Abs(x - _pressX), MathF.Abs(y - _pressY));
+            if (moved < Scale(LogicalDragThreshold)) return;
+
+            _dragging = true;
+            _dragOrder = [.. Enumerable.Range(0, _loaded.Count)];
+            _visuals.SetLifted(_pressedIndex, true);
+
+            // Ahora sí: a partir de aquí queremos el ratón aunque se salga de la
+            // ventana, para poder arrastrar hacia arriba y sacar el icono.
+            PInvoke.SetCapture(_hwnd);
+        }
+
+        // El icono va donde va el dedo. Directo, sin muelle: interpolar aquí solo
+        // añadiría retraso, igual que pasa con el cursor de la magnificación.
+        _visuals.SetShift(_pressedIndex, x - _pressX);
+
+        // Mientras esté arriba, fuera del dock, nadie hace hueco: se está sacando.
+        if (IsPulledOff(y)) return;
+
+        int from = _dragOrder.IndexOf(_pressedIndex);
+
+        // _lastRest ya viene de invertir esta misma x en OnMouseMove: invertir otra vez
+        // serian 40 iteraciones de biseccion por cada pixel de raton, para nada.
+        int over = _visuals.HitTest(_lastRest);
+        if (over < 0 || over == from) return;
+
+        _dragOrder.RemoveAt(from);
+        _dragOrder.Insert(over, _pressedIndex);
+        ApplyDragShifts();
+    }
+
+    /// <summary>
+    /// Manda a cada icono al sitio que le toca con el orden de ahora mismo.
+    ///
+    /// El desplazamiento se calcula en píxeles de PANTALLA con <c>Project</c>, no en
+    /// coordenadas de reposo: bajo la lupa una ranura mide casi el doble, y usar el
+    /// ancho de reposo dejaría a los vecinos apartándose demasiado poco justo donde se
+    /// está mirando.
+    ///
+    /// ponytail: se recalcula solo al cambiar el orden, no en cada movimiento, así que
+    /// entre permutación y permutación la magnificación lo desvía un poco. Se nota
+    /// menos que el coste de relanzar N muelles por cada píxel de ratón.
+    /// </summary>
+    private void ApplyDragShifts()
+    {
+        for (int position = 0; position < _dragOrder.Count; position++)
+        {
+            int index = _dragOrder[position];
+            if (index == _pressedIndex) continue;
+
+            float now = _curve.Project(_curve.RestLeft(index), _windowWidth, _lastRest);
+            float target = _curve.Project(_curve.RestLeft(position), _windowWidth, _lastRest);
+            _visuals?.SpringShift(index, target - now);
+        }
+    }
+
+    /// <summary>Si el cursor está lo bastante por encima de la barra como para sacarlo.</summary>
+    private bool IsPulledOff(int y)
+    {
+        float barTop = _windowHeight - BarHeight;
+        return y < barTop - Scale(LogicalPullOffDistance);
+    }
+
+    /// <summary>Se acabó el arrastre: o se reordena, o el icono se va.</summary>
+    private void FinishDrag(int y)
+    {
+        _dragging = false;
+        int dragged = _pressedIndex;
+        _pressedIndex = -1;
+
+        List<DockApp> apps = [.. _dragOrder.Select(i => _loaded[i].App)];
+        bool quitado = false;
+
+        if (IsPulledOff(y))
+        {
+            _visuals?.Puff(dragged);
+            apps.Remove(_loaded[dragged].App);
+            Console.WriteLine($"[dock] quitada '{_loaded[dragged].App.Name}'");
+            quitado = true;
+        }
+
+        DockLocal.Save(_config.BaseApps, apps);
+
+        // Reconstruir con el orden nuevo. Los Shift vuelven a cero al crearse los
+        // visuales, y como ya estaban donde toca, no se ve ningún salto.
+        _config = new DockConfig
+        {
+            IconSize = _config.IconSize,
+            IconSpacing = _config.IconSpacing,
+            AutoHide = _config.AutoHide,
+            AutoStart = _config.AutoStart,
+            BaseApps = _config.BaseApps,
+            Apps = apps,
+        };
+
+        // Si se ha quitado uno, se le deja acabar de desvanecerse antes de
+        // reconstruir; si no, cuanto antes mejor.
+        if (quitado) PInvoke.SetTimer(_hwnd, PuffTimerId, 200, null);
+        else StartIconLoad();
+    }
+
+    /// <summary>Deshace un arrastre a medias y devuelve todo a su sitio.</summary>
+    private void CancelDrag()
+    {
+        if (!_dragging)
+        {
+            _pressedIndex = -1;
+            return;
+        }
+
+        _dragging = false;
+        _visuals?.SetLifted(_pressedIndex, false);
+
+        for (int i = 0; i < _loaded.Count; i++) _visuals?.SpringShift(i, 0f);
+        _pressedIndex = -1;
     }
 
     /// <summary>

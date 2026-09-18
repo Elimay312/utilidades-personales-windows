@@ -25,6 +25,8 @@ GetDpiForMonitor
 
 // --- Raton, solo en la ventana propia (no es un hook) ---
 TrackMouseEvent
+SetCapture
+ReleaseCapture
 
 // --- Composicion de escritorio, sobre el HWND propio ---
 

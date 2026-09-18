@@ -271,12 +271,17 @@ internal sealed unsafe class DockVisuals : IDisposable
             // expresión, así no se pelea con la que ya es dueña de Offset.
             visual.Properties.InsertScalar("Bounce", 0f);
 
+            // Y su gemelo horizontal, para arrastrar y reordenar. Mismo truco: la
+            // expresión de Offset lo suma, así que moverlo no le quita la propiedad a
+            // la ExpressionAnimation que gobierna la magnificación.
+            visual.Properties.InsertScalar("Shift", 0f);
+
             float top = items[i] is null
                 ? windowHeight - padding - visual.Size.Y
                 : iconTop;
 
             ExpressionAnimation offset = _compositor.CreateExpressionAnimation(
-                DockExpressions.IconOffset(curve, i, top, "I.Bounce"));
+                DockExpressions.IconOffset(curve, i, top, "I.Bounce", "I.Shift"));
             offset.SetReferenceParameter(DockExpressions.Props, _props);
             offset.SetReferenceParameter("I", visual);
             visual.StartAnimation("Offset", offset);
@@ -302,7 +307,11 @@ internal sealed unsafe class DockVisuals : IDisposable
             round.CornerRadius = new Vector2(dotSize * 0.5f);
             dot.Clip = _compositor.CreateGeometricClip(round);
 
-            Animate(dot, "Offset", DockExpressions.ItemCenter(curve, i, dotSize, dotTop));
+            ExpressionAnimation center = _compositor.CreateExpressionAnimation(
+                DockExpressions.ItemCenter(curve, i, dotSize, dotTop, "I.Shift"));
+            center.SetReferenceParameter(DockExpressions.Props, _props);
+            center.SetReferenceParameter("I", visual);
+            dot.StartAnimation("Offset", center);
             _root.Children.InsertAtTop(dot);
             _dots.Add(dot);
         }
@@ -325,6 +334,79 @@ internal sealed unsafe class DockVisuals : IDisposable
         jump.Duration = TimeSpan.FromMilliseconds(680);
 
         _items[index].Properties.StartAnimation("Bounce", jump);
+    }
+
+    /// <summary>
+    /// Pone el icono donde diga, ya mismo y sin suavizar. Es el que sigue al dedo
+    /// mientras se arrastra, así que igual que con el cursor de la magnificación,
+    /// interpolar aquí solo añadiría retraso.
+    /// </summary>
+    public void SetShift(int index, float x)
+    {
+        if (index < 0 || index >= _items.Count) return;
+
+        // Si venía de hacer sitio con un muelle, hay que pararlo: mientras una
+        // animación posee la propiedad, escribirla no hace nada.
+        // Si venía de hacer sitio con un muelle, hay que pararlo: mientras una
+        // animación posee la propiedad, escribirla no hace nada.
+        _items[index].Properties.StopAnimation("Shift");
+        _items[index].Properties.InsertScalar("Shift", x);
+    }
+
+    /// <summary>
+    /// Lleva el icono a su sitio con un muelle. Es el de los que se apartan para hacer
+    /// hueco, y el de volver a cero al soltar.
+    /// </summary>
+    public void SpringShift(int index, float x)
+    {
+        if (index < 0 || index >= _items.Count) return;
+
+        SpringScalarNaturalMotionAnimation slide = _compositor.CreateSpringScalarAnimation();
+        slide.DampingRatio = 0.9f;
+        slide.Period = TimeSpan.FromMilliseconds(55);
+        slide.FinalValue = x;
+        _items[index].Properties.StartAnimation("Shift", slide);
+    }
+
+    /// <summary>
+    /// Marca el icono que está en la mano.
+    ///
+    /// Lo primero es subirlo al frente. El orden z de los visuals es el de inserción, o
+    /// sea el orden del dock, así que un icono arrastrado hacia la derecha se metía
+    /// DEBAJO de sus vecinos y desaparecía de la vista. Se vio arrastrando el Bloc de
+    /// notas sobre Paint: el icono seguía ahí, con su Shift correcto, tapado.
+    /// </summary>
+    public void SetLifted(int index, bool lifted)
+    {
+        if (index < 0 || index >= _items.Count) return;
+
+        if (lifted)
+        {
+            _root.Children.Remove(_items[index]);
+            _root.Children.InsertAtTop(_items[index]);
+        }
+
+        ScalarKeyFrameAnimation fade = _compositor.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(1f, lifted ? 0.85f : 1f);
+        fade.Duration = TimeSpan.FromMilliseconds(120);
+        _items[index].StartAnimation("Opacity", fade);
+    }
+
+    /// <summary>
+    /// El "puf" de quitar un icono del dock. Se va por opacidad y no encogiéndose
+    /// porque la escala la posee una ExpressionAnimation: animarla aquí le quitaría el
+    /// control a la magnificación y el icono se quedaría clavado a tamaño de reposo.
+    /// </summary>
+    public void Puff(int index)
+    {
+        if (index < 0 || index >= _items.Count) return;
+
+        ScalarKeyFrameAnimation fade = _compositor.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(1f, 0f);
+        fade.Duration = TimeSpan.FromMilliseconds(180);
+        _items[index].StartAnimation("Opacity", fade);
+
+        if (_dots[index] is SpriteVisual dot) dot.StartAnimation("Opacity", fade);
     }
 
     /// <summary>Enciende o apaga los puntos de "app abierta".</summary>

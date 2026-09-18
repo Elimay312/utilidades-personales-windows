@@ -35,6 +35,7 @@ internal static class Program
     private static void SelfCheck()
     {
         IconsSelfCheck.Run();
+        MagnifySelfCheck.Run();
 
         DockConfig config = DockConfig.Load(DockConfig.DefaultPath);
         Console.WriteLine($"[check] dock.json: {config.Apps.Count} apps validas");

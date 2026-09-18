@@ -19,9 +19,16 @@ internal sealed unsafe class DockWindow : IDisposable
 {
     private const string ClassName = "DockWindowClass";
 
-    /// Margen vertical del icono dentro del dock, en unidades lógicas.
+    /// Margen del icono dentro de la barra, en unidades lógicas.
     private const int LogicalPadding = 12;
     private const int LogicalBottomMargin = 8;
+
+    /// Escala máxima del icono justo bajo el cursor.
+    private const float MaxScale = 2.0f;
+
+    /// Radio de influencia del cursor, medido en ranuras. Junto con MaxScale son los
+    /// dos mandos que gobiernan el tacto de la magnificación.
+    private const float RadiusInSlots = 2.5f;
 
     // Mensajes que manejamos. Se declaran aquí para no arrastrar cientos de
     // constantes desde la metadata del SDK.
@@ -75,6 +82,14 @@ internal sealed unsafe class DockWindow : IDisposable
 
     /// Apps que sí llegaron a tener icono, en el mismo orden que los visuals.
     private List<(DockApp App, IconBitmap Icon)> _loaded = [];
+
+    /// Curva vigente, con la que se invierte el cursor y se hace el hit-test. Tiene
+    /// que ser la MISMA que generó las expresiones, o el icono que se resalta no
+    /// coincide con el que se lanza.
+    private DockCurve _curve;
+    private float _windowWidth;
+    private float _windowHeight;
+    private bool _hovering;
 
     public DockWindow(HMONITOR monitor, DockConfig config)
     {
@@ -171,6 +186,15 @@ internal sealed unsafe class DockWindow : IDisposable
 
     private float Scale(int logical) => (float)(logical * _dpi / 96.0);
 
+    private DockCurve CurveFor(int count) => new()
+    {
+        IconSize = Scale(_config.IconSize),
+        Spacing = Scale(_config.IconSpacing),
+        Count = count,
+        Radius = Scale(_config.IconSize + _config.IconSpacing) * RadiusInSlots,
+        MaxScale = MaxScale,
+    };
+
     /// <summary>Rectángulo del dock en píxeles físicos, centrado abajo en su monitor.</summary>
     private (int X, int Y, int W, int H) ComputeBounds()
     {
@@ -180,14 +204,20 @@ internal sealed unsafe class DockWindow : IDisposable
         PInvoke.GetDpiForMonitor(_monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out uint dpiX, out _);
         _dpi = dpiX;
 
-        int count = Math.Max(_config.Apps.Count, 1);
-        int w = (int)(Scale(_config.IconSize) * count + Scale(_config.IconSpacing) * (count + 1));
-        int h = (int)(Scale(_config.IconSize) + Scale(LogicalPadding) * 2);
+        // La ventana se dimensiona para el caso MÁXIMO y no se vuelve a tocar: tiene
+        // que caber la fila ya ensanchada y el icono magnificado, que crece hacia
+        // arriba. Lo que se ve moverse es la barra de fondo, no la ventana.
+        DockCurve curve = CurveFor(Math.Max(_config.Apps.Count, 1));
+        float padding = Scale(LogicalPadding);
+        int w = (int)MathF.Ceiling(curve.RestWidth + curve.MaxGrowth + padding * 2f);
+        int h = (int)MathF.Ceiling(curve.IconSize * MaxScale + padding * 2f);
 
         RECT work = info.rcWork;
         int x = work.left + ((work.right - work.left) - w) / 2;
         int y = work.bottom - h - (int)Scale(LogicalBottomMargin);
 
+        _windowWidth = w;
+        _windowHeight = h;
         return (x, y, w, h);
     }
 
@@ -249,11 +279,13 @@ internal sealed unsafe class DockWindow : IDisposable
     {
         if (_visuals is null) return;
 
-        _visuals.BuildIcons(
+        _curve = CurveFor(_loaded.Count);
+        _visuals.Build(
+            _curve,
             [.. _loaded.Select(entry => entry.Icon)],
-            Scale(_config.IconSize),
-            Scale(_config.IconSpacing),
-            Scale(_config.IconSize) + Scale(LogicalPadding) * 2);
+            _windowWidth,
+            _windowHeight,
+            Scale(LogicalPadding));
 
         Console.WriteLine($"[iconos] {_loaded.Count} listos");
     }
@@ -329,7 +361,12 @@ internal sealed unsafe class DockWindow : IDisposable
                 return new LRESULT(0);
 
             case WM_MOUSELEAVE:
-                if (self is not null) self._trackingMouse = false;
+                if (self is not null)
+                {
+                    self._trackingMouse = false;
+                    self._hovering = false;
+                    self._visuals?.SetHover(false);
+                }
                 return new LRESULT(0);
 
             case WM_LBUTTONUP:
@@ -381,11 +418,33 @@ internal sealed unsafe class DockWindow : IDisposable
             PInvoke.TrackMouseEvent(&tme);
             _trackingMouse = true;
         }
+
+        if (_visuals is null || _curve.Count == 0) return;
+
+        if (!_hovering)
+        {
+            _hovering = true;
+            _visuals.SetHover(true);
+
+
+        }
+
+        // Lo ÚNICO que hace el hilo de UI por cada movimiento: invertir la curva y
+        // escribir un escalar. Ni layout, ni repintado, ni recorrer los iconos.
+        //
+        // Composition agrupa los cambios y los confirma al volver al bucle de
+        // mensajes. A partir de ahí la animación vive en el proceso de DWM: se
+        // verificó bloqueando este hilo 3 s a propósito y viendo que el muelle seguía
+        // oscilando (ancho 352 -> 529 -> 500 sin ejecutar nosotros una instrucción).
+        _visuals.SetCursor(CursorToRest(lParam));
     }
+
+    /// <summary>Pasa la X del ratón a coordenadas de reposo de la curva.</summary>
+    private float CursorToRest(LPARAM lParam) => _curve.Invert(LoWord(lParam), _windowWidth);
 
     private void OnLeftClick(LPARAM lParam)
     {
-        int index = _visuals?.HitTest(LoWord(lParam)) ?? -1;
+        int index = _visuals?.HitTest(CursorToRest(lParam)) ?? -1;
         if (index < 0 || index >= _loaded.Count) return;
 
         DockApp app = _loaded[index].App;

@@ -38,9 +38,14 @@ internal sealed unsafe class DockVisuals : IDisposable
 
     private CompositionGraphicsDevice? _graphics;
 
-    /// Geometría en reposo de cada icono, en píxeles físicos. M2 la sustituye por
-    /// la curva de magnificación, pero el hit-test ya se apoya en ella.
-    private readonly List<(float X, float Size)> _slots = [];
+    /// <summary>
+    /// La ÚNICA entrada de la animación. Todo el dock son expresiones en forma
+    /// cerrada sobre estas dos propiedades, así que el hilo de UI solo tiene que
+    /// escribir aquí y el compositor hace el resto.
+    /// </summary>
+    private readonly CompositionPropertySet _props;
+
+    private DockCurve _curve;
 
     public DockVisuals(HWND hwnd)
     {
@@ -56,6 +61,10 @@ internal sealed unsafe class DockVisuals : IDisposable
         _root = _compositor.CreateContainerVisual();
         _root.RelativeSizeAdjustment = Vector2.One;
         _target.Root = _root;
+
+        _props = _compositor.CreatePropertySet();
+        _props.InsertScalar("C", 0f);
+        _props.InsertScalar("Amount", 0f);
     }
 
     public Compositor Compositor => _compositor;
@@ -197,47 +206,97 @@ internal sealed unsafe class DockVisuals : IDisposable
     }
 
     /// <summary>
-    /// Coloca los iconos en fila, centrados. Devuelve el ancho total en píxeles.
+    /// Monta el dock entero: barra de fondo e iconos, cada uno con sus dos
+    /// ExpressionAnimation. A partir de aquí el hilo de UI no vuelve a tocar la
+    /// geometría: solo escribe el cursor en el property set.
     /// </summary>
-    public void BuildIcons(IReadOnlyList<IconBitmap> icons, float iconSize, float spacing, float windowHeight)
+    public void Build(
+        in DockCurve curve,
+        IReadOnlyList<IconBitmap> icons,
+        float windowWidth,
+        float windowHeight,
+        float padding)
     {
+        _curve = curve;
         _root.Children.RemoveAll();
-        _slots.Clear();
 
-        // Fondo propio, pintado por Composition en vez de delegarlo al backdrop de
-        // DWM. Diagnostico del bug "el dock desaparece": si esto sobrevive, el que
-        // falla es DWM y no el arbol de visuals.
-        SpriteVisual background = _compositor.CreateSpriteVisual();
-        background.Brush = _compositor.CreateColorBrush(Windows.UI.Color.FromArgb(200, 32, 32, 40));
-        background.RelativeSizeAdjustment = Vector2.One;
-        _root.Children.InsertAtBottom(background);
+        float barHeight = curve.IconSize + padding * 2f;
+        float barTop = windowHeight - barHeight;
+        float iconTop = windowHeight - padding - curve.IconSize;
 
-        float x = spacing;
-        float y = (windowHeight - iconSize) / 2f;
+        // Barra de fondo. Crece con la fila, como el Dock de macOS: la ventana es fija
+        // y del tamaño máximo posible, pero la barra visible sigue a los iconos.
+        SpriteVisual bar = _compositor.CreateSpriteVisual();
+        bar.Brush = _compositor.CreateColorBrush(Windows.UI.Color.FromArgb(200, 32, 32, 40));
+        Animate(bar, "Offset", DockExpressions.BarOffset(curve, windowWidth, padding, barTop));
+        Animate(bar, "Size", DockExpressions.BarSize(curve, padding, barHeight));
+        _root.Children.InsertAtBottom(bar);
 
-        foreach (IconBitmap icon in icons)
+        for (int i = 0; i < icons.Count; i++)
         {
             SpriteVisual visual = _compositor.CreateSpriteVisual();
-            visual.Brush = CreateIconBrush(icon);
-            visual.Size = new Vector2(iconSize, iconSize);
-            visual.Offset = new Vector3(x, y, 0);
+            visual.Brush = CreateIconBrush(icons[i]);
+            visual.Size = new Vector2(curve.IconSize, curve.IconSize);
+
+            // CenterPoint en el borde INFERIOR izquierdo: el icono crece hacia arriba
+            // y hacia la derecha desde ahí, que es como se comporta el Dock.
+            visual.CenterPoint = new Vector3(0f, curve.IconSize, 0f);
+
+            Animate(visual, "Offset", DockExpressions.IconOffset(curve, windowWidth, i, iconTop));
+            Animate(visual, "Scale", DockExpressions.IconScale(curve, i));
+
             _root.Children.InsertAtTop(visual);
-
-            _slots.Add((x, iconSize));
-            x += iconSize + spacing;
         }
-
     }
 
-    /// <summary>Índice del icono bajo esa X, o -1.</summary>
-    public int HitTest(float x)
+    private void Animate(Visual visual, string property, string expression)
     {
-        for (int i = 0; i < _slots.Count; i++)
-        {
-            (float slotX, float size) = _slots[i];
-            if (x >= slotX && x < slotX + size) return i;
-        }
-        return -1;
+        ExpressionAnimation animation = _compositor.CreateExpressionAnimation(expression);
+        animation.SetReferenceParameter(DockExpressions.Props, _props);
+        visual.StartAnimation(property, animation);
+    }
+
+    /// <summary>
+    /// Posición del cursor, en coordenadas de reposo. Es lo único que el hilo de UI
+    /// escribe por cada movimiento de ratón: un InsertScalar, sin layout ni repintado.
+    /// </summary>
+    public void SetCursor(float restPosition) => _props.InsertScalar("C", restPosition);
+
+    /// <summary>
+    /// Entrada y salida del hover, con un muelle para que no dé un salto.
+    ///
+    /// El suavizado va sobre Amount y no sobre Scale a propósito: las
+    /// ExpressionAnimation ya son dueñas de Scale y Offset, y una animación implícita
+    /// encima chocaría con ellas. Modulando Amount, el muelle entra dentro de la
+    /// propia expresión.
+    ///
+    /// C no se suaviza: tiene que seguir al puntero exactamente, o el icono de debajo
+    /// del cursor iría con retraso, que es peor que el jitter que quitaría.
+    /// </summary>
+    public void SetHover(bool hovering)
+    {
+        SpringScalarNaturalMotionAnimation spring = _compositor.CreateSpringScalarAnimation();
+        spring.DampingRatio = 0.85f;
+        spring.Period = TimeSpan.FromMilliseconds(40);
+        spring.FinalValue = hovering ? 1f : 0f;
+        _props.StartAnimation("Amount", spring);
+    }
+
+    /// <summary>
+    /// Índice del icono que hay en esa coordenada de REPOSO, o -1 si cae en un hueco.
+    /// Se resuelve en coordenadas de reposo y no en pantalla porque ahí las ranuras
+    /// son una rejilla regular: el cálculo es exacto y no depende de la magnificación.
+    /// </summary>
+    public int HitTest(float restPosition)
+    {
+        if (_curve.Count == 0) return -1;
+
+        int index = (int)MathF.Floor(restPosition / _curve.SlotWidth);
+        if (index < 0 || index >= _curve.Count) return -1;
+
+        return restPosition >= _curve.RestLeft(index) && restPosition < _curve.RestRight(index)
+            ? index
+            : -1;
     }
 
     public void Dispose()

@@ -187,6 +187,129 @@ alguien arrancase el dock elevado, **el arrastrar y soltar dejaría de funcionar
 silencio**. El dock lo detecta al arrancar y lo avisa por consola en vez de quedarse
 mudo.
 
+## Enmienda 3 — inventario de ventanas, la barra de tareas y las miniaturas (2026-09-18)
+
+La fase 4 trae multipantalla, previsualizaciones y "que la barra de tareas no aparezca".
+Casi todo eso choca contra lo escrito arriba, así que se enmienda por escrito antes de
+tocar una línea de código. **No se levanta todo**: se abren cinco cosas, se dejan las
+demás prohibidas y se añade una prohibición nueva.
+
+### Qué se abre
+
+**1. Inventariar ventanas, cualquiera, no solo las de las apps del dock.**
+
+La enmienda 1 prohibía *"enumerar ventanas para algo que no sea localizar la app del
+icono clicado"*. A partir de ahora el dock mantiene un inventario de las ventanas de
+nivel superior del escritorio: handle, proceso y monitor.
+
+Por qué sigue siendo defendible: es exactamente lo que hace la barra de tareas de
+Windows, y lo que hacen Rainmeter o TranslucentTB. Lo que separa esto de algo sospechoso
+no cambia en nada: **no se inyecta nada en otro proceso**, **no se lee el contenido de
+ninguna ventana salvo para la animación que el usuario pidió**, **nada sale del proceso**
+y **no hay red**. Un inventario de handles que se usa y se tira no es exfiltración;
+mandarlo a algún sitio sí lo sería, y la regla 6 sigue intacta.
+
+**2. `RegisterShellHookWindow`, que NO es un hook.**
+
+Se usa para enterarse de que una ventana nace o muere sin sondear cuatro veces por
+segundo. La regla 3 prohíbe `SetWindowsHookEx` y `SetWinEventHook`, y esto no es ninguno
+de los dos. La documentación de Microsoft lo contrasta ella misma, textualmente:
+
+> *"Many of the messages are the same as those that can be received after calling the
+> SetWindowsHookEx function and specifying WH_SHELL... **The difference with
+> RegisterShellHookWindow is that the messages are received through the specified
+> window's WindowProc and not through a call back procedure.**"*
+
+Es decir: **no se carga ninguna DLL en ningún proceso ajeno** y no se instala ningún
+callback de bajo nivel. Los mensajes llegan a nuestro propio `WndProc` como cualquier
+otro mensaje de ventana. Queda citado aquí porque la palabra "ShellHook" en un `grep`
+puede confundirse con lo otro, y no lo es.
+
+**La regla 3 no se toca.** `SetWindowsHookEx` global sigue prohibido, y `SetWinEventHook`
+también: con `RegisterShellHookWindow` no hace falta.
+
+**3. Registrarse como AppBar** (`SHAppBarMessage`: `ABM_NEW`, `ABM_QUERYPOS`,
+`ABM_SETPOS`, `ABM_REMOVE`, `ABM_ACTIVATE`, `ABM_WINDOWPOSCHANGED`,
+`ABM_GETTASKBARPOS`, `ABM_SETAUTOHIDEBAREX`).
+
+Es API pública de `Shell32` desde XP, actúa sobre **nuestro propio `HWND`**, no requiere
+elevación, y su único uso documentado es literalmente "soy una barra de herramientas de
+escritorio" — que es lo que el dock es. `ABM_REMOVE` es obligatorio al salir, y la doc lo
+dice así: *"An application should always send ABM_REMOVE before destroying an appbar."*
+
+**`ABM_SETSTATE` queda prohibido** — ver la tabla de abajo.
+
+**4. Capturar un fotograma de una ventana ajena de forma repetida mientras el ratón está
+sobre su icono.**
+
+El apéndice de la enmienda 1 presumía de *"Es un solo fotograma, no una sesión de
+captura: no hay nada que siga grabando"*. Una miniatura que se refresca rompe esa frase,
+así que se reescribe el límite en vez de fingir que no ha cambiado:
+
+- Sigue siendo `PrintWindow` con `PW_RENDERFULLCONTENT`. **Sigue sin haber sesión de
+  captura, ni framepool, ni `Windows.Graphics.Capture`.**
+- Solo mientras el puntero está sobre ese icono. **Se para al salir**, no al cabo de un
+  rato.
+- Solo las ventanas de esa app, que está en `dock.json`.
+- El fotograma vive en memoria, se dibuja y se tira. No se guarda a disco ni se analiza.
+
+**5. Leer los documentos recientes de otra app** (`IApplicationDocumentLists` con
+`SetAppID` + `GetList`).
+
+Es API pública implementada por el sistema, y la doc no restringe el AppID al del propio
+proceso. Pero **es leer datos del usuario**, o sea la regla 10, así que lleva los mismos
+tres cortafuegos que la enmienda 1:
+
+- Solo apps que están en `dock.json`.
+- Solo tras un gesto explícito del usuario sobre ese icono (abrir el menú contextual).
+- **Nunca en un temporizador, y nunca enumerando las apps del sistema.**
+
+Sin esos tres cortes esto es "enumerar los documentos recientes del usuario", y eso se
+parece a un infostealer aunque la API sea pública.
+
+### Qué NO se levanta
+
+| Sigue prohibido | Por qué se queda |
+|---|---|
+| Reglas 1, 2, 4, 5, 6, 8 y 9 enteras | Driver, sensores, inyección, reemplazo del shell, red, ofuscación, código en runtime. Son las que hacen que Defender ignore este binario. |
+| **`SetWindowsHookEx` global y `SetWinEventHook`** (regla 3, intacta) | Un hook global carga una DLL nuestra dentro de otros procesos. *Ese* es el patrón de keylogger, y con `RegisterShellHookWindow` no hace falta para nada. |
+| Persistencia oculta (regla 7) | El autoarranque sigue en `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, visible y preguntado. |
+| Portapapeles y credenciales (regla 10 y enmienda 2) | Sin cambios. |
+| Cerrar ventanas ajenas | La enmienda 1 ya lo prohibía y sigue. El inventario es para saber, no para matar. |
+| Guardar, transmitir o analizar una imagen capturada | Sin cambios respecto a la enmienda 1. |
+| Parsear a mano los ficheros de `AutomaticDestinations` | Formato no documentado, ficheros internos del perfil del usuario. Es lo que hacen las herramientas forenses y el malware de exfiltración — y existiendo `IApplicationDocumentLists` no tiene defensa. |
+| **`ABM_SETSTATE`** | Escribe el ajuste **global** de la barra de tareas del usuario, el mismo checkbox de sus propiedades. Devuelve siempre `TRUE`, así que no se puede detectar el fallo, y **no hay ninguna API que lo restaure**. Cambiar un ajuste global sin pedirlo y sin poder deshacerlo es el perfil del adware de barras de herramientas. Además no consigue lo que se quería: apagar el autoocultar deja la barra *permanentemente* visible. |
+| `Windows.Graphics.Capture` con `IsBorderRequired = false` | Quitarle al usuario el aviso de que estás capturando su pantalla es precisamente lo que querría un espía. Si algún día hay miniaturas por esa vía, **con el borde puesto**. |
+
+### Y una prohibición NUEVA: `DWMWA_CLOAK` sobre ventanas ajenas
+
+Se propuso ocultar la ventana con `DwmSetWindowAttribute(DWMWA_CLOAK)` en vez de
+minimizarla, para que el efecto genio conserve la textura viva. **Se prohíbe**, y la
+razón hay que dejarla escrita porque la idea volverá:
+
+- **No está documentado que funcione entre procesos.** La doc de `DwmRegisterThumbnail`
+  sí dice que la ventana destino *"must... be owned by the process that is calling"*.
+  La de `DwmSetWindowAttribute` no dice nada. Donde DWM quiere poner un límite de
+  proceso, lo escribe; que aquí calle no es permiso, es silencio. Y el valor de lectura
+  se llama `DWM_CLOAKED_APP` = *"cloaked by **its owner** application"*.
+- **No hay rollback.** No existe ningún concepto documentado de "dueño del cloak" ni de
+  limpieza cuando muere el proceso que lo puso. Si el dock revienta después de cloakear
+  la ventana de otra app, **esa ventana se queda invisible** y el usuario no tiene forma
+  de recuperarla salvo cerrar la app a ciegas.
+
+Compárese con el apéndice de `DWMWA_TRANSITIONS_FORCEDISABLED`, que se defiende bien
+justamente porque *"se restaura inmediatamente después. La ventana no queda alterada."*
+Cloakear no tiene esa propiedad: es estado persistente e irreversible dentro del proceso
+de otro. `DWMWA_CLOAKED` **de lectura** sigue permitido — ya se usa para filtrar ventanas
+fantasma del inventario.
+
+### Lo que se descartó por imposible, no por prohibido
+
+`ITaskbarList3::SetProgressValue` y `SetOverlayIcon` **solo escriben**, y solo sobre un
+`HWND` propio. No existe ningún método `Get*` en `ITaskbarList` 1, 2, 3 ni 4: el estado
+vive dentro de `explorer.exe` y no está expuesto. Leer el progreso que publicó otra app
+no se puede con ninguna API documentada. No se añade el P/Invoke.
+
 ## Corolarios de diseño
 
 - **Sin single-file comprimido.** `EnableCompressionInSingleFile` produce exactamente
@@ -222,6 +345,14 @@ git ls-files | xargs grep -rn "OleGetClipboard\|GetClipboardData\|OpenClipboard\
 
 # Enmienda 2: los .lnk se leen, nunca se escriben. No debe aparecer ningun Save.
 git ls-files '*.cs' | xargs grep -rn "IPersistFile"
+
+# Enmienda 3: cloakear ventanas ajenas y tocar el ajuste de la barra de tareas
+# estan prohibidos. No debe devolver nada. DWMWA_CLOAKED (lectura) no casa aqui.
+git ls-files '*.cs' NativeMethods.txt | xargs grep -rnE "DWMWA_CLOAK\b|ABM_SETSTATE|IsBorderRequired|GraphicsCapture"
+
+# Enmienda 3: RegisterShellHookWindow si esta permitido, pero tiene que ser el unico
+# mecanismo de aviso de ventanas. Si aparece SetWinEventHook, la regla 3 esta rota.
+git ls-files '*.cs' NativeMethods.txt | xargs grep -rn "RegisterShellHookWindow\|SetWinEventHook"
 ```
 
 La lista completa y cerrada de P/Invokes está en `NativeMethods.txt`, que es el fichero

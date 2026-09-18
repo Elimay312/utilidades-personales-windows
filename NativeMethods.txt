@@ -136,3 +136,14 @@ RegisterDragDrop
 RevokeDragDrop
 IDropTarget
 DROPEFFECT
+IDropTargetHelper
+CLSID_DragDropHelper
+CoCreateInstance
+IShellItem
+SIGDN
+SHCreateShellItemArrayFromDataObject
+SHCreateShellItemArrayFromShellItem
+IShellItemArray
+IApplicationActivationManager
+ApplicationActivationManager
+ShellExecuteExW

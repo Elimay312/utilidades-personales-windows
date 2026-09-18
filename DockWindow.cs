@@ -94,6 +94,9 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Terminó de mirarse qué apps están abiertas. WM_APP + 3.
     private const uint WM_APP_RUNNING = 0x8003;
 
+    /// Se soltó algo encima. WM_APP + 4.
+    private const uint WM_APP_DROP = 0x8004;
+
     // IDC_ARROW = MAKEINTRESOURCE(32512)
     private const int IdcArrow = 32512;
 
@@ -181,6 +184,12 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Se va permutando mientras se arrastra y al soltar es lo que se persiste.
     /// </summary>
     private List<int> _dragOrder = [];
+
+    /// <summary>
+    /// Lo último que se soltó, esperando a lanzarse fuera de IDropTarget.Drop. Lanzar
+    /// ahí dentro bloquearía el hilo que el Explorador está esperando.
+    /// </summary>
+    private (int Slot, string[] Paths) _pendingDrop = (-1, []);
 
     /// <summary>
     /// El último fotograma de cada ventana que el dock minimizó, para poder reproducir
@@ -547,6 +556,10 @@ internal sealed unsafe class DockWindow : IDisposable
 
             case WM_APP_RELOAD:
                 self?.OnReload();
+                return new LRESULT(0);
+
+            case WM_APP_DROP:
+                self?.OnDropped();
                 return new LRESULT(0);
 
             case WM_APP_RUNNING:
@@ -1075,8 +1088,64 @@ internal sealed unsafe class DockWindow : IDisposable
         return _visuals.HitTest(rest);
     }
 
+    /// <summary>El HWND, para el ayudante que dibuja la miniatura de arrastre.</summary>
+    public HWND Handle => _hwnd;
+
+    /// <summary>
+    /// Si en ese punto de pantalla hay un icono que sepa abrir ficheros, y de paso lo
+    /// levanta para que se vea cuál va a recibir la suelta.
+    /// </summary>
+    public bool AcceptsDropAt(int screenX, int screenY)
+    {
+        int slot = SlotAtScreen(screenX, screenY);
+        bool ok = slot >= 0 && slot < _loaded.Count && _loaded[slot].App.IsApp;
+
+        // Un documento o un separador no abren nada, así que ni se levantan.
+        _visuals?.SetDropTarget(ok ? slot : -1, Scale(_config.IconSize) * 0.25f);
+        return ok;
+    }
+
+    /// <summary>
+    /// Apunta lo soltado y se quita de en medio. El trabajo de verdad va por mensaje:
+    /// mientras estemos dentro de Drop, el Explorador está esperando a que volvamos.
+    /// </summary>
+    public void QueueDrop(int slot, string[] paths)
+    {
+        Console.WriteLine($"[drop] soltado: icono={slot} ficheros={paths.Length}");
+        if (slot < 0 || paths.Length == 0) return;
+
+        _pendingDrop = (slot, paths);
+        PInvoke.PostMessage(_hwnd, WM_APP_DROP, default, default);
+    }
+
     /// <summary>El arrastre se fue o terminó: el dock puede volver a esconderse.</summary>
-    public void OnDragOutside() => ScheduleHide();
+    public void OnDragOutside()
+    {
+        _visuals?.SetDropTarget(-1, 0f);
+        ScheduleHide();
+    }
+
+    /// <summary>Ya fuera del arrastre: abrir lo soltado con la app del icono.</summary>
+    private void OnDropped()
+    {
+        (int slot, string[] paths) = _pendingDrop;
+        _pendingDrop = (-1, []);
+
+        if (slot < 0 || slot >= _loaded.Count || paths.Length == 0) return;
+
+        DockApp app = _loaded[slot].App;
+        if (!app.IsApp) return;
+
+        _visuals?.Bounce(slot, Scale(_config.IconSize) * 0.35f);
+        Console.WriteLine($"[dock] '{app.Name}' abre {string.Join(", ", paths)}");
+
+        // Fuera del hilo de UI, como al lanzar: ShellExecuteEx puede tardar segundos.
+        Task.Run(() =>
+        {
+            try { app.OpenWith(paths); }
+            catch (Exception ex) { Console.WriteLine($"[dock] falló abrir con '{app.Name}': {ex.Message}"); }
+        });
+    }
 
     /// <summary>Deshace un arrastre a medias y devuelve todo a su sitio.</summary>
     private void CancelDrag()

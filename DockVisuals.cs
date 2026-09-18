@@ -48,6 +48,9 @@ internal sealed unsafe class DockVisuals : IDisposable
 
     private DockCurve _curve;
 
+    /// <summary>Icono levantado ahora mismo porque se va a soltar algo encima, o -1.</summary>
+    private int _dropTarget = -1;
+
     /// Un visual por ranura: icono o separador.
     private readonly List<SpriteVisual> _items = [];
 
@@ -232,6 +235,7 @@ internal sealed unsafe class DockVisuals : IDisposable
         _root.Children.RemoveAll();
         _items.Clear();
         _dots.Clear();
+        _dropTarget = -1;
 
         // Los subtérminos compartidos de la curva, calculados una sola vez.
         DockExpressions.Setup(_compositor, _props, curve, windowWidth);
@@ -390,6 +394,33 @@ internal sealed unsafe class DockVisuals : IDisposable
         fade.InsertKeyFrame(1f, lifted ? 0.85f : 1f);
         fade.Duration = TimeSpan.FromMilliseconds(120);
         _items[index].StartAnimation("Opacity", fade);
+    }
+
+    /// <summary>
+    /// Levanta el icono sobre el que se va a soltar algo, y baja el anterior.
+    ///
+    /// Se reutiliza la propiedad del rebote en vez de inventar un resaltado nuevo: es
+    /// la misma idea de "este es el que va a recibir" y no hace falta ni una expresión
+    /// más. Con muelle, que es lo que distingue "se ha levantado" de "ha parpadeado".
+    /// </summary>
+    public void SetDropTarget(int index, float height)
+    {
+        if (index == _dropTarget) return;
+
+        Lift(_dropTarget, 0f);
+        _dropTarget = index;
+        Lift(index, height);
+    }
+
+    private void Lift(int index, float height)
+    {
+        if (index < 0 || index >= _items.Count) return;
+
+        SpringScalarNaturalMotionAnimation rise = _compositor.CreateSpringScalarAnimation();
+        rise.DampingRatio = 0.7f;
+        rise.Period = TimeSpan.FromMilliseconds(50);
+        rise.FinalValue = height;
+        _items[index].Properties.StartAnimation("Bounce", rise);
     }
 
     /// <summary>

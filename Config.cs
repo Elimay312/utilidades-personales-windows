@@ -1,4 +1,8 @@
 using System.Diagnostics;
+using Windows.Win32;
+using Windows.Win32.Foundation;
+using Windows.Win32.UI.Shell;
+using Windows.Win32.UI.WindowsAndMessaging;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -63,6 +67,129 @@ internal sealed class DockApp
         // un explorer.exe suelto apareciendo en Alt+Tab.
         Process.Start(new ProcessStartInfo(Target) { UseShellExecute = true });
     }
+
+    /// <summary>
+    /// Abre esos ficheros con esta app. Es lo que pasa al soltar algo sobre un icono.
+    ///
+    /// Aquí sí hacen falta dos caminos, y es el único sitio del dock donde los hay: a
+    /// una app empaquetada no se le puede pasar un fichero por línea de comandos.
+    /// Lanzarla a secas sí funciona con el moniker <c>shell:</c> (ver <see cref="Launch"/>),
+    /// pero con fichero hay que usar la activación oficial.
+    /// </summary>
+    public void OpenWith(IReadOnlyList<string> paths)
+    {
+        // Las rutas vienen de una suelta del usuario, no de entrada libre, pero se
+        // normalizan igual y se rechaza cualquiera con comillas: van dentro de un
+        // lpParameters entrecomillado y una comilla suelta lo partiría en dos.
+        List<string> safe = [];
+        foreach (string path in paths)
+        {
+            if (path.Contains('"')) continue;
+
+            try { safe.Add(Path.GetFullPath(path)); }
+            catch { /* ruta imposible: se descarta */ }
+        }
+
+        if (safe.Count == 0) return;
+
+        if (IsShellItem) ActivateForFile(safe);
+        else ShellExecute(safe);
+    }
+
+    /// <summary>App normal: el fichero va como argumento, entrecomillado.</summary>
+    private unsafe void ShellExecute(IReadOnlyList<string> paths)
+    {
+        string arguments = string.Join(' ', paths.Select(p => $"\"{p}\""));
+
+        fixed (char* file = Target)
+        fixed (char* args = arguments)
+        {
+            SHELLEXECUTEINFOW info = new()
+            {
+                cbSize = (uint)sizeof(SHELLEXECUTEINFOW),
+
+                // NOASYNC porque no vamos a morirnos justo después, y NO_UI para que un
+                // fallo no plante un diálogo modal delante del usuario: se loguea y ya.
+                fMask = SeeMaskNoAsync | SeeMaskNoUi,
+                lpFile = new PCWSTR(file),
+                lpParameters = new PCWSTR(args),
+                nShow = (int)SHOW_WINDOW_CMD.SW_SHOWNORMAL,
+            };
+
+            // Sin verbo: el de defecto. Nunca "runas" — ver la enmienda 2 de SEGURIDAD.md.
+            if (!PInvoke.ShellExecuteEx(ref info))
+                Console.WriteLine($"[dock] '{Name}' no pudo abrir {arguments}");
+        }
+    }
+
+    /// <summary>
+    /// App empaquetada: activación oficial, que es lo que acaba en el evento
+    /// <c>FileActivated</c> de la app. No requiere elevación y funciona desde una app
+    /// no empaquetada como esta.
+    /// </summary>
+    private unsafe void ActivateForFile(IReadOnlyList<string> paths)
+    {
+        int slash = Target.LastIndexOf('\\');
+        if (slash < 0) return;
+
+        string aumid = Target[(slash + 1)..];
+
+        // ponytail: solo el primero. Montar un IShellItemArray de varios pide
+        // SHCreateShellItemArrayFromIDLists y andar con PIDLs; si algún día hace falta
+        // soltar varios sobre una app de la Store, es aquí.
+        Guid itemId = typeof(IShellItem).GUID;
+        object item;
+        fixed (char* path = paths[0])
+        {
+            if (PInvoke.SHCreateItemFromParsingName(new PCWSTR(path), null, &itemId, out item).Failed) return;
+        }
+
+        Guid arrayId = typeof(IShellItemArray).GUID;
+        if (PInvoke.SHCreateShellItemArrayFromShellItem((IShellItem)item, &arrayId, out object array).Failed) return;
+
+        // Objeto in-proc a propósito: la nota de la propia interfaz dice que
+        // CLSCTX_LOCAL_SERVER es para procesos que nacen solo para lanzar algo. Un dock
+        // vive todo lo que dure la sesión.
+        var manager = (IApplicationActivationManager)new ApplicationActivationManager();
+
+        fixed (char* id = aumid)
+        fixed (char* verb = "open")
+        {
+            try
+            {
+                manager.ActivateForFile(new PCWSTR(id), (IShellItemArray)array, new PCWSTR(verb), out _);
+                return;
+            }
+            catch (Exception ex)
+            {
+                // 0x80270254: "no es compatible con el contrato especificado". No todas
+                // las apps de AppsFolder son UWP. Paint, por ejemplo, es un Win32
+                // EMPAQUETADO: no declara el contrato de activación por fichero, y coge
+                // la ruta por línea de comandos como cualquier programa de siempre.
+                // Para esas vale ActivateApplication, que es el otro método de esta
+                // misma interfaz y sí lleva argumentos.
+                Console.WriteLine($"[dock] '{Name}' no acepta ficheros por contrato ({ex.Message.Trim()}), se prueba por argumentos");
+            }
+        }
+
+        fixed (char* id = aumid)
+        fixed (char* args = $"\"{paths[0]}\"")
+        {
+            try
+            {
+                manager.ActivateApplication(new PCWSTR(id), new PCWSTR(args), ACTIVATEOPTIONS.AO_NONE, out _);
+            }
+            catch (Exception ex)
+            {
+                // Que la app diga que no sabe abrir eso es un no aceptable, no un fallo
+                // del dock: se anota y se sigue.
+                Console.WriteLine($"[dock] '{Name}' no pudo abrir {paths[0]}: {ex.Message.Trim()}");
+            }
+        }
+    }
+
+    private const uint SeeMaskNoAsync = 0x00000100;
+    private const uint SeeMaskNoUi = 0x00000400;
 }
 
 /// <summary>Contenido de dock.json.</summary>

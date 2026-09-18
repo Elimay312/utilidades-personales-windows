@@ -1,9 +1,7 @@
 using System.Runtime.InteropServices;
 using Windows.Win32;
 using Windows.Win32.Foundation;
-using Windows.Win32.Graphics.Dwm;
 using Windows.Win32.Graphics.Gdi;
-using Windows.Win32.UI.Controls;
 using Windows.Win32.UI.HiDpi;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Windows.Win32.UI.WindowsAndMessaging;
@@ -27,8 +25,12 @@ internal sealed unsafe class DockWindow : IDisposable
     private const float MaxScale = 2.0f;
 
     /// Radio de influencia del cursor, medido en ranuras. Junto con MaxScale son los
-    /// dos mandos que gobiernan el tacto de la magnificación.
-    private const float RadiusInSlots = 2.5f;
+    /// dos mandos que gobiernan el tacto de la magnificación, y los únicos números de
+    /// aquí que piden ajustarse a ojo.
+    ///
+    /// A 2.5 el bulto abarcaba casi un dock de 4 iconos y lo ensanchaba un 62%, mucho
+    /// más de lo que hace macOS. Con 1.75 se magnifican unos 3 iconos.
+    private const float RadiusInSlots = 1.75f;
 
     // Mensajes que manejamos. Se declaran aquí para no arrastrar cientos de
     // constantes desde la metadata del SDK.
@@ -59,9 +61,6 @@ internal sealed unsafe class DockWindow : IDisposable
 
     // Respuesta a WM_MOUSEACTIVATE: no activar, pero tampoco descartar el clic.
     private const int MA_NOACTIVATE = 3;
-
-    // DWMWA_BORDER_COLOR: quita el borde manteniendo el redondeo.
-    private const uint DwmwaColorNone = 0xFFFFFFFE;
 
     /// El delegate se guarda en un campo estático para que el GC no lo recoja
     /// mientras Windows conserva el puntero dentro de la clase de ventana.
@@ -167,7 +166,6 @@ internal sealed unsafe class DockWindow : IDisposable
             throw new InvalidOperationException($"CreateWindowEx falló: {Marshal.GetLastWin32Error()}");
 
         Instances[(nint)_hwnd.Value] = this;
-        ApplyDwmAttributes();
 
         // Composition pasa a ser dueña del contenido de la ventana. Lo que no pinte
         // queda transparente y deja ver el material acrílico de DWM.
@@ -221,27 +219,15 @@ internal sealed unsafe class DockWindow : IDisposable
         return (x, y, w, h);
     }
 
-    private void ApplyDwmAttributes()
-    {
-        // Esquinas redondeadas. La doc lo llama un hint, no una garantía.
-        DWM_WINDOW_CORNER_PREFERENCE corner = DWM_WINDOW_CORNER_PREFERENCE.DWMWCP_ROUND;
-        PInvoke.DwmSetWindowAttribute(_hwnd, DWMWINDOWATTRIBUTE.DWMWA_WINDOW_CORNER_PREFERENCE,
-            &corner, (uint)sizeof(DWM_WINDOW_CORNER_PREFERENCE));
-
-        // Borde invisible, manteniendo el redondeo.
-        uint border = DwmwaColorNone;
-        PInvoke.DwmSetWindowAttribute(_hwnd, DWMWINDOWATTRIBUTE.DWMWA_BORDER_COLOR,
-            &border, sizeof(uint));
-
-        // De momento no se pide backdrop a DWM: el fondo lo pinta Composition, que
-        // es la dueña del contenido de la ventana. DWM solo redondea las esquinas,
-        // que es geometría y no contenido.
-        //
-        // El acrílico de verdad es trabajo de M3, y entonces habrá que elegir entre
-        // DWMWA_SYSTEMBACKDROP_TYPE (que en M0 funcionó, pero obliga a WS_CAPTION +
-        // WM_NCCALCSIZE) y Compositor.CreateHostBackdropBrush, que se queda dentro de
-        // Composition y no depende de las heurísticas de DWM.
-    }
+    /// <summary>
+    /// Ya no se le pide nada a DWM, y es a propósito.
+    ///
+    /// La ventana es del tamaño MÁXIMO que puede ocupar el dock magnificado y está
+    /// casi toda transparente, así que un backdrop de DWM pintaría ese rectángulo
+    /// entero en vez de solo la barra, y DWMWA_WINDOW_CORNER_PREFERENCE redondearía
+    /// unas esquinas que nadie ve. El material y el redondeo los hace Composition,
+    /// sobre la barra y solo sobre ella (ver DockVisuals.BuildBar).
+    /// </summary>
 
     /// <summary>
     /// La doc de Microsoft dice que extraer iconos "can be time consuming" y que

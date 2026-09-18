@@ -1,4 +1,5 @@
 using System.Globalization;
+using Windows.UI.Composition;
 
 namespace Dock;
 
@@ -13,80 +14,124 @@ namespace Dock;
 ///
 /// El lenguaje tiene Sin y Clamp, que es justo lo que pide G(t). No tiene Exp, que es
 /// otra razón para el coseno elevado frente a una gaussiana.
+///
+/// <para>
+/// Las expresiones tienen un límite de longitud, y escribirlas del tirón lo pasaba:
+/// cada icono repetía cuatro veces el mismo G(−c/R) y dos veces la transferencia del
+/// ancho total. Así que los subtérminos compartidos se calculan UNA vez, con sus
+/// propias expresiones sobre el property set, y los iconos solo los referencian. Sale
+/// más corto y además se evalúa una sola vez por frame en vez de una por icono.
+/// </para>
 /// </summary>
 internal static class DockExpressions
 {
     /// <summary>Nombre del CompositionPropertySet dentro de las expresiones.</summary>
     public const string Props = "P";
 
-    /// <summary>Cursor en coordenadas de reposo.</summary>
+    /// <summary>Cursor en coordenadas de reposo. Lo escribe el hilo de UI.</summary>
     public const string Cursor = Props + ".C";
 
-    /// <summary>Intensidad del hover, de 0 a 1.</summary>
+    /// <summary>Intensidad del hover, de 0 a 1. La mueve el muelle.</summary>
     public const string Amount = Props + ".Amount";
 
+    /// <summary>G(−c/R): el término de anclaje, común a toda la curva.</summary>
+    private const string Anchor = Props + ".G0";
+
+    /// <summary>T(anchoEnReposo): el ancho de la fila ya magnificada.</summary>
+    private const string TotalWidth = Props + ".TW";
+
+    /// <summary>Desplazamiento que mantiene la fila centrada mientras se ensancha.</summary>
+    private const string Origin = Props + ".Origin";
+
     /// <summary>
-    /// Siempre en cultura invariante: en español el separador decimal es la coma y
-    /// eso rompería cada número dentro de la expresión.
+    /// Siempre en cultura invariante: en español el separador decimal es la coma y eso
+    /// rompería cada número dentro de la expresión.
     /// </summary>
-    private static string F(float value) => value.ToString("R", CultureInfo.InvariantCulture);
+    private static string F(float value) => value.ToString("G7", CultureInfo.InvariantCulture);
 
     /// <summary>G(t) = clamp(t,−1,1)/2 + sin(π·clamp(t,−1,1))/(2π)</summary>
     private static string G(string t)
     {
-        // Clamp aparece dos veces, así que se calcula sobre el mismo subtérmino.
         string clamped = $"Clamp({t},-1,1)";
         return $"({clamped}*0.5 + Sin(3.14159265*{clamped})*0.15915494)";
     }
 
-    /// <summary>T(u) = u + (M−1)·Amount·R·[ G((u−c)/R) − G(−c/R) ]</summary>
+    /// <summary>G evaluada en el punto u de reposo.</summary>
+    private static string GAt(in DockCurve curve, float u)
+        => G($"(({F(u)} - {Cursor})*{F(1f / curve.Radius)})");
+
+    /// <summary>T(u) − Origin, o sea la transferencia sin centrar.</summary>
     private static string Transfer(in DockCurve curve, float u)
-    {
-        float invRadius = 1f / curve.Radius;
-        float growth = (curve.MaxScale - 1f) * curve.Radius;
-
-        string gu = G($"(({F(u)} - {Cursor})*{F(invRadius)})");
-        string g0 = G($"((0 - {Cursor})*{F(invRadius)})");
-
-        return $"({F(u)} + {F(growth)}*{Amount}*({gu} - {g0}))";
-    }
-
-    /// <summary>Desplazamiento que mantiene la fila centrada mientras se ensancha.</summary>
-    private static string Origin(in DockCurve curve, float availableWidth)
-        => $"(({F(availableWidth)} - {Transfer(curve, curve.RestWidth)})*0.5)";
-
-    /// <summary>Posición en pantalla del punto u.</summary>
-    private static string Project(in DockCurve curve, float availableWidth, float u)
-        => $"({Origin(curve, availableWidth)} + {Transfer(curve, u)})";
+        => $"({F(u)} + {F((curve.MaxScale - 1f) * curve.Radius)}*{Amount}*({GAt(curve, u)} - {Anchor}))";
 
     /// <summary>
-    /// Offset del icono. Con CenterPoint en el borde inferior izquierdo, el icono
-    /// crece hacia arriba y hacia la derecha desde ahí, así que el offset es
-    /// directamente el borde izquierdo proyectado.
+    /// Registra en el property set los términos compartidos. Hay que llamarlo antes de
+    /// crear las expresiones de los visuals.
     /// </summary>
-    public static string IconOffset(in DockCurve curve, float availableWidth, int index, float restTop)
-        => $"Vector3({Project(curve, availableWidth, curve.RestLeft(index))}, {F(restTop)}, 0)";
+    public static void Setup(
+        Compositor compositor,
+        CompositionPropertySet props,
+        in DockCurve curve,
+        float availableWidth)
+    {
+        props.InsertScalar("G0", 0f);
+        props.InsertScalar("TW", curve.RestWidth);
+        props.InsertScalar("Origin", 0f);
+
+        // El orden importa: TW usa G0, y Origin usa TW.
+        Start(compositor, props, "G0", G($"((0 - {Cursor})*{F(1f / curve.Radius)})"));
+        Start(compositor, props, "TW", Transfer(curve, curve.RestWidth));
+        Start(compositor, props, "Origin", $"(({F(availableWidth)} - {TotalWidth})*0.5)");
+    }
+
+    private static void Start(Compositor compositor, CompositionPropertySet props, string property, string expression)
+    {
+        ExpressionAnimation animation = compositor.CreateExpressionAnimation(expression);
+        animation.SetReferenceParameter(Props, props);
+        props.StartAnimation(property, animation);
+    }
+
+    /// <summary>
+    /// Offset del icono. Con CenterPoint en el borde inferior izquierdo, el icono crece
+    /// hacia arriba y hacia la derecha desde ahí, así que el offset es directamente el
+    /// borde izquierdo proyectado.
+    /// </summary>
+    public static string IconOffset(in DockCurve curve, int index, float restTop)
+        => $"Vector3({Origin} + {Transfer(curve, curve.RestLeft(index))}, {F(restTop)}, 0)";
 
     /// <summary>
     /// Escala del icono: el ancho proyectado partido por el de reposo. Se mapean los
-    /// BORDES y se restan, que es lo que garantiza que no haya solapes.
+    /// BORDES y se restan, que es lo que garantiza que no haya solapes. Al restar, el
+    /// término de anclaje se cancela solo y la expresión sale más corta.
     /// </summary>
     public static string IconScale(in DockCurve curve, int index)
     {
-        string left = Transfer(curve, curve.RestLeft(index));
-        string right = Transfer(curve, curve.RestRight(index));
-        string scale = $"(({right} - {left})*{F(1f / curve.IconSize)})";
+        float a = curve.RestLeft(index);
+        float b = curve.RestRight(index);
+        float growth = (curve.MaxScale - 1f) * curve.Radius;
+
+        string scale = $"(({F(b - a)} + {F(growth)}*{Amount}*({GAt(curve, b)} - {GAt(curve, a)}))*{F(1f / curve.IconSize)})";
         return $"Vector3({scale}, {scale}, 1)";
     }
 
-    /// <summary>Borde izquierdo de la barra de fondo, con su margen.</summary>
-    public static string BarOffset(in DockCurve curve, float availableWidth, float padding, float top)
-        => $"Vector3({Project(curve, availableWidth, 0f)} - {F(padding)}, {F(top)}, 0)";
+    /// <summary>
+    /// Borde izquierdo de la barra, con su margen. T(0) es 0 por construcción, así que
+    /// el borde de la fila es exactamente el origen.
+    /// </summary>
+    public static string BarOffset(float padding, float top)
+        => $"Vector3({Origin} - {F(padding)}, {F(top)}, 0)";
 
     /// <summary>
-    /// Ancho de la barra de fondo. Crece con la fila, como el Dock de macOS: la
-    /// ventana es fija y del tamaño máximo, pero la barra visible sigue a los iconos.
+    /// Tamaño de la barra. Crece con la fila, como el Dock de macOS: la ventana es fija
+    /// y del tamaño máximo, pero la barra visible sigue a los iconos.
     /// </summary>
-    public static string BarSize(in DockCurve curve, float padding, float height)
-        => $"Vector2({Transfer(curve, curve.RestWidth)} + {F(padding * 2f)}, {F(height)})";
+    public static string BarSize(float padding, float height)
+        => $"Vector2({TotalWidth} + {F(padding * 2f)}, {F(height)})";
+
+    /// <summary>
+    /// Solo el ancho, para la geometría del recorte redondeado, que lleva su propio
+    /// Size y tiene que seguir al de la barra.
+    /// </summary>
+    public static string BarSizeOnly(float padding)
+        => $"Vector2({TotalWidth} + {F(padding * 2f)}, 100000)";
 }

@@ -220,17 +220,14 @@ internal sealed unsafe class DockVisuals : IDisposable
         _curve = curve;
         _root.Children.RemoveAll();
 
+        // Los subterminos compartidos de la curva, calculados una sola vez.
+        DockExpressions.Setup(_compositor, _props, curve, windowWidth);
+
         float barHeight = curve.IconSize + padding * 2f;
         float barTop = windowHeight - barHeight;
         float iconTop = windowHeight - padding - curve.IconSize;
 
-        // Barra de fondo. Crece con la fila, como el Dock de macOS: la ventana es fija
-        // y del tamaño máximo posible, pero la barra visible sigue a los iconos.
-        SpriteVisual bar = _compositor.CreateSpriteVisual();
-        bar.Brush = _compositor.CreateColorBrush(Windows.UI.Color.FromArgb(200, 32, 32, 40));
-        Animate(bar, "Offset", DockExpressions.BarOffset(curve, windowWidth, padding, barTop));
-        Animate(bar, "Size", DockExpressions.BarSize(curve, padding, barHeight));
-        _root.Children.InsertAtBottom(bar);
+        BuildBar(padding, barTop, barHeight);
 
         for (int i = 0; i < icons.Count; i++)
         {
@@ -242,11 +239,82 @@ internal sealed unsafe class DockVisuals : IDisposable
             // y hacia la derecha desde ahí, que es como se comporta el Dock.
             visual.CenterPoint = new Vector3(0f, curve.IconSize, 0f);
 
-            Animate(visual, "Offset", DockExpressions.IconOffset(curve, windowWidth, i, iconTop));
+            Animate(visual, "Offset", DockExpressions.IconOffset(curve, i, iconTop));
             Animate(visual, "Scale", DockExpressions.IconScale(curve, i));
 
             _root.Children.InsertAtTop(visual);
         }
+    }
+
+    /// <summary>
+    /// La barra del dock: acrílico con esquinas redondeadas, y crece con la fila
+    /// igual que en macOS.
+    ///
+    /// El material NO se le pide a DWM (DWMWA_SYSTEMBACKDROP_TYPE) a propósito: la
+    /// ventana es del tamaño MÁXIMO que puede llegar a ocupar el dock magnificado,
+    /// así que un backdrop de DWM pintaría ese rectángulo entero en vez de solo la
+    /// barra. CreateHostBackdropBrush muestrea el escritorio ya desenfocado por el
+    /// sistema y se aplica exactamente donde queramos.
+    ///
+    /// El acrílico se compone como manda la receta: backdrop desenfocado debajo y una
+    /// capa de tinte translúcida encima. Sin efectos encadenados, que necesitarían
+    /// Win2D y una dependencia más.
+    /// </summary>
+    private void BuildBar(float padding, float top, float height)
+    {
+        ContainerVisual bar = _compositor.CreateContainerVisual();
+        Animate(bar, "Offset", DockExpressions.BarOffset(padding, top));
+        Animate(bar, "Size", DockExpressions.BarSize(padding, height));
+
+        // Esquinas redondeadas recortando en el compositor, con antialiasing.
+        // SetWindowRgn habría sido la otra vía, pero recorta sin suavizar y además
+        // expulsa a la ventana de la categoría que DWM redondea y compone.
+        CompositionRoundedRectangleGeometry corners = _compositor.CreateRoundedRectangleGeometry();
+        corners.CornerRadius = new Vector2(height * 0.28f);
+        // La geometría del recorte tiene su propio tamaño: sigue al de la barra.
+        StartExpression(corners, "Size", DockExpressions.BarSizeOnly(padding));
+        bar.Clip = _compositor.CreateGeometricClip(corners);
+
+        // Capa 1: el escritorio desenfocado por el sistema.
+        SpriteVisual material = _compositor.CreateSpriteVisual();
+        material.RelativeSizeAdjustment = Vector2.One;
+        material.Brush = CreateAcrylicBrush();
+        bar.Children.InsertAtBottom(material);
+
+        // Capa 2: el tinte. Sin él el acrílico es solo un desenfoque y sobre un fondo
+        // oscuro queda casi negro; el tinte claro a baja opacidad es lo que da el
+        // aspecto de cristal esmerilado y mantiene los iconos legibles sobre
+        // cualquier cosa que haya detrás.
+        SpriteVisual tint = _compositor.CreateSpriteVisual();
+        tint.RelativeSizeAdjustment = Vector2.One;
+        tint.Brush = _compositor.CreateColorBrush(Windows.UI.Color.FromArgb(48, 255, 255, 255));
+        bar.Children.InsertAtTop(tint);
+
+        _root.Children.InsertAtBottom(bar);
+    }
+
+    /// <summary>
+    /// Acrílico, con caída a color sólido si el sistema no lo soporta. El dock sigue
+    /// siendo usable en ese caso: solo se ve más plano.
+    /// </summary>
+    private CompositionBrush CreateAcrylicBrush()
+    {
+        try
+        {
+            return _compositor.CreateHostBackdropBrush();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[acrilico] no disponible, se usa color sólido: {ex.Message}");
+            return _compositor.CreateColorBrush(Windows.UI.Color.FromArgb(200, 32, 32, 40));
+        }
+    }
+
+    private void StartExpression(CompositionObject target, string property, string expression)
+    {
+        ExpressionAnimation animation = _compositor.CreateExpressionAnimation(expression);
+        animation.SetReferenceParameter(DockExpressions.Props, _props);
+        target.StartAnimation(property, animation);
     }
 
     private void Animate(Visual visual, string property, string expression)

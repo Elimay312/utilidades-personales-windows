@@ -17,7 +17,7 @@ internal static class Program
             return;
         }
 
-        Console.WriteLine("Dock M1 - clic derecho sobre el dock para salir");
+        Console.WriteLine("Dock M3 - clic derecho sobre el dock para salir");
         Console.WriteLine();
 
         DockConfig config = DockConfig.Load(DockConfig.DefaultPath);

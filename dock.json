@@ -10,6 +10,11 @@
   "iconSize": 48,
   "iconSpacing": 16,
 
+  // Cuanto crece el icono bajo el cursor. 1.0 la apaga del todo, que es como
+  // viene macOS de fabrica. A 2.0 el bulto empuja tanto a los vecinos que cuesta
+  // acertarle a un icono.
+  "magnification": 1.3,
+
   // Si el dock se esconde solo y asoma al llevar el ratón al borde inferior.
   "autoHide": true,
 

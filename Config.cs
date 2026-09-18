@@ -221,6 +221,15 @@ internal sealed class DockConfig
     public bool AutoStart { get; init; }
 
     /// <summary>
+    /// Cuánto crece el icono justo bajo el cursor.
+    ///
+    /// <b>1.0 la apaga del todo</b>, que es como viene macOS de fábrica: allí la
+    /// magnificación es una casilla que hay que ir a marcar. A 2.0 el bulto empuja a
+    /// los vecinos tanto que cuesta acertarle a un icono; 1.3 se nota sin estorbar.
+    /// </summary>
+    public float Magnification { get; init; } = 1.3f;
+
+    /// <summary>
     /// Si la papelera va al final del dock, como en macOS. Se puede quitar
     /// arrastrándola fuera igual que cualquier otro icono.
     /// </summary>
@@ -243,8 +252,43 @@ internal sealed class DockConfig
         AllowTrailingCommas = true,
     };
 
-    public static string DefaultPath =>
-        Path.Combine(AppContext.BaseDirectory, "dock.json");
+    /// <summary>
+    /// Dónde vive la configuración: <c>%LOCALAPPDATA%\Dock</c>, y <b>no</b> junto al
+    /// ejecutable.
+    ///
+    /// Estaba junto al ejecutable, que durante el desarrollo es la carpeta de
+    /// compilación. Un <c>dotnet clean</c>, borrar <c>bin\</c> o mover el repo se
+    /// llevaba por delante el dock.json Y el dock.local.json con todo lo que el usuario
+    /// hubiera reordenado y añadido, sin avisar.
+    /// </summary>
+    public static string Folder => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Dock");
+
+    public static string DefaultPath => Path.Combine(Folder, "dock.json");
+
+    /// <summary>
+    /// Crea la carpeta y, la primera vez, copia el dock.json que viene junto al
+    /// ejecutable como semilla. A partir de ahí el de al lado ya no se mira.
+    /// </summary>
+    public static void EnsureSeeded()
+    {
+        try
+        {
+            Directory.CreateDirectory(Folder);
+            if (File.Exists(DefaultPath)) return;
+
+            string seed = Path.Combine(AppContext.BaseDirectory, "dock.json");
+            if (File.Exists(seed))
+            {
+                File.Copy(seed, DefaultPath);
+                Console.WriteLine($"[config] primera vez: copiado a {DefaultPath}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[config] no se pudo preparar {Folder}: {ex.Message}");
+        }
+    }
 
     /// <summary>
     /// Nombre de parsing de la papelera. Es un objeto virtual del shell, sin ruta de
@@ -275,6 +319,7 @@ internal sealed class DockConfig
             IconSpacing = config.IconSpacing,
             AutoHide = config.AutoHide,
             AutoStart = config.AutoStart,
+            Magnification = Math.Clamp(config.Magnification, 1f, 2.5f),
             Trash = config.Trash,
             BaseApps = baseApps,
             Apps = DockLocal.Load().ApplyTo(baseApps),
@@ -351,8 +396,7 @@ internal sealed class DockLocal
     /// <summary>Claves de dock.json que el usuario sacó del dock.</summary>
     public List<string> Quitadas { get; init; } = [];
 
-    public static string DefaultPath =>
-        Path.Combine(AppContext.BaseDirectory, "dock.local.json");
+    public static string DefaultPath => Path.Combine(DockConfig.Folder, "dock.local.json");
 
     private static readonly JsonSerializerOptions Write = new()
     {

@@ -26,17 +26,22 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Franja que asoma cuando el dock está escondido, en unidades lógicas.
     private const int LogicalRevealStrip = 3;
 
-    /// Hueco por encima del icono magnificado para la etiqueta con el nombre. La
-    /// ventana medía exactamente lo que el icono más grande, así que sin esto la
-    /// etiqueta caería fuera y no se vería.
-    private const int LogicalLabelRoom = 30;
+    /// Hueco por encima del icono magnificado, en unidades lógicas. La ventana medía
+    /// exactamente lo que el icono más grande, así que sin esto ni la etiqueta ni el
+    /// menú cabrían.
+    ///
+    /// Lo dimensiona el MENÚ, no la etiqueta: dos filas de 30 más sus márgenes. Al
+    /// bajar la magnificación la ventana encogió y el menú pasó a dibujarse fuera de
+    /// ella, donde queda recortado y no se puede clicar. La etiqueta sola necesitaría
+    /// menos de la mitad.
+    ///
+    /// Que el hueco sea generoso no le quita sitio al escritorio: la región de la
+    /// ventana solo sube hasta aquí mientras el ratón está encima (ver ApplyRegion).
+    private const int LogicalLabelRoom = 76;
 
     /// Margen antes de esconderse al salir el ratón. Sin él, rozar el dock de paso
     /// lo haría parpadear.
     private const uint HideDelayMs = 450;
-
-    /// Escala máxima del icono justo bajo el cursor.
-    private const float MaxScale = 2.0f;
 
     /// Lo que hay que mover el ratón con el botón pulsado para que deje de ser un clic
     /// y pase a ser un arrastre, en unidades lógicas. Por debajo de esto, un pulso con
@@ -50,9 +55,9 @@ internal sealed unsafe class DockWindow : IDisposable
     /// que casar con lo que dibuja DockVisuals.BuildAddZone.
     private const float AddZoneFraction = 0.58f;
 
-    /// Radio de influencia del cursor, medido en ranuras. Junto con MaxScale son los
-    /// dos mandos que gobiernan el tacto de la magnificación, y los únicos números de
-    /// aquí que piden ajustarse a ojo.
+    /// Radio de influencia del cursor, medido en ranuras. Junto con la magnificación
+    /// (que ahora vive en dock.json) son los dos mandos que gobiernan el tacto, y los
+    /// únicos números de aquí que piden ajustarse a ojo.
     ///
     /// A 2.5 el bulto abarcaba casi un dock de 4 iconos y lo ensanchaba un 62%, mucho
     /// más de lo que hace macOS. Con 1.75 se magnifican unos 3 iconos.
@@ -205,6 +210,13 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Extremos de la última región aplicada, para no reaplicarla igual.
     private int _regionLeft = int.MinValue;
     private int _regionRight = int.MinValue;
+    private int _regionTop = int.MinValue;
+
+    /// <summary>
+    /// Si la región llega hasta arriba del todo. Solo hace falta cuando hay algo
+    /// dibujado ahí: la etiqueta, el menú o el icono magnificado.
+    /// </summary>
+    private bool _tallRegion;
 
     /// X de pantalla del borde izquierdo de la ventana.
     private int _windowLeft;
@@ -401,7 +413,7 @@ internal sealed unsafe class DockWindow : IDisposable
         // Aunque no haya nada configurado, la ventana necesita un tamaño con sentido.
         if (slots.Count == 0) slots.Add(new DockSlot(icon + spacing, icon));
 
-        return new DockCurve(slots, radius: (icon + spacing) * RadiusInSlots, maxScale: MaxScale);
+        return new DockCurve(slots, radius: (icon + spacing) * RadiusInSlots, maxScale: _config.Magnification);
     }
 
     /// <summary>Rectángulo del dock en píxeles físicos, centrado abajo en su monitor.</summary>
@@ -425,7 +437,7 @@ internal sealed unsafe class DockWindow : IDisposable
         float padding = Scale(LogicalPadding);
         int w = info.rcWork.right - info.rcWork.left;
         int h = (int)MathF.Ceiling(
-            Scale(_config.IconSize) * MaxScale + padding * 2f + Scale(LogicalLabelRoom));
+            Scale(_config.IconSize) * _config.Magnification + padding * 2f + Scale(LogicalLabelRoom));
 
         RECT work = info.rcWork;
         int x = work.left;
@@ -645,6 +657,13 @@ internal sealed unsafe class DockWindow : IDisposable
                     if (!self._dragging)
                     {
                         self._hovering = false;
+
+                        // Sacar el ratón del dock cierra el menú, y tiene que ser aquí:
+                        // un clic FUERA del dock no nos llega —el hit-test lo deja
+                        // pasar—, así que sin esto el menú se quedaba abierto, y con él
+                        // abierto el dock tampoco se escondía.
+                        self._visuals?.CloseMenu();
+                        self.SetTallRegion(false);
                         self._visuals?.SetHover(false);
                         self._visuals?.SetLabel(-1);
                         self.ScheduleHide();
@@ -1003,6 +1022,7 @@ internal sealed unsafe class DockWindow : IDisposable
         if (!_hovering)
         {
             _hovering = true;
+            SetTallRegion(true);
             _visuals.SetHover(true);
 
 
@@ -1307,16 +1327,29 @@ internal sealed unsafe class DockWindow : IDisposable
         int left = center - half;
         int right = center + half + extra;
 
+        // Y hasta dónde llega por arriba. Fuera del dock la ventana se queda en la
+        // barra más lo que crece el icono magnificado, porque por encima no hay nada
+        // dibujado y ahí el usuario tiene los iconos del escritorio.
+        //
+        // Y sí, tiene que ser la REGIÓN y no el hit-test: HTTRANSPARENT tampoco
+        // atraviesa procesos para los clics. Se midió poniendo Paint debajo del hueco:
+        // devolviendo HTTRANSPARENT el clic no le llegaba igual.
+        int top = _tallRegion
+            ? 0
+            : (int)MathF.Floor(_windowHeight - BarHeight
+                - Scale(_config.IconSize) * (_config.Magnification - 1f));
+
         // Si no ha cambiado, no se toca. Cada SetWindowRgn reajusta la forma de la
         // ventana, y esto se llama en CADA reconstrucción: recargar el JSON, reordenar,
         // volver a cargar iconos. Reformar la ventana por nada es justo el momento en
         // que otra cosa puede ganarle la carrera por el borde inferior de la pantalla.
-        if (left == _regionLeft && right == _regionRight) return;
+        if (left == _regionLeft && right == _regionRight && top == _regionTop) return;
 
         _regionLeft = left;
         _regionRight = right;
+        _regionTop = top;
 
-        HRGN region = PInvoke.CreateRectRgn(left, 0, right, (int)_windowHeight);
+        HRGN region = PInvoke.CreateRectRgn(left, top, right, (int)_windowHeight);
 
         if (_config.AutoHide)
         {
@@ -1329,6 +1362,19 @@ internal sealed unsafe class DockWindow : IDisposable
 
         // SetWindowRgn se queda con la región: no hay que borrarla después.
         PInvoke.SetWindowRgn(_hwnd, region, true);
+    }
+
+    /// <summary>
+    /// Sube o baja el techo de la ventana. Se llama al entrar y salir el ratón y al
+    /// empezar y acabar un arrastre, que son los momentos en que aparece o desaparece
+    /// algo por encima de la barra.
+    /// </summary>
+    private void SetTallRegion(bool tall)
+    {
+        if (tall == _tallRegion) return;
+
+        _tallRegion = tall;
+        ApplyRegion();
     }
 
     /// <summary>
@@ -1364,6 +1410,7 @@ internal sealed unsafe class DockWindow : IDisposable
     /// </summary>
     public bool AcceptsDropAt(int screenX, int screenY)
     {
+        SetTallRegion(true);
         (_dropKind, _dropSlot) = KindAt(screenX, screenY);
 
         _visuals?.SetDropTarget(_dropKind == DropKind.Open ? _dropSlot : -1, Scale(_config.IconSize) * 0.25f);
@@ -1428,6 +1475,7 @@ internal sealed unsafe class DockWindow : IDisposable
     /// <summary>El arrastre se fue o terminó: el dock puede volver a esconderse.</summary>
     public void OnDragOutside()
     {
+        if (!_hovering) SetTallRegion(false);
         _visuals?.SetDropTarget(-1, 0f);
         _visuals?.SetAddZone(false);
         _visuals?.SetAddZoneHot(false);

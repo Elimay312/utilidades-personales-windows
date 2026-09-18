@@ -43,6 +43,7 @@ internal static class Program
         Console.WriteLine("Dock - clic derecho sobre el dock para salir");
         Console.WriteLine();
 
+        DockConfig.EnsureSeeded();
         DockConfig config = DockConfig.Load(DockConfig.DefaultPath);
         Console.WriteLine($"[config] {config.Apps.Count} apps");
 

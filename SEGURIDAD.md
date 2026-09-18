@@ -128,6 +128,65 @@ grabación que Windows dibuja alrededor de lo que se está capturando.
   `CreateDIBSection`, `SelectObject`, `DeleteDC`, `DeleteObject`. Dibujar en un bitmap
   propio.
 
+## Enmienda 2 — arrastrar y soltar (2026-09-18)
+
+La fase 3 hace que el dock acepte ficheros arrastrados desde el Explorador. Eso toca
+tres sitios que rozan la lista de prohibiciones, y se aclaran aquí antes de escribir el
+código, no después.
+
+### 1. Leer una suelta NO es leer el portapapeles
+
+La regla 10 prohíbe leer el portapapeles. Recibir un `IDataObject` en `IDropTarget::Drop`
+usa nombres que se le parecen — `CF_HDROP` es un formato *de portapapeles*— y un auditor
+puede confundirlos. Son canales distintos:
+
+- El portapapeles es un almacén del sistema que cualquiera puede leer en cualquier
+  momento, sin que el usuario se entere. **Sigue prohibido.**
+- El objeto de arrastre nos lo entrega el usuario con su gesto, sobre nuestra ventana, y
+  deja de ser válido en cuanto acaba la suelta.
+
+Quedan prohibidas explícitamente `OleGetClipboard`, `GetClipboardData` y
+`OpenClipboard`, y se auditan con grep abajo. Del objeto soltado solo se leen rutas y el
+AppUserModelID; no se guarda en disco ni se analiza su contenido.
+
+### 2. `ShellExecuteExW` con parámetros
+
+Abrir un fichero con una app concreta obliga a pasar un argumento al lanzarla. Es *la*
+API de lanzar procesos y es común en malware, así que:
+
+- Nunca con el verbo `runas` ni con nada que eleve. El verbo va a `NULL`, el de defecto.
+- La ruta viene de una suelta del usuario, no de entrada libre: se normaliza con
+  `GetFullPathName` y se rechaza cualquiera que contenga comillas dobles.
+- Va siempre **entre comillas** en `lpParameters`, que es el patrón canónico del registro.
+- `ShellExecuteEx` no pasa por `cmd.exe`, así que no hay inyección de comandos.
+
+### 3. Los accesos directos se leen, nunca se escriben
+
+Para resolver un `.lnk` soltado hace falta `CLSID_ShellLink` + `IPersistFile::Load`.
+**`IPersistFile::Save` queda prohibido**: escribir accesos directos, sobre todo en
+Inicio o en el escritorio, es persistencia de malware. Solo lectura, y solo del fichero
+que el usuario acaba de soltar.
+
+### 4. Ausencias deliberadas
+
+No basta con no usarlas: se anotan para que se vea que la decisión fue consciente.
+
+| No se usa | Por qué |
+|---|---|
+| `ChangeWindowMessageFilterEx` | Relajar UIPI es patrón de escalada de privilegios, y Microsoft lo desaconseja para este caso concreto. No hace falta corriendo sin elevar |
+| `IPersistFile::Save` | Escribir `.lnk` es persistencia |
+| `IAssocHandler::MakeDefault` | Cambiar la app por defecto de un tipo de fichero es comportamiento de *hijacker* |
+| `OleGetClipboard`, `GetClipboardData` | Regla 10, intacta |
+
+### Corolario — correr sin elevar pasa a ser también un requisito funcional
+
+UIPI bloquea los mensajes de ventana de un proceso de integridad baja a uno de
+integridad alta, y el arrastre se implementa con mensajes de ventana. El Explorador
+corre a integridad media. La regla 1 ya obliga a `asInvoker`, pero a partir de ahora, si
+alguien arrancase el dock elevado, **el arrastrar y soltar dejaría de funcionar en
+silencio**. El dock lo detecta al arrancar y lo avisa por consola en vez de quedarse
+mudo.
+
 ## Corolarios de diseño
 
 - **Sin single-file comprimido.** `EnableCompressionInSingleFile` produce exactamente
@@ -136,8 +195,12 @@ grabación que Windows dibuja alrededor de lo que se está capturando.
   por un analizador estático.
 - **La config vive en texto plano legible** junto al ejecutable. Nada de formato
   binario propietario.
-- **Lanzar apps** se hace con `Process.Start` + `UseShellExecute = true`, que delega en
-  el shell. No `CreateProcess` con flags raros.
+- **Lanzar apps** se hace con `Process.Start` + `UseShellExecute = true`, o con
+  `ShellExecuteExW` cuando hay que pasarle un fichero. Ambas delegan en el shell. No
+  `CreateProcess` con flags raros.
+- **La configuración que el dock escribe va aparte.** `dock.json` es del usuario y no se
+  toca; lo que el dock cambia al reordenar o añadir va a `dock.local.json`, también en
+  texto plano legible y junto al ejecutable.
 
 ## Cómo se audita
 
@@ -153,6 +216,12 @@ git ls-files '*.cs' | xargs grep -rn "SetValue\|DeleteValue\|CreateSubKey"
 
 # Regla 11: toda llamada que toque una ventana ajena tiene que salir de un clic.
 git ls-files '*.cs' | xargs grep -rn "SetForegroundWindow\|ShowWindow\|PrintWindow"
+
+# Enmienda 2: el portapapeles sigue prohibido, y las ausencias deliberadas.
+git ls-files | xargs grep -rn "OleGetClipboard\|GetClipboardData\|OpenClipboard\|ChangeWindowMessageFilterEx\|MakeDefault"
+
+# Enmienda 2: los .lnk se leen, nunca se escriben. No debe aparecer ningun Save.
+git ls-files '*.cs' | xargs grep -rn "IPersistFile"
 ```
 
 La lista completa y cerrada de P/Invokes está en `NativeMethods.txt`, que es el fichero

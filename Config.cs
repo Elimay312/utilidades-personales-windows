@@ -28,13 +28,13 @@ internal sealed class DockApp
     /// </summary>
     public void Launch()
     {
-        // Las apps MSIX no tienen un .exe que lanzar, así que se abren por su
-        // nombre de parsing a través del explorador.
-        ProcessStartInfo info = IsShellItem
-            ? new ProcessStartInfo("explorer.exe", Target)
-            : new ProcessStartInfo(Target) { UseShellExecute = true };
-
-        Process.Start(info);
+        // Una sola ruta para todo. UseShellExecute acaba en ShellExecuteEx, que
+        // entiende tanto una ruta de archivo como un moniker "shell:", así que las
+        // apps MSIX no necesitan nada especial.
+        //
+        // Antes se lanzaban con explorer.exe como proceso intermedio, y eso dejaba
+        // un explorer.exe suelto apareciendo en Alt+Tab.
+        Process.Start(new ProcessStartInfo(Target) { UseShellExecute = true });
     }
 }
 

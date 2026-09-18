@@ -86,6 +86,13 @@ internal sealed unsafe class DockWindow : IDisposable
     /// que ser la MISMA que generó las expresiones, o el icono que se resalta no
     /// coincide con el que se lanza.
     private DockCurve _curve;
+
+    /// Última posición del cursor en coordenadas de reposo. El clic la reutiliza en
+    /// vez de volver a invertir la curva: invertir necesita saber cuánto vale Amount,
+    /// y reutilizar el valor ya calculado es más simple y no puede desincronizarse
+    /// del icono que se está viendo magnificado.
+    private float _lastRest;
+
     private float _windowWidth;
     private float _windowHeight;
     private bool _hovering;
@@ -422,15 +429,13 @@ internal sealed unsafe class DockWindow : IDisposable
         // mensajes. A partir de ahí la animación vive en el proceso de DWM: se
         // verificó bloqueando este hilo 3 s a propósito y viendo que el muelle seguía
         // oscilando (ancho 352 -> 529 -> 500 sin ejecutar nosotros una instrucción).
-        _visuals.SetCursor(CursorToRest(lParam));
+        _lastRest = _curve.Invert(LoWord(lParam), _windowWidth);
+        _visuals.SetCursor(_lastRest);
     }
-
-    /// <summary>Pasa la X del ratón a coordenadas de reposo de la curva.</summary>
-    private float CursorToRest(LPARAM lParam) => _curve.Invert(LoWord(lParam), _windowWidth);
 
     private void OnLeftClick(LPARAM lParam)
     {
-        int index = _visuals?.HitTest(CursorToRest(lParam)) ?? -1;
+        int index = _visuals?.HitTest(_lastRest) ?? -1;
         if (index < 0 || index >= _loaded.Count) return;
 
         DockApp app = _loaded[index].App;

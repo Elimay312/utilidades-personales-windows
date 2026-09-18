@@ -51,6 +51,8 @@ internal sealed unsafe class GenieOverlay : IDisposable
     private readonly CompositionPropertySet _props;
 
     private CompositionSurfaceBrush? _capture;
+    private Action? _onFinished;
+    private bool _reverse;
     private HWND _hwnd;
     private bool _disposed;
 
@@ -103,14 +105,25 @@ internal sealed unsafe class GenieOverlay : IDisposable
 
     /// <summary>
     /// Reproduce el genio y se limpia solo al acabar. Devuelve false si no se pudo, y
-    /// entonces quien llama debe minimizar sin animación.
+    /// entonces quien llama debe minimizar o restaurar sin animación.
     /// </summary>
+    /// <param name="reverse">
+    /// Al revés: la ventana sale del icono en vez de entrar en él. Es el camino de
+    /// vuelta, para cuando se restaura desde el dock.
+    /// </param>
+    /// <param name="onFinished">
+    /// Se llama al acabar, justo antes de desmontar. En el camino de vuelta es donde se
+    /// restaura la ventana de verdad: si se restaurase al empezar, aparecería entera
+    /// debajo del genio y se vería asomar por los bordes.
+    /// </param>
     public static bool Play(
         Compositor compositor,
         RECT monitor,
         CompositionSurfaceBrush capture,
         Vector2 captureSize,
-        in GenieCurve curve)
+        in GenieCurve curve,
+        bool reverse = false,
+        Action? onFinished = null)
     {
         GenieOverlay overlay;
         try
@@ -124,6 +137,8 @@ internal sealed unsafe class GenieOverlay : IDisposable
         }
 
         overlay._capture = capture;
+        overlay._reverse = reverse;
+        overlay._onFinished = onFinished;
         overlay.BuildMesh(capture, captureSize, curve, monitor);
         PInvoke.ShowWindow(overlay._hwnd, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
         overlay.Start();
@@ -200,8 +215,8 @@ internal sealed unsafe class GenieOverlay : IDisposable
             new Vector2(0.45f, 0f), new Vector2(0.2f, 1f));
 
         ScalarKeyFrameAnimation run = _compositor.CreateScalarKeyFrameAnimation();
-        run.InsertKeyFrame(0f, 0f);
-        run.InsertKeyFrame(1f, 1f, ease);
+        run.InsertKeyFrame(0f, _reverse ? 1f : 0f);
+        run.InsertKeyFrame(1f, _reverse ? 0f : 1f, ease);
         run.Duration = TimeSpan.FromMilliseconds(DurationMs);
         _props.StartAnimation("P", run);
 
@@ -211,15 +226,26 @@ internal sealed unsafe class GenieOverlay : IDisposable
         // apelmazada encima de él, y se ve. Disolver el último tramo es lo que lo
         // convierte en "se lo ha tragado" en vez de "ha parado y ha desaparecido".
         ScalarKeyFrameAnimation fade = _compositor.CreateScalarKeyFrameAnimation();
-        fade.InsertKeyFrame(0f, 1f);
-        fade.InsertKeyFrame(0.7f, 1f);
-        fade.InsertKeyFrame(1f, 0f);
+        if (_reverse)
+        {
+            // De vuelta se materializa saliendo del icono, que es el mismo tramo pero
+            // recorrido al revés.
+            fade.InsertKeyFrame(0f, 0f);
+            fade.InsertKeyFrame(0.3f, 1f);
+            fade.InsertKeyFrame(1f, 1f);
+        }
+        else
+        {
+            fade.InsertKeyFrame(0f, 1f);
+            fade.InsertKeyFrame(0.7f, 1f);
+            fade.InsertKeyFrame(1f, 0f);
+        }
         fade.Duration = TimeSpan.FromMilliseconds(DurationMs);
         _root.StartAnimation("Opacity", fade);
 
         // La limpieza va por temporizador y no por callback de la animación: así el
         // desmontaje ocurre en el mismo hilo que lo montó, sin saltos de hilo.
-        PInvoke.SetTimer(_hwnd, EndTimerId, (uint)(DurationMs + 200), null);
+        PInvoke.SetTimer(_hwnd, EndTimerId, (uint)(DurationMs + 80), null);
     }
 
     // --- Expresiones -------------------------------------------------------------
@@ -316,6 +342,10 @@ internal sealed unsafe class GenieOverlay : IDisposable
                 return new LRESULT(HTTRANSPARENT);
 
             case WM_TIMER when wParam.Value == EndTimerId:
+                // Primero la ventana de verdad y luego el desmontaje, en el mismo paso
+                // del bucle de mensajes: así no hay ni un fotograma sin ninguna de las
+                // dos.
+                self?._onFinished?.Invoke();
                 self?.Dispose();
                 return new LRESULT(0);
 

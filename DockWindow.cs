@@ -145,6 +145,16 @@ internal sealed unsafe class DockWindow : IDisposable
     private int _windowLeft;
     private int _windowTop;
 
+    /// <summary>
+    /// El último fotograma de cada ventana que el dock minimizó, para poder reproducir
+    /// el genio al revés al restaurarla. Una ventana minimizada no se puede capturar, y
+    /// restaurarla para capturarla sería justo el parpadeo que se quiere evitar.
+    ///
+    /// Se consume al restaurar, así que solo sobreviven las de las ventanas que están
+    /// minimizadas ahora mismo: como mucho una por icono del dock.
+    /// </summary>
+    private readonly Dictionary<nint, (IconBitmap Shot, Box Source)> _shots = [];
+
     public DockWindow(HMONITOR monitor, DockConfig config)
     {
         _monitor = monitor;
@@ -484,7 +494,11 @@ internal sealed unsafe class DockWindow : IDisposable
                 return new LRESULT(0);
 
             case WM_APP_RUNNING:
-                if (self is not null) self._visuals?.SetRunning([.. self._state.Select(entry => entry.HasWindow)]);
+                if (self is not null)
+                {
+                    self._visuals?.SetRunning([.. self._state.Select(entry => entry.HasWindow)]);
+                    self.DropDeadShots();
+                }
                 return new LRESULT(0);
 
             case WM_MOUSEMOVE:
@@ -637,6 +651,20 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Mira qué apps están abiertas, FUERA del hilo de UI: resolver las MSIX obliga a
     /// recorrer la lista de procesos y eso no puede bloquear el ratón.
     /// </summary>
+    /// <summary>
+    /// Suelta los fotogramas de ventanas que ya no existen. Sin esto, minimizar algo
+    /// con el genio y luego cerrarlo dejaría su captura (varios MB) ahí para siempre.
+    /// </summary>
+    private void DropDeadShots()
+    {
+        if (_shots.Count == 0) return;
+
+        foreach (nint handle in _shots.Keys.Where(h => !PInvoke.IsWindow((HWND)h)).ToList())
+        {
+            _shots.Remove(handle);
+        }
+    }
+
     private void RefreshRunning()
     {
         if (_checkingRunning || _loaded.Count == 0) return;
@@ -756,14 +784,42 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Monta y arranca el genio hacia el icono <paramref name="index"/>. Devuelve false
     /// si algo no salió, y entonces el minimizado va sin animación.
     /// </summary>
+    /// <summary>
+    /// Traga la ventana hacia su icono. Devuelve false si algo no salió, y entonces el
+    /// minimizado va sin animación.
+    /// </summary>
     private bool PlayGenie(int index, HWND window)
     {
-        if (_visuals is null || index >= _curve.Count) return false;
         if (!PInvoke.GetWindowRect(window, out RECT rect)) return false;
         if (rect.right <= rect.left || rect.bottom <= rect.top) return false;
 
         IconBitmap? shot = WindowCapture.Capture(window);
         if (shot is null) return false;
+
+        Box source = new(rect.left, rect.top, rect.right, rect.bottom);
+
+        // Guardado para el camino de vuelta: una ventana minimizada ya no se puede
+        // capturar, así que el único fotograma que habrá nunca es este.
+        _shots[(nint)window.Value] = (shot, source);
+
+        return Genie(index, source, shot, reverse: false, onFinished: null);
+    }
+
+    /// <summary>
+    /// La saca del icono. Solo funciona si la minimizó el propio dock, porque es de ahí
+    /// de donde sale el fotograma.
+    /// </summary>
+    private bool PlayGenieBack(int index, HWND window)
+    {
+        if (!_shots.Remove((nint)window.Value, out (IconBitmap Shot, Box Source) saved)) return false;
+
+        return Genie(index, saved.Source, saved.Shot, reverse: true,
+            onFinished: () => WindowActions.BringToFront(window, instant: true));
+    }
+
+    private bool Genie(int index, Box source, IconBitmap shot, bool reverse, Action? onFinished)
+    {
+        if (_visuals is null || index >= _curve.Count) return false;
 
         MONITORINFO info = new() { cbSize = (uint)sizeof(MONITORINFO) };
         if (!PInvoke.GetMonitorInfo(_monitor, &info)) return false;
@@ -784,14 +840,15 @@ internal sealed unsafe class DockWindow : IDisposable
         float middle = bottom - size * 0.5f;
         float thin = size * 0.10f;
         Box target = new(left, middle - thin, right, middle + thin);
-        Box source = new(rect.left, rect.top, rect.right, rect.bottom);
 
         return GenieOverlay.Play(
             _visuals.Compositor,
             info.rcMonitor,
             _visuals.CreateBitmapBrush(shot),
             new Vector2(shot.Width, shot.Height),
-            new GenieCurve(source, target, GenieOverlay.Slices));
+            new GenieCurve(source, target, GenieOverlay.Slices),
+            reverse,
+            onFinished);
     }
 
     private void OnLeftClick(LPARAM lParam)
@@ -824,8 +881,12 @@ internal sealed unsafe class DockWindow : IDisposable
 
         if (state.HasWindow)
         {
-            WindowActions.BringToFront(state.MainWindow);
-            Console.WriteLine($"[dock] al frente '{app.Name}'");
+            // Si la minimizó el dock, vuelve saliendo del icono. El genio restaura la
+            // ventana él mismo al acabar, por eso aquí no se hace nada más.
+            bool genie = WindowActions.IsMinimized(state.MainWindow) && PlayGenieBack(index, state.MainWindow);
+            if (!genie) WindowActions.BringToFront(state.MainWindow);
+
+            Console.WriteLine($"[dock] al frente '{app.Name}'{(genie ? " con genio" : "")}");
             return;
         }
 

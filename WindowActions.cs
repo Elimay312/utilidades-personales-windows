@@ -38,11 +38,22 @@ internal static unsafe class WindowActions
     /// nuestra cola de entrada a la del hilo dueño de la ventana es el rodeo documentado
     /// para los casos en que la condición anterior no basta. Se desadjunta siempre.
     /// </summary>
-    public static void BringToFront(HWND window)
+    public static void BringToFront(HWND window, bool instant = false)
     {
         if (window.IsNull) return;
 
-        if (PInvoke.IsIconic(window)) PInvoke.ShowWindow(window, SHOW_WINDOW_CMD.SW_RESTORE);
+        if (PInvoke.IsIconic(window))
+        {
+            // Igual que al minimizar: si el genio ya ha hecho la animación, la de
+            // Windows sobra. Ver Minimize.
+            uint off = 1;
+            if (instant) PInvoke.DwmSetWindowAttribute(window, DWMWINDOWATTRIBUTE.DWMWA_TRANSITIONS_FORCEDISABLED, &off, 4);
+
+            PInvoke.ShowWindow(window, SHOW_WINDOW_CMD.SW_RESTORE);
+
+            uint on = 0;
+            if (instant) PInvoke.DwmSetWindowAttribute(window, DWMWINDOWATTRIBUTE.DWMWA_TRANSITIONS_FORCEDISABLED, &on, 4);
+        }
 
         uint target = PInvoke.GetWindowThreadProcessId(window, null);
         uint self = PInvoke.GetCurrentThreadId();

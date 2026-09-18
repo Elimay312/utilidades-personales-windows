@@ -122,6 +122,7 @@ internal sealed unsafe class DockWindow : IDisposable
 
     private HWND _hwnd;
     private DockVisuals? _visuals;
+    private DockDropTarget? _dropTarget;
     private uint _dpi = 96;
     private bool _trackingMouse;
 
@@ -289,6 +290,14 @@ internal sealed unsafe class DockWindow : IDisposable
         // queda transparente y deja ver el material acrílico de DWM.
         _visuals = new DockVisuals(_hwnd);
 
+        // A partir de aquí la ventana acepta sueltas del Explorador. Devuelve
+        // E_OUTOFMEMORY si el hilo se inicializó con CoInitialize en vez de
+        // OleInitialize, que es la trampa que documenta la propia API; por eso
+        // Program lo hace lo primero de todo.
+        _dropTarget = new DockDropTarget(this);
+        HRESULT hr = PInvoke.RegisterDragDrop(_hwnd, _dropTarget);
+        Console.WriteLine($"[drop] RegisterDragDrop -> 0x{(uint)hr.Value:X8}");
+
         // Vigilancia del z-order. No es animación (eso va en el compositor): es una
         // comprobación de 1 vez por segundo de que seguimos arriba.
         //
@@ -441,6 +450,12 @@ internal sealed unsafe class DockWindow : IDisposable
             Scale(_config.IconSize));
 
         Console.WriteLine($"[iconos] {_loaded.Count} elementos");
+
+        // Aquí y no en ComputeBounds: la región depende del ancho de la barra, y ese
+        // no se sabe hasta tener la curva, que es justo lo que se acaba de construir.
+        // Todos los caminos que recolocan la ventana (recarga, cambio de DPI,
+        // reordenar) acaban pasando por aquí.
+        ApplyRegion();
 
         if (_config.AutoHide)
         {
@@ -985,6 +1000,84 @@ internal sealed unsafe class DockWindow : IDisposable
         else StartIconLoad();
     }
 
+
+    /// <summary>
+    /// Recorta la ventana a lo que de verdad es dock, y deja pasar el resto.
+    ///
+    /// La ventana ocupa todo el ancho del monitor pero casi todo es aire. Hasta ahora
+    /// eso se resolvía devolviendo HTTRANSPARENT desde WM_NCHITTEST, y para los CLICS
+    /// funciona. Para las SUELTAS no: el spike de F2a midió que el Explorador, que es
+    /// otro proceso, manda DragEnter y 30 DragOver sobre la zona transparente. O sea
+    /// que el dock se tragaría las sueltas de todo el borde inferior de la pantalla.
+    ///
+    /// <para>
+    /// Con una región, los píxeles de fuera no son de la ventana en absoluto: el
+    /// sistema los excluye del hit testing en el kernel y no hay ambigüedad entre
+    /// procesos. Es lo que la documentación de WS_EX_TRANSPARENT recomienda para lograr
+    /// transparencia sin sus limitaciones.
+    /// </para>
+    ///
+    /// Son dos rectángulos:
+    /// <list type="bullet">
+    /// <item>La franja central, de <b>alto completo</b>. No puede ser solo la barra: los
+    /// iconos magnificados crecen hacia arriba y la región también recorta lo que se
+    /// dibuja, así que se quedarían cortados por la mitad.</item>
+    /// <item>La franja de revelado, a lo ancho de todo, para que el dock siga
+    /// asomándose empujando el ratón a cualquier punto del borde inferior.</item>
+    /// </list>
+    /// </summary>
+    private void ApplyRegion()
+    {
+        // El ancho máximo de la barra: la curva no puede ensanchar más de MaxGrowth, y
+        // Origin la mantiene siempre centrada.
+        float widest = _curve.Count > 0 ? _curve.RestWidth + _curve.MaxGrowth : _windowWidth;
+        int half = (int)MathF.Ceiling(widest * 0.5f + Scale(LogicalPadding)) + 2;
+        int center = (int)(_windowWidth * 0.5f);
+
+        HRGN region = PInvoke.CreateRectRgn(center - half, 0, center + half, (int)_windowHeight);
+
+        if (_config.AutoHide)
+        {
+            HRGN strip = PInvoke.CreateRectRgn(
+                0, _revealTop - _windowTop, (int)_windowWidth, (int)_windowHeight);
+
+            PInvoke.CombineRgn(region, region, strip, RGN_COMBINE_MODE.RGN_OR);
+            PInvoke.DeleteObject((HGDIOBJ)(nint)strip.Value);
+        }
+
+        // SetWindowRgn se queda con la región: no hay que borrarla después.
+        PInvoke.SetWindowRgn(_hwnd, region, true);
+    }
+
+    /// <summary>
+    /// Qué icono hay bajo ese punto de PANTALLA, o -1 si ahí no hay barra.
+    ///
+    /// Lo llama el destino de sueltas, que recibe las coordenadas en pantalla y no en
+    /// cliente. De paso revela el dock: mientras se arrastra algo por encima tiene que
+    /// estar a la vista, o no habría dónde soltarlo.
+    /// </summary>
+    public int SlotAtScreen(int screenX, int screenY)
+    {
+        if (_visuals is null || _curve.Count == 0) return -1;
+
+        int y = screenY - _windowTop;
+        if (y < _windowHeight - BarHeight || y > _windowHeight) return -1;
+
+        Reveal();
+
+        float rest = _curve.Invert(screenX - _windowLeft, _windowWidth);
+        _visuals.SetCursor(rest);
+
+        (float left, float right) = BarBounds();
+        float x = screenX - _windowLeft;
+        if (x < left || x > right) return -1;
+
+        return _visuals.HitTest(rest);
+    }
+
+    /// <summary>El arrastre se fue o terminó: el dock puede volver a esconderse.</summary>
+    public void OnDragOutside() => ScheduleHide();
+
     /// <summary>Deshace un arrastre a medias y devuelve todo a su sitio.</summary>
     private void CancelDrag()
     {
@@ -1166,6 +1259,9 @@ internal sealed unsafe class DockWindow : IDisposable
         if (_hwnd.IsNull) return;
         PInvoke.KillTimer(_hwnd, TopmostTimerId);
         PInvoke.KillTimer(_hwnd, HideTimerId);
+        if (!_hwnd.IsNull && _dropTarget is not null) PInvoke.RevokeDragDrop(_hwnd);
+        _dropTarget = null;
+
         _visuals?.Dispose();
         PInvoke.DestroyWindow(_hwnd);
         _hwnd = default;

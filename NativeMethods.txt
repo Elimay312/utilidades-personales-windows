@@ -123,3 +123,16 @@ SelectObject
 DeleteDC
 GetDC
 ReleaseDC
+
+// --- Arrastrar y soltar (Fase 3, enmienda 2 de SEGURIDAD.md) ---
+// Receptivo: solo recibe lo que el usuario suelta sobre nuestra ventana. El
+// portapapeles sigue prohibido, y no aparece aqui OleGetClipboard ni nada parecido.
+CreateRectRgn
+CombineRgn
+SetWindowRgn
+OleInitialize
+OleUninitialize
+RegisterDragDrop
+RevokeDragDrop
+IDropTarget
+DROPEFFECT

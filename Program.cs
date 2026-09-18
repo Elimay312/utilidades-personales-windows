@@ -1,5 +1,7 @@
 using System.Text;
 using Dock;
+using Windows.Win32;
+using Windows.Win32.Foundation;
 
 internal static class Program
 {
@@ -18,6 +20,15 @@ internal static class Program
             const uint AttachParentProcess = 0xFFFFFFFF;
             Windows.Win32.PInvoke.AttachConsole(AttachParentProcess);
         }
+
+        // OleInitialize LO PRIMERO, antes de tocar nada de COM.
+        //
+        // No vale CoInitialize: la documentacion de RegisterDragDrop dice que si el
+        // hilo se inicializo con CoInitialize/CoInitializeEx, RegisterDragDrop
+        // "will always return an E_OUTOFMEMORY error". Y [STAThread] hace que el CLR
+        // inicialice COM en cuanto se usa, asi que hay que ganarle la mano.
+        HRESULT ole = PInvoke.OleInitialize();
+        if (ole.Failed) Console.WriteLine($"[ole] OleInitialize fallo: 0x{(uint)ole.Value:X8}");
 
         // La consola de Windows usa la codificacion ANSI del sistema por defecto
         // y destroza los acentos.
@@ -49,6 +60,9 @@ internal static class Program
         DockWindow.RunMessageLoop();
 
         foreach (DockWindow dock in docks) dock.Dispose();
+
+        // Despues de revocar los destinos de sueltas, que se hace en Dispose.
+        PInvoke.OleUninitialize();
 
         Console.WriteLine("[dock] salida limpia");
     }

@@ -33,7 +33,7 @@ internal sealed unsafe class GenieOverlay : IDisposable
 {
     private const string ClassName = "DockGenieOverlayClass";
     public const int Slices = 40;
-    private const int DurationMs = 700;
+    private const int DurationMs = 400;
 
     private const uint WM_DESTROY = 0x0002;
     private const uint WM_NCHITTEST = 0x0084;
@@ -193,15 +193,33 @@ internal sealed unsafe class GenieOverlay : IDisposable
 
     private void Start()
     {
+        // Lineal se siente muerta: el genio arranca despacio, coge velocidad por el
+        // medio y se mete de golpe en el icono. Eso es lo que da la sensación de que
+        // algo se está tragando la ventana, y no la duración a secas.
+        CompositionEasingFunction ease = _compositor.CreateCubicBezierEasingFunction(
+            new Vector2(0.45f, 0f), new Vector2(0.2f, 1f));
+
         ScalarKeyFrameAnimation run = _compositor.CreateScalarKeyFrameAnimation();
-        run.InsertKeyFrame(0f, 0f, _compositor.CreateLinearEasingFunction());
-        run.InsertKeyFrame(1f, 1f, _compositor.CreateLinearEasingFunction());
+        run.InsertKeyFrame(0f, 0f);
+        run.InsertKeyFrame(1f, 1f, ease);
         run.Duration = TimeSpan.FromMilliseconds(DurationMs);
         _props.StartAnimation("P", run);
 
+        // Sin esto el genio no se absorbe: se queda quieto en su último fotograma y
+        // desaparece de golpe cuando se destruye la superposición. Aunque en p=1 la
+        // malla mide exactamente lo que el icono, sigue siendo la ventana entera
+        // apelmazada encima de él, y se ve. Disolver el último tramo es lo que lo
+        // convierte en "se lo ha tragado" en vez de "ha parado y ha desaparecido".
+        ScalarKeyFrameAnimation fade = _compositor.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(0f, 1f);
+        fade.InsertKeyFrame(0.7f, 1f);
+        fade.InsertKeyFrame(1f, 0f);
+        fade.Duration = TimeSpan.FromMilliseconds(DurationMs);
+        _root.StartAnimation("Opacity", fade);
+
         // La limpieza va por temporizador y no por callback de la animación: así el
         // desmontaje ocurre en el mismo hilo que lo montó, sin saltos de hilo.
-        PInvoke.SetTimer(_hwnd, EndTimerId, (uint)(DurationMs + 120), null);
+        PInvoke.SetTimer(_hwnd, EndTimerId, (uint)(DurationMs + 200), null);
     }
 
     // --- Expresiones -------------------------------------------------------------

@@ -8,8 +8,14 @@ using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Dock;
 
-/// <summary>Estado de una app del dock: si corre, y cuál es su ventana principal.</summary>
-internal readonly record struct AppState(bool IsRunning, HWND MainWindow)
+/// <summary>Estado de una app del dock: su ventana principal, si tiene alguna.</summary>
+///
+/// <remarks>
+/// "Abierta" quiere decir <b>que tiene ventana</b>, no que haya un proceso vivo. Con
+/// los procesos a secas el Explorador salía siempre abierto, porque explorer.exe es el
+/// shell y nunca se va, y el puntito mentía.
+/// </remarks>
+internal readonly record struct AppState(HWND MainWindow)
 {
     public bool HasWindow => !MainWindow.IsNull;
 }
@@ -17,10 +23,9 @@ internal readonly record struct AppState(bool IsRunning, HWND MainWindow)
 /// <summary>
 /// Averigua qué apps del dock están abiertas y dónde está su ventana.
 ///
-/// Lo primero (el puntito de "abierta") solo mira PROCESOS, nunca ventanas. Lo segundo
-/// sí enumera ventanas, y por eso está sujeto a la enmienda 1 de SEGURIDAD.md: solo se
-/// usa para localizar la app del icono que el usuario acaba de clicar, el resultado se
-/// usa y se tira, y no se inventaría nada.
+/// Enumera ventanas, y por eso está sujeto a la enmienda 1 de SEGURIDAD.md: solo se usa
+/// para saber qué iconos llevan puntito y para localizar la app del icono que el usuario
+/// acaba de clicar. El resultado se usa y se tira, y no se inventaría nada.
 /// </summary>
 internal static class Running
 {
@@ -36,6 +41,17 @@ internal static class Running
     private const string UwpCoreClass = "Windows.UI.Core.CoreWindow";
 
     /// <summary>
+    /// Marco UWP -> PID de la app, recordado de cuando sí se pudo resolver.
+    ///
+    /// Al minimizarse una app UWP, Windows le saca la CoreWindow de dentro del marco y
+    /// la deja como ventana de primer nivel aparte. A partir de ahí FindWindowEx no
+    /// encuentra nada dentro del marco y la ventana dejaría de cruzar con su icono: el
+    /// dock creería que la app está cerrada y el siguiente clic abriría OTRA instancia,
+    /// que es exactamente lo que pasaba con la Calculadora.
+    /// </summary>
+    private static readonly Dictionary<nint, uint> UwpOwners = [];
+
+    /// <summary>
     /// Resuelve de una pasada el estado de todas las apps. De una pasada y no una por
     /// una porque tanto los procesos como las ventanas se recorren enteros: hacerlo una
     /// vez por icono sería tirar el trabajo.
@@ -47,17 +63,12 @@ internal static class Running
         // PID -> índice de app, para poder cruzar después con las ventanas.
         Dictionary<uint, int> owners = MapProcessesToApps(apps);
 
-        foreach (int index in owners.Values)
-        {
-            result[index] = new AppState(true, default);
-        }
-
         foreach ((HWND window, uint pid) in TopLevelWindows())
         {
             if (!owners.TryGetValue(pid, out int index)) continue;
             if (result[index].HasWindow) continue;
 
-            result[index] = new AppState(true, window);
+            result[index] = new AppState(window);
         }
 
         return result;
@@ -159,8 +170,14 @@ internal static class Running
     {
         List<(HWND, uint)> found = [];
 
+        // El escritorio es una ventana de explorer.exe CON título ("Program Manager"),
+        // así que pasaba todos los filtros: el Explorador salía siempre abierto y el
+        // clic minimizaba el escritorio entero.
+        HWND desktop = PInvoke.GetShellWindow();
+
         PInvoke.EnumWindows((window, _) =>
         {
+            if (window == desktop) return true;
             if (!PInvoke.IsWindowVisible(window)) return true;
             if (!PInvoke.GetWindow(window, GET_WINDOW_CMD.GW_OWNER).IsNull) return true;
             if (PInvoke.GetWindowTextLength(window) == 0) return true;
@@ -194,12 +211,21 @@ internal static class Running
         fixed (char* child = UwpCoreClass)
         {
             HWND core = PInvoke.FindWindowEx(window, default, new PCWSTR(child), default);
-            if (core.IsNull) return hostPid;
-
-            uint pid = 0;
-            PInvoke.GetWindowThreadProcessId(core, &pid);
-            return pid == 0 ? hostPid : pid;
+            if (!core.IsNull)
+            {
+                uint pid = 0;
+                PInvoke.GetWindowThreadProcessId(core, &pid);
+                if (pid != 0)
+                {
+                    UwpOwners[(nint)window.Value] = pid;
+                    return pid;
+                }
+            }
         }
+
+        // Minimizada: la CoreWindow ya no está dentro. Vale lo que se resolvió mientras
+        // estaba a la vista, que el dock consulta cada segundo.
+        return UwpOwners.TryGetValue((nint)window.Value, out uint remembered) ? remembered : hostPid;
     }
 
     private static unsafe string ClassNameOf(HWND window)

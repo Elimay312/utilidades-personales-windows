@@ -96,6 +96,7 @@ GetPackageFamilyName
 // --- Localizar y gobernar la ventana de la app clicada (enmienda 1 de SEGURIDAD.md) ---
 // Solo se usan tras un clic del usuario sobre un icono del dock. Nunca en segundo plano.
 EnumWindows
+GetShellWindow
 GetWindowThreadProcessId
 IsWindowVisible
 IsIconic

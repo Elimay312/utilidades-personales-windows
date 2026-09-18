@@ -484,7 +484,7 @@ internal sealed unsafe class DockWindow : IDisposable
                 return new LRESULT(0);
 
             case WM_APP_RUNNING:
-                if (self is not null) self._visuals?.SetRunning([.. self._state.Select(entry => entry.IsRunning)]);
+                if (self is not null) self._visuals?.SetRunning([.. self._state.Select(entry => entry.HasWindow)]);
                 return new LRESULT(0);
 
             case WM_MOUSEMOVE:
@@ -775,7 +775,15 @@ internal sealed unsafe class DockWindow : IDisposable
 
         // El icono crece hacia arriba desde su borde inferior, que no se mueve.
         float bottom = _windowTop + _windowHeight - Scale(LogicalPadding);
-        Box target = new(left, bottom - (right - left), right, bottom);
+        float size = right - left;
+
+        // El destino NO es el icono entero: es una franja fina en su centro. Apuntando
+        // al icono completo, la ventana acababa como una miniatura de 60x60 parada
+        // encima, y eso se lee como "ha parado y ha desaparecido" en vez de "se lo ha
+        // tragado". Con la franja, el último tramo se consume al entrar.
+        float middle = bottom - size * 0.5f;
+        float thin = size * 0.10f;
+        Box target = new(left, middle - thin, right, middle + thin);
         Box source = new(rect.left, rect.top, rect.right, rect.bottom);
 
         return GenieOverlay.Play(

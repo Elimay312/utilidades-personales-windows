@@ -21,6 +21,10 @@
   "apps": [
     { "name": "Explorador",    "target": "C:/Windows/explorer.exe" },
     { "name": "Bloc de notas", "target": "C:/Windows/System32/notepad.exe" },
+
+    // Un separador: ocupa mucho menos que un icono y solo pinta una raya.
+    { "separator": true },
+
     { "name": "Paint",         "target": "shell:AppsFolder/Microsoft.Paint_8wekyb3d8bbwe!App" },
     { "name": "Calculadora",   "target": "shell:AppsFolder/Microsoft.WindowsCalculator_8wekyb3d8bbwe!App" }
   ]

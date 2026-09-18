@@ -96,8 +96,21 @@ internal static class DockExpressions
     /// hacia arriba y hacia la derecha desde ahí, así que el offset es directamente el
     /// borde izquierdo proyectado.
     /// </summary>
-    public static string IconOffset(in DockCurve curve, int index, float restTop)
-        => $"Vector3({Origin} + {Transfer(curve, curve.RestLeft(index))}, {F(restTop)}, 0)";
+    /// <param name="bounce">
+    /// Referencia a la propiedad de rebote del propio visual. Va restando en la Y, así
+    /// que el icono salta hacia arriba sin pelearse con la ExpressionAnimation que ya
+    /// es dueña de Offset.
+    /// </param>
+    public static string IconOffset(in DockCurve curve, int index, float restTop, string bounce)
+        => $"Vector3({Origin} + {Transfer(curve, curve.RestLeft(index))}, {F(restTop)} - {bounce}, 0)";
+
+    /// <summary>Centro horizontal del elemento, para colgarle el punto de "abierta".</summary>
+    public static string ItemCenter(in DockCurve curve, int index, float dotSize, float top)
+    {
+        string left = Transfer(curve, curve.RestLeft(index));
+        string right = Transfer(curve, curve.RestRight(index));
+        return $"Vector3({Origin} + ({left} + {right})*0.5 - {F(dotSize * 0.5f)}, {F(top)}, 0)";
+    }
 
     /// <summary>
     /// Escala del icono: el ancho proyectado partido por el de reposo. Se mapean los
@@ -109,8 +122,9 @@ internal static class DockExpressions
         float a = curve.RestLeft(index);
         float b = curve.RestRight(index);
         float growth = (curve.MaxScale - 1f) * curve.Radius;
+        float content = curve.Slot(index).ContentWidth;
 
-        string scale = $"(({F(b - a)} + {F(growth)}*{Amount}*({GAt(curve, b)} - {GAt(curve, a)}))*{F(1f / curve.IconSize)})";
+        string scale = $"(({F(b - a)} + {F(growth)}*{Amount}*({GAt(curve, b)} - {GAt(curve, a)}))*{F(1f / content)})";
         return $"Vector3({scale}, {scale}, 1)";
     }
 

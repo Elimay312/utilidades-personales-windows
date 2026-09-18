@@ -20,6 +20,12 @@ internal sealed class DockApp
     /// </summary>
     public string Target { get; init; } = "";
 
+    /// <summary>
+    /// Una raya vertical para separar grupos, en vez de una app. Ocupa mucho menos
+    /// espacio que un icono: la curva admite ranuras de ancho variable.
+    /// </summary>
+    public bool Separator { get; init; }
+
     public bool IsShellItem => Target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
@@ -80,6 +86,12 @@ internal sealed class DockConfig
         List<DockApp> valid = [];
         foreach (DockApp app in config.Apps)
         {
+            if (app.Separator)
+            {
+                valid.Add(app);
+                continue;
+            }
+
             if (string.IsNullOrWhiteSpace(app.Target))
             {
                 Console.WriteLine($"[config] omitida '{app.Name}': sin target");

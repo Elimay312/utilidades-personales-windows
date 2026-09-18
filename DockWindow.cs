@@ -76,6 +76,9 @@ internal sealed unsafe class DockWindow : IDisposable
     /// dock.json cambió en disco. WM_APP + 2.
     private const uint WM_APP_RELOAD = 0x8002;
 
+    /// Terminó de mirarse qué apps están abiertas. WM_APP + 3.
+    private const uint WM_APP_RUNNING = 0x8003;
+
     // IDC_ARROW = MAKEINTRESOURCE(32512)
     private const int IdcArrow = 32512;
 
@@ -107,8 +110,13 @@ internal sealed unsafe class DockWindow : IDisposable
     private uint _dpi = 96;
     private bool _trackingMouse;
 
-    /// Apps que sí llegaron a tener icono, en el mismo orden que los visuals.
-    private List<(DockApp App, IconBitmap Icon)> _loaded = [];
+    /// Elementos del dock en el mismo orden que los visuals. El icono es null en los
+    /// separadores, que no tienen app detrás.
+    private List<(DockApp App, IconBitmap? Icon)> _loaded = [];
+
+    /// Qué apps están abiertas. Se recalcula fuera del hilo de UI.
+    private bool[] _running = [];
+    private bool _checkingRunning;
 
     /// Curva vigente, con la que se invierte el cursor y se hace el hit-test. Tiene
     /// que ser la MISMA que generó las expresiones, o el icono que se resalta no
@@ -251,14 +259,30 @@ internal sealed unsafe class DockWindow : IDisposable
     /// <summary>Cuánto hay que deslizar el contenido para dejar solo la franja.</summary>
     private float HiddenOffset => BarHeight - Scale(LogicalRevealStrip);
 
-    private DockCurve CurveFor(int count) => new()
+    /// <summary>
+    /// Construye la curva a partir de una lista de elementos. Los separadores ocupan
+    /// una ranura mucho más estrecha que un icono, que es justo para lo que la curva
+    /// admite ranuras de ancho variable.
+    /// </summary>
+    private DockCurve CurveFor(IReadOnlyList<DockApp> apps)
     {
-        IconSize = Scale(_config.IconSize),
-        Spacing = Scale(_config.IconSpacing),
-        Count = count,
-        Radius = Scale(_config.IconSize + _config.IconSpacing) * RadiusInSlots,
-        MaxScale = MaxScale,
-    };
+        float icon = Scale(_config.IconSize);
+        float spacing = Scale(_config.IconSpacing);
+        float separator = MathF.Max(2f, spacing * 0.2f);
+
+        List<DockSlot> slots = [];
+        foreach (DockApp app in apps)
+        {
+            slots.Add(app.Separator
+                ? new DockSlot(separator + spacing, separator)
+                : new DockSlot(icon + spacing, icon));
+        }
+
+        // Aunque no haya nada configurado, la ventana necesita un tamaño con sentido.
+        if (slots.Count == 0) slots.Add(new DockSlot(icon + spacing, icon));
+
+        return new DockCurve(slots, radius: (icon + spacing) * RadiusInSlots, maxScale: MaxScale);
+    }
 
     /// <summary>Rectángulo del dock en píxeles físicos, centrado abajo en su monitor.</summary>
     private (int X, int Y, int W, int H) ComputeBounds()
@@ -278,10 +302,9 @@ internal sealed unsafe class DockWindow : IDisposable
         //
         // El alto sí es el del caso máximo: tiene que caber el icono magnificado, que
         // crece hacia arriba. Lo que se ve moverse es la barra de fondo, no la ventana.
-        DockCurve curve = CurveFor(Math.Max(_config.Apps.Count, 1));
         float padding = Scale(LogicalPadding);
         int w = info.rcWork.right - info.rcWork.left;
-        int h = (int)MathF.Ceiling(curve.IconSize * MaxScale + padding * 2f);
+        int h = (int)MathF.Ceiling(Scale(_config.IconSize) * MaxScale + padding * 2f);
 
         RECT work = info.rcWork;
         int x = work.left;
@@ -321,9 +344,16 @@ internal sealed unsafe class DockWindow : IDisposable
 
         Task.Run(() =>
         {
-            List<(DockApp, IconBitmap)> loaded = [];
+            List<(DockApp, IconBitmap?)> loaded = [];
             foreach (DockApp app in apps)
             {
+                // Un separador no tiene icono que extraer: ocupa su ranura y ya.
+                if (app.Separator)
+                {
+                    loaded.Add((app, null));
+                    continue;
+                }
+
                 try
                 {
                     IconBitmap? cached;
@@ -351,21 +381,25 @@ internal sealed unsafe class DockWindow : IDisposable
     {
         if (_visuals is null) return;
 
-        _curve = CurveFor(_loaded.Count);
+        _curve = CurveFor([.. _loaded.Select(entry => entry.App)]);
         _visuals.Build(
             _curve,
             [.. _loaded.Select(entry => entry.Icon)],
             _windowWidth,
             _windowHeight,
-            Scale(LogicalPadding));
+            Scale(LogicalPadding),
+            Scale(_config.IconSize));
 
-        Console.WriteLine($"[iconos] {_loaded.Count} listos");
+        Console.WriteLine($"[iconos] {_loaded.Count} elementos");
 
         if (_config.AutoHide)
         {
             _hidden = true;
             _visuals.SetHidden(true, HiddenOffset);
         }
+
+        // Estado inicial de los puntos, sin esperar al primer latido.
+        RefreshRunning();
     }
 
     public void Show()
@@ -443,6 +477,10 @@ internal sealed unsafe class DockWindow : IDisposable
 
             case WM_APP_RELOAD:
                 self?.OnReload();
+                return new LRESULT(0);
+
+            case WM_APP_RUNNING:
+                if (self is not null) self._visuals?.SetRunning(self._running);
                 return new LRESULT(0);
 
             case WM_MOUSEMOVE:
@@ -588,6 +626,33 @@ internal sealed unsafe class DockWindow : IDisposable
         }
 
         EnsureTopmost();
+        RefreshRunning();
+    }
+
+    /// <summary>
+    /// Mira qué apps están abiertas, FUERA del hilo de UI: resolver las MSIX obliga a
+    /// recorrer la lista de procesos y eso no puede bloquear el ratón.
+    /// </summary>
+    private void RefreshRunning()
+    {
+        if (_checkingRunning || _loaded.Count == 0) return;
+        _checkingRunning = true;
+
+        HWND hwnd = _hwnd;
+        List<DockApp> apps = [.. _loaded.Select(entry => entry.App)];
+
+        Task.Run(() =>
+        {
+            try
+            {
+                _running = Running.Check(apps);
+                PInvoke.PostMessage(hwnd, WM_APP_RUNNING, default, default);
+            }
+            finally
+            {
+                _checkingRunning = false;
+            }
+        });
     }
 
     /// <summary>
@@ -689,6 +754,11 @@ internal sealed unsafe class DockWindow : IDisposable
         if (index < 0 || index >= _loaded.Count) return;
 
         DockApp app = _loaded[index].App;
+        if (app.Separator) return;
+
+        // El rebote arranca ya, sin esperar a que la app abra: es acuse de recibo del
+        // clic. Corre en el compositor, así que ni le afecta lo que tarde ShellExecute.
+        _visuals?.Bounce(index, Scale(_config.IconSize) * 0.35f);
 
         // Lanzar fuera de este hilo: Process.Start con UseShellExecute acaba en
         // ShellExecuteEx, que puede bloquear varios segundos, y este hilo es el que

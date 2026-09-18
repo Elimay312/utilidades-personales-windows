@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
 using Windows.Graphics.DirectX;
+using Windows.UI;
 using Windows.UI.Composition;
 using Windows.UI.Composition.Desktop;
 using Windows.Win32;
@@ -46,6 +47,12 @@ internal sealed unsafe class DockVisuals : IDisposable
     private readonly CompositionPropertySet _props;
 
     private DockCurve _curve;
+
+    /// Un visual por ranura: icono o separador.
+    private readonly List<SpriteVisual> _items = [];
+
+    /// El punto de "app abierta" de cada ranura, o null si es un separador.
+    private readonly List<SpriteVisual?> _dots = [];
 
     public DockVisuals(HWND hwnd)
     {
@@ -206,59 +213,151 @@ internal sealed unsafe class DockVisuals : IDisposable
     }
 
     /// <summary>
-    /// Monta el dock entero: barra de fondo e iconos, cada uno con sus dos
-    /// ExpressionAnimation. A partir de aquí el hilo de UI no vuelve a tocar la
-    /// geometría: solo escribe el cursor en el property set.
+    /// Monta el dock entero: barra de fondo, elementos y sus puntos de estado, cada
+    /// uno con sus ExpressionAnimation. A partir de aquí el hilo de UI no vuelve a
+    /// tocar la geometría: solo escribe el cursor en el property set.
     /// </summary>
+    /// <param name="items">
+    /// Un icono por elemento, o null si esa ranura es un separador.
+    /// </param>
     public void Build(
         in DockCurve curve,
-        IReadOnlyList<IconBitmap> icons,
+        IReadOnlyList<IconBitmap?> items,
         float windowWidth,
         float windowHeight,
-        float padding)
+        float padding,
+        float iconSize)
     {
         _curve = curve;
         _root.Children.RemoveAll();
+        _items.Clear();
+        _dots.Clear();
 
-        // Los subterminos compartidos de la curva, calculados una sola vez.
+        // Los subtérminos compartidos de la curva, calculados una sola vez.
         DockExpressions.Setup(_compositor, _props, curve, windowWidth);
 
-        float barHeight = curve.IconSize + padding * 2f;
+        float barHeight = iconSize + padding * 2f;
         float barTop = windowHeight - barHeight;
-        float iconTop = windowHeight - padding - curve.IconSize;
+        float iconTop = windowHeight - padding - iconSize;
 
         BuildBar(padding, barTop, barHeight);
 
-        for (int i = 0; i < icons.Count; i++)
+        float dotSize = MathF.Max(4f, padding * 0.4f);
+        float dotTop = windowHeight - padding + (padding - dotSize) * 0.5f;
+
+        for (int i = 0; i < items.Count; i++)
         {
+            float content = curve.Slot(i).ContentWidth;
             SpriteVisual visual = _compositor.CreateSpriteVisual();
-            visual.Brush = CreateIconBrush(icons[i]);
-            visual.Size = new Vector2(curve.IconSize, curve.IconSize);
 
-            // CenterPoint en el borde INFERIOR izquierdo: el icono crece hacia arriba
-            // y hacia la derecha desde ahí, que es como se comporta el Dock.
-            visual.CenterPoint = new Vector3(0f, curve.IconSize, 0f);
+            if (items[i] is IconBitmap icon)
+            {
+                visual.Brush = CreateIconBrush(icon);
+                visual.Size = new Vector2(content, iconSize);
+            }
+            else
+            {
+                // Separador: una raya fina y discreta, más corta que los iconos.
+                visual.Brush = _compositor.CreateColorBrush(Color.FromArgb(60, 255, 255, 255));
+                visual.Size = new Vector2(content, iconSize * 0.55f);
+            }
 
-            Animate(visual, "Offset", DockExpressions.IconOffset(curve, i, iconTop));
+            // CenterPoint en el borde INFERIOR izquierdo: el elemento crece hacia
+            // arriba y hacia la derecha desde ahí, que es como se comporta el Dock.
+            visual.CenterPoint = new Vector3(0f, visual.Size.Y, 0f);
+
+            // El rebote vive en el propio visual, no en el property set compartido:
+            // cada icono salta por su cuenta. Va restando en la Y dentro de la misma
+            // expresión, así no se pelea con la que ya es dueña de Offset.
+            visual.Properties.InsertScalar("Bounce", 0f);
+
+            float top = items[i] is null
+                ? windowHeight - padding - visual.Size.Y
+                : iconTop;
+
+            ExpressionAnimation offset = _compositor.CreateExpressionAnimation(
+                DockExpressions.IconOffset(curve, i, top, "I.Bounce"));
+            offset.SetReferenceParameter(DockExpressions.Props, _props);
+            offset.SetReferenceParameter("I", visual);
+            visual.StartAnimation("Offset", offset);
+
             Animate(visual, "Scale", DockExpressions.IconScale(curve, i));
-
             _root.Children.InsertAtTop(visual);
+            _items.Add(visual);
+
+            // Punto de "app abierta". Solo para iconos, y arranca invisible.
+            if (items[i] is null)
+            {
+                _dots.Add(null);
+                continue;
+            }
+
+            SpriteVisual dot = _compositor.CreateSpriteVisual();
+            dot.Size = new Vector2(dotSize, dotSize);
+            dot.Brush = _compositor.CreateColorBrush(Color.FromArgb(235, 255, 255, 255));
+            dot.Opacity = 0f;
+
+            CompositionRoundedRectangleGeometry round = _compositor.CreateRoundedRectangleGeometry();
+            round.Size = new Vector2(dotSize, dotSize);
+            round.CornerRadius = new Vector2(dotSize * 0.5f);
+            dot.Clip = _compositor.CreateGeometricClip(round);
+
+            Animate(dot, "Offset", DockExpressions.ItemCenter(curve, i, dotSize, dotTop));
+            _root.Children.InsertAtTop(dot);
+            _dots.Add(dot);
         }
     }
 
     /// <summary>
-    /// La barra del dock: acrílico con esquinas redondeadas, y crece con la fila
-    /// igual que en macOS.
+    /// El rebote al lanzar. Sube y baja un par de veces, cada vez menos, que es lo que
+    /// hace el Dock. Corre entero en el compositor: el hilo de UI solo lo dispara.
+    /// </summary>
+    public void Bounce(int index, float height)
+    {
+        if (index < 0 || index >= _items.Count) return;
+
+        ScalarKeyFrameAnimation jump = _compositor.CreateScalarKeyFrameAnimation();
+        jump.InsertKeyFrame(0f, 0f);
+        jump.InsertKeyFrame(0.28f, height);
+        jump.InsertKeyFrame(0.52f, 0f);
+        jump.InsertKeyFrame(0.74f, height * 0.42f);
+        jump.InsertKeyFrame(1f, 0f);
+        jump.Duration = TimeSpan.FromMilliseconds(680);
+
+        _items[index].Properties.StartAnimation("Bounce", jump);
+    }
+
+    /// <summary>Enciende o apaga los puntos de "app abierta".</summary>
+    public void SetRunning(IReadOnlyList<bool> running)
+    {
+        for (int i = 0; i < _dots.Count && i < running.Count; i++)
+        {
+            if (_dots[i] is not SpriteVisual dot) continue;
+
+            float target = running[i] ? 1f : 0f;
+            if (MathF.Abs(dot.Opacity - target) < 0.01f) continue;
+
+            ScalarKeyFrameAnimation fade = _compositor.CreateScalarKeyFrameAnimation();
+            fade.InsertKeyFrame(1f, target);
+            fade.Duration = TimeSpan.FromMilliseconds(180);
+            dot.StartAnimation("Opacity", fade);
+            dot.Opacity = target;
+        }
+    }
+
+    /// <summary>
+    /// La barra del dock: acrílico con esquinas redondeadas, y crece con la fila igual
+    /// que en macOS.
     ///
     /// El material NO se le pide a DWM (DWMWA_SYSTEMBACKDROP_TYPE) a propósito: la
-    /// ventana es del tamaño MÁXIMO que puede llegar a ocupar el dock magnificado,
-    /// así que un backdrop de DWM pintaría ese rectángulo entero en vez de solo la
-    /// barra. CreateHostBackdropBrush muestrea el escritorio ya desenfocado por el
-    /// sistema y se aplica exactamente donde queramos.
+    /// ventana ocupa todo el ancho del monitor y está casi entera transparente, así que
+    /// un backdrop de DWM pintaría ese rectángulo completo en vez de solo la barra.
+    /// CreateHostBackdropBrush muestrea el escritorio ya desenfocado por el sistema y se
+    /// aplica exactamente donde queramos.
     ///
     /// El acrílico se compone como manda la receta: backdrop desenfocado debajo y una
-    /// capa de tinte translúcida encima. Sin efectos encadenados, que necesitarían
-    /// Win2D y una dependencia más.
+    /// capa de tinte translúcida encima. Sin efectos encadenados, que necesitarían Win2D
+    /// y una dependencia más.
     /// </summary>
     private void BuildBar(float padding, float top, float height)
     {
@@ -283,11 +382,11 @@ internal sealed unsafe class DockVisuals : IDisposable
 
         // Capa 2: el tinte. Sin él el acrílico es solo un desenfoque y sobre un fondo
         // oscuro queda casi negro; el tinte claro a baja opacidad es lo que da el
-        // aspecto de cristal esmerilado y mantiene los iconos legibles sobre
-        // cualquier cosa que haya detrás.
+        // aspecto de cristal esmerilado y mantiene los iconos legibles sobre cualquier
+        // cosa que haya detrás.
         SpriteVisual tint = _compositor.CreateSpriteVisual();
         tint.RelativeSizeAdjustment = Vector2.One;
-        tint.Brush = _compositor.CreateColorBrush(Windows.UI.Color.FromArgb(48, 255, 255, 255));
+        tint.Brush = _compositor.CreateColorBrush(Color.FromArgb(48, 255, 255, 255));
         bar.Children.InsertAtTop(tint);
 
         _root.Children.InsertAtBottom(bar);
@@ -306,7 +405,7 @@ internal sealed unsafe class DockVisuals : IDisposable
         catch (Exception ex)
         {
             Console.WriteLine($"[acrilico] no disponible, se usa color sólido: {ex.Message}");
-            return _compositor.CreateColorBrush(Windows.UI.Color.FromArgb(200, 32, 32, 40));
+            return _compositor.CreateColorBrush(Color.FromArgb(200, 32, 32, 40));
         }
     }
 
@@ -368,21 +467,11 @@ internal sealed unsafe class DockVisuals : IDisposable
     }
 
     /// <summary>
-    /// Índice del icono que hay en esa coordenada de REPOSO, o -1 si cae en un hueco.
+    /// Índice de la ranura que hay en esa coordenada de REPOSO, o -1 si cae fuera.
     /// Se resuelve en coordenadas de reposo y no en pantalla porque ahí las ranuras
-    /// son una rejilla regular: el cálculo es exacto y no depende de la magnificación.
+    /// son fijas: el cálculo no depende de cuánto esté magnificado el dock.
     /// </summary>
-    public int HitTest(float restPosition)
-    {
-        if (_curve.Count == 0) return -1;
-
-        int index = (int)MathF.Floor(restPosition / _curve.SlotWidth);
-        if (index < 0 || index >= _curve.Count) return -1;
-
-        return restPosition >= _curve.RestLeft(index) && restPosition < _curve.RestRight(index)
-            ? index
-            : -1;
-    }
+    public int HitTest(float restPosition) => _curve.SlotAt(restPosition);
 
     public void Dispose()
     {

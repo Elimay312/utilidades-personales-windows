@@ -3,6 +3,13 @@ using System.Globalization;
 namespace Dock;
 
 /// <summary>
+/// Una ranura del dock: cuánto espacio ocupa y cuánto de ese espacio se pinta.
+/// Un icono ocupa su tamaño más la separación; un separador ocupa mucho menos y
+/// pinta solo una línea fina.
+/// </summary>
+internal readonly record struct DockSlot(float Width, float ContentWidth);
+
+/// <summary>
 /// La curva de magnificación del dock.
 ///
 /// La regla que lo gobierna todo: <b>la escala se define, la posición se integra</b>.
@@ -11,41 +18,60 @@ namespace Dock;
 /// que hace que los iconos nunca se solapen ni dejen huecos, sin corregir nada a
 /// mano, y es lo que distingue un dock que se siente bien de uno que resbala.
 ///
-/// Con w = ancho de ranura en reposo, c = cursor en coordenadas de reposo,
-/// R = radio de influencia y M = escala máxima:
+/// Con c = cursor en coordenadas de reposo, R = radio de influencia y M = escala
+/// máxima:
 ///
 ///   s(u) = 1 + (M-1)·f(t),  t = (u-c)/R,  f(t) = (1+cos(π·t))/2  si |t|≤1, si no 0
 ///   T(u) = ∫₀ᵘ s = u + (M-1)·R·[ G((u-c)/R) − G(−c/R) ]
 ///   G(t) = clamp(t,−1,1)/2 + sin(π·clamp(t,−1,1))/(2π)
 ///
-/// Y por icono se mapean los BORDES, no el centro:
-///   Lᵢ = T(izquierda)   Rᵢ = T(derecha)   escalaᵢ = (Rᵢ−Lᵢ)/w
+/// Y por elemento se mapean los BORDES, no el centro:
+///   Lᵢ = T(izquierda)   Rᵢ = T(derecha)   escalaᵢ = (Rᵢ−Lᵢ)/anchoEnReposo
 ///
 /// Se eligió el coseno elevado y no una gaussiana por dos razones: su derivada es 0
 /// en los bordes del radio (así no hay costura donde empieza el efecto) y el lenguaje
 /// de expresiones de Composition tiene Sin y Clamp pero no Exp.
+///
+/// <para>
+/// Las ranuras son de ancho VARIABLE. La transferencia integra sobre u y le da igual
+/// cómo esté partida la fila, así que soportar separadores estrechos no cuesta nada
+/// en la matemática: solo hay que acumular los bordes en vez de multiplicar.
+/// </para>
 /// </summary>
 internal readonly struct DockCurve
 {
-    /// <summary>Ancho del icono en reposo, en píxeles físicos.</summary>
-    public required float IconSize { get; init; }
+    private readonly DockSlot[] _slots;
 
-    /// <summary>Separación entre iconos en reposo, en píxeles físicos.</summary>
-    public required float Spacing { get; init; }
+    /// <summary>Bordes acumulados de las ranuras. Tiene un elemento más que _slots.</summary>
+    private readonly float[] _edges;
 
-    public required int Count { get; init; }
+    public DockCurve(IReadOnlyList<DockSlot> slots, float radius, float maxScale)
+    {
+        _slots = [.. slots];
+        _edges = new float[_slots.Length + 1];
+
+        float running = 0f;
+        for (int i = 0; i < _slots.Length; i++)
+        {
+            _edges[i] = running;
+            running += _slots[i].Width;
+        }
+        _edges[^1] = running;
+
+        Radius = radius;
+        MaxScale = maxScale;
+    }
 
     /// <summary>Radio de influencia del cursor, en coordenadas de reposo.</summary>
-    public required float Radius { get; init; }
+    public float Radius { get; }
 
     /// <summary>Escala máxima, justo bajo el cursor.</summary>
-    public required float MaxScale { get; init; }
+    public float MaxScale { get; }
 
-    /// <summary>Ancho de una ranura: el icono más su separación.</summary>
-    public float SlotWidth => IconSize + Spacing;
+    public int Count => _slots?.Length ?? 0;
 
     /// <summary>Ancho total de la fila en reposo.</summary>
-    public float RestWidth => Count * SlotWidth;
+    public float RestWidth => _edges is null || _edges.Length == 0 ? 0f : _edges[^1];
 
     /// <summary>
     /// Cuánto se ensancha la fila como máximo al magnificarse. El ancho total es
@@ -54,11 +80,17 @@ internal readonly struct DockCurve
     /// </summary>
     public float MaxGrowth => (MaxScale - 1f) * Radius;
 
-    /// <summary>Borde izquierdo del icono i en coordenadas de reposo.</summary>
-    public float RestLeft(int index) => index * SlotWidth + Spacing * 0.5f;
+    public DockSlot Slot(int index) => _slots[index];
 
-    /// <summary>Borde derecho del icono i en coordenadas de reposo.</summary>
-    public float RestRight(int index) => RestLeft(index) + IconSize;
+    /// <summary>Principio de la ranura i, en coordenadas de reposo.</summary>
+    public float SlotStart(int index) => _edges[index];
+
+    /// <summary>Borde izquierdo de lo que se PINTA en la ranura i, centrado en ella.</summary>
+    public float RestLeft(int index)
+        => _edges[index] + (_slots[index].Width - _slots[index].ContentWidth) * 0.5f;
+
+    /// <summary>Borde derecho de lo que se pinta en la ranura i.</summary>
+    public float RestRight(int index) => RestLeft(index) + _slots[index].ContentWidth;
 
     /// <summary>Primitiva de la curva. G(−1) = −½ y G(1) = +½ por construcción.</summary>
     public static float G(float t)
@@ -116,6 +148,16 @@ internal readonly struct DockCurve
 
         return (low + high) * 0.5f;
     }
+
+    /// <summary>Índice de la ranura que contiene esa coordenada de reposo, o -1.</summary>
+    public int SlotAt(float restPosition)
+    {
+        for (int i = 0; i < Count; i++)
+        {
+            if (restPosition >= _edges[i] && restPosition < _edges[i + 1]) return i;
+        }
+        return -1;
+    }
 }
 
 /// <summary>
@@ -126,18 +168,16 @@ internal static class MagnifySelfCheck
 {
     public static void Run()
     {
-        DockCurve curve = new()
-        {
-            IconSize = 60f,
-            Spacing = 20f,
-            Count = 6,
-            Radius = 200f,
-            MaxScale = 2f,
-        };
+        // A propósito con ranuras de anchos DISTINTOS, que es el caso general desde
+        // que existen los separadores.
+        DockSlot icono = new(80f, 60f);
+        DockSlot separador = new(24f, 2f);
+        DockCurve curve = new(
+            [icono, icono, separador, icono, icono, separador, icono],
+            radius: 200f,
+            maxScale: 2f);
 
         float width = curve.RestWidth + curve.MaxGrowth;
-
-        // Varias posiciones de cursor, incluidos los extremos.
         float[] cursores = [0f, 30f, 120f, curve.RestWidth * 0.5f, curve.RestWidth - 40f, curve.RestWidth];
 
         foreach (float c in cursores)
@@ -148,40 +188,37 @@ internal static class MagnifySelfCheck
 
         AnchoConstanteEnElCentro(curve);
         LaInversionDevuelveElPunto(curve, width);
+        LasRanurasSeLocalizan(curve);
 
         Console.WriteLine("[check] curva de magnificación: OK");
     }
 
     /// <summary>
-    /// La propiedad central: el borde derecho de un icono coincide con el izquierdo
-    /// del siguiente una vez descontada la separación. Si esto falla, los iconos se
-    /// solapan o dejan huecos.
+    /// Las ranuras particionan la fila: la suma de sus anchos proyectados tiene que
+    /// dar exactamente el ancho proyectado total, sin perder ni ganar píxeles. Y lo
+    /// que se pinta dentro de cada una nunca invade la siguiente.
     /// </summary>
     private static void SinHuecosNiSolapes(DockCurve curve, float width, float cursor)
     {
-        // Las ranuras particionan la fila: la suma de sus anchos proyectados tiene
-        // que dar exactamente el ancho proyectado total, sin perder ni ganar píxeles.
-        float sumaRanuras = 0f;
+        float suma = 0f;
         for (int i = 0; i < curve.Count; i++)
         {
-            float inicio = curve.Project(i * curve.SlotWidth, width, cursor);
-            float fin = curve.Project((i + 1) * curve.SlotWidth, width, cursor);
+            float inicio = curve.Project(curve.SlotStart(i), width, cursor);
+            float fin = curve.Project(curve.SlotStart(i) + curve.Slot(i).Width, width, cursor);
             Assert(fin > inicio, $"la ranura {i} salió de ancho <= 0 (cursor={cursor})");
-            sumaRanuras += fin - inicio;
+            suma += fin - inicio;
         }
 
-        float anchoTotal = curve.Project(curve.RestWidth, width, cursor)
-            - curve.Project(0f, width, cursor);
-        Assert(MathF.Abs(sumaRanuras - anchoTotal) < 0.01f,
-            $"las ranuras no particionan la fila: {sumaRanuras} vs {anchoTotal} (cursor={cursor})");
+        float total = curve.Project(curve.RestWidth, width, cursor) - curve.Project(0f, width, cursor);
+        Assert(MathF.Abs(suma - total) < 0.01f,
+            $"las ranuras no particionan la fila: {suma} vs {total} (cursor={cursor})");
 
-        // Y los iconos nunca se pisan entre sí.
         for (int i = 0; i < curve.Count - 1; i++)
         {
-            float derechaI = curve.Project(curve.RestRight(i), width, cursor);
-            float izquierdaSiguiente = curve.Project(curve.RestLeft(i + 1), width, cursor);
-            Assert(izquierdaSiguiente >= derechaI - 0.001f,
-                $"el icono {i + 1} se solapa con el {i} (cursor={cursor})");
+            float derecha = curve.Project(curve.RestRight(i), width, cursor);
+            float izquierda = curve.Project(curve.RestLeft(i + 1), width, cursor);
+            Assert(izquierda >= derecha - 0.001f,
+                $"el elemento {i + 1} se solapa con el {i} (cursor={cursor})");
         }
     }
 
@@ -222,6 +259,17 @@ internal static class MagnifySelfCheck
             float vuelta = curve.Invert(pantalla, width);
             Assert(MathF.Abs(vuelta - u) < 0.5f,
                 $"la inversión no cuadra: {u} -> {pantalla} -> {vuelta}");
+        }
+    }
+
+    /// <summary>El centro de cada ranura cae en esa ranura, y no en la de al lado.</summary>
+    private static void LasRanurasSeLocalizan(DockCurve curve)
+    {
+        for (int i = 0; i < curve.Count; i++)
+        {
+            float centro = curve.SlotStart(i) + curve.Slot(i).Width * 0.5f;
+            Assert(curve.SlotAt(centro) == i,
+                $"el centro de la ranura {i} se localizó como {curve.SlotAt(centro)}");
         }
     }
 

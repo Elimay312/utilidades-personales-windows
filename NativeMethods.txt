@@ -104,6 +104,19 @@ GetWindowTextLengthW
 FindWindowExW
 GetClassNameW
 DwmGetWindowAttribute
+DwmSetWindowAttribute
 SetForegroundWindow
 AttachThreadInput
 GetCurrentThreadId
+
+// --- Captura de la ventana para el efecto genio (G2) ---
+// Se midio que PrintWindow con PW_RENDERFULLCONTENT basta para las apps reales
+// (Explorador, Paint y Bloc de notas capturan integras), asi que no hace falta
+// Windows.Graphics.Capture ni su borde amarillo.
+PrintWindow
+CreateCompatibleDC
+CreateDIBSection
+SelectObject
+DeleteDC
+GetDC
+ReleaseDC

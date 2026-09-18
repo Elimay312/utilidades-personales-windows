@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Runtime.InteropServices;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -142,6 +143,7 @@ internal sealed unsafe class DockWindow : IDisposable
 
     /// X de pantalla del borde izquierdo de la ventana.
     private int _windowLeft;
+    private int _windowTop;
 
     public DockWindow(HMONITOR monitor, DockConfig config)
     {
@@ -319,6 +321,7 @@ internal sealed unsafe class DockWindow : IDisposable
         _windowHeight = h;
         _revealTop = y + h - (int)Scale(LogicalRevealStrip);
         _windowLeft = x;
+        _windowTop = y;
         return (x, y, w, h);
     }
 
@@ -749,6 +752,40 @@ internal sealed unsafe class DockWindow : IDisposable
         _visuals.SetCursor(_lastRest);
     }
 
+    /// <summary>
+    /// Monta y arranca el genio hacia el icono <paramref name="index"/>. Devuelve false
+    /// si algo no salió, y entonces el minimizado va sin animación.
+    /// </summary>
+    private bool PlayGenie(int index, HWND window)
+    {
+        if (_visuals is null || index >= _curve.Count) return false;
+        if (!PInvoke.GetWindowRect(window, out RECT rect)) return false;
+        if (rect.right <= rect.left || rect.bottom <= rect.top) return false;
+
+        IconBitmap? shot = WindowCapture.Capture(window);
+        if (shot is null) return false;
+
+        MONITORINFO info = new() { cbSize = (uint)sizeof(MONITORINFO) };
+        if (!PInvoke.GetMonitorInfo(_monitor, &info)) return false;
+
+        // Dónde está el icono AHORA mismo, magnificado y todo: el ratón está encima de
+        // él, así que hay que preguntárselo a la curva, no a la posición en reposo.
+        float left = _windowLeft + _curve.Project(_curve.RestLeft(index), _windowWidth, _lastRest);
+        float right = _windowLeft + _curve.Project(_curve.RestRight(index), _windowWidth, _lastRest);
+
+        // El icono crece hacia arriba desde su borde inferior, que no se mueve.
+        float bottom = _windowTop + _windowHeight - Scale(LogicalPadding);
+        Box target = new(left, bottom - (right - left), right, bottom);
+        Box source = new(rect.left, rect.top, rect.right, rect.bottom);
+
+        return GenieOverlay.Play(
+            _visuals.Compositor,
+            info.rcMonitor,
+            _visuals.CreateBitmapBrush(shot),
+            new Vector2(shot.Width, shot.Height),
+            new GenieCurve(source, target, GenieOverlay.Slices));
+    }
+
     private void OnLeftClick(LPARAM lParam)
     {
         int index = _visuals?.HitTest(_lastRest) ?? -1;
@@ -764,9 +801,12 @@ internal sealed unsafe class DockWindow : IDisposable
 
         if (state.HasWindow && WindowActions.IsForeground(state.MainWindow))
         {
-            // Ya la estabas mirando: el segundo clic la esconde. Aquí entrará el genio.
-            WindowActions.Minimize(state.MainWindow);
-            Console.WriteLine($"[dock] minimizada '{app.Name}'");
+            // Ya la estabas mirando: el segundo clic la esconde. El genio se monta
+            // ANTES de minimizar, porque para capturarla tiene que estar todavía ahí.
+            // Si la captura falla, se minimiza a secas: degradar es mejor que romperse.
+            bool genie = PlayGenie(index, state.MainWindow);
+            WindowActions.Minimize(state.MainWindow, instant: genie);
+            Console.WriteLine($"[dock] minimizada '{app.Name}'{(genie ? " con genio" : "")}");
             return;
         }
 

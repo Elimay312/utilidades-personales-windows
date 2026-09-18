@@ -137,7 +137,7 @@ internal sealed unsafe class DockVisuals : IDisposable
     }
 
     /// <summary>Sube los píxeles de un icono a una superficie del compositor.</summary>
-    private CompositionSurfaceBrush CreateIconBrush(IconBitmap icon)
+    public CompositionSurfaceBrush CreateBitmapBrush(IconBitmap icon)
     {
         CompositionDrawingSurface surface = EnsureGraphicsDevice().CreateDrawingSurface(
             new global::Windows.Foundation.Size(icon.Width, icon.Height),
@@ -252,7 +252,7 @@ internal sealed unsafe class DockVisuals : IDisposable
 
             if (items[i] is IconBitmap icon)
             {
-                visual.Brush = CreateIconBrush(icon);
+                visual.Brush = CreateBitmapBrush(icon);
                 visual.Size = new Vector2(content, iconSize);
             }
             else

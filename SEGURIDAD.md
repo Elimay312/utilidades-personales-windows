@@ -108,6 +108,26 @@ destino, para que Windows no reproduzca SU animación de minimizar encima de la 
   encogiéndose en pantalla; con él, ya ha desaparecido.
 - Sigue atado a la misma condición: solo tras un clic del usuario sobre ese icono.
 
+### Apéndice — cómo se captura la ventana
+
+La enmienda autoriza leer los píxeles de la ventana clicada, y este es el detalle de
+cómo, porque el método elegido no es el que el plan preveía.
+
+Se usa `PrintWindow` con `PW_RENDERFULLCONTENT` sobre un `CreateDIBSection` propio, y
+**no** `Windows.Graphics.Capture`. Se probó primero el camino barato y resultó bastar
+para las apps reales del dock — Explorador, Paint y Bloc de notas devuelven la ventana
+entera. Eso elimina de raíz el framepool, la sesión asíncrona y el borde amarillo de
+grabación que Windows dibuja alrededor de lo que se está capturando.
+
+- Es **un solo fotograma**, no una sesión de captura: no hay nada que siga grabando.
+- Los píxeles van del DIB a una superficie del compositor y se **liberan al acabar** la
+  animación. Sin disco, sin red, sin análisis.
+- Si la captura vuelve en blanco, se detecta y se minimiza sin animación. No se
+  reintenta por otras vías ni se escala el privilegio.
+- Los P/Invoke que esto añade son de GDI corriente: `CreateCompatibleDC`,
+  `CreateDIBSection`, `SelectObject`, `DeleteDC`, `DeleteObject`. Dibujar en un bitmap
+  propio.
+
 ## Corolarios de diseño
 
 - **Sin single-file comprimido.** `EnableCompressionInSingleFile` produce exactamente

@@ -1,5 +1,6 @@
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Dwm;
 using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Dock;
@@ -66,9 +67,31 @@ internal static unsafe class WindowActions
         }
     }
 
-    public static void Minimize(HWND window)
+    /// <summary>
+    /// Minimiza. Con <paramref name="instant"/> la ventana desaparece de golpe, sin la
+    /// animación que Windows le pone.
+    ///
+    /// <para>
+    /// No hay forma documentada de callar esa animación en una ventana ajena, así que se
+    /// midió: con DWMWA_TRANSITIONS_FORCEDISABLED puesto, a los 25 ms ya había ocurrido
+    /// el 30% del cambio; sin él, el 0%. O sea que surte efecto — ver el apéndice de
+    /// SEGURIDAD.md, donde también se justifica por qué es benigno. Se vuelve a dejar
+    /// como estaba en cuanto ShowWindow retorna: DWM ya decidió durante la llamada, y
+    /// dejar las transiciones de otra app apagadas para siempre sería una grosería.
+    /// </para>
+    ///
+    /// Nunca se toca SPI_SETANIMATION: eso es un ajuste global del sistema.
+    /// </summary>
+    public static void Minimize(HWND window, bool instant = false)
     {
         if (window.IsNull) return;
+
+        uint off = 1;
+        if (instant) PInvoke.DwmSetWindowAttribute(window, DWMWINDOWATTRIBUTE.DWMWA_TRANSITIONS_FORCEDISABLED, &off, 4);
+
         PInvoke.ShowWindow(window, SHOW_WINDOW_CMD.SW_MINIMIZE);
+
+        uint on = 0;
+        if (instant) PInvoke.DwmSetWindowAttribute(window, DWMWINDOWATTRIBUTE.DWMWA_TRANSITIONS_FORCEDISABLED, &on, 4);
     }
 }

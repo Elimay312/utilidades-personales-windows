@@ -1,0 +1,46 @@
+// Lista auditable de P/Invokes (Fase 2). Todas son APIs publicas documentadas y
+// actuan sobre el propio proceso o el propio HWND.
+
+// --- Ventana propia ---
+RegisterClassExW
+CreateWindowExW
+DefWindowProcW
+DestroyWindow
+PostQuitMessage
+ShowWindow
+SetWindowPos
+LoadCursorW
+
+// --- Bucle de mensajes propio ---
+GetMessageW
+TranslateMessage
+DispatchMessageW
+
+// --- Geometria de pantalla (solo lectura) ---
+MonitorFromPoint
+MonitorFromWindow
+GetMonitorInfoW
+GetDpiForWindow
+GetDpiForMonitor
+
+// --- Raton, solo en la ventana propia (no es un hook) ---
+TrackMouseEvent
+
+// --- Composicion de escritorio, sobre el HWND propio ---
+DwmSetWindowAttribute
+DwmExtendFrameIntoClientArea
+DWM_SYSTEMBACKDROP_TYPE
+DWM_WINDOW_CORNER_PREFERENCE
+
+// --- Pintado del marcador de M0 ---
+BeginPaint
+EndPaint
+FillRect
+CreateSolidBrush
+DeleteObject
+
+// --- Modulo propio (para hInstance) ---
+GetModuleHandleW
+
+// --- Area cliente para el pintado ---
+GetClientRect

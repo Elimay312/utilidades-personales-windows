@@ -79,3 +79,9 @@ GetWindowLongPtrW
 WINDOWPOS
 SetTimer
 KillTimer
+
+// --- Autoocultar y pantalla completa (M4) ---
+SHQueryUserNotificationState
+GetForegroundWindow
+GetWindowRect
+EnumDisplayMonitors

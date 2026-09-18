@@ -4,6 +4,7 @@ using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.UI.HiDpi;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
+using Windows.Win32.UI.Shell;
 using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Dock;
@@ -20,6 +21,13 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Margen del icono dentro de la barra, en unidades lógicas.
     private const int LogicalPadding = 12;
     private const int LogicalBottomMargin = 8;
+
+    /// Franja que asoma cuando el dock está escondido, en unidades lógicas.
+    private const int LogicalRevealStrip = 3;
+
+    /// Margen antes de esconderse al salir el ratón. Sin él, rozar el dock de paso
+    /// lo haría parpadear.
+    private const uint HideDelayMs = 450;
 
     /// Escala máxima del icono justo bajo el cursor.
     private const float MaxScale = 2.0f;
@@ -44,13 +52,22 @@ internal sealed unsafe class DockWindow : IDisposable
     private const uint WM_MOUSELEAVE = 0x02A3;
     private const uint WM_TIMER = 0x0113;
     private const uint WM_WINDOWPOSCHANGING = 0x0046;
+    private const uint WM_NCHITTEST = 0x0084;
+
+    /// Respuestas a WM_NCHITTEST. HTTRANSPARENT hace que el clic atraviese la ventana
+    /// y llegue a la de debajo.
+    private const int HTTRANSPARENT = -1;
+    private const int HTCLIENT = 1;
     private const uint WM_DPICHANGED = 0x02E0;
 
     /// HWND_TOPMOST: primera posición de la banda de ventanas siempre encima.
     private static readonly HWND HwndTopmost = (HWND)(nint)(-1);
 
-    /// Identificador del temporizador que vigila el z-order.
+    /// Identificador del temporizador que vigila el z-order y la pantalla completa.
     private const nuint TopmostTimerId = 1;
+
+    /// Identificador del temporizador de un disparo que esconde el dock.
+    private const nuint HideTimerId = 2;
 
 
     /// Los iconos terminaron de extraerse en background. WM_APP + 1.
@@ -97,6 +114,12 @@ internal sealed unsafe class DockWindow : IDisposable
     private float _windowHeight;
     private bool _hovering;
 
+    /// Estado del autoocultar.
+    private bool _hidden;
+
+    /// Y de pantalla a partir de la cual empieza la franja que asoma.
+    private int _revealTop;
+
     public DockWindow(HMONITOR monitor, DockConfig config)
     {
         _monitor = monitor;
@@ -106,9 +129,26 @@ internal sealed unsafe class DockWindow : IDisposable
         Create();
     }
 
-    /// <summary>Monitor principal. En M4 esto lo sustituye EnumDisplayMonitors.</summary>
-    public static HMONITOR PrimaryMonitor =>
-        PInvoke.MonitorFromPoint(default, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY);
+    /// <summary>
+    /// Todos los monitores conectados, uno por dock. La ventana se parametrizó por
+    /// HMONITOR desde M0 justo para que esto no necesitara refactor.
+    /// </summary>
+    public static List<HMONITOR> AllMonitors()
+    {
+        List<HMONITOR> monitors = [];
+
+        PInvoke.EnumDisplayMonitors(default, (RECT*)null, (monitor, _, _, _) =>
+        {
+            monitors.Add(monitor);
+            return true;
+        }, default);
+
+        // Si la enumeración fallara, al menos el principal.
+        if (monitors.Count == 0)
+            monitors.Add(PInvoke.MonitorFromPoint(default, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY));
+
+        return monitors;
+    }
 
     private static HINSTANCE ModuleHandle
     {
@@ -191,6 +231,12 @@ internal sealed unsafe class DockWindow : IDisposable
 
     private float Scale(int logical) => (float)(logical * _dpi / 96.0);
 
+    /// <summary>Alto de la barra visible, sin contar el espacio para magnificar.</summary>
+    private float BarHeight => Scale(_config.IconSize) + Scale(LogicalPadding) * 2f;
+
+    /// <summary>Cuánto hay que deslizar el contenido para dejar solo la franja.</summary>
+    private float HiddenOffset => BarHeight - Scale(LogicalRevealStrip);
+
     private DockCurve CurveFor(int count) => new()
     {
         IconSize = Scale(_config.IconSize),
@@ -219,10 +265,15 @@ internal sealed unsafe class DockWindow : IDisposable
 
         RECT work = info.rcWork;
         int x = work.left + ((work.right - work.left) - w) / 2;
-        int y = work.bottom - h - (int)Scale(LogicalBottomMargin);
+
+        // Al autoocultarse, la ventana se pega al borde: la franja que asoma tiene que
+        // estar justo en el filo de la pantalla para que se revele al empujar ahí el
+        // ratón, como en macOS.
+        int y = work.bottom - h - (_config.AutoHide ? 0 : (int)Scale(LogicalBottomMargin));
 
         _windowWidth = w;
         _windowHeight = h;
+        _revealTop = y + h - (int)Scale(LogicalRevealStrip);
         return (x, y, w, h);
     }
 
@@ -281,6 +332,12 @@ internal sealed unsafe class DockWindow : IDisposable
             Scale(LogicalPadding));
 
         Console.WriteLine($"[iconos] {_loaded.Count} listos");
+
+        if (_config.AutoHide)
+        {
+            _hidden = true;
+            _visuals.SetHidden(true, HiddenOffset);
+        }
     }
 
     public void Show()
@@ -341,8 +398,17 @@ internal sealed unsafe class DockWindow : IDisposable
                 ((WINDOWPOS*)lParam.Value)->hwndInsertAfter = HwndTopmost;
                 break;
 
+            // Mientras está escondido, todo lo que no sea la franja deja pasar el
+            // clic a la ventana de debajo: el dock no estorba a lo que haya ahí.
+            case WM_NCHITTEST when self is { _config.AutoHide: true, _hidden: true }:
+                return new LRESULT(HiWord(lParam) >= self._revealTop ? HTCLIENT : HTTRANSPARENT);
+
             case WM_TIMER when wParam.Value == TopmostTimerId:
-                self?.EnsureTopmost();
+                self?.OnWatchdogTick();
+                return new LRESULT(0);
+
+            case WM_TIMER when wParam.Value == HideTimerId:
+                self?.Hide();
                 return new LRESULT(0);
 
             case WM_APP_ICONS_READY:
@@ -359,6 +425,7 @@ internal sealed unsafe class DockWindow : IDisposable
                     self._trackingMouse = false;
                     self._hovering = false;
                     self._visuals?.SetHover(false);
+                    self.ScheduleHide();
                 }
                 return new LRESULT(0);
 
@@ -382,6 +449,90 @@ internal sealed unsafe class DockWindow : IDisposable
         }
 
         return PInvoke.DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+
+    /// <summary>Saca el dock a la vista y cancela cualquier ocultamiento pendiente.</summary>
+    private void Reveal()
+    {
+        PInvoke.KillTimer(_hwnd, HideTimerId);
+        if (!_hidden) return;
+
+        _hidden = false;
+        _visuals?.SetHidden(false, HiddenOffset);
+    }
+
+    /// <summary>Programa el ocultamiento, con margen para no parpadear al rozarlo.</summary>
+    private void ScheduleHide()
+    {
+        if (!_config.AutoHide) return;
+        PInvoke.SetTimer(_hwnd, HideTimerId, HideDelayMs, null);
+    }
+
+    private void Hide()
+    {
+        PInvoke.KillTimer(_hwnd, HideTimerId);
+        if (_hidden || !_config.AutoHide) return;
+
+        _hidden = true;
+        _visuals?.SetHidden(true, HiddenOffset);
+    }
+
+    /// <summary>
+    /// Latido de una vez por segundo: reafirma el z-order y mira si hay algo a
+    /// pantalla completa.
+    /// </summary>
+    private void OnWatchdogTick()
+    {
+        if (IsFullscreenAppRunning())
+        {
+            // Nada de reafirmar el z-order por encima de un juego o un vídeo.
+            Hide();
+            return;
+        }
+
+        EnsureTopmost();
+    }
+
+    /// <summary>
+    /// Si hay una app ocupando la pantalla entera. SHQueryUserNotificationState es la
+    /// API documentada para esto, pero la propia doc avisa de que NO emite
+    /// notificaciones: hay que preguntarla, de ahí el sondeo.
+    ///
+    /// No cubre el fullscreen sin bordes (vídeo en el navegador, muchos juegos
+    /// modernos), así que se complementa comparando el rect de la ventana en primer
+    /// plano con el del monitor. Solo se LEE su geometría: no se la toca.
+    /// </summary>
+    private bool IsFullscreenAppRunning()
+    {
+        if (PInvoke.SHQueryUserNotificationState(out QUERY_USER_NOTIFICATION_STATE state).Succeeded
+            && state is QUERY_USER_NOTIFICATION_STATE.QUNS_RUNNING_D3D_FULL_SCREEN
+                or QUERY_USER_NOTIFICATION_STATE.QUNS_PRESENTATION_MODE
+                or QUERY_USER_NOTIFICATION_STATE.QUNS_BUSY)
+        {
+            return true;
+        }
+
+        HWND foreground = PInvoke.GetForegroundWindow();
+        if (foreground.IsNull || foreground == _hwnd) return false;
+
+        // Una ventana MAXIMIZADA no es pantalla completa. Con la barra de tareas en
+        // autoocultar el área de trabajo es la pantalla entera, así que comparar solo
+        // rectángulos daría por fullscreen cualquier ventana maximizada y el dock no
+        // volvería a aparecer. Las de verdad no tienen barra de título ni borde
+        // redimensionable.
+        nint style = PInvoke.GetWindowLongPtr(foreground, WINDOW_LONG_PTR_INDEX.GWL_STYLE);
+        const nint WsCaption = 0x00C00000;
+        const nint WsThickFrame = 0x00040000;
+        if ((style & (WsCaption | WsThickFrame)) != 0) return false;
+
+        if (!PInvoke.GetWindowRect(foreground, out RECT rect)) return false;
+
+        MONITORINFO info = new() { cbSize = (uint)sizeof(MONITORINFO) };
+        if (!PInvoke.GetMonitorInfo(_monitor, &info)) return false;
+
+        RECT screen = info.rcMonitor;
+        return rect.left <= screen.left && rect.top <= screen.top
+            && rect.right >= screen.right && rect.bottom >= screen.bottom;
     }
 
     /// <summary>Reafirma la posición en la banda topmost. Barato y sin efecto si ya estamos.</summary>
@@ -413,6 +564,8 @@ internal sealed unsafe class DockWindow : IDisposable
         }
 
         if (_visuals is null || _curve.Count == 0) return;
+
+        Reveal();
 
         if (!_hovering)
         {
@@ -494,6 +647,7 @@ internal sealed unsafe class DockWindow : IDisposable
     {
         if (_hwnd.IsNull) return;
         PInvoke.KillTimer(_hwnd, TopmostTimerId);
+        PInvoke.KillTimer(_hwnd, HideTimerId);
         _visuals?.Dispose();
         PInvoke.DestroyWindow(_hwnd);
         _hwnd = default;

@@ -351,6 +351,23 @@ internal sealed unsafe class DockVisuals : IDisposable
     }
 
     /// <summary>
+    /// Desliza el dock dentro o fuera de la pantalla.
+    ///
+    /// Se mueve el árbol de visuals, no la ventana: mover la ventana sería animar
+    /// desde el hilo de UI, mientras que esto lo interpola el compositor. La ventana
+    /// se queda quieta y el hit-test se encarga de que los clics la atraviesen
+    /// mientras está escondida (ver DockWindow.OnHitTest).
+    /// </summary>
+    public void SetHidden(bool hidden, float hiddenOffset)
+    {
+        SpringScalarNaturalMotionAnimation slide = _compositor.CreateSpringScalarAnimation();
+        slide.DampingRatio = 1f;
+        slide.Period = TimeSpan.FromMilliseconds(70);
+        slide.FinalValue = hidden ? hiddenOffset : 0f;
+        _root.StartAnimation("Offset.Y", slide);
+    }
+
+    /// <summary>
     /// Índice del icono que hay en esa coordenada de REPOSO, o -1 si cae en un hueco.
     /// Se resuelve en coordenadas de reposo y no en pantalla porque ahí las ranuras
     /// son una rejilla regular: el cálculo es exacto y no depende de la magnificación.

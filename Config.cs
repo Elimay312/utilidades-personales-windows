@@ -47,6 +47,11 @@ internal sealed class DockConfig
     /// <summary>Separación entre iconos, en unidades lógicas.</summary>
     public int IconSpacing { get; init; } = 16;
 
+    /// <summary>
+    /// Si el dock se esconde solo, dejando asomar una franja en el borde inferior.
+    /// </summary>
+    public bool AutoHide { get; init; } = true;
+
     public List<DockApp> Apps { get; init; } = [];
 
     private static readonly JsonSerializerOptions Options = new()
@@ -97,6 +102,7 @@ internal sealed class DockConfig
         {
             IconSize = config.IconSize,
             IconSpacing = config.IconSpacing,
+            AutoHide = config.AutoHide,
             Apps = valid,
         };
     }

@@ -17,16 +17,23 @@ internal static class Program
             return;
         }
 
-        Console.WriteLine("Dock M3 - clic derecho sobre el dock para salir");
+        Console.WriteLine("Dock M4 - clic derecho sobre el dock para salir");
         Console.WriteLine();
 
         DockConfig config = DockConfig.Load(DockConfig.DefaultPath);
         Console.WriteLine($"[config] {config.Apps.Count} apps");
 
-        // M1: una sola ventana en el monitor principal. En M4 pasa a una por pantalla.
-        using var dock = new DockWindow(DockWindow.PrimaryMonitor, config);
-        dock.Show();
+        // Un dock por pantalla.
+        List<DockWindow> docks = [];
+        foreach (var monitor in DockWindow.AllMonitors())
+            docks.Add(new DockWindow(monitor, config));
+
+        Console.WriteLine($"[dock] {docks.Count} monitor(es)");
+        foreach (DockWindow dock in docks) dock.Show();
+
         DockWindow.RunMessageLoop();
+
+        foreach (DockWindow dock in docks) dock.Dispose();
 
         Console.WriteLine("[dock] salida limpia");
     }

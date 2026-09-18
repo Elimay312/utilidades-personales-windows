@@ -121,42 +121,60 @@ internal sealed unsafe class DockDropTarget(DockWindow dock) : IDropTarget
     /// <summary>
     /// De un elemento del shell a lo que el dock guardaría de él.
     ///
-    /// El orden importa: <b>primero el AppUserModelID</b>. Un acceso directo del menú
-    /// Inicio puede llevar el AUMID dentro, y ese gana sobre su ruta, porque es lo que
-    /// identifica a la app de verdad. Solo si no lo lleva se mira la ruta.
+    /// <b>Manda la ruta de disco, y el AppUserModelID solo cuando no hay ninguna.</b>
+    /// El plan decía justo lo contrario, y estaba mal: Chromium y Electron le ponen un
+    /// AppUserModelID a sus accesos directos para que Windows agrupe sus ventanas en la
+    /// barra de tareas, pero ese id <b>no</b> es una entrada del shell. El de Brave es
+    /// literalmente <c>Brave</c>. Y <c>SHCreateItemFromParsingName</c> acepta
+    /// <c>shell:AppsFolder\Brave</c> sin rechistar e incluso devuelve un icono, así
+    /// que tampoco sirve para distinguirlo: el fallo solo se veía después, cuando el
+    /// dock buscaba esa app por nombre de familia de paquete —que Brave no tiene— y
+    /// nunca la detectaba como abierta.
+    ///
+    /// Un objeto de verdad virtual (una app de la Store arrastrada desde el menú
+    /// Inicio) no tiene ruta de disco, y ahí el AUMID sí es la única identidad que hay.
     /// </summary>
     private static DroppedItem? Resolve(IShellItem item)
     {
         string name = Display(item, SIGDN.SIGDN_NORMALDISPLAY) ?? "";
+        string? aumid = AumidOf(item);
+        string? path = Display(item, SIGDN.SIGDN_FILESYSPATH);
 
-        if (item is IShellItem2 item2)
-        {
-            try
-            {
-                PROPERTYKEY key = PInvoke.PKEY_AppUserModel_ID;
-                PWSTR aumid;
-                item2.GetString(&key, &aumid);
-                string id = aumid.ToString();
-                Marshal.FreeCoTaskMem((nint)aumid.Value);
+        if (path is null) return AsApp(aumid, name);
 
-                if (!string.IsNullOrEmpty(id))
-                    return new DroppedItem(@"shell:AppsFolder\" + id, name, null);
-            }
-            catch
-            {
-                // No es una app: sigue por la ruta.
-            }
-        }
-
-        if (Display(item, SIGDN.SIGDN_FILESYSPATH) is not string path) return null;
+        if (!path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
+            return new DroppedItem(path, name, path);
 
         // Un acceso directo se guarda por su destino, no por el .lnk: el fichero puede
-        // desaparecer o moverse y lo que el usuario quería era la app.
-        string target = path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)
-            ? TargetOfShortcut(path) ?? path
-            : path;
+        // moverse o borrarse y lo que el usuario quería era la app.
+        if (TargetOfShortcut(path) is string target) return new DroppedItem(target, name, path);
 
-        return new DroppedItem(target, name, path);
+        // Sin destino de fichero: es el acceso directo de una app empaquetada, y
+        // entonces su AUMID sí es lo correcto.
+        return AsApp(aumid, name) ?? new DroppedItem(path, name, path);
+    }
+
+    private static DroppedItem? AsApp(string? aumid, string name)
+        => string.IsNullOrEmpty(aumid) ? null : new DroppedItem(@"shell:AppsFolder\" + aumid, name, null);
+
+    private static string? AumidOf(IShellItem item)
+    {
+        if (item is not IShellItem2 item2) return null;
+
+        try
+        {
+            PROPERTYKEY key = PInvoke.PKEY_AppUserModel_ID;
+            PWSTR value;
+            item2.GetString(&key, &value);
+            string id = value.ToString();
+            Marshal.FreeCoTaskMem((nint)value.Value);
+            return string.IsNullOrEmpty(id) ? null : id;
+        }
+        catch
+        {
+            // No lo lleva, que es lo normal en un fichero cualquiera.
+            return null;
+        }
     }
 
     private static string? Display(IShellItem item, SIGDN kind)

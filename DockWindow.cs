@@ -163,6 +163,10 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Y de pantalla a partir de la cual empieza la franja que asoma.
     private int _revealTop;
 
+    /// Extremos de la última región aplicada, para no reaplicarla igual.
+    private int _regionLeft = int.MinValue;
+    private int _regionRight = int.MinValue;
+
     /// X de pantalla del borde izquierdo de la ventana.
     private int _windowLeft;
     private int _windowTop;
@@ -1060,8 +1064,19 @@ internal sealed unsafe class DockWindow : IDisposable
         // Por la derecha, además, la zona del "+": si se queda fuera de la región no
         // llegan los eventos de arrastre ahí y no habría dónde soltar para añadir.
         int extra = (int)MathF.Ceiling(BarHeight * AddZoneFraction * 1.4f) + 4;
+        int left = center - half;
+        int right = center + half + extra;
 
-        HRGN region = PInvoke.CreateRectRgn(center - half, 0, center + half + extra, (int)_windowHeight);
+        // Si no ha cambiado, no se toca. Cada SetWindowRgn reajusta la forma de la
+        // ventana, y esto se llama en CADA reconstrucción: recargar el JSON, reordenar,
+        // volver a cargar iconos. Reformar la ventana por nada es justo el momento en
+        // que otra cosa puede ganarle la carrera por el borde inferior de la pantalla.
+        if (left == _regionLeft && right == _regionRight) return;
+
+        _regionLeft = left;
+        _regionRight = right;
+
+        HRGN region = PInvoke.CreateRectRgn(left, 0, right, (int)_windowHeight);
 
         if (_config.AutoHide)
         {
@@ -1231,7 +1246,17 @@ internal sealed unsafe class DockWindow : IDisposable
                 continue;
             }
 
-            apps.Add(new DockApp { Name = item.Name, Target = target });
+            // Por el mismo filtro que las de dock.json. Si el target no existe, mejor
+            // no llegar a guardarlo: quedaría en dock.local.json para siempre y la
+            // entrada desaparecería en cada arranque sin decir por qué.
+            List<DockApp> ok = DockConfig.Validate([new DockApp { Name = item.Name, Target = target }]);
+            if (ok.Count == 0)
+            {
+                Console.WriteLine($"[dock] no se pudo añadir '{item.Name}': {target}");
+                continue;
+            }
+
+            apps.Add(ok[0]);
             Console.WriteLine($"[dock] añadida '{item.Name}' -> {target}");
             changed = true;
         }

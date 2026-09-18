@@ -17,7 +17,7 @@ internal static class Program
             return;
         }
 
-        Console.WriteLine("Dock M4 - clic derecho sobre el dock para salir");
+        Console.WriteLine("Dock M5 - clic derecho sobre el dock para salir");
         Console.WriteLine();
 
         DockConfig config = DockConfig.Load(DockConfig.DefaultPath);
@@ -31,11 +31,44 @@ internal static class Program
         Console.WriteLine($"[dock] {docks.Count} monitor(es)");
         foreach (DockWindow dock in docks) dock.Show();
 
+        using FileSystemWatcher watcher = WatchConfig(docks);
         DockWindow.RunMessageLoop();
 
         foreach (DockWindow dock in docks) dock.Dispose();
 
         Console.WriteLine("[dock] salida limpia");
+    }
+
+    /// <summary>
+    /// Vigila dock.json y recarga el dock al vuelo.
+    ///
+    /// El rebote de 250 ms no sobra: los editores no guardan de una sola vez, sino
+    /// que disparan varios eventos por guardado (y a veces truncan el archivo antes
+    /// de escribirlo). Sin esperar, se leeria un JSON a medias.
+    /// </summary>
+    private static FileSystemWatcher WatchConfig(List<DockWindow> docks)
+    {
+        string path = DockConfig.DefaultPath;
+        FileSystemWatcher watcher = new(Path.GetDirectoryName(path)!, Path.GetFileName(path))
+        {
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+        };
+
+        // Un unico timer que se reprograma en cada evento: el rebote clasico.
+        Timer debounce = new(_ =>
+        {
+            foreach (DockWindow dock in docks) dock.RequestReload();
+        }, null, Timeout.Infinite, Timeout.Infinite);
+
+        void Touched(object? sender, FileSystemEventArgs e) => debounce.Change(250, Timeout.Infinite);
+
+        watcher.Changed += Touched;
+        watcher.Created += Touched;
+        watcher.Renamed += (_, _) => debounce.Change(250, Timeout.Infinite);
+        watcher.EnableRaisingEvents = true;
+
+        Console.WriteLine($"[config] vigilando {path}");
+        return watcher;
     }
 
     /// <summary>Verificacion sin arrancar la ventana: logica pura + extraccion real.</summary>

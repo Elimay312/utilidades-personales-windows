@@ -73,6 +73,9 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Los iconos terminaron de extraerse en background. WM_APP + 1.
     private const uint WM_APP_ICONS_READY = 0x8001;
 
+    /// dock.json cambió en disco. WM_APP + 2.
+    private const uint WM_APP_RELOAD = 0x8002;
+
     // IDC_ARROW = MAKEINTRESOURCE(32512)
     private const int IdcArrow = 32512;
 
@@ -89,7 +92,15 @@ internal sealed unsafe class DockWindow : IDisposable
     private static ushort _classAtom;
 
     private readonly HMONITOR _monitor;
-    private readonly DockConfig _config;
+
+    /// <summary>
+    /// Caché de iconos por target, compartida entre todos los docks. Sirve para dos
+    /// cosas: al recargar el JSON solo se extraen los iconos nuevos, y con varios
+    /// monitores cada icono se extrae una sola vez en vez de una por pantalla.
+    /// </summary>
+    private static readonly Dictionary<string, IconBitmap> IconCache = [];
+
+    private DockConfig _config;
 
     private HWND _hwnd;
     private DockVisuals? _visuals;
@@ -305,7 +316,14 @@ internal sealed unsafe class DockWindow : IDisposable
             {
                 try
                 {
-                    loaded.Add((app, Icons.Extract(app.Target)));
+                    IconBitmap? cached;
+                    lock (IconCache) IconCache.TryGetValue(app.Target, out cached);
+
+                    IconBitmap icon = cached ?? Icons.Extract(app.Target);
+                    if (cached is null)
+                        lock (IconCache) IconCache[app.Target] = icon;
+
+                    loaded.Add((app, icon));
                 }
                 catch (Exception ex)
                 {
@@ -415,6 +433,10 @@ internal sealed unsafe class DockWindow : IDisposable
                 self?.OnIconsReady();
                 return new LRESULT(0);
 
+            case WM_APP_RELOAD:
+                self?.OnReload();
+                return new LRESULT(0);
+
             case WM_MOUSEMOVE:
                 self?.OnMouseMove(lParam);
                 return new LRESULT(0);
@@ -449,6 +471,39 @@ internal sealed unsafe class DockWindow : IDisposable
         }
 
         return PInvoke.DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+
+    /// <summary>
+    /// Avisa de que dock.json cambió. Se hace por mensaje porque el watcher notifica
+    /// desde un hilo del pool, y todo lo de Composition tiene que ocurrir en el hilo
+    /// que tiene la DispatcherQueue.
+    /// </summary>
+    public void RequestReload() => PInvoke.PostMessage(_hwnd, WM_APP_RELOAD, default, default);
+
+    private void OnReload()
+    {
+        DockConfig fresh;
+        try
+        {
+            fresh = DockConfig.Load(DockConfig.DefaultPath);
+        }
+        catch (Exception ex)
+        {
+            // Un JSON a medio guardar o mal escrito no puede tumbar el dock: se avisa
+            // y se sigue con la configuración anterior.
+            Console.WriteLine($"[config] no se pudo recargar, se mantiene la anterior: {ex.Message}");
+            return;
+        }
+
+        _config = fresh;
+
+        // El tamaño depende del número de iconos, así que hay que recolocar.
+        (int x, int y, int w, int h) = ComputeBounds();
+        PInvoke.SetWindowPos(_hwnd, default, x, y, w, h,
+            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER);
+
+        Console.WriteLine($"[config] recargada: {_config.Apps.Count} apps");
+        StartIconLoad();
     }
 
     /// <summary>Saca el dock a la vista y cancela cualquier ocultamiento pendiente.</summary>

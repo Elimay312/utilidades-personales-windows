@@ -131,6 +131,9 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Y de pantalla a partir de la cual empieza la franja que asoma.
     private int _revealTop;
 
+    /// X de pantalla del borde izquierdo de la ventana.
+    private int _windowLeft;
+
     public DockWindow(HMONITOR monitor, DockConfig config)
     {
         _monitor = monitor;
@@ -266,16 +269,22 @@ internal sealed unsafe class DockWindow : IDisposable
         PInvoke.GetDpiForMonitor(_monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out uint dpiX, out _);
         _dpi = dpiX;
 
-        // La ventana se dimensiona para el caso MÁXIMO y no se vuelve a tocar: tiene
-        // que caber la fila ya ensanchada y el icono magnificado, que crece hacia
-        // arriba. Lo que se ve moverse es la barra de fondo, no la ventana.
+        // La ventana ocupa TODO el ancho del monitor, no solo el del dock.
+        //
+        // Así la franja que asoma cubre el borde inferior entero y el dock se revela
+        // empujando el ratón a cualquier punto de abajo. La contrapartida, aceptada:
+        // la barra de tareas en autoocultar ya no se revela con el ratón, porque
+        // somos nosotros quienes lo recibimos ahí.
+        //
+        // El alto sí es el del caso máximo: tiene que caber el icono magnificado, que
+        // crece hacia arriba. Lo que se ve moverse es la barra de fondo, no la ventana.
         DockCurve curve = CurveFor(Math.Max(_config.Apps.Count, 1));
         float padding = Scale(LogicalPadding);
-        int w = (int)MathF.Ceiling(curve.RestWidth + curve.MaxGrowth + padding * 2f);
+        int w = info.rcWork.right - info.rcWork.left;
         int h = (int)MathF.Ceiling(curve.IconSize * MaxScale + padding * 2f);
 
         RECT work = info.rcWork;
-        int x = work.left + ((work.right - work.left) - w) / 2;
+        int x = work.left;
 
         // Al autoocultarse, la ventana se pega al borde: la franja que asoma tiene que
         // estar justo en el filo de la pantalla para que se revele al empujar ahí el
@@ -285,6 +294,7 @@ internal sealed unsafe class DockWindow : IDisposable
         _windowWidth = w;
         _windowHeight = h;
         _revealTop = y + h - (int)Scale(LogicalRevealStrip);
+        _windowLeft = x;
         return (x, y, w, h);
     }
 
@@ -416,10 +426,8 @@ internal sealed unsafe class DockWindow : IDisposable
                 ((WINDOWPOS*)lParam.Value)->hwndInsertAfter = HwndTopmost;
                 break;
 
-            // Mientras está escondido, todo lo que no sea la franja deja pasar el
-            // clic a la ventana de debajo: el dock no estorba a lo que haya ahí.
-            case WM_NCHITTEST when self is { _config.AutoHide: true, _hidden: true }:
-                return new LRESULT(HiWord(lParam) >= self._revealTop ? HTCLIENT : HTTRANSPARENT);
+            case WM_NCHITTEST when self is not null:
+                return new LRESULT(self.OnHitTest(lParam));
 
             case WM_TIMER when wParam.Value == TopmostTimerId:
                 self?.OnWatchdogTick();
@@ -504,6 +512,40 @@ internal sealed unsafe class DockWindow : IDisposable
 
         Console.WriteLine($"[config] recargada: {_config.Apps.Count} apps");
         StartIconLoad();
+    }
+
+    /// <summary>
+    /// Qué partes de la ventana recogen el ratón. El resto devuelve HTTRANSPARENT y
+    /// el clic atraviesa hasta la ventana de debajo.
+    ///
+    /// Hacen falta dos zonas, y la primera no es opcional: si solo fuera nuestra la
+    /// barra, revelar el dock desde un extremo del borde lo escondería al instante
+    /// (el cursor quedaría fuera de la barra, llegaría WM_MOUSELEAVE y se ocultaría),
+    /// o sea un parpadeo. Con la franja siempre nuestra, el dock se queda quieto
+    /// mientras el ratón siga abajo.
+    /// </summary>
+    private int OnHitTest(LPARAM lParam)
+    {
+        // La franja del borde inferior: siempre nuestra, de lado a lado.
+        if (_config.AutoHide && HiWord(lParam) >= _revealTop) return HTCLIENT;
+
+        // Por encima, solo la barra. La ventana ocupa el ancho de la pantalla, así que
+        // sin esto se tragaría cualquier clic en la franja inferior del escritorio.
+        (float left, float right) = BarBounds();
+        float x = LoWord(lParam) - _windowLeft;
+        return x >= left && x <= right ? HTCLIENT : HTTRANSPARENT;
+    }
+
+    /// <summary>Extremos de la barra en coordenadas de cliente, ahora mismo.</summary>
+    private (float Left, float Right) BarBounds()
+    {
+        if (_curve.Count == 0) return (0f, _windowWidth);
+
+        float amount = _hovering ? 1f : 0f;
+        float padding = Scale(LogicalPadding);
+        float origin = _curve.Origin(_windowWidth, _lastRest, amount);
+        float width = _curve.Transfer(_curve.RestWidth, _lastRest, amount);
+        return (origin - padding, origin + width + padding);
     }
 
     /// <summary>Saca el dock a la vista y cancela cualquier ocultamiento pendiente.</summary>

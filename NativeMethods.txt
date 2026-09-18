@@ -85,3 +85,6 @@ SHQueryUserNotificationState
 GetForegroundWindow
 GetWindowRect
 EnumDisplayMonitors
+
+// --- Consola para --check estando compilado como WinExe (M5) ---
+AttachConsole

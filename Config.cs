@@ -52,6 +52,13 @@ internal sealed class DockConfig
     /// </summary>
     public bool AutoHide { get; init; } = true;
 
+    /// <summary>
+    /// Si el dock se lanza al iniciar sesión. Escribe en
+    /// HKCU\Software\Microsoft\Windows\CurrentVersion\Run, visible en el
+    /// Administrador de tareas. Ponlo a false y la entrada se borra sola.
+    /// </summary>
+    public bool AutoStart { get; init; }
+
     public List<DockApp> Apps { get; init; } = [];
 
     private static readonly JsonSerializerOptions Options = new()
@@ -103,6 +110,7 @@ internal sealed class DockConfig
             IconSize = config.IconSize,
             IconSpacing = config.IconSpacing,
             AutoHide = config.AutoHide,
+            AutoStart = config.AutoStart,
             Apps = valid,
         };
     }

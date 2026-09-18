@@ -1,9 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- Exe (con consola) en M0: la consola es donde se leen los spikes de raton.
-         Pasara a WinExe cuando el dock se valga por si mismo. -->
-    <OutputType>Exe</OutputType>
+    <!-- WinExe: sin esto, el autoarranque abriria una ventana de consola al iniciar
+         sesion. Los mensajes no se pierden: Program engancha la consola del padre si
+         se lanza desde una terminal. -->
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <AssemblyName>Dock</AssemblyName>
     <PlatformTarget>x64</PlatformTarget>

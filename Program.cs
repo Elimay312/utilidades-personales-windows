@@ -7,9 +7,21 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // Compilado como WinExe no hay consola propia. Si nos lanzaron desde una
+        // terminal, enganchamos la suya para no perder los mensajes; si se arranco al
+        // iniciar sesion, simplemente no hay donde escribir y da igual.
+        //
+        // Si la salida ya viene redirigida (una tuberia), no se toca nada: engancharse
+        // a otra consola romperia la redireccion.
+        if (!Console.IsOutputRedirected)
+        {
+            const uint AttachParentProcess = 0xFFFFFFFF;
+            Windows.Win32.PInvoke.AttachConsole(AttachParentProcess);
+        }
+
         // La consola de Windows usa la codificacion ANSI del sistema por defecto
         // y destroza los acentos.
-        Console.OutputEncoding = Encoding.UTF8;
+        try { Console.OutputEncoding = Encoding.UTF8; } catch { /* sin consola */ }
 
         if (args.Contains("--check"))
         {
@@ -22,6 +34,8 @@ internal static class Program
 
         DockConfig config = DockConfig.Load(DockConfig.DefaultPath);
         Console.WriteLine($"[config] {config.Apps.Count} apps");
+
+        AutoStart.Sync(config.AutoStart);
 
         // Un dock por pantalla.
         List<DockWindow> docks = [];

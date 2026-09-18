@@ -13,6 +13,11 @@
   // Si el dock se esconde solo y asoma al llevar el ratón al borde inferior.
   "autoHide": true,
 
+  // Arrancar al iniciar sesión. Escribe en
+  // HKCU\Software\Microsoft\Windows\CurrentVersion\Run, que sale listado en la
+  // pestaña Inicio del Administrador de tareas. A false, la entrada se borra sola.
+  "autoStart": true,
+
   "apps": [
     { "name": "Explorador",    "target": "C:/Windows/explorer.exe" },
     { "name": "Bloc de notas", "target": "C:/Windows/System32/notepad.exe" },

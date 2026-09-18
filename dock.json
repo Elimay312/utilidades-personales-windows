@@ -1,0 +1,18 @@
+// Config del dock. Se admiten comentarios y comas finales.
+//
+// "target" puede ser:
+//   - la ruta de un ejecutable            -> "C:/Windows/System32/notepad.exe"
+//   - un elemento del shell (apps Store)  -> "shell:AppsFolder/<AppUserModelID>"
+//
+// Usa siempre barras normales: el dock las convierte solo, así no hay que
+// escapar barras invertidas en JSON.
+{
+  "iconSize": 48,
+  "iconSpacing": 16,
+  "apps": [
+    { "name": "Explorador",    "target": "C:/Windows/explorer.exe" },
+    { "name": "Bloc de notas", "target": "C:/Windows/System32/notepad.exe" },
+    { "name": "Paint",         "target": "shell:AppsFolder/Microsoft.Paint_8wekyb3d8bbwe!App" },
+    { "name": "Calculadora",   "target": "shell:AppsFolder/Microsoft.WindowsCalculator_8wekyb3d8bbwe!App" }
+  ]
+}

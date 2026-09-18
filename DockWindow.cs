@@ -19,22 +19,25 @@ internal sealed unsafe class DockWindow : IDisposable
 {
     private const string ClassName = "DockWindowClass";
 
-    // Medidas en unidades lógicas (a 96 DPI). Se escalan por el DPI del monitor.
-    private const int LogicalHeight = 72;
-    private const int LogicalWidth = 420;
+    /// Margen vertical del icono dentro del dock, en unidades lógicas.
+    private const int LogicalPadding = 12;
     private const int LogicalBottomMargin = 8;
 
     // Mensajes que manejamos. Se declaran aquí para no arrastrar cientos de
     // constantes desde la metadata del SDK.
     private const uint WM_DESTROY = 0x0002;
-    private const uint WM_PAINT = 0x000F;
-    private const uint WM_ERASEBKGND = 0x0014;
     private const uint WM_MOUSEACTIVATE = 0x0021;
     private const uint WM_NCCALCSIZE = 0x0083;
+    private const uint WM_NCACTIVATE = 0x0086;
     private const uint WM_MOUSEMOVE = 0x0200;
+    private const uint WM_LBUTTONUP = 0x0202;
     private const uint WM_RBUTTONUP = 0x0205;
     private const uint WM_MOUSELEAVE = 0x02A3;
     private const uint WM_DPICHANGED = 0x02E0;
+
+
+    /// Los iconos terminaron de extraerse en background. WM_APP + 1.
+    private const uint WM_APP_ICONS_READY = 0x8001;
 
     // IDC_ARROW = MAKEINTRESOURCE(32512)
     private const int IdcArrow = 32512;
@@ -50,19 +53,26 @@ internal sealed unsafe class DockWindow : IDisposable
     private static readonly WNDPROC WndProcThunk = WndProc;
 
     /// Un dock por HWND. En M0 solo hay una entrada; en M4, una por monitor.
-    private static readonly Dictionary<nint, DockWindow> Windows = [];
+    private static readonly Dictionary<nint, DockWindow> Instances = [];
 
     private static ushort _classAtom;
 
     private readonly HMONITOR _monitor;
+    private readonly DockConfig _config;
 
     private HWND _hwnd;
+    private DockVisuals? _visuals;
     private uint _dpi = 96;
     private bool _trackingMouse;
 
-    public DockWindow(HMONITOR monitor)
+    /// Apps que sí llegaron a tener icono, en el mismo orden que los visuals.
+    private List<(DockApp App, IconBitmap Icon)> _loaded = [];
+
+    public DockWindow(HMONITOR monitor, DockConfig config)
     {
         _monitor = monitor;
+        _config = config;
+
         EnsureClassRegistered();
         Create();
     }
@@ -88,9 +98,9 @@ internal sealed unsafe class DockWindow : IDisposable
         {
             WNDCLASSEXW wc = new()
             {
-                // Marshal.SizeOf y no sizeof: WNDCLASSEXW lleva un delegate, asi que el
-                // compilador la trata como tipo administrado y su sizeof no es el
-                // tamano nativo que espera RegisterClassEx.
+                // Marshal.SizeOf y no sizeof: WNDCLASSEXW lleva un delegate, así que
+                // el compilador la trata como tipo administrado y su sizeof no es el
+                // tamaño nativo que espera RegisterClassEx.
                 cbSize = (uint)Marshal.SizeOf<WNDCLASSEXW>(),
                 lpfnWndProc = WndProcThunk,
                 hInstance = ModuleHandle,
@@ -109,11 +119,10 @@ internal sealed unsafe class DockWindow : IDisposable
     {
         (int x, int y, int w, int h) = ComputeBounds();
 
-        // WS_CAPTION es obligatorio aunque no queramos barra de título: verificado en
-        // M0, DWM ignora el backdrop en una WS_POPUP pura y la ventana sale invisible.
-        // WM_NCCALCSIZE colapsa después el área no cliente, así que no se dibuja
-        // barra ni se puede arrastrar.
-        const WINDOW_STYLE Style = WINDOW_STYLE.WS_POPUP | WINDOW_STYLE.WS_CAPTION;
+        // WS_POPUP a secas. En M0 hizo falta WS_CAPTION para que DWM pintara su
+        // backdrop; al pasar el fondo a Composition ese engaño dejó de hacer falta.
+        // Si M3 vuelve al backdrop de DWM, habrá que reponer WS_CAPTION.
+        const WINDOW_STYLE Style = WINDOW_STYLE.WS_POPUP;
 
         fixed (char* className = ClassName)
         fixed (char* title = "Dock")
@@ -134,9 +143,17 @@ internal sealed unsafe class DockWindow : IDisposable
         if (_hwnd.IsNull)
             throw new InvalidOperationException($"CreateWindowEx falló: {Marshal.GetLastWin32Error()}");
 
-        Windows[(nint)_hwnd.Value] = this;
+        Instances[(nint)_hwnd.Value] = this;
         ApplyDwmAttributes();
+
+        // Composition pasa a ser dueña del contenido de la ventana. Lo que no pinte
+        // queda transparente y deja ver el material acrílico de DWM.
+        _visuals = new DockVisuals(_hwnd);
+
+        StartIconLoad();
     }
+
+    private float Scale(int logical) => (float)(logical * _dpi / 96.0);
 
     /// <summary>Rectángulo del dock en píxeles físicos, centrado abajo en su monitor.</summary>
     private (int X, int Y, int W, int H) ComputeBounds()
@@ -147,13 +164,13 @@ internal sealed unsafe class DockWindow : IDisposable
         PInvoke.GetDpiForMonitor(_monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out uint dpiX, out _);
         _dpi = dpiX;
 
-        int Scale(int logical) => (int)Math.Round(logical * dpiX / 96.0);
+        int count = Math.Max(_config.Apps.Count, 1);
+        int w = (int)(Scale(_config.IconSize) * count + Scale(_config.IconSpacing) * (count + 1));
+        int h = (int)(Scale(_config.IconSize) + Scale(LogicalPadding) * 2);
 
-        int w = Scale(LogicalWidth);
-        int h = Scale(LogicalHeight);
         RECT work = info.rcWork;
         int x = work.left + ((work.right - work.left) - w) / 2;
-        int y = work.bottom - h - Scale(LogicalBottomMargin);
+        int y = work.bottom - h - (int)Scale(LogicalBottomMargin);
 
         return (x, y, w, h);
     }
@@ -170,14 +187,59 @@ internal sealed unsafe class DockWindow : IDisposable
         PInvoke.DwmSetWindowAttribute(_hwnd, DWMWINDOWATTRIBUTE.DWMWA_BORDER_COLOR,
             &border, sizeof(uint));
 
-        // Extender el marco a toda el área cliente: sin esto DWM no tiene dónde
-        // pintar el material.
-        MARGINS margins = new() { cxLeftWidth = -1, cxRightWidth = -1, cyTopHeight = -1, cyBottomHeight = -1 };
-        PInvoke.DwmExtendFrameIntoClientArea(_hwnd, &margins);
+        // De momento no se pide backdrop a DWM: el fondo lo pinta Composition, que
+        // es la dueña del contenido de la ventana. DWM solo redondea las esquinas,
+        // que es geometría y no contenido.
+        //
+        // El acrílico de verdad es trabajo de M3, y entonces habrá que elegir entre
+        // DWMWA_SYSTEMBACKDROP_TYPE (que en M0 funcionó, pero obliga a WS_CAPTION +
+        // WM_NCCALCSIZE) y Compositor.CreateHostBackdropBrush, que se queda dentro de
+        // Composition y no depende de las heurísticas de DWM.
+    }
 
-        DWM_SYSTEMBACKDROP_TYPE backdrop = DWM_SYSTEMBACKDROP_TYPE.DWMSBT_TRANSIENTWINDOW;
-        PInvoke.DwmSetWindowAttribute(_hwnd, DWMWINDOWATTRIBUTE.DWMWA_SYSTEMBACKDROP_TYPE,
-            &backdrop, (uint)sizeof(DWM_SYSTEMBACKDROP_TYPE));
+    /// <summary>
+    /// La doc de Microsoft dice que extraer iconos "can be time consuming" y que
+    /// nunca debe hacerse en el hilo de UI. Se extrae en background y se avisa con
+    /// un mensaje, porque las superficies de Composition sí hay que crearlas en el
+    /// hilo que tiene la DispatcherQueue.
+    /// </summary>
+    private void StartIconLoad()
+    {
+        HWND hwnd = _hwnd;
+        List<DockApp> apps = _config.Apps;
+
+        Task.Run(() =>
+        {
+            List<(DockApp, IconBitmap)> loaded = [];
+            foreach (DockApp app in apps)
+            {
+                try
+                {
+                    loaded.Add((app, Icons.Extract(app.Target)));
+                }
+                catch (Exception ex)
+                {
+                    // Un icono que falla no puede tumbar el dock: se omite esa app.
+                    Console.WriteLine($"[iconos] '{app.Name}' falló: {ex.Message}");
+                }
+            }
+
+            _loaded = loaded;
+            PInvoke.PostMessage(hwnd, WM_APP_ICONS_READY, default, default);
+        });
+    }
+
+    private void OnIconsReady()
+    {
+        if (_visuals is null) return;
+
+        _visuals.BuildIcons(
+            [.. _loaded.Select(entry => entry.Icon)],
+            Scale(_config.IconSize),
+            Scale(_config.IconSpacing),
+            Scale(_config.IconSize) + Scale(LogicalPadding) * 2);
+
+        Console.WriteLine($"[iconos] {_loaded.Count} listos");
     }
 
     public void Show()
@@ -189,29 +251,44 @@ internal sealed unsafe class DockWindow : IDisposable
 
     private static LRESULT WndProc(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam)
     {
-        Windows.TryGetValue((nint)hwnd.Value, out DockWindow? self);
+        Instances.TryGetValue((nint)hwnd.Value, out DockWindow? self);
 
         switch (msg)
         {
             // WS_EX_NOACTIVATE por sí solo NO basta: verificado en M0, al hacer clic
             // llegaban WM_ACTIVATE(WA_CLICKACTIVE) y WM_SETFOCUS. MA_NOACTIVATE
-            // rechaza la activación sin descartar el clic, que es lo que M1 necesita
-            // para lanzar apps.
+            // rechaza la activación sin descartar el clic, que es lo que hace falta
+            // para poder lanzar apps sin robar el foco.
             case WM_MOUSEACTIVATE:
                 return new LRESULT(MA_NOACTIVATE);
 
-            // Colapsa el área no cliente. No depende de la instancia a propósito:
-            // este mensaje llega durante CreateWindowEx, cuando la ventana todavía no
-            // está en el diccionario.
-            case WM_NCCALCSIZE when wParam.Value != 0:
+            // DWM deja de pintar el material acrílico en las ventanas que considera
+            // inactivas, y la nuestra nunca se activa por diseño (MA_NOACTIVATE).
+            // Al arrancar aún lo pinta, pero en cuanto otra ventana toma y suelta el
+            // foco la marca inactiva y el dock se vuelve invisible del todo: sigue
+            // ahí y sigue recibiendo clics, pero no se ve nada.
+            //
+            // Pasar wParam=TRUE hace que DWM la dibuje siempre como activa sin tocar
+            // el foco real de Win32. Es la mitigación documentada para
+            // microsoft-ui-xaml#10570.
+            case WM_NCACTIVATE:
+                return PInvoke.DefWindowProc(hwnd, msg, new WPARAM(1), lParam);
+
+            // Colapsa el área no cliente: devolver 0 deja el área cliente igual al
+            // rect de la ventana, así que no se dibuja barra de título ni bordes.
+            //
+            // Sin filtrar por wParam a propósito. Llega en dos formas (FALSE con un
+            // RECT, TRUE con un NCCALCSIZE_PARAMS) y ambas quieren la misma
+            // respuesta; la de CreateWindowEx es la FALSE, que es justo la que hay
+            // que atrapar para que la barra no aparezca nunca.
+            //
+            // Tampoco depende de la instancia: este mensaje llega durante
+            // CreateWindowEx, cuando la ventana aún no está en el diccionario.
+            case WM_NCCALCSIZE:
                 return new LRESULT(0);
 
-            case WM_ERASEBKGND:
-                // No borrar: el fondo lo pinta OnPaint de una sola vez.
-                return new LRESULT(1);
-
-            case WM_PAINT:
-                self?.OnPaint();
+            case WM_APP_ICONS_READY:
+                self?.OnIconsReady();
                 return new LRESULT(0);
 
             case WM_MOUSEMOVE:
@@ -222,8 +299,12 @@ internal sealed unsafe class DockWindow : IDisposable
                 if (self is not null) self._trackingMouse = false;
                 return new LRESULT(0);
 
+            case WM_LBUTTONUP:
+                self?.OnLeftClick(lParam);
+                return new LRESULT(0);
+
             case WM_RBUTTONUP:
-                // Única vía de salida en M0: la ventana no sale en Alt+Tab.
+                // Única vía de salida por ahora: la ventana no sale en Alt+Tab.
                 PInvoke.PostQuitMessage(0);
                 return new LRESULT(0);
 
@@ -232,7 +313,7 @@ internal sealed unsafe class DockWindow : IDisposable
                 return new LRESULT(0);
 
             case WM_DESTROY:
-                Windows.Remove((nint)hwnd.Value);
+                Instances.Remove((nint)hwnd.Value);
                 PInvoke.PostQuitMessage(0);
                 return new LRESULT(0);
         }
@@ -240,33 +321,9 @@ internal sealed unsafe class DockWindow : IDisposable
         return PInvoke.DefWindowProc(hwnd, msg, wParam, lParam);
     }
 
-    /// <summary>
-    /// Pintado provisional de M0 con GDI. M1 lo sustituye entero por un árbol de
-    /// visuals de Composition, así que aquí no se invierte más de lo justo.
-    /// </summary>
-    private void OnPaint()
-    {
-        PAINTSTRUCT ps;
-        HDC hdc = PInvoke.BeginPaint(_hwnd, &ps);
+    private static short LoWord(LPARAM lParam) => (short)(lParam.Value & 0xFFFF);
 
-        // Con el marco extendido, TODA el área cliente tiene que quedar definida o
-        // DWM embarra el buffer anterior. El negro de GDI es lo que DWM interpreta
-        // como transparente: es ahí donde pinta el material.
-        RECT client;
-        PInvoke.GetClientRect(_hwnd, &client);
-        HBRUSH black = PInvoke.CreateSolidBrush(new COLORREF(0x00000000));
-        PInvoke.FillRect(hdc, &client, black);
-        PInvoke.DeleteObject((HGDIOBJ)(nint)black);
-
-        // Marcador opaco, para localizar la ventana aunque el material no se pinte.
-        int size = (int)Math.Round(24 * _dpi / 96.0);
-        RECT marker = new() { left = 0, top = 0, right = size, bottom = size };
-        HBRUSH brush = PInvoke.CreateSolidBrush(new COLORREF(0x004040FF));
-        PInvoke.FillRect(hdc, &marker, brush);
-        PInvoke.DeleteObject((HGDIOBJ)(nint)brush);
-
-        PInvoke.EndPaint(_hwnd, &ps);
-    }
+    private static short HiWord(LPARAM lParam) => (short)((lParam.Value >> 16) & 0xFFFF);
 
     private void OnMouseMove(LPARAM lParam)
     {
@@ -283,22 +340,46 @@ internal sealed unsafe class DockWindow : IDisposable
             PInvoke.TrackMouseEvent(&tme);
             _trackingMouse = true;
         }
+    }
 
-        short x = (short)(lParam.Value & 0xFFFF);
-        short y = (short)((lParam.Value >> 16) & 0xFFFF);
-        Console.WriteLine($"[raton] x={x} y={y}");
+    private void OnLeftClick(LPARAM lParam)
+    {
+        int index = _visuals?.HitTest(LoWord(lParam)) ?? -1;
+        if (index < 0 || index >= _loaded.Count) return;
+
+        DockApp app = _loaded[index].App;
+        try
+        {
+            app.Launch();
+            Console.WriteLine($"[dock] lanzada '{app.Name}'");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[dock] no se pudo lanzar '{app.Name}': {ex.Message}");
+        }
     }
 
     private void OnDpiChanged(WPARAM wParam, LPARAM lParam)
     {
-        _dpi = (uint)(wParam.Value & 0xFFFF);
-        RECT* suggested = (RECT*)lParam.Value;
-        PInvoke.SetWindowPos(_hwnd, default,
-            suggested->left, suggested->top,
-            suggested->right - suggested->left, suggested->bottom - suggested->top,
+        // Se IGNORA a propósito el rect sugerido que viene en lParam.
+        //
+        // Windows lo calcula escalando el rect anterior por el cambio de DPI, y eso
+        // solo vale para ventanas cuyo tamaño lo decide el usuario. El del dock sale
+        // de su contenido: nº de iconos x tamaño de icono x DPI. Recalcularlo es la
+        // única forma de que quede bien.
+        //
+        // Aplicar el rect sugerido además era acumulativo y destructivo: lanzar
+        // ciertas apps (Paint) dispara un WM_DPICHANGED transitorio a 96 DPI, así que
+        // el dock se encogía un 20% y se desplazaba con cada una. Tras unas cuantas
+        // quedaba diminuto y parecía que había desaparecido.
+        (int x, int y, int w, int h) = ComputeBounds();
+
+        PInvoke.SetWindowPos(_hwnd, default, x, y, w, h,
             SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER);
 
-        Console.WriteLine($"[dpi] WM_DPICHANGED -> {_dpi} ({_dpi * 100 / 96}%)");
+        // El layout de los iconos va en píxeles físicos: hay que rehacerlo.
+        OnIconsReady();
+        Console.WriteLine($"[dpi] WM_DPICHANGED -> recalculado a {_dpi} DPI ({_dpi * 100 / 96}%), {w}x{h} en ({x},{y})");
     }
 
     public static void RunMessageLoop()
@@ -314,6 +395,7 @@ internal sealed unsafe class DockWindow : IDisposable
     public void Dispose()
     {
         if (_hwnd.IsNull) return;
+        _visuals?.Dispose();
         PInvoke.DestroyWindow(_hwnd);
         _hwnd = default;
     }

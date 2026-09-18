@@ -32,11 +32,7 @@ DwmExtendFrameIntoClientArea
 DWM_SYSTEMBACKDROP_TYPE
 DWM_WINDOW_CORNER_PREFERENCE
 
-// --- Pintado del marcador de M0 ---
-BeginPaint
-EndPaint
-FillRect
-CreateSolidBrush
+// --- Recursos GDI de los iconos (M1) ---
 DeleteObject
 
 // --- Modulo propio (para hInstance) ---
@@ -44,3 +40,44 @@ GetModuleHandleW
 
 // --- Area cliente para el pintado ---
 GetClientRect
+
+// --- Composition interop (M1) ---
+ICompositorDesktopInterop
+ICompositionDrawingSurfaceInterop
+ICompositorInterop
+CreateDispatcherQueueController
+DispatcherQueueOptions
+
+// --- Iconos (M1) ---
+SHCreateItemFromParsingName
+IShellItemImageFactory
+SIIGBF
+GetObject
+GetDIBits
+BITMAPINFO
+DIB_USAGE
+
+// --- Superficie de Composition para los iconos (M1) ---
+D3D11CreateDevice
+D2D1CreateDevice
+ID2D1Device
+ID2D1DeviceContext
+ID2D1Bitmap1
+IDXGIDevice
+GetDC
+ReleaseDC
+BITMAP
+BI_COMPRESSION
+D3D_DRIVER_TYPE
+D3D11_CREATE_DEVICE_FLAG
+ID3D11Device
+IDXGIDevice
+ID2D1Bitmap1
+D2D1_BITMAP_PROPERTIES1
+D2D1_ALPHA_MODE
+DXGI_FORMAT
+D2D1_BITMAP_INTERPOLATION_MODE
+PostMessageW
+IsWindowVisible
+GetWindowLongPtrW
+WINDOWPOS

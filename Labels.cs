@@ -75,6 +75,26 @@ internal static unsafe class Labels
             D2D1_DRAW_TEXT_OPTIONS.D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
+    /// <summary>
+    /// Solo el texto, sin pastilla, centrado verticalmente en una fila de la altura
+    /// dada. Es lo que usa el menú del clic derecho, que trae su propio fondo.
+    /// </summary>
+    public static void DrawRow(ID2D1DeviceContext context, string text, float scale, System.Drawing.Point at, float rowHeight)
+    {
+        D2D1_COLOR_F ink = new() { r = 1f, g = 1f, b = 1f, a = 0.95f };
+        context.CreateSolidColorBrush(&ink, null, out ID2D1SolidColorBrush brush);
+
+        IDWriteTextLayout layout = LayoutOf(text, scale);
+        DWRITE_TEXT_METRICS metrics;
+        layout.GetMetrics(&metrics);
+
+        context.DrawTextLayout(
+            new D2D_POINT_2F { x = at.X, y = at.Y + (rowHeight - metrics.height) * 0.5f },
+            layout,
+            brush,
+            D2D1_DRAW_TEXT_OPTIONS.D2D1_DRAW_TEXT_OPTIONS_NONE);
+    }
+
     private static IDWriteTextLayout LayoutOf(string text, float scale)
     {
         EnsureFormat(scale);

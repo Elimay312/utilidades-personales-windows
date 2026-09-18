@@ -169,6 +169,9 @@ internal sealed unsafe class DockWindow : IDisposable
     private int _launchingIndex = -1;
     private DateTime _launchingUntil;
 
+    /// <summary>Icono sobre el que se abrió el menú, o -1 si se abrió en hueco.</summary>
+    private int _menuIndex = -1;
+
     /// Curva vigente, con la que se invierte el cursor y se hace el hit-test. Tiene
     /// que ser la MISMA que generó las expresiones, o el icono que se resalta no
     /// coincide con el que se lanza.
@@ -651,8 +654,7 @@ internal sealed unsafe class DockWindow : IDisposable
                 return new LRESULT(0);
 
             case WM_RBUTTONUP:
-                // Única vía de salida por ahora: la ventana no sale en Alt+Tab.
-                PInvoke.PostQuitMessage(0);
+                self?.OnRightClick();
                 return new LRESULT(0);
 
             case WM_DPICHANGED:
@@ -748,6 +750,10 @@ internal sealed unsafe class DockWindow : IDisposable
     /// <summary>Programa el ocultamiento, con margen para no parpadear al rozarlo.</summary>
     private void ScheduleHide()
     {
+        // Con el menú abierto no: se llevaría por delante lo que el usuario está
+        // leyendo.
+        if (_visuals?.MenuOpen == true) return;
+
         if (!_config.AutoHide) return;
         PInvoke.SetTimer(_hwnd, HideTimerId, HideDelayMs, null);
     }
@@ -935,11 +941,91 @@ internal sealed unsafe class DockWindow : IDisposable
         _lastRest = _curve.Invert(LoWord(lParam), _windowWidth);
         _visuals.SetCursor(_lastRest);
 
+        if (_visuals.MenuOpen)
+        {
+            _visuals.MenuHot(_visuals.MenuHitTest(LoWord(lParam), HiWord(lParam)));
+            _visuals.SetLabel(-1);
+            return;
+        }
+
         // El nombre del icono de debajo. Mientras se arrastra no: ahí el icono ya no
         // está donde dice la curva y la etiqueta se quedaría señalando al hueco.
         _visuals.SetLabel(_dragging || _hidden ? -1 : _visuals.HitTest(_lastRest));
 
         if (_pressedIndex >= 0) OnDragMove(LoWord(lParam), HiWord(lParam));
+    }
+
+    /// <summary>
+    /// El menú del clic derecho.
+    ///
+    /// Antes el clic derecho cerraba el dock directamente, que era un atajo de
+    /// desarrollo: bastaba un clic mal dado para quedarte sin dock. Ahora salir está
+    /// dentro del menú, que es donde se espera encontrarlo.
+    /// </summary>
+    private void OnRightClick()
+    {
+        if (_visuals is null || _curve.Count == 0) return;
+
+        if (_visuals.MenuOpen)
+        {
+            _visuals.CloseMenu();
+            return;
+        }
+
+        int index = _visuals.HitTest(_lastRest);
+        bool sobreIcono = index >= 0 && index < _loaded.Count && !_loaded[index].App.Separator;
+
+        _menuIndex = sobreIcono ? index : -1;
+        string[] items = sobreIcono
+            ? [$"Quitar '{_loaded[index].App.Name}' del dock", "Salir del dock"]
+            : ["Salir del dock"];
+
+        float anchor = sobreIcono
+            ? _curve.Project((_curve.RestLeft(index) + _curve.RestRight(index)) * 0.5f, _windowWidth, _lastRest)
+            : _windowWidth * 0.5f;
+
+        // La etiqueta ocupa el mismo hueco que el menú: se quita o se solapan.
+        _visuals.SetLabel(-1);
+
+        (float left, float right) = BarBounds();
+        _visuals.OpenMenu(items, anchor, _windowHeight - BarHeight, left, right);
+    }
+
+    /// <summary>Ejecuta lo que se eligió en el menú.</summary>
+    private void OnMenuChoice(int choice)
+    {
+        bool sobreIcono = _menuIndex >= 0;
+        _visuals?.CloseMenu();
+
+        // La última entrada siempre es salir, tenga el menú una o dos.
+        if (!sobreIcono || choice == 1)
+        {
+            PInvoke.PostQuitMessage(0);
+            return;
+        }
+
+        if (_menuIndex >= _loaded.Count) return;
+
+        DockApp fuera = _loaded[_menuIndex].App;
+        List<DockApp> apps = [.. _loaded.Select(entry => entry.App)];
+        apps.Remove(fuera);
+
+        _visuals?.Puff(_menuIndex);
+        Console.WriteLine($"[dock] quitada '{fuera.Name}'");
+
+        DockLocal.Save(_config.BaseApps, apps);
+        _config = new DockConfig
+        {
+            IconSize = _config.IconSize,
+            IconSpacing = _config.IconSpacing,
+            AutoHide = _config.AutoHide,
+            AutoStart = _config.AutoStart,
+            Trash = _config.Trash,
+            BaseApps = _config.BaseApps,
+            Apps = apps,
+        };
+
+        PInvoke.SetTimer(_hwnd, PuffTimerId, 200, null);
     }
 
     /// <summary>
@@ -960,6 +1046,16 @@ internal sealed unsafe class DockWindow : IDisposable
     /// <summary>Un clic que nunca llegó a ser arrastre sigue siendo un clic.</summary>
     private void OnLeftUp(LPARAM lParam)
     {
+        if (_visuals?.MenuOpen == true)
+        {
+            int choice = _visuals.MenuHitTest(LoWord(lParam), HiWord(lParam));
+            if (choice >= 0) OnMenuChoice(choice);
+            else _visuals.CloseMenu();
+
+            _pressedIndex = -1;
+            return;
+        }
+
         if (!_dragging)
         {
             _pressedIndex = -1;
@@ -1192,12 +1288,23 @@ internal sealed unsafe class DockWindow : IDisposable
         return _dropKind != DropKind.None;
     }
 
+    /// <summary>
+    /// Qué significaría soltar en ese punto, y es <b>indulgente a propósito</b>.
+    ///
+    /// Antes solo valía la franja de la barra, abajo del todo, y había que afinar
+    /// demasiado: la miniatura que dibuja el shell va por DEBAJO del cursor, así que
+    /// uno apunta instintivamente con la imagen y el ratón se queda alto. Ahora vale
+    /// toda la altura de la ventana, y la regla es simple: <b>sobre el icono de una app
+    /// la abre con ella; en cualquier otro sitio del dock, la añade</b>. Así el
+    /// separador, los márgenes y el hueco de la etiqueta también sirven para añadir, en
+    /// vez de rechazar la suelta sin decir por qué.
+    /// </summary>
     private (DropKind Kind, int Slot) KindAt(int screenX, int screenY)
     {
         if (_visuals is null || _curve.Count == 0) return (DropKind.None, -1);
 
         int y = screenY - _windowTop;
-        if (y < _windowHeight - BarHeight || y > _windowHeight) return (DropKind.None, -1);
+        if (y < 0 || y > _windowHeight) return (DropKind.None, -1);
 
         // Mientras se arrastra algo por encima, el dock tiene que estar a la vista: si
         // no, no habría dónde soltarlo.
@@ -1207,27 +1314,16 @@ internal sealed unsafe class DockWindow : IDisposable
         _lastRest = _curve.Invert(x, _windowWidth);
         _visuals.SetCursor(_lastRest);
 
-        (float addLeft, float addRight) = AddZoneBounds();
-        if (x >= addLeft && x <= addRight) return (DropKind.Add, -1);
-
+        // A la derecha de la barra: la zona del "+", hasta donde llegue la ventana.
         (float left, float right) = BarBounds();
-        if (x < left || x > right) return (DropKind.None, -1);
+        if (x > right) return (DropKind.Add, -1);
+        if (x < left) return (DropKind.Add, -1);
 
         int slot = _visuals.HitTest(_lastRest);
         bool app = slot >= 0 && slot < _loaded.Count && _loaded[slot].App.IsApp;
 
-        // Un separador o un documento no abren nada: ni se levantan ni aceptan.
-        return app ? (DropKind.Open, slot) : (DropKind.None, -1);
-    }
-
-    /// <summary>Extremos de la zona del "+", pegada al borde derecho de la barra.</summary>
-    private (float Left, float Right) AddZoneBounds()
-    {
-        float padding = Scale(LogicalPadding);
-        float size = BarHeight * AddZoneFraction;
-        float barRight = _curve.Project(_curve.RestWidth, _windowWidth, _lastRest) + padding;
-        float gap = size * 0.35f;
-        return (barRight + gap, barRight + gap + size);
+        // Sobre un separador o un documento no hay nada que abrir, así que se añade.
+        return app ? (DropKind.Open, slot) : (DropKind.Add, -1);
     }
 
     /// <summary>El HWND, para el ayudante que dibuja la miniatura de arrastre.</summary>

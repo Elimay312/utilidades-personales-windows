@@ -63,6 +63,9 @@ internal sealed unsafe class DockVisuals : IDisposable
     /// <summary>Escala del monitor, para que el texto no salga borroso a 125%.</summary>
     private float _scale = 1f;
 
+    /// <summary>El menú del clic derecho. Se crea la primera vez que hace falta.</summary>
+    private DockMenu? _menu;
+
     /// Un visual por ranura: icono o separador.
     private readonly List<SpriteVisual> _items = [];
 
@@ -251,6 +254,7 @@ internal sealed unsafe class DockVisuals : IDisposable
         _labels.Clear();
         _dropTarget = -1;
         _labelShown = -1;
+        _menu?.Close();
 
         // Los subtérminos compartidos de la curva, calculados una sola vez.
         DockExpressions.Setup(_compositor, _props, curve, windowWidth);
@@ -522,6 +526,22 @@ internal sealed unsafe class DockVisuals : IDisposable
         fade.Duration = TimeSpan.FromMilliseconds(target > 0f ? 140 : 90);
         label.StartAnimation("Opacity", fade);
     }
+
+    // --- Menú del clic derecho -------------------------------------------------
+
+    public bool MenuOpen => _menu?.IsOpen == true;
+
+    public void OpenMenu(string[] items, float anchorX, float bottom, float left, float right)
+    {
+        _menu ??= new DockMenu(_compositor, _root, EnsureGraphicsDevice());
+        _menu.Open(items, anchorX, bottom, _scale, left, right);
+    }
+
+    public void CloseMenu() => _menu?.Close();
+
+    public int MenuHitTest(float x, float y) => _menu?.HitTest(x, y) ?? -1;
+
+    public void MenuHot(int index) => _menu?.SetHot(index);
 
     /// <summary>
     /// Enseña o esconde la zona del "+". Solo tiene sentido mientras se arrastra algo

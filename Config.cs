@@ -44,8 +44,8 @@ internal sealed class DockApp
     /// documentos. Si algún día molesta, la lista de extensiones se amplía aquí.
     /// </summary>
     [JsonIgnore]
-    public bool IsApp => IsShellItem
-        || Target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+    public bool IsApp => Target != DockConfig.TrashTarget
+        && (IsShellItem || Target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Con qué se identifica esta entrada en <c>dock.local.json</c>. Los separadores
@@ -213,6 +213,12 @@ internal sealed class DockConfig
     /// </summary>
     public bool AutoStart { get; init; }
 
+    /// <summary>
+    /// Si la papelera va al final del dock, como en macOS. Se puede quitar
+    /// arrastrándola fuera igual que cualquier otro icono.
+    /// </summary>
+    public bool Trash { get; init; } = true;
+
     public List<DockApp> Apps { get; init; } = [];
 
     /// <summary>
@@ -233,6 +239,13 @@ internal sealed class DockConfig
     public static string DefaultPath =>
         Path.Combine(AppContext.BaseDirectory, "dock.json");
 
+    /// <summary>
+    /// Nombre de parsing de la papelera. Es un objeto virtual del shell, sin ruta de
+    /// disco, así que va por el mismo camino que las apps de la Store: de aquí salen
+    /// tanto su icono como su apertura.
+    /// </summary>
+    public const string TrashTarget = "shell:RecycleBinFolder";
+
     public static DockConfig Load(string path)
     {
         DockConfig config = JsonSerializer.Deserialize<DockConfig>(File.ReadAllText(path), Options)
@@ -240,12 +253,22 @@ internal sealed class DockConfig
 
         List<DockApp> baseApps = Validate(config.Apps);
 
+        // La papelera se añade aquí y no en dock.json para que esté por defecto sin
+        // que el usuario tenga que escribirla. Entra en la lista BASE, así que se
+        // reordena y se quita arrastrando como cualquier otra: la superposición local
+        // ya sabe recordar que se quitó.
+        if (config.Trash)
+        {
+            baseApps.Add(new DockApp { Name = "Papelera", Target = TrashTarget, Separator = false });
+        }
+
         return new DockConfig
         {
             IconSize = config.IconSize,
             IconSpacing = config.IconSpacing,
             AutoHide = config.AutoHide,
             AutoStart = config.AutoStart,
+            Trash = config.Trash,
             BaseApps = baseApps,
             Apps = DockLocal.Load().ApplyTo(baseApps),
         };

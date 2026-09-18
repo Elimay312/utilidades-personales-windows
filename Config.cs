@@ -199,8 +199,15 @@ internal sealed class DockApp
     private const uint SeeMaskNoUi = 0x00000400;
 }
 
-/// <summary>Contenido de dock.json.</summary>
-internal sealed class DockConfig
+/// <summary>
+/// Contenido de dock.json.
+///
+/// Es un <c>record</c> y no una clase por una razón concreta: reordenar, quitar y añadir
+/// reconstruían el objeto campo a campo, y los tres sitios se olvidaron de
+/// <c>Magnification</c>. El usuario apagaba la lupa, arrastraba un icono y volvía sola.
+/// Con <c>config with { Apps = ... }</c> el campo que se añada mañana se copia gratis.
+/// </summary>
+internal sealed record DockConfig
 {
     /// <summary>Tamaño del icono en reposo, en unidades lógicas (96 DPI).</summary>
     public int IconSize { get; init; } = 48;

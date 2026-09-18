@@ -1,3 +1,4 @@
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
@@ -48,8 +49,12 @@ internal static class Running
     /// encuentra nada dentro del marco y la ventana dejaría de cruzar con su icono: el
     /// dock creería que la app está cerrada y el siguiente clic abriría OTRA instancia,
     /// que es exactamente lo que pasaba con la Calculadora.
+    ///
+    /// Concurrente porque con varios monitores hay un dock por pantalla y cada uno
+    /// refresca su estado en una tarea del pool: dos hilos escribiendo un Dictionary
+    /// normal a la vez pueden dejarlo corrupto y colgarse dentro de él.
     /// </summary>
-    private static readonly Dictionary<nint, uint> UwpOwners = [];
+    private static readonly ConcurrentDictionary<nint, uint> UwpOwners = new();
 
     /// <summary>
     /// Resuelve de una pasada el estado de todas las apps. De una pasada y no una por

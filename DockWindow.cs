@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using System.Runtime.InteropServices;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -1049,7 +1049,7 @@ internal sealed unsafe class DockWindow : IDisposable
         // pida por variable de entorno, y sale barata porque la magnificación ya ha
         // hecho el trabajo caro justo encima.
         if (Environment.GetEnvironmentVariable("DOCK_HOVER_LOG") is not null)
-            Console.WriteLine($"[hover] x={LoWord(lParam)} idx={_visuals.HitTest(_lastRest)}");
+            Console.WriteLine($"[hover] x={LoWord(lParam)} idx={_visuals.HitTest(_lastRest)} mag={_config.Magnification}");
 
         // El nombre del icono de debajo. Mientras se arrastra no: ahí el icono ya no
         // está donde dice la curva y la etiqueta se quedaría señalando al hueco.
@@ -1117,16 +1117,7 @@ internal sealed unsafe class DockWindow : IDisposable
         Console.WriteLine($"[dock] quitada '{fuera.Name}'");
 
         DockLocal.Save(_config.BaseApps, apps);
-        _config = new DockConfig
-        {
-            IconSize = _config.IconSize,
-            IconSpacing = _config.IconSpacing,
-            AutoHide = _config.AutoHide,
-            AutoStart = _config.AutoStart,
-            Trash = _config.Trash,
-            BaseApps = _config.BaseApps,
-            Apps = apps,
-        };
+        _config = _config with { Apps = apps };
 
         PInvoke.SetTimer(_hwnd, PuffTimerId, 200, null);
     }
@@ -1271,15 +1262,7 @@ internal sealed unsafe class DockWindow : IDisposable
 
         // Reconstruir con el orden nuevo. Los Shift vuelven a cero al crearse los
         // visuales, y como ya estaban donde toca, no se ve ningún salto.
-        _config = new DockConfig
-        {
-            IconSize = _config.IconSize,
-            IconSpacing = _config.IconSpacing,
-            AutoHide = _config.AutoHide,
-            AutoStart = _config.AutoStart,
-            BaseApps = _config.BaseApps,
-            Apps = apps,
-        };
+        _config = _config with { Apps = apps };
 
         // Si se ha quitado uno, se le deja acabar de desvanecerse antes de
         // reconstruir; si no, cuanto antes mejor.
@@ -1552,15 +1535,7 @@ internal sealed unsafe class DockWindow : IDisposable
         if (!changed) return;
 
         DockLocal.Save(_config.BaseApps, apps);
-        _config = new DockConfig
-        {
-            IconSize = _config.IconSize,
-            IconSpacing = _config.IconSpacing,
-            AutoHide = _config.AutoHide,
-            AutoStart = _config.AutoStart,
-            BaseApps = _config.BaseApps,
-            Apps = apps,
-        };
+        _config = _config with { Apps = apps };
 
         StartIconLoad();
     }

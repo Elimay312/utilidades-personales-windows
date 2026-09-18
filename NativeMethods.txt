@@ -167,3 +167,7 @@ DWRITE_FONT_STYLE
 DWRITE_FONT_STRETCH
 D2D1_ROUNDED_RECT
 D2D1_DRAW_TEXT_OPTIONS
+
+// --- Contenido de una carpeta del dock, para desplegarla ---
+IEnumShellItems
+BHID_EnumItems

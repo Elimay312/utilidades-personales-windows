@@ -48,6 +48,13 @@ internal sealed class DockApp
         && (IsShellItem || Target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
+    /// Si esto es una carpeta, y por tanto se puede desplegar en rejilla en vez de
+    /// abrirse en el Explorador. La papelera cuenta: también tiene contenido.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsFolder => Target == DockConfig.TrashTarget || Directory.Exists(Target);
+
+    /// <summary>
     /// Con qué se identifica esta entrada en <c>dock.local.json</c>. Los separadores
     /// no tienen target, así que se distinguen por su orden de aparición.
     /// </summary>

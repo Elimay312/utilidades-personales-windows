@@ -119,6 +119,9 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Se soltó algo encima. WM_APP + 4.
     private const uint WM_APP_DROP = 0x8004;
 
+    /// Ya se leyó el contenido de una carpeta y se puede desplegar. WM_APP + 5.
+    private const uint WM_APP_STACK = 0x8005;
+
     // IDC_ARROW = MAKEINTRESOURCE(32512)
     private const int IdcArrow = 32512;
 
@@ -171,6 +174,12 @@ internal sealed unsafe class DockWindow : IDisposable
 
     /// <summary>Icono sobre el que se abrió el menú, o -1 si se abrió en hueco.</summary>
     private int _menuIndex = -1;
+
+    /// <summary>La rejilla desplegada ahora mismo, si hay alguna.</summary>
+    private StackOverlay? _stack;
+
+    /// <summary>Contenido leído en segundo plano, esperando a dibujarse.</summary>
+    private (int Index, string Folder, List<StackItem> Items)? _pendingStack;
 
     /// Curva vigente, con la que se invierte el cursor y se hace el hit-test. Tiene
     /// que ser la MISMA que generó las expresiones, o el icono que se resalta no
@@ -604,6 +613,10 @@ internal sealed unsafe class DockWindow : IDisposable
                 self?.OnReload();
                 return new LRESULT(0);
 
+            case WM_APP_STACK:
+                self?.ShowStack();
+                return new LRESULT(0);
+
             case WM_APP_DROP:
                 self?.OnDropped();
                 return new LRESULT(0);
@@ -750,9 +763,10 @@ internal sealed unsafe class DockWindow : IDisposable
     /// <summary>Programa el ocultamiento, con margen para no parpadear al rozarlo.</summary>
     private void ScheduleHide()
     {
-        // Con el menú abierto no: se llevaría por delante lo que el usuario está
-        // leyendo.
-        if (_visuals?.MenuOpen == true) return;
+        // Con el menú o la rejilla abiertos no: se llevaría por delante lo que el
+        // usuario está mirando. Y para LLEGAR a la rejilla hay que salirse del dock,
+        // así que sin esto se cerraba sola de camino.
+        if (_visuals?.MenuOpen == true || _stack is not null) return;
 
         if (!_config.AutoHide) return;
         PInvoke.SetTimer(_hwnd, HideTimerId, HideDelayMs, null);
@@ -765,6 +779,10 @@ internal sealed unsafe class DockWindow : IDisposable
 
         _hidden = true;
         _visuals?.SetLabel(-1);
+
+        // El menú vive dentro de esta ventana, así que se va con ella. La rejilla no:
+        // es una ventana aparte y se cierra por su cuenta al salirse el ratón.
+        _visuals?.CloseMenu();
         _visuals?.SetHidden(true, HiddenOffset);
     }
 
@@ -793,6 +811,65 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Mira qué apps están abiertas, FUERA del hilo de UI: resolver las MSIX obliga a
     /// recorrer la lista de procesos y eso no puede bloquear el ratón.
     /// </summary>
+    /// <summary>
+    /// Lee la carpeta fuera del hilo de UI y avisa cuando esté. Extraer veinte iconos
+    /// del shell tarda lo suyo, y este hilo es el que atiende el ratón.
+    /// </summary>
+    private void OpenStack(int index, string folder)
+    {
+        HWND hwnd = _hwnd;
+        Task.Run(() =>
+        {
+            List<StackItem> items = StackItems.Read(folder);
+            _pendingStack = (index, folder, items);
+            PInvoke.PostMessage(hwnd, WM_APP_STACK, default, default);
+        });
+    }
+
+    private void ShowStack()
+    {
+        if (_pendingStack is not (int index, string folder, List<StackItem> items)) return;
+        _pendingStack = null;
+
+        if (_visuals is null || index >= _curve.Count) return;
+
+        if (items.Count == 0)
+        {
+            // Vacía o no enumerable: se abre como siempre y ya.
+            Console.WriteLine($"[stack] {folder} no tiene nada que desplegar");
+            Task.Run(() => { try { _loaded[index].App.Launch(); } catch { } });
+            return;
+        }
+
+        MONITORINFO info = new() { cbSize = (uint)sizeof(MONITORINFO) };
+        if (!PInvoke.GetMonitorInfo(_monitor, &info)) return;
+
+        float anchor = _windowLeft
+            + _curve.Project((_curve.RestLeft(index) + _curve.RestRight(index)) * 0.5f, _windowWidth, _lastRest);
+
+        _stack = StackOverlay.Open(_visuals, items, folder, _visuals.Scale, anchor, _windowTop, info.rcMonitor);
+        if (_stack is null) return;
+
+        // Al cerrarse la rejilla el dock vuelve a poder esconderse: mientras estaba
+        // abierta se le prohibió, y su WM_MOUSELEAVE ya pasó hace rato.
+        _stack.Closed = () => { _stack = null; ScheduleHide(); };
+        Console.WriteLine($"[stack] {items.Count} elementos de {folder}");
+    }
+
+    private void CloseStack()
+    {
+        StackOverlay? open = _stack;
+        _stack = null;
+        open?.Dispose();
+    }
+
+    /// <summary>Cierra lo que esté abierto encima del dock antes de hacer otra cosa.</summary>
+    private void CloseMenuAndStack(string? exceptFolder = null)
+    {
+        _visuals?.CloseMenu();
+        if (_stack is not null && _stack.Folder != exceptFolder) CloseStack();
+    }
+
     /// <summary>Deja de botar en cuanto la app abre su ventana, o al agotarse el tope.</summary>
     private void StopBounceIfOpened()
     {
@@ -948,6 +1025,12 @@ internal sealed unsafe class DockWindow : IDisposable
             return;
         }
 
+        // Traza para calibrar las sondas: qué icono cae en qué x. Apagada salvo que se
+        // pida por variable de entorno, y sale barata porque la magnificación ya ha
+        // hecho el trabajo caro justo encima.
+        if (Environment.GetEnvironmentVariable("DOCK_HOVER_LOG") is not null)
+            Console.WriteLine($"[hover] x={LoWord(lParam)} idx={_visuals.HitTest(_lastRest)}");
+
         // El nombre del icono de debajo. Mientras se arrastra no: ahí el icono ya no
         // está donde dice la curva y la etiqueta se quedaría señalando al hueco.
         _visuals.SetLabel(_dragging || _hidden ? -1 : _visuals.HitTest(_lastRest));
@@ -1086,6 +1169,7 @@ internal sealed unsafe class DockWindow : IDisposable
             if (moved < Scale(LogicalDragThreshold)) return;
 
             _dragging = true;
+            CloseMenuAndStack();
             _dragOrder = [.. Enumerable.Range(0, _loaded.Count)];
             _visuals.SetLifted(_pressedIndex, true);
 
@@ -1528,6 +1612,19 @@ internal sealed unsafe class DockWindow : IDisposable
         DockApp app = _loaded[index].App;
         if (app.Separator) return;
 
+        CloseMenuAndStack(exceptFolder: app.IsFolder ? app.Target : null);
+
+        // Una carpeta se despliega en rejilla en vez de abrir el Explorador. Si ya
+        // estaba desplegada, el mismo clic la cierra.
+        if (app.IsFolder)
+        {
+            if (_stack is not null) { CloseStack(); return; }
+
+            _visuals?.Bounce(index, Scale(_config.IconSize) * 0.25f);
+            OpenStack(index, app.Target);
+            return;
+        }
+
         // Tres estados, como la barra de tareas de Windows. Esto es lo que autoriza la
         // enmienda 1 de SEGURIDAD.md: se toca una ventana ajena SOLO aquí, como
         // respuesta directa a un clic sobre su icono, y nunca desde ningún otro sitio.
@@ -1620,6 +1717,8 @@ internal sealed unsafe class DockWindow : IDisposable
         if (_hwnd.IsNull) return;
         PInvoke.KillTimer(_hwnd, TopmostTimerId);
         PInvoke.KillTimer(_hwnd, HideTimerId);
+        CloseStack();
+
         if (!_hwnd.IsNull && _dropTarget is not null) PInvoke.RevokeDragDrop(_hwnd);
         _dropTarget = null;
 

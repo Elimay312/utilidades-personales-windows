@@ -472,7 +472,13 @@ internal sealed unsafe class DockVisuals : IDisposable
         return label;
     }
 
-    private CompositionSurfaceBrush CreateLabelBrush(string name, Vector2 size)
+    /// <summary>El acrílico de la barra, para que el desplegable use el mismo material.</summary>
+    public CompositionBrush CreateBackdropBrush() => CreateAcrylicBrush();
+
+    /// <summary>La escala de este monitor, que el desplegable necesita para medir.</summary>
+    public float Scale => _scale;
+
+    public CompositionSurfaceBrush CreateLabelBrush(string name, Vector2 size)
     {
         CompositionDrawingSurface surface = EnsureGraphicsDevice().CreateDrawingSurface(
             new global::Windows.Foundation.Size(size.X, size.Y),

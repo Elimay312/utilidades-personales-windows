@@ -1,0 +1,23 @@
+// Lista auditable de P/Invokes. Fichero de entrada de CsWin32: si una funcion no esta
+// aqui, no se genera y el codigo no compila. Esta lista no puede desviarse de lo que el
+// binario realmente usa, y por eso es el primer sitio donde mira un auditor.
+//
+// Cada grupo va bajo un comentario que dice para que es.
+
+// --- Ventana propia (M0) ---
+// La ventana-host es invisible y no dibuja nada: existe porque WH_KEYBOARD_LL exige un
+// hilo con bucle de mensajes, y porque es donde aterriza el WM_APP del hook.
+RegisterClassExW
+CreateWindowExW
+DefWindowProcW
+DestroyWindow
+PostQuitMessage
+GetModuleHandleW
+
+// --- Bucle de mensajes propio (M0) ---
+GetMessageW
+TranslateMessage
+DispatchMessageW
+
+// --- Consola para --check estando compilado como WinExe (M0) ---
+AttachConsole

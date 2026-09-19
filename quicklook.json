@@ -1,0 +1,5 @@
+{
+  // Config de QuickLook. Este archivo es tuyo: el programa no lo toca nunca.
+  // Lo que el programa cambia va a quicklook.local.json, al lado.
+  "autoStart": false
+}

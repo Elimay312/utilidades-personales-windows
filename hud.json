@@ -1,0 +1,22 @@
+// Configuracion del HUD. Vive en %LOCALAPPDATA%\Hud\hud.json.
+// Admite comentarios y comas finales. Se recarga sola al guardarla.
+{
+  // Si el HUD aparta el aviso de volumen y brillo de Windows para no tener dos.
+  // Ponlo en false y vuelve el de siempre, tal cual. Lo que hace y por que se puede
+  // hacer esta en SEGURIDAD.md §1, que es la seccion mas larga del documento por algo.
+  "ocultarFlyoutNativo": true,
+
+  // Cuanto sube o baja el volumen cada pulsacion, en porcentaje. Windows usa 2.
+  // Como las teclas las registramos nosotros, el paso lo decides tu.
+  "pasoVolumen": 2,
+
+  // Cuanto se queda el HUD en pantalla despues de la ultima pulsacion, en ms.
+  "msAutoocultar": 1600,
+
+  // Donde sale: "abajo" (como macOS) o "arriba".
+  "posicion": "abajo",
+
+  // Autoarranque con la sesion. Escribe en HKCU\...\Run, que sale en la pestana
+  // Inicio del Administrador de tareas. Por defecto no se escribe nada.
+  "autoArranque": false
+}

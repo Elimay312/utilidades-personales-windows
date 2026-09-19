@@ -1,0 +1,47 @@
+// Lista auditable de P/Invokes. Crece un grupo por hito: si una entrada esta aqui es
+// porque hay codigo que la usa hoy, no porque vaya a hacer falta. Cada grupo lleva
+// encima para que es -- ahi es donde mira un auditor -- y cada entrada tiene que poder
+// senalarse a una seccion de SEGURIDAD.md §3. Si una no se puede, o sobra la entrada o
+// falta una seccion.
+//
+// Lo que NO esta aqui y no va a estar: SetWindowsHookEx, SetWinEventHook,
+// GetAsyncKeyState, EnumWindows, OpenProcess, GetWindowThreadProcessId. Las teclas se
+// registran (§3.1) y la unica ventana ajena se busca por su clase (§3.5).
+
+// --- H0: ventana propia ---
+RegisterClassExW
+CreateWindowExW
+DefWindowProcW
+DestroyWindow
+PostQuitMessage
+SetWindowPos
+LoadCursorW
+IDC_ARROW
+WINDOWPOS
+
+// --- H0: bucle de mensajes propio ---
+GetMessageW
+TranslateMessage
+DispatchMessageW
+
+// --- H0: modulo propio (para hInstance) ---
+GetModuleHandleW
+
+// --- H0: geometria de pantalla (solo lectura) ---
+// No se enumera ninguna ventana ni ningun proceso: solo se pregunta donde esta el
+// monitor del cursor y a que escala, para colocarnos encima. GetCursorPos devuelve un
+// punto; no observa botones, no observa teclas, y no es un hook.
+GetCursorPos
+MonitorFromPoint
+GetMonitorInfoW
+GetDpiForMonitor
+
+// --- H0: teclas de volumen y salida (SEGURIDAD.md §3.1) ---
+// NO es un hook: no se observa el teclado, se le pide a Windows que mande WM_HOTKEY a
+// NUESTRA ventana cuando se pulse UNA de tres teclas concretas. Sin DLL en otros
+// procesos y sin ver ninguna otra tecla. Es como registra su atajo cualquier app.
+RegisterHotKey
+UnregisterHotKey
+
+// --- H0: consola estando compilado como WinExe ---
+AttachConsole

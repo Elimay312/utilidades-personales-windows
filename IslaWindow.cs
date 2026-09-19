@@ -54,7 +54,6 @@ internal sealed unsafe class IslaWindow : IDisposable
     private const int AsomoSegundos = 4;
 
     private const int AtajoPomodoro = 2;
-    private static readonly TimeSpan Pomodoro = TimeSpan.FromMinutes(25);
 
     // El reloj de los tiempos, y SOLO mientras el panel esta abierto: el texto de
     // los segundos no se puede animar en el compositor como si se anima la barra.
@@ -82,11 +81,18 @@ internal sealed unsafe class IslaWindow : IDisposable
     private const uint WM_LBUTTONUP = 0x0202;
     private const uint WM_HOTKEY = 0x0312;
     private const uint WM_POWERBROADCAST = 0x0218;
+    private const uint WM_DISPLAYCHANGE = 0x007E;
+    private const uint WM_DPICHANGED = 0x02E0;
     private const nuint PBT_APMPOWERSTATUSCHANGE = 0xA;
 
     // WM_APP + 1. Lo manda Medios desde el pool de hilos para avisar de que hay
     // algo nuevo que pintar; el dato viaja aparte, en Medios.Ultima.
     private const uint WM_APP_MEDIA = 0x8001;
+
+    // Del vigilante del fichero a la ventana, y de la ventana al bucle. Son dos saltos
+    // porque rehacer la ventana desde dentro de su propio WndProc no se puede.
+    private const uint WM_APP_RECARGAR = 0x8002;
+    private const uint WM_APP_REHACER = 0x8003;
 
     private const int MA_NOACTIVATE = 3;
     private const nint WS_EX_TRANSPARENT = 0x00000020;
@@ -98,7 +104,11 @@ internal sealed unsafe class IslaWindow : IDisposable
     private static readonly WNDPROC WndProcThunk = WndProc;
     private static ushort _classAtom;
     private static IslaWindow? _instancia;
+    private static bool _rehacerPendiente;
+    private static bool _rehaciendo;
 
+    private readonly IslaConfig _config;
+    private readonly HMONITOR _monitor;
     private readonly HWND _hwnd;
     private readonly IslaVisuals _visuals;
     private readonly uint _dpi;
@@ -124,10 +134,11 @@ internal sealed unsafe class IslaWindow : IDisposable
     private bool _arrastrando;
     private DateTime _leido;
     private TimeSpan _duracion;
+    private bool _apartada;
 
-    public static IslaWindow? Create()
+    public static IslaWindow? Create(IslaConfig config)
     {
-        try { return new IslaWindow(); }
+        try { return new IslaWindow(config); }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[isla] {ex.GetType().Name}: {ex.Message}");
@@ -135,15 +146,18 @@ internal sealed unsafe class IslaWindow : IDisposable
         }
     }
 
-    private IslaWindow()
+    private IslaWindow(IslaConfig config)
     {
-        // Monitor principal. Una isla sola, no una por pantalla: elegir cual es de M7.
-        HMONITOR monitor = PInvoke.MonitorFromPoint(default, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY);
-        PInvoke.GetDpiForMonitor(monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out uint dpiX, out _);
+        _config = config;
+
+        // Una isla sola, no una por pantalla: la muesca de un portatil tampoco se
+        // repite en cada monitor.
+        _monitor = Elegir(config.Pantalla);
+        PInvoke.GetDpiForMonitor(_monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out uint dpiX, out _);
         _dpi = dpiX;
 
         MONITORINFO info = new() { cbSize = (uint)sizeof(MONITORINFO) };
-        if (!PInvoke.GetMonitorInfo(monitor, &info)) throw new InvalidOperationException("sin monitor");
+        if (!PInvoke.GetMonitorInfo(_monitor, &info)) throw new InvalidOperationException("sin monitor");
 
         // rcMonitor y no rcWork: la isla vive en el filo de la pantalla, por encima de
         // lo que haya reservado cualquier otro.
@@ -207,7 +221,47 @@ internal sealed unsafe class IslaWindow : IDisposable
         // Medios avisa con WM_APP_MEDIA en cuanto encuentra una sesion de audio.
         Medios.Arrancar(_hwnd, WM_APP_MEDIA);
 
-        Console.WriteLine($"[isla] {_dpi * 100 / 96}% de escala, ventana {_w}x{h} en {_x},{_y}");
+        Console.WriteLine($"[isla] {NombreDe(_monitor)} al {_dpi * 100 / 96}%, ventana {_w}x{h} en {_x},{_y}");
+        Console.WriteLine($"[isla] pantallas: {string.Join(", ", Monitores().Select(NombreDe))}");
+    }
+
+    /// <summary>
+    /// La pantalla por su nombre de dispositivo. No vale el HMONITOR: cambia entre
+    /// arranques, asi que lo que se guarda en isla.json es el \\.\DISPLAYn.
+    /// </summary>
+    private static HMONITOR Elegir(string pantalla)
+    {
+        if (!string.IsNullOrWhiteSpace(pantalla))
+        {
+            foreach (HMONITOR m in Monitores())
+            {
+                if (NombreDe(m) == pantalla) return m;
+            }
+
+            Console.Error.WriteLine($"[isla] no encuentro la pantalla {pantalla}; se usa la principal.");
+        }
+
+        return PInvoke.MonitorFromPoint(default, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY);
+    }
+
+    private static HMONITOR[] Monitores()
+    {
+        List<HMONITOR> lista = [];
+        MONITORENUMPROC recoge = (m, _, _, _) => { lista.Add(m); return true; };
+        PInvoke.EnumDisplayMonitors(default, null, recoge, default);
+
+        // Si la enumeracion falla, al menos la principal.
+        return lista.Count > 0
+            ? [.. lista]
+            : [PInvoke.MonitorFromPoint(default, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY)];
+    }
+
+    private static string NombreDe(HMONITOR m)
+    {
+        MONITORINFOEXW info = default;
+        info.monitorInfo.cbSize = (uint)sizeof(MONITORINFOEXW);
+        if (!PInvoke.GetMonitorInfo(m, (MONITORINFO*)&info)) return "?";
+        return new string((char*)&info.szDevice).TrimEnd('\0');
     }
 
     private float Scale(float logical) => (float)(logical * _dpi / 96.0);
@@ -294,12 +348,25 @@ internal sealed unsafe class IslaWindow : IDisposable
                 return new LRESULT(0);
 
             // Llega al enchufar y desenchufar. No se sondea nada.
+            // Un cambio de pantallas o de DPI invalida el HMONITOR y todas las medidas
+            // en pixeles, que estan horneadas en los visuales. Se rehace entera, que es
+            // bruto pero es una sola ventana.
+            case WM_DISPLAYCHANGE:
+            case WM_DPICHANGED:
+            case WM_APP_RECARGAR:
+                PedirRehacer();
+                return new LRESULT(0);
+
             case WM_POWERBROADCAST:
                 if (wParam.Value == PBT_APMPOWERSTATUSCHANGE) isla?.OnEnergia();
                 return new LRESULT(1);
 
             case WM_DESTROY:
-                PInvoke.PostQuitMessage(0);
+                // Rehacerse tambien destruye la ventana, y PostQuitMessage ahi mata el
+                // bucle: la ventana nueva nace y el proceso se cierra detras, sin dejar
+                // rastro. Medido -- tras mover la isla de pantalla el proceso
+                // desaparecia. El dock lleva el mismo guardia por el mismo motivo.
+                if (!_rehaciendo) PInvoke.PostQuitMessage(0);
                 return new LRESULT(0);
         }
 
@@ -311,9 +378,50 @@ internal sealed unsafe class IslaWindow : IDisposable
         MSG msg;
         while (PInvoke.GetMessage(&msg, default, 0, 0).Value > 0)
         {
+            // Un mensaje de hilo no tiene ventana, asi que DispatchMessage lo tiraria.
+            if (msg.hwnd.IsNull && msg.message == WM_APP_REHACER)
+            {
+                _rehacerPendiente = false;
+                Rehacer();
+                continue;
+            }
+
             PInvoke.TranslateMessage(&msg);
             PInvoke.DispatchMessage(&msg);
         }
+    }
+
+    /// <summary>Lo llama el vigilante de isla.json, desde otro hilo. PostMessage vale.</summary>
+    public static void Recargar()
+    {
+        HWND h = _instancia?._hwnd ?? default;
+        if (!h.IsNull) PInvoke.PostMessage(h, WM_APP_RECARGAR, default, default);
+    }
+
+    public static void Cerrar()
+    {
+        _instancia?.Dispose();
+        _instancia = null;
+    }
+
+    private static void PedirRehacer()
+    {
+        // Enchufar un monitor dispara varios mensajes seguidos; con uno basta.
+        if (_rehacerPendiente) return;
+        _rehacerPendiente = true;
+        PInvoke.PostMessage(HWND.Null, WM_APP_REHACER, default, default);
+    }
+
+    private static void Rehacer()
+    {
+        _rehaciendo = true;
+        _instancia?.Dispose();
+        _instancia = null;
+        _rehaciendo = false;
+
+        IslaConfig config = Config.Cargar();
+        Config.AplicarAutoArranque(config.AutoArranque);
+        if (Create(config) is null) Console.Error.WriteLine("[isla] no se pudo rehacer la ventana.");
     }
 
     // --- estado --------------------------------------------------------------------
@@ -495,7 +603,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         }
 
         _hayPomodoro = true;
-        _finPomodoro = DateTime.UtcNow + Pomodoro;
+        _finPomodoro = DateTime.UtcNow + TimeSpan.FromMinutes(_config.PomodoroMinutos);
         _segundoPomodoro = -1;
         Ensenar(true);
         Asomar();
@@ -549,9 +657,23 @@ internal sealed unsafe class IslaWindow : IDisposable
         float v = (++_tic & 3) == 0 ? Audio.Volumen() : -1f;
         if (v >= 0f)
         {
-            if (_volumenAnterior >= 0f && Math.Abs(v - _volumenAnterior) > 0.005f)
+            if (_config.VolumenAsoma && _volumenAnterior >= 0f && Math.Abs(v - _volumenAnterior) > 0.005f)
                 Avisar($"Volumen   {(int)Math.Round(v * 100)} %");
             _volumenAnterior = v;
+        }
+
+        // Una vez por segundo: apartarse de lo que este a pantalla completa y volver
+        // al principio de la banda topmost.
+        if ((_tic & 7) == 0)
+        {
+            bool pleno = HayPlenoPantalla();
+            if (pleno != _apartada)
+            {
+                _apartada = pleno;
+                Pintar();
+            }
+
+            if (_visible && !_apartada) AsegurarTopmost();
         }
 
         if (_base == Estado.Asomada && !_hayPomodoro && ahora > _finAsomo)
@@ -565,7 +687,64 @@ internal sealed unsafe class IslaWindow : IDisposable
     {
         if (si == _visible) return;
         _visible = si;
-        PInvoke.ShowWindow(_hwnd, si ? SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE : SHOW_WINDOW_CMD.SW_HIDE);
+        Pintar();
+    }
+
+    /// <summary>
+    /// Un unico sitio que decide si la ventana se ve: hay algo que decir Y no hay nada
+    /// a pantalla completa. Con dos sitios llamando a ShowWindow se acaba con la isla
+    /// parpadeando encima de un juego.
+    /// </summary>
+    private void Pintar() => PInvoke.ShowWindow(
+        _hwnd,
+        _visible && !_apartada ? SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE : SHOW_WINDOW_CMD.SW_HIDE);
+
+    /// <summary>
+    /// Si hay algo ocupando la pantalla entera. Lo decide la VENTANA, no el estado del
+    /// sistema: SHQueryUserNotificationState devuelve BUSY de forma transitoria despues
+    /// de cualquier minimizado, y en el dock eso provocaba que se apartara sola una vez
+    /// por minimizado. Aqui se comparan los estilos y el rectangulo, que no mienten.
+    ///
+    /// Solo se LEE la geometria de una ventana, la que esta en primer plano. No se
+    /// enumera nada y no se toca nada (SEGURIDAD.md §3.5).
+    /// </summary>
+    private bool HayPlenoPantalla()
+    {
+        HWND frente = PInvoke.GetForegroundWindow();
+        if (frente.IsNull || frente == _hwnd) return false;
+
+        // Solo cuenta lo que pase en NUESTRA pantalla.
+        if (PInvoke.MonitorFromWindow(frente, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST) != _monitor)
+            return false;
+
+        // Una maximizada cubre el monitor igual que una a pantalla completa; lo que las
+        // separa son los estilos. IsZoomed devuelve true en los dos casos y no sirve.
+        const nint WsCaption = 0x00C00000;
+        const nint WsThickFrame = 0x00040000;
+        nint estilo = PInvoke.GetWindowLongPtr(frente, WINDOW_LONG_PTR_INDEX.GWL_STYLE);
+        if ((estilo & (WsCaption | WsThickFrame)) != 0) return false;
+
+        if (!PInvoke.GetWindowRect(frente, out RECT r)) return false;
+
+        MONITORINFO info = new() { cbSize = (uint)sizeof(MONITORINFO) };
+        if (!PInvoke.GetMonitorInfo(_monitor, &info)) return false;
+
+        RECT p = info.rcMonitor;
+        return r.left <= p.left && r.top <= p.top && r.right >= p.right && r.bottom >= p.bottom;
+    }
+
+    /// <summary>
+    /// Windows saca las ventanas de la banda topmost sin quitarles el bit. Dos llamadas:
+    /// la primera vuelve a la banda, la segunda sube al principio de ella.
+    /// </summary>
+    private void AsegurarTopmost()
+    {
+        const SET_WINDOW_POS_FLAGS Quieta = SET_WINDOW_POS_FLAGS.SWP_NOMOVE
+            | SET_WINDOW_POS_FLAGS.SWP_NOSIZE
+            | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE;
+
+        PInvoke.SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, Quieta);
+        PInvoke.SetWindowPos(_hwnd, HWND.Null, 0, 0, 0, 0, Quieta);
     }
 
     private RECT ZonaCaliente(bool abierta)

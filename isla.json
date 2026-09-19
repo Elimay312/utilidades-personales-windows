@@ -1,0 +1,20 @@
+// Configuracion de la isla. Vive en %LOCALAPPDATA%\Isla\isla.json.
+// Admite comentarios y comas finales. Se recarga sola al guardarlo.
+{
+  // Nombre de dispositivo de la pantalla donde vive la isla. Vacio = la principal.
+  // Al arrancar, la isla imprime en la consola las que hay: \\.\DISPLAY1, etc.
+  // Ojo con las barras: en JSON hay que doblarlas -> "\\\\.\\DISPLAY2"
+  "pantalla": "",
+
+  // Cuanto dura el pomodoro de Ctrl+Alt+T.
+  "pomodoroMinutos": 25,
+
+  // Si un cambio de volumen hace asomar la isla.
+  // Windows ya ensena el suyo arriba a la izquierda y no se puede quitar, asi que
+  // ponlo en false si te sobra verlo dos veces.
+  "volumenAsoma": true,
+
+  // Autoarranque con la sesion. Escribe en HKCU\...\Run, que sale en la pestana
+  // Inicio del Administrador de tareas. Por defecto no se escribe nada.
+  "autoArranque": false
+}

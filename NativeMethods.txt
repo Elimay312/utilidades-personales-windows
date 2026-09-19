@@ -122,3 +122,12 @@ CLSCTX
 GetSystemPowerStatus
 SYSTEM_POWER_STATUS
 IAudioEndpointVolume
+
+// --- Pantallas y pantalla completa (solo lectura) ---
+// De la ventana en primer plano se lee SU GEOMETRIA y nada mas: ni se enumera nada
+// ni se la toca (SEGURIDAD.md �3.5).
+EnumDisplayMonitors
+MONITORINFOEXW
+GetForegroundWindow
+MonitorFromWindow
+GetWindowRect

@@ -30,18 +30,48 @@ internal static class Program
 
         Stopwatch reloj = Stopwatch.StartNew();
 
-        IslaWindow? isla = IslaWindow.Create();
-        if (isla is null)
+        IslaConfig config = Config.Cargar();
+        Config.AplicarAutoArranque(config.AutoArranque);
+
+        if (IslaWindow.Create(config) is null)
         {
             Console.Error.WriteLine("[isla] no se pudo crear la ventana.");
             return 2;
         }
 
+        using FileSystemWatcher vigilante = Vigilar();
+
         Console.WriteLine($"[isla] arrancada en {reloj.ElapsedMilliseconds} ms");
         Console.WriteLine("[isla] Ctrl+Alt+I rota brasa -> asomada -> abierta.");
 
         IslaWindow.RunMessageLoop();
-        isla.Dispose();
+        IslaWindow.Cerrar();
         return 0;
+    }
+
+    /// <summary>
+    /// Recarga isla.json al guardarlo, con rebote de 250 ms: los editores disparan
+    /// varios eventos por guardado y a veces truncan el fichero antes de escribirlo,
+    /// asi que sin esperar se leeria un JSON a medias.
+    /// </summary>
+    private static FileSystemWatcher Vigilar()
+    {
+        FileSystemWatcher vigilante = new(Config.Carpeta, "isla.json")
+        {
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+            EnableRaisingEvents = true,
+        };
+
+        Timer? espera = null;
+        void Cambio()
+        {
+            espera?.Dispose();
+            espera = new Timer(_ => IslaWindow.Recargar(), null, 250, Timeout.Infinite);
+        }
+
+        vigilante.Changed += (_, _) => Cambio();
+        vigilante.Created += (_, _) => Cambio();
+        vigilante.Renamed += (_, _) => Cambio();
+        return vigilante;
     }
 }

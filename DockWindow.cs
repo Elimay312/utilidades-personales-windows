@@ -288,6 +288,9 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Estado del autoocultar.
     private bool _hidden;
 
+    /// <summary>Si hay algo a pantalla completa en ESTA pantalla y el dock se ha apartado.</summary>
+    private bool _fullscreen;
+
     /// Y de pantalla a partir de la cual empieza la franja que asoma.
     private int _revealTop;
 
@@ -967,7 +970,7 @@ internal sealed unsafe class DockWindow : IDisposable
     /// </summary>
     private void UpdateSmartHide()
     {
-        if (!_config.AutoHide || _hovering || _dragging) return;
+        if (!_config.AutoHide || _hovering || _dragging || _fullscreen) return;
         if (_visuals?.MenuOpen == true || _stack is not null) return;
 
         bool tapado = Running.AnythingOver(BarRect());
@@ -1105,7 +1108,25 @@ internal sealed unsafe class DockWindow : IDisposable
     /// </summary>
     private void OnWatchdogTick()
     {
-        if (IsFullscreenAppRunning())
+        bool pleno = IsFullscreenAppRunning();
+
+        if (pleno != _fullscreen)
+        {
+            _fullscreen = pleno;
+
+            // Con algo a pantalla completa el dock se aparta DEL TODO, no solo se
+            // esconde. Esconderse baja los visuals pero la ventana se queda, y con ella
+            // la franja de revelado del borde inferior: bajar el ratón para tocar la
+            // barra de progreso de un vídeo revelaba el dock encima y el clic se lo
+            // comía él. Ocultando la ventana, ese borde vuelve a ser del vídeo.
+            PInvoke.ShowWindow(_hwnd, pleno
+                ? SHOW_WINDOW_CMD.SW_HIDE
+                : SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
+
+            Console.WriteLine($"[pleno] {_device}: {(pleno ? "el dock se aparta" : "el dock vuelve")}");
+        }
+
+        if (pleno)
         {
             // Nada de reafirmar el z-order por encima de un juego o un vídeo.
             Hide(force: true);

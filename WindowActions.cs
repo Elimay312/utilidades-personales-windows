@@ -79,6 +79,31 @@ internal static unsafe class WindowActions
     }
 
     /// <summary>
+    /// Sube la ventana al frente <b>sin activarla</b>, y la restaura si estaba
+    /// minimizada.
+    ///
+    /// Existe aparte de <see cref="BringToFront"/> por una razón medida: Windows no
+    /// concede el derecho a cambiar la ventana en primer plano por haber recibido una
+    /// rueda. Se comprobó lado a lado, con las mismas ventanas y el mismo icono: con un
+    /// clic la ventana pasa al frente; con la rueda, SetForegroundWindow no surte
+    /// efecto ni una sola vez. Así que el gesto de la rueda se queda en subirla en el
+    /// orden de apilado, que no necesita permiso ninguno.
+    ///
+    /// La consecuencia, y hay que saberla: la ventana se ve, pero el teclado sigue
+    /// donde estaba. Un clic encima la activa como siempre.
+    /// </summary>
+    public static void Raise(HWND window)
+    {
+        if (window.IsNull) return;
+
+        if (PInvoke.IsIconic(window)) PInvoke.ShowWindow(window, SHOW_WINDOW_CMD.SW_RESTORE);
+
+        PInvoke.SetWindowPos(window, HWND.Null, 0, 0, 0, 0,
+            SET_WINDOW_POS_FLAGS.SWP_NOMOVE | SET_WINDOW_POS_FLAGS.SWP_NOSIZE
+                | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE | SET_WINDOW_POS_FLAGS.SWP_SHOWWINDOW);
+    }
+
+    /// <summary>
     /// Minimiza. Con <paramref name="instant"/> la ventana desaparece de golpe, sin la
     /// animación que Windows le pone.
     ///

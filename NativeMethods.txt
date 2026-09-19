@@ -120,6 +120,7 @@ IsWindowVisible
 IsIconic
 GetWindow
 GetWindowTextLengthW
+GetWindowTextW
 FindWindowExW
 GetClassNameW
 DwmGetWindowAttribute

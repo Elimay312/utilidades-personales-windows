@@ -77,6 +77,8 @@ internal sealed unsafe class DockWindow : IDisposable
     private const uint WM_LBUTTONUP = 0x0202;
     private const uint WM_CAPTURECHANGED = 0x0215;
     private const uint WM_RBUTTONUP = 0x0205;
+    private const uint WM_MBUTTONUP = 0x0208;
+    private const uint WM_MOUSEWHEEL = 0x020A;
     private const uint WM_MOUSELEAVE = 0x02A3;
     private const uint WM_TIMER = 0x0113;
     private const uint WM_WINDOWPOSCHANGING = 0x0046;
@@ -215,6 +217,11 @@ internal sealed unsafe class DockWindow : IDisposable
     /// hilo de UI porque resolver las MSIX obliga a recorrer procesos y ventanas.
     private AppState[] _state = [];
     private string _lastRunningTrace = " ";
+
+    /// <summary>Icono sobre el que se está girando la rueda, y por qué ventana va.</summary>
+    private int _wheelIndex = -1;
+    private int _wheelAt;
+    private HWND[] _wheelWindows = [];
 
     /// <summary>
     /// Icono que está botando porque su app se está abriendo, y hasta cuándo. El tope
@@ -745,7 +752,7 @@ internal sealed unsafe class DockWindow : IDisposable
                         // un clic FUERA del dock no nos llega —el hit-test lo deja
                         // pasar—, así que sin esto el menú se quedaba abierto, y con él
                         // abierto el dock tampoco se escondía.
-                        self._visuals?.CloseMenu();
+                        self.CloseMenu();
                         self.SetTallRegion(false);
                         self._visuals?.SetHover(false);
                         self._visuals?.SetLabel(-1);
@@ -770,6 +777,14 @@ internal sealed unsafe class DockWindow : IDisposable
 
             case WM_RBUTTONUP:
                 self?.OnRightClick();
+                return new LRESULT(0);
+
+            case WM_MBUTTONUP:
+                self?.OnMiddleClick();
+                return new LRESULT(0);
+
+            case WM_MOUSEWHEEL:
+                self?.OnWheel(wParam);
                 return new LRESULT(0);
 
             case WM_DPICHANGED:
@@ -940,7 +955,7 @@ internal sealed unsafe class DockWindow : IDisposable
 
         // El menú vive dentro de esta ventana, así que se va con ella. La rejilla no:
         // es una ventana aparte y se cierra por su cuenta al salirse el ratón.
-        _visuals?.CloseMenu();
+        CloseMenu();
         _visuals?.SetHidden(true, HiddenOffset);
     }
 
@@ -1075,10 +1090,21 @@ internal sealed unsafe class DockWindow : IDisposable
         open?.Dispose();
     }
 
+    /// <summary>
+    /// Cierra el menú, sea el del clic derecho o la lista de ventanas de la rueda. Lo
+    /// segundo importa: si no se olvidara la lista, el siguiente clic en el menú del
+    /// clic derecho se interpretaría como elegir una ventana.
+    /// </summary>
+    private void CloseMenu()
+    {
+        _visuals?.CloseMenu();
+        _wheelIndex = -1;
+    }
+
     /// <summary>Cierra lo que esté abierto encima del dock antes de hacer otra cosa.</summary>
     private void CloseMenuAndStack(string? exceptFolder = null)
     {
-        _visuals?.CloseMenu();
+        CloseMenu();
         if (_stack is not null && _stack.Folder != exceptFolder) CloseStack();
     }
 
@@ -1341,7 +1367,14 @@ internal sealed unsafe class DockWindow : IDisposable
 
         if (_visuals.MenuOpen)
         {
-            _visuals.MenuHot(_visuals.MenuHitTest(LoWord(lParam), HiWord(lParam)));
+            // Con la lista de la rueda abierta, el ratón se queda sobre el ICONO, que
+            // está debajo de la lista: el hit-test devuelve -1 y borraba la fila que la
+            // rueda acababa de elegir. Solo manda el ratón cuando de verdad está encima
+            // de una fila.
+            int hot = _visuals.MenuHitTest(LoWord(lParam), HiWord(lParam));
+            if (hot >= 0) { _wheelAt = hot; _visuals.MenuHot(hot); }
+            else if (_wheelIndex < 0) _visuals.MenuHot(-1);
+
             _visuals.SetLabel(-1);
             return;
         }
@@ -1372,7 +1405,7 @@ internal sealed unsafe class DockWindow : IDisposable
 
         if (_visuals.MenuOpen)
         {
-            _visuals.CloseMenu();
+            CloseMenu();
             return;
         }
 
@@ -1398,8 +1431,23 @@ internal sealed unsafe class DockWindow : IDisposable
     /// <summary>Ejecuta lo que se eligió en el menú.</summary>
     private void OnMenuChoice(int choice)
     {
-        bool sobreIcono = _menuIndex >= 0;
         _visuals?.CloseMenu();
+
+        // El menú de la rueda es una lista de ventanas, no el del clic derecho. Aquí
+        // sí se puede activar: el clic es lo que da el permiso que la rueda no da.
+        if (_wheelIndex >= 0)
+        {
+            HWND[] windows = _wheelWindows;
+            _wheelIndex = -1;
+
+            if (choice < 0 || choice >= windows.Length) return;
+
+            WindowActions.BringToFront(windows[choice]);
+            Console.WriteLine($"[rueda] al frente la ventana {choice + 1}");
+            return;
+        }
+
+        bool sobreIcono = _menuIndex >= 0;
 
         // La última entrada siempre es salir, tenga el menú una o dos.
         if (!sobreIcono || choice == 1)
@@ -1446,7 +1494,7 @@ internal sealed unsafe class DockWindow : IDisposable
         {
             int choice = _visuals.MenuHitTest(LoWord(lParam), HiWord(lParam));
             if (choice >= 0) OnMenuChoice(choice);
-            else _visuals.CloseMenu();
+            else CloseMenu();
 
             _pressedIndex = -1;
             return;
@@ -1939,6 +1987,114 @@ internal sealed unsafe class DockWindow : IDisposable
             new GenieCurve(source, target, GenieOverlay.Slices),
             reverse,
             onFinished);
+    }
+
+    /// <summary>
+    /// Clic central: una instancia NUEVA, aunque ya haya ventana. Es lo que hace la
+    /// barra de tareas de Windows y lo que hace macOS con el icono del Finder.
+    ///
+    /// El camino de lanzar ya existía; lo que faltaba era una forma de pedirlo teniendo
+    /// ventana, porque el clic izquierdo solo lanza cuando NO la hay.
+    /// </summary>
+    private void OnMiddleClick()
+    {
+        int index = _visuals?.HitTest(_lastRest) ?? -1;
+        if (index < 0 || index >= _loaded.Count) return;
+
+        DockApp app = _loaded[index].App;
+        if (app.Separator || !app.IsApp) return;
+
+        CloseMenuAndStack(exceptFolder: null);
+        _visuals?.Bounce(index, Scale(_config.IconSize) * 0.35f);
+
+        // Fuera del hilo de UI por lo mismo que el clic izquierdo: ShellExecuteEx puede
+        // bloquear segundos y aquí se atiende el ratón.
+        Task.Run(() =>
+        {
+            try
+            {
+                app.Launch();
+                Console.WriteLine($"[dock] instancia nueva de '{app.Name}'");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[dock] no se pudo lanzar '{app.Name}': {ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>
+    /// Rueda sobre un icono: elige entre sus ventanas.
+    ///
+    /// <para>
+    /// El gesto que se pidió era "la rueda trae la siguiente ventana al frente", y eso
+    /// <b>Windows no lo deja hacer</b>. Medido, y de dos maneras: con la rueda encima
+    /// del icono, <c>SetForegroundWindow</c> no surte efecto ni una vez, mientras que
+    /// con un clic sobre el mismo icono y las mismas ventanas sí; y
+    /// <c>SetWindowPos(HWND_TOP)</c> y <c>BringWindowToTop</c> sobre una ventana ajena
+    /// devuelven TRUE y no mueven nada. Es a propósito: la rueda se enruta a la ventana
+    /// bajo el puntero justamente para NO activarla, y sin activación no hay derecho a
+    /// reordenar las ventanas de otro proceso.
+    /// </para>
+    ///
+    /// <para>
+    /// Lo que sí da ese derecho es un clic. Así que la rueda enseña la lista de
+    /// ventanas y mueve el resaltado, y el clic —que es lo único que Windows escucha—
+    /// abre la elegida. La lista se dibuja con el mismo menú del clic derecho.
+    /// </para>
+    /// </summary>
+    private void OnWheel(WPARAM wParam)
+    {
+        // Se usa la posición que ya mantiene el movimiento del ratón: en WM_MOUSEWHEEL
+        // lParam viene en coordenadas de PANTALLA, no de cliente como en el resto de
+        // mensajes, y además HitTest trabaja en la escala en reposo.
+        int index = _visuals?.HitTest(_lastRest) ?? -1;
+        if (_visuals is null || index < 0 || index >= _loaded.Count || index >= _state.Length) return;
+
+        HWND[] windows = _state[index].All;
+        if (windows.Length < 2) return;
+
+        // El signo del delta va en la parte alta de wParam, con signo.
+        int step = (short)((wParam.Value >> 16) & 0xFFFF) > 0 ? -1 : 1;
+
+        if (_wheelIndex != index || !_visuals.MenuOpen)
+        {
+            _wheelIndex = index;
+            _wheelWindows = windows;
+            _wheelAt = 0;
+            _menuIndex = -1;
+
+            _visuals.SetLabel(-1);
+            (float left, float right) = BarBounds();
+            _visuals.OpenMenu(
+                [.. windows.Select(TitleOf)],
+                _curve.Project((_curve.RestLeft(index) + _curve.RestRight(index)) * 0.5f, _windowWidth, _lastRest),
+                _windowHeight - BarHeight,
+                left,
+                right);
+        }
+        else
+        {
+            _wheelAt = ((_wheelAt + step) % _wheelWindows.Length + _wheelWindows.Length) % _wheelWindows.Length;
+        }
+
+        _visuals.MenuHot(_wheelAt);
+        Console.WriteLine($"[rueda] '{_loaded[index].App.Name}' ventana {_wheelAt + 1} de {_wheelWindows.Length}");
+    }
+
+    /// <summary>El título de una ventana, recortado para que quepa en una fila.</summary>
+    private static string TitleOf(HWND window)
+    {
+        int length = PInvoke.GetWindowTextLength(window);
+        if (length <= 0) return "(sin título)";
+
+        Span<char> buffer = new char[length + 1];
+        fixed (char* p = buffer)
+        {
+            int got = PInvoke.GetWindowText(window, p, buffer.Length);
+            string text = got > 0 ? new string(buffer[..got]) : "(sin título)";
+            return text.Length > 48 ? text[..47] + "…" : text;
+        }
     }
 
     private void OnLeftClick(LPARAM lParam)

@@ -42,6 +42,12 @@ internal static class Running
     /// <summary>DWMWA_CLOAKED: si DWM tiene la ventana oculta aunque sea "visible".</summary>
     private const uint DwmwaCloaked = 14;
 
+    /// <summary>
+    /// La bandera con la que una ventana declara que <b>no es una app</b>. La barra de
+    /// tareas de Windows la respeta, y el dock también tiene que hacerlo.
+    /// </summary>
+    private const nint WsExToolWindow = 0x00000080;
+
     /// <summary>Las apps UWP no son dueñas de su ventana: la hospeda este marco.</summary>
     private const string UwpFrameClass = "ApplicationFrameWindow";
 
@@ -362,6 +368,17 @@ internal static class Running
         if (!PInvoke.IsWindowVisible(window)) return false;
         if (!PInvoke.GetWindow(window, GET_WINDOW_CMD.GW_OWNER).IsNull) return false;
         if (PInvoke.GetWindowTextLength(window) == 0) return false;
+
+        // Una utilidad de escritorio con título salía como app abierta: la isla dinámica
+        // aparecía en el dock con su icono al lado de Spotify. El filtro que faltaba es
+        // el que ya usa la barra de tareas.
+        //
+        // Medido enumerando todo lo que pasaba este predicado: las ÚNICAS ventanas con
+        // el bit puesto eran la isla y los tres docks; las diez apps de verdad
+        // —Terminal, Discord, Spotify, Brave…— lo tenían a cero. Y hace que la excepción
+        // por PID propio pase a ser cinturón además de tirantes.
+        nint estilo = PInvoke.GetWindowLongPtr(window, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE);
+        if ((estilo & WsExToolWindow) != 0) return false;
 
         int cloaked = 0;
         PInvoke.DwmGetWindowAttribute(window, (DWMWINDOWATTRIBUTE)DwmwaCloaked, &cloaked, sizeof(int));

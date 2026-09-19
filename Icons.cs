@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Gdi;
@@ -20,8 +21,50 @@ internal static class Icons
     /// Extrae el icono de un ejecutable o de un elemento del shell.
     /// La doc de Microsoft avisa de que esto "can be time consuming" y que no debe
     /// hacerse en el hilo de UI: la llamada va en background.
+    ///
+    /// <para>
+    /// <b>Y ese background tiene que ser STA.</b> Los manejadores de icono del shell se
+    /// registran con <c>ThreadingModel=Apartment</c>; desde un hilo MTA —cualquiera del
+    /// pool— <c>GetImage</c> no llega a usarlos y devuelve el icono genérico sin fallar
+    /// ni avisar. Medido sobre el .url de un juego de Steam, misma llamada, mismo
+    /// fichero: en STA salen 5553 píxeles con alfa (el icono del juego) y en MTA 35789
+    /// opacos en un rectángulo vertical, que es la hoja en blanco. Los .exe, .lnk,
+    /// carpetas y la papelera dan byte por byte lo mismo en los dos, y por eso el fallo
+    /// tardó en verse.
+    /// </para>
+    ///
+    /// <para>
+    /// El apaño va aquí y no en los llamantes porque hay tres <c>Task.Run</c> distintos
+    /// que acaban en esta función: cargar el dock, abrir una carpeta y navegar dentro
+    /// de ella.
+    /// </para>
     /// </summary>
-    public static unsafe IconBitmap Extract(string target)
+    public static IconBitmap Extract(string target)
+    {
+        if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA) return ExtractHere(target);
+
+        // ponytail: un hilo por extracción. Crear un hilo son décimas de milisegundo
+        // contra las decenas que tarda el shell en devolver el icono, así que no
+        // compensa todavía; si algún día los iconos se extraen en caliente, un único
+        // hilo STA con cola.
+        IconBitmap? icon = null;
+        ExceptionDispatchInfo? error = null;
+
+        Thread sta = new(() =>
+        {
+            try { icon = ExtractHere(target); }
+            catch (Exception ex) { error = ExceptionDispatchInfo.Capture(ex); }
+        });
+
+        sta.SetApartmentState(ApartmentState.STA);
+        sta.Start();
+        sta.Join();
+
+        error?.Throw();
+        return icon!;
+    }
+
+    private static unsafe IconBitmap ExtractHere(string target)
     {
         // Una URL no es un elemento del shell: SHCreateItemFromParsingName la rechaza.
         // Se le pone la cara de la app que la va a abrir, que es lo que el usuario

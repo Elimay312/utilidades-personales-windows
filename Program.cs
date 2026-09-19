@@ -145,7 +145,11 @@ internal static class Program
         {
             try
             {
-                IconBitmap icon = Icons.Extract(app.IconSource);
+                // Desde el pool y no desde aqui a proposito: Main es STA, y en STA el
+                // shell devuelve el icono bueno aunque Extract no se defienda. El dock
+                // extrae desde Task.Run, asi que si esto midiera en STA volveria a dar
+                // por bueno un icono que en el dock sale en blanco.
+                IconBitmap icon = Task.Run(() => Icons.Extract(app.IconSource)).GetAwaiter().GetResult();
                 int opaque = 0, transparent = 0;
                 for (int i = 3; i < icon.Bgra.Length; i += 4)
                 {

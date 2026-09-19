@@ -10,6 +10,23 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H3 — El ranking por uso
+
+- **Decaimiento exponencial con semivida de 30 días**, y las veces **saturan a las 10**. Sin
+  saturar, algo abierto trescientas veces sepultaría todo lo demás para siempre y el lanzador
+  dejaría de aprender. Comprobado: 300 veces no puntúa más que 10.
+- **La elección fijada manda.** Si para `br` elegiste Brave, `br` da Brave siempre, aunque
+  puntúe peor de texto. Diez líneas, y es lo que hace que parezca que te lee la mente.
+- **Cerrado el caso que H2 dejó abierto.** `adm` daba `Administrative Tools` (164) por delante
+  de `Administrador de tareas` (161), por 3 puntos de longitud. Con el Administrador abierto
+  4 veces: **161 → 209**, y adelanta. No hizo falta tocar ni un peso del algoritmo.
+- **Otro caso de prueba mal escrito, no el código.** Comprobaba que con la consulta `b` ganase
+  `Br`, pero ganaba `Brave` — y con razón: el refuerzo normal de haberlo abierto. La
+  comprobación ahora mira el **mecanismo** (que el bono de fijado no se escape a otra
+  consulta) en vez del resultado, que cambiaría al afinar los pesos.
+- **Las comprobaciones usan fechas fijas y un `Uso` construido a mano.** Si leyeran el
+  `uso.json` de verdad, dirían una cosa distinta cada día.
+
 ### H2 — El algoritmo
 
 - **Dos pasadas.** Un filtro O(m) que descarta lo que ni siquiera contiene las letras en

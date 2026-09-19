@@ -9,8 +9,11 @@ namespace Lanzador;
 /// </summary>
 internal sealed record Desglose(int Total, int Letras, int Prefijo, int Longitud, int[] Donde);
 
-/// <summary>Una entrada y lo que puntuo para la consulta de ahora.</summary>
-internal sealed record Resultado(Entrada Entrada, int Puntos);
+/// <summary>
+/// Una entrada y lo que puntuo para la consulta de ahora, con el total repartido: cuanto
+/// puso el texto y cuanto puso lo que sueles abrir.
+/// </summary>
+internal sealed record Resultado(Entrada Entrada, int Puntos, int Texto, int Costumbre);
 
 /// <summary>
 /// El algoritmo. Dos pasadas, porque una sola es o lenta o tonta:
@@ -40,18 +43,31 @@ internal static class Coincidencia
     /// <summary>
     /// Los mejores de todo el indice. La consulta se normaliza aqui una vez, no una vez
     /// por candidato.
+    /// <para>
+    /// Con <paramref name="uso"/> a null se puntua solo el texto, que es como corre
+    /// <c>--check</c>: asi los casos del algoritmo no cambian de resultado segun lo que
+    /// hayas abierto hoy.
+    /// </para>
     /// </summary>
-    public static List<Resultado> Buscar(IReadOnlyList<Entrada> indice, string consulta, int cuantos)
+    public static List<Resultado> Buscar(IReadOnlyList<Entrada> indice, string consulta, int cuantos,
+                                         Uso? uso = null, DateTimeOffset ahora = default)
     {
         string q = Normalizar(consulta).ToLowerInvariant().Trim();
         List<Resultado> vivos = new(64);
         if (q.Length == 0) return vivos;
 
+        string? fijado = uso?.Fijado(q);
+
         foreach (Entrada e in indice)
         {
             if (!Contiene(e.Buscable, q)) continue;
-            int puntos = Puntuar(e.Buscable, q);
-            if (puntos != NoCoincide) vivos.Add(new Resultado(e, puntos));
+            int texto = Puntuar(e.Buscable, q);
+            if (texto == NoCoincide) continue;
+
+            int costumbre = uso?.Refuerzo(e.Destino, ahora) ?? 0;
+            if (fijado is not null && e.Destino == fijado) costumbre += Uso.BonoDeFijado;
+
+            vivos.Add(new Resultado(e, texto + costumbre, texto, costumbre));
         }
 
         // A igualdad de puntos gana el nombre mas corto y luego el alfabetico: sin el

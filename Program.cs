@@ -66,8 +66,6 @@ internal static class Program
         return 2;
     }
 
-    private static int Olvidar() => NoTodavia("--olvidar", "H3");
-
     /// <summary>
     /// Los casos del algoritmo, con candidatos inventados. <b>Inventados a proposito</b>:
     /// si dependieran del menu Inicio de esta maquina, dejarian de comprobar nada en
@@ -172,6 +170,61 @@ internal static class Program
         }
         fallos += Exige($"{probados} consultas al azar, ningun desacuerdo", desacuerdos == 0);
 
+        // --- El ranking por uso (H3) ------------------------------------------------
+        // Con fechas fijas y un Uso construido a mano: si esto leyera el uso.json de
+        // verdad, la comprobacion diria una cosa distinta cada dia.
+        Console.WriteLine();
+        Console.WriteLine("Uso — el refuerzo decae con el tiempo");
+        DateTimeOffset hoy = new(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);
+        Uso uso = new();
+        uso.Lanzamientos["reciente"] = new Lanzamiento { Veces = 5, Ultimo = hoy };
+        uso.Lanzamientos["hace30"] = new Lanzamiento { Veces = 5, Ultimo = hoy.AddDays(-30) };
+        uso.Lanzamientos["hace180"] = new Lanzamiento { Veces = 5, Ultimo = hoy.AddDays(-180) };
+
+        int hoyPuntos = uso.Refuerzo("reciente", hoy);
+        int mesPuntos = uso.Refuerzo("hace30", hoy);
+        int semestre = uso.Refuerzo("hace180", hoy);
+        Console.WriteLine($"       hoy {hoyPuntos}   hace 30 dias {mesPuntos}   hace 180 dias {semestre}");
+        fallos += Exige("lo de hoy pesa mas que lo de hace un mes", hoyPuntos > mesPuntos);
+        fallos += Exige("y lo de hace un mes mas que lo de hace medio ano", mesPuntos > semestre);
+        fallos += Exige("a los 30 dias vale la mitad (semivida)", mesPuntos * 2 == hoyPuntos);
+        fallos += Exige("lo que no has abierto nunca no suma", uso.Refuerzo("jamas", hoy) == 0);
+        fallos += Exige("un reloj que va hacia atras no premia",
+                        uso.Refuerzo("reciente", hoy.AddDays(-5)) == hoyPuntos);
+
+        // Sin saturar, algo abierto trescientas veces sepultaria todo lo demas para
+        // siempre y el lanzador dejaria de aprender.
+        Uso muchas = new();
+        muchas.Lanzamientos["a"] = new Lanzamiento { Veces = 10, Ultimo = hoy };
+        muchas.Lanzamientos["b"] = new Lanzamiento { Veces = 300, Ultimo = hoy };
+        fallos += Exige("las veces saturan: 300 no puntua mas que 10",
+                        muchas.Refuerzo("b", hoy) == muchas.Refuerzo("a", hoy));
+
+        Console.WriteLine();
+        Console.WriteLine("Uso — lo que elegiste manda");
+        List<Entrada> dos = [new Entrada("Brave", "brave.lnk"), new Entrada("Br", "br.lnk")];
+
+        List<Resultado> sinUso = Coincidencia.Buscar(dos, "br", 2);
+        fallos += Exige("sin uso, gana el que puntua mejor de texto (Br)",
+                        sinUso[0].Entrada.Nombre == "Br");
+
+        Uso fijado = new();
+        fijado.Registrar("br", "brave.lnk", hoy);
+        List<Resultado> conFijado = Coincidencia.Buscar(dos, "br", 2, fijado, hoy);
+        fallos += Exige("con la eleccion fijada, gana Brave aunque puntue peor de texto",
+                        conFijado[0].Entrada.Nombre == "Brave");
+        // Con "b" tambien gana Brave, pero por otro motivo: el refuerzo normal de haberlo
+        // abierto una vez. Lo que se comprueba aqui es que NO lleva el bono de fijado, que
+        // es lo unico que no debe salirse de su consulta. Comprobar quien sale primero
+        // seria comprobar el peso, no el mecanismo, y cambiaria al afinar los pesos.
+        List<Resultado> otraConsulta = Coincidencia.Buscar(dos, "b", 2, fijado, hoy);
+        fallos += Exige("el bono de fijado no se escapa a otra consulta",
+                        otraConsulta.TrueForAll(r => r.Costumbre < Uso.BonoDeFijado));
+
+        // Lo que se guarda es lo que lanzaste, no lo que escribiste (regla 11).
+        fallos += Exige("registrar guarda el destino, no la consulta suelta",
+                        fijado.Lanzamientos.ContainsKey("brave.lnk") && fijado.Lanzamientos.Count == 1);
+
         Console.WriteLine();
         if (fallos == 0) { Console.WriteLine("TODO BIEN"); return 0; }
         Console.WriteLine($"{fallos} comprobacion(es) fallan");
@@ -232,15 +285,18 @@ internal static class Program
         }
 
         List<Entrada> indice = Indice.Construir();
+        Uso uso = Uso.Cargar();
+        DateTimeOffset ahora = DateTimeOffset.UtcNow;
 
         // Diez pasadas para que el reloj tenga algo que medir: una sola consulta esta por
         // debajo de la resolucion del cronometro y saldria siempre 0 ms.
         Stopwatch reloj = Stopwatch.StartNew();
         List<Resultado> mejores = new();
-        for (int i = 0; i < 10; i++) mejores = Coincidencia.Buscar(indice, consulta, 10);
+        for (int i = 0; i < 10; i++) mejores = Coincidencia.Buscar(indice, consulta, 10, uso, ahora);
         double ms = reloj.Elapsed.TotalMilliseconds / 10;
 
-        Console.WriteLine($"\"{consulta}\"  sobre {indice.Count} entradas  {ms:0.00} ms por consulta");
+        Console.WriteLine($"\"{consulta}\"  sobre {indice.Count} entradas  {ms:0.00} ms por consulta" +
+                          $"  ({uso.Lanzamientos.Count} cosas en uso.json)");
         Console.WriteLine();
 
         string q = Coincidencia.Normalizar(consulta).ToLowerInvariant().Trim();
@@ -250,9 +306,19 @@ internal static class Program
             if (d is null) continue;
 
             Console.WriteLine($"  {r.Puntos,5}  {Marcado(r.Entrada.Buscable, d.Donde)}");
-            Console.WriteLine($"         letras {d.Letras}   prefijo {d.Prefijo}   longitud {d.Longitud}");
+            Console.WriteLine($"         letras {d.Letras}   prefijo {d.Prefijo}   longitud {d.Longitud}" +
+                              $"   costumbre {r.Costumbre}");
         }
 
+        return 0;
+    }
+
+    private static int Olvidar()
+    {
+        bool habia = Uso.Olvidar();
+        Console.WriteLine(habia
+            ? $"[lanzador] borrado {Uso.Ruta}"
+            : $"[lanzador] no habia nada que borrar en {Uso.Ruta}");
         return 0;
     }
 

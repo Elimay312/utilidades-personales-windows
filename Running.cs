@@ -78,6 +78,8 @@ internal static class Running
 
     public static Snapshot Take()
     {
+        var reloj = System.Diagnostics.Stopwatch.StartNew();
+
         Dictionary<uint, string> names = [];
         foreach (Process process in Process.GetProcesses())
         {
@@ -86,7 +88,16 @@ internal static class Running
             finally { process.Dispose(); }
         }
 
-        return new Snapshot(TopLevelWindows(), names);
+        long procesos = reloj.ElapsedMilliseconds;
+        List<(HWND, uint)> windows = TopLevelWindows();
+
+        if (Environment.GetEnvironmentVariable("DOCK_HOVER_LOG") is not null)
+        {
+            Console.WriteLine($"[barrido] {names.Count} procesos en {procesos} ms, " +
+                $"{windows.Count} ventanas en {reloj.ElapsedMilliseconds - procesos} ms");
+        }
+
+        return new Snapshot(windows, names);
     }
 
     /// <summary>

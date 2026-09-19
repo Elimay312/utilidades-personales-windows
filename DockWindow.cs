@@ -45,6 +45,12 @@ internal sealed unsafe class DockWindow : IDisposable
     /// el icono magnificado, sin contar esto (ver ApplyRegion).
     private const int LogicalLabelRoom = 200;
 
+    /// Lo que hay que dejar por encima del icono magnificado para que quepa la
+    /// etiqueta. NO es lo mismo que LogicalLabelRoom: aquel es el hueco que se reserva
+    /// en la VENTANA para que quepa el menú; este es lo único que hace falta que la
+    /// región deje pasar cuando solo hay una etiqueta.
+    private const int LogicalLabelStrip = 36;
+
     /// Cuántos recientes caben en el menú del clic derecho, dejando sitio a sus dos
     /// entradas de siempre.
     private const int MenuJumpLimit = 4;
@@ -108,13 +114,16 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Identificador del temporizador que vigila el z-order y la pantalla completa.
     private const nuint TopmostTimerId = 1;
 
-    /// Cada cuánto se reafirma el z-order.
+    /// Cada cuánto se reafirma el z-order <b>por reloj</b>.
     ///
-    /// Era un segundo, y se notaba: cuando la barra de tareas se revela se pone por
-    /// encima del dock, y quedarse debajo un segundo entero es justo lo que se veía en
-    /// la captura del usuario. Bajarlo NO evita que la barra salga —eso se midió a 200
-    /// y a 60 ms y sale igual—, pero recupera el sitio enseguida.
-    private const uint WatchdogMs = 250;
+    /// Fue un segundo, luego 250 ms —quedarse debajo de la barra de tareas un segundo
+    /// entero se veía—, y ahora vuelve a ser un segundo por otra razón: desde M4 el
+    /// shell nos avisa cuando se activa una ventana, que es justo cuando el z-order
+    /// cambia, y ahí se reafirma al instante. El reloj queda de red de seguridad para
+    /// lo que no genera aviso.
+    ///
+    /// Medido: a 250 ms el dock gastaba 4,1% de un núcleo en reposo con tres pantallas.
+    private const uint WatchdogMs = 1000;
 
     /// Red de seguridad del inventario de ventanas.
     ///
@@ -643,7 +652,15 @@ internal sealed unsafe class DockWindow : IDisposable
             Scale(LogicalPadding),
             Scale(_config.IconSize));
 
-        Console.WriteLine($"[iconos] {_loaded.Count} elementos");
+        if (Program.Startup is { } reloj)
+        {
+            Console.WriteLine($"[iconos] {_loaded.Count} elementos ({reloj.ElapsedMilliseconds} ms desde el arranque)");
+            if (Instances.Count > 1) Program.Startup = null;   // solo el primero deja la marca
+        }
+        else
+        {
+            Console.WriteLine($"[iconos] {_loaded.Count} elementos");
+        }
 
         // Aquí y no en ComputeBounds: la región depende del ancho de la barra, y ese
         // no se sabe hasta tener la curva, que es justo lo que se acaba de construir.
@@ -958,6 +975,11 @@ internal sealed unsafe class DockWindow : IDisposable
         // La franja del borde inferior: siempre nuestra, de lado a lado.
         if (_config.AutoHide && HiWord(lParam) >= _revealTop) return HTCLIENT;
 
+        // Por encima del techo de la región no somos nadie. La región ya lo corta, así
+        // que esto es cinturón además de tirantes — pero OJO: en WM_NCHITTEST lParam
+        // viene en coordenadas de PANTALLA y la región está en coordenadas de cliente.
+        if (HiWord(lParam) - _windowTop < _regionTop) return HTTRANSPARENT;
+
         // Por encima, solo la barra. La ventana ocupa el ancho de la pantalla, así que
         // sin esto se tragaría cualquier clic en la franja inferior del escritorio.
         (float left, float right) = BarBounds();
@@ -1215,6 +1237,7 @@ internal sealed unsafe class DockWindow : IDisposable
         _wheelIndex = -1;
         _menuJumps = [];
         ClosePreview();
+        ApplyRegion();
     }
 
     /// <summary>Cierra lo que esté abierto encima del dock antes de hacer otra cosa.</summary>
@@ -1320,9 +1343,15 @@ internal sealed unsafe class DockWindow : IDisposable
         // RUDEAPPACTIVATED es WINDOWACTIVATED con el bit alto puesto.
         switch (code & ~(nuint)0x8000)
         {
+            case 4:   // HSHELL_WINDOWACTIVATED, y RUDEAPPACTIVATED con el bit quitado
+                // Activar una ventana es lo que cambia el z-order, así que es aquí
+                // donde reafirmarlo, y no cuatro veces por segundo por si acaso.
+                foreach (DockWindow dock in Instances.Values) dock.OnWatchdogTick();
+                ScheduleRunningRefresh();
+                break;
+
             case 1:   // HSHELL_WINDOWCREATED
             case 2:   // HSHELL_WINDOWDESTROYED
-            case 4:   // HSHELL_WINDOWACTIVATED
             case 13:  // HSHELL_WINDOWREPLACED
                 ScheduleRunningRefresh();
                 break;
@@ -1604,6 +1633,10 @@ internal sealed unsafe class DockWindow : IDisposable
 
         (float left, float right) = BarBounds();
         _visuals.OpenMenu(items, anchor, _windowHeight - BarHeight, left, right);
+
+        // El menú se sale por arriba de lo que la región deja pasar, así que hay que
+        // subir el techo o no se podría clicar.
+        ApplyRegion();
     }
 
     /// <summary>Ejecuta lo que se eligió en el menú.</summary>
@@ -1906,22 +1939,35 @@ internal sealed unsafe class DockWindow : IDisposable
         // Y sí, tiene que ser la REGIÓN y no el hit-test: HTTRANSPARENT tampoco
         // atraviesa procesos para los clics. Se midió poniendo Paint debajo del hueco:
         // devolviendo HTTRANSPARENT el clic no le llegaba igual.
-        int top = _tallRegion
-            ? 0
-            : (int)MathF.Floor(_windowHeight - BarHeight
-                - Scale(_config.IconSize) * (_config.Magnification - 1f));
+        // Y hasta dónde llega por arriba: SOLO hasta lo que de verdad se dibuja.
+        //
+        // Antes, con el ratón encima, subía hasta el techo de la ventana. Eso funcionó
+        // mientras la ventana medía 163 px, pero al crecer el hueco del menú a 200
+        // pasó a medir 287, y esa columna entera —invisible— seguía siendo del dock:
+        // el ratón a doscientos píxeles por encima de la barra marcaba el icono y lo
+        // habría abierto al clicar.
+        float top = _windowHeight - BarHeight
+            - Scale(_config.IconSize) * (_config.Magnification - 1f);
+
+        // La etiqueta se dibuja justo encima del icono del todo magnificado.
+        if (_tallRegion) top -= Scale(LogicalLabelStrip);
+
+        // Y el menú o la lista de ventanas, más arriba todavía. Ahí sí hay que llegar,
+        // porque se clican.
+        if (_visuals?.MenuOpen == true) top = MathF.Min(top, _visuals.MenuTop);
 
         // Si no ha cambiado, no se toca. Cada SetWindowRgn reajusta la forma de la
         // ventana, y esto se llama en CADA reconstrucción: recargar el JSON, reordenar,
         // volver a cargar iconos. Reformar la ventana por nada es justo el momento en
         // que otra cosa puede ganarle la carrera por el borde inferior de la pantalla.
-        if (left == _regionLeft && right == _regionRight && top == _regionTop) return;
+        int techo = (int)MathF.Floor(MathF.Max(0f, top));
+        if (left == _regionLeft && right == _regionRight && techo == _regionTop) return;
 
         _regionLeft = left;
         _regionRight = right;
-        _regionTop = top;
+        _regionTop = techo;
 
-        HRGN region = PInvoke.CreateRectRgn(left, top, right, (int)_windowHeight);
+        HRGN region = PInvoke.CreateRectRgn(left, (int)MathF.Floor(MathF.Max(0f, top)), right, (int)_windowHeight);
 
         if (_config.AutoHide)
         {
@@ -2343,6 +2389,8 @@ internal sealed unsafe class DockWindow : IDisposable
                 left,
                 right,
                 closable: true);
+
+            ApplyRegion();
         }
 
         _visuals.MenuHot(_wheelAt - first);

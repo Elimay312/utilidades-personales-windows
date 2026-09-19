@@ -43,6 +43,10 @@ internal static class Program
         Console.WriteLine("Dock - clic derecho sobre el dock para salir");
         Console.WriteLine();
 
+        // Cronometro del arranque. El criterio de aceptacion es "menos de un segundo",
+        // y sin medirlo no hay forma de saber si se cumple.
+        Startup = System.Diagnostics.Stopwatch.StartNew();
+
         DockConfig.EnsureSeeded();
         DockConfig config = DockConfig.Load(DockConfig.DefaultPath);
         Console.WriteLine($"[config] {config.Apps.Count} apps en dock.json");
@@ -76,6 +80,9 @@ internal static class Program
 
         Console.WriteLine("[dock] salida limpia");
     }
+
+    /// <summary>Desde que arranca el proceso. Lo lee el dock para dejar constancia.</summary>
+    internal static System.Diagnostics.Stopwatch? Startup;
 
     /// <summary>Crea un dock por pantalla y los muestra.</summary>
     private static void Rebuild(List<DockWindow> docks, DockConfig config)

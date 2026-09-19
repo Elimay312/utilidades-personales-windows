@@ -15,15 +15,14 @@ viene en el SDK.
 
 ## Estado
 
-**M1 — espacio → panel.** El hook está puesto y filtrado, y el espacio abre y cierra un
-panel acrílico sobre el Explorador. Todavía no enseña nada dentro.
+**M3 — miniaturas.** El espacio abre el panel sobre el archivo seleccionado y enseña su
+miniatura real: imágenes, PDFs, vídeos y documentos de Office. Lo que no tiene miniatura
+cae a una ficha con su icono, nombre, tamaño y fecha. Todavía sin animación.
 
 Lo que viene, en orden:
 
 | | |
 |---|---|
-| M2 | Selección del Explorador → ficha del archivo |
-| M3 | Miniatura del shell (imágenes, PDF, vídeo, Office) |
 | M4 | El morph |
 | M5 | Texto y código |
 | M6 | PDF paginado |
@@ -36,6 +35,7 @@ Lo que viene, en orden:
 
 ```powershell
 dotnet build                                                      # 0 errores, 0 advertencias
+dotnet run -- --check                                             # lógica pura
 pwsh -File auditar.ps1                                            # TODO LIMPIO
 dotnet publish -c Release -o "$env:LOCALAPPDATA\QuickLook\app"
 & "$env:LOCALAPPDATA\QuickLook\app\QuickLook.exe"
@@ -93,7 +93,12 @@ barra de direcciones. Sin eso, el programa hace el Explorador inusable.
 | `Program.cs` | Entrada. Consola, ventana-host, bucle de mensajes. |
 | `HostWindow.cs` | La ventana que nunca se ve. Donde aterriza el aviso del hook. |
 | `Hook.cs` | Lo único que ve una tecla. 88 líneas, y así se queda. |
-| `Visuals.cs` | El compositor del proceso y el material acrílico. |
+| `Selection.cs` | Qué archivo tiene seleccionado el Explorador. COM desde fuera. |
+| `Shell.cs` | Los píxeles del archivo: icono o miniatura, misma llamada. |
+| `Visuals.cs` | El compositor, el device de dibujo y los pinceles. |
+| `Text.cs` | El texto del panel, con DirectWrite. |
+| `Content/Preview.cs` | Qué trato le toca a cada extensión. |
 | `Panel.cs` | El panel. No roba el foco, sí recibe ratón. |
+| `SelfCheck.cs` | Lo que `--check` comprueba: la lógica pura. |
 | `NativeMethods.txt` | La lista cerrada de P/Invokes. Si algo no está aquí, no compila. |
 | `auditar.ps1` | Comprueba `SEGURIDAD.md` contra el código. Tiene que decir `TODO LIMPIO`. |

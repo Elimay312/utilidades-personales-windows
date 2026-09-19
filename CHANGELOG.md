@@ -113,3 +113,74 @@ con F2 siga aceptando espacios.
 
 **Ficheros:** `Hook.cs`, `Visuals.cs`, `Panel.cs`, `HostWindow.cs`, `Program.cs`,
 `NativeMethods.txt` (33 entradas).
+
+---
+
+## M2 + M3 — La selección del Explorador, la ficha y la miniatura
+
+Van juntos porque son la misma llamada: `IShellItemImageFactory::GetImage` **con**
+`SIIGBF_ICONONLY` da el icono del tipo, y **sin** esa bandera da la miniatura real del
+contenido. Imágenes, PDFs, vídeos y Office salen del mismo camino, sin decodificador
+propio y sin una sola dependencia nueva.
+
+### Lo que costó encontrar
+
+**`IShellBrowser::GetWindow` no devuelve el marco del Explorador.** Con una ventana de
+carpeta en primer plano (`0x812B6`), la colección `IShellWindows` daba `0x390EA2` y
+`0x51402`, y ninguna coincidía: en el Explorador con pestañas de Windows 11, cada pestaña
+es una ventana de shell y **cuelga** del marco. Se empareja por `GetAncestor(GA_ROOT)`, y
+además se exige `IsWindowVisible` sobre la ventana de la pestaña, porque un marco con
+varias pestañas tiene varias ventanas de shell y solo la de delante está visible.
+
+**`IFolderView::Items(SVGIO_SELECTION, IID_IShellItemArray)` contesta `0x80070490`
+(ERROR_NOT_FOUND) aunque haya selección.** Costó porque parecía una carrera: la sonda
+creaba la carpeta y medía enseguida. Lo que zanjó la duda fue preguntarle a otro por el
+mismo dato — `Shell.Application`, `$w.Document.SelectedItems()` decía **1 elemento** en el
+mismo instante. Con eso ya no era el Explorador, éramos nosotros. La llamada correcta es
+**`IFolderView2::GetSelection`**, que contesta a la primera. Va con
+`fNoneImpliesFolder = false`: sin selección se quiere "nada", no la carpeta entera —
+enseñar la carpeta porque el usuario no marcó ningún archivo sería peor que no abrir.
+
+**`Compositor.As<ICompositorInterop>()` tiraba `InvalidCastException`, y el problema no
+era COM.** El mismo código funciona en el dock a diario, el IID generado es idéntico
+(`25297D5C-…`) y el `.csproj` no se diferencia en nada. En aislado funcionaba; dentro del
+flujo real, no. Lo resolvió meter el objeto en una variable local: `Compositor` nombra a
+la vez la propiedad estática de `Visuals` y el **tipo** `Windows.UI.Composition.Compositor`
+importado arriba, y en esa llamada el compilador lo resuelve contra el tipo, **compila sin
+una sola advertencia** y revienta en ejecución con algo que parece un `E_NOINTERFACE` del
+compositor. Se confirmó volviendo a poner el código malo y viendo fallar otra vez. Arreglo:
+dentro de `Visuals` se usa `Ensure()` y nunca la propiedad; desde fuera se escribe
+`Visuals.Compositor`, que no es ambiguo.
+
+**Si `Build` fallaba, la ventana se quedaba huérfana.** `Panel.Open` crea el HWND antes
+que el contenido, así que el `catch` devolvía null con la ventana ya creada y sin nadie que
+la cerrara. Peor todavía: la sonda la encontraba por clase, medía 460x300 y daba el caso
+por bueno mientras el log decía que no se había podido abrir. Ahora el `catch` hace
+`Dispose`.
+
+### La sonda, otra vez, antes que el código
+
+Tres fallos de método más, todos anotados en la cabecera de `sonda-contenido.ps1`:
+
+- Ventanas del Explorador de sondas anteriores apuntando a carpetas ya borradas: el shell
+  contesta `0x80070490` y parece que la selección está rota cuando lo que está rancia es la
+  ventana. Se cierran todas antes de medir y se usa una carpeta nueva en cada pasada.
+- El filtro de líneas del log (`seleccion|shell|preview|panel`) se comía las trazas `[paso]`
+  que acababa de poner para diagnosticar, y parecía que el código no llegaba a ejecutarse.
+- Una ventana del Explorador recién abierta tarda en asentar la selección, así que el
+  `/select` se repite en cada reintento.
+
+### Medido
+
+- Imagen de 800x400 → panel de **832x478**: la imagen queda a **800x400** exactos dentro
+  (16 de margen por lado y 46 de pie), proporción 2,000. **No se agranda** por encima de su
+  tamaño nativo: estirar una miniatura solo enseña los píxeles más grandes.
+- `.zip` → panel de **460x300**, la ficha fija, con icono y datos.
+- `--check` con cuatro bloques: premultiplicado, encaje del panel, clasificador de
+  extensión y tamaño legible. Se le metió el fallo a propósito —quitar el tope de escala—
+  y la prueba lo cazó: *"una miniatura de 64 se estiró a 674"*.
+- `auditar.ps1`: `TODO LIMPIO`, 85 entradas en `NativeMethods.txt`, `Hook.cs` sigue en 88
+  líneas.
+
+**Ficheros:** `Selection.cs`, `Shell.cs`, `Text.cs`, `Content/Preview.cs`, `SelfCheck.cs`,
+`Visuals.cs`, `Panel.cs`, `HostWindow.cs`, `Program.cs`, `NativeMethods.txt`.

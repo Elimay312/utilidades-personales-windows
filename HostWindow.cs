@@ -111,9 +111,22 @@ internal sealed unsafe class HostWindow : IDisposable
             return;
         }
 
-        // La ventana en primer plano es la del Explorador: el hook ya lo comprobo, y de
-        // ella sale en que monitor y a que escala se dibuja el panel.
-        _panel = Panel.Open(PInvoke.GetForegroundWindow());
+        // La ventana en primer plano es la del Explorador: el hook ya lo comprobo. De
+        // ella salen las dos cosas que hacen falta: que archivo hay seleccionado, y en
+        // que monitor y a que escala se dibuja el panel.
+        HWND front = PInvoke.GetForegroundWindow();
+
+        string? path = Selection.Path(front);
+        if (path is null)
+        {
+            // Sin nada seleccionado no hay nada que ensenar. El espacio ya se lo comio el
+            // hook, pero abrir un panel vacio seria peor.
+            Console.WriteLine("[seleccion] nada seleccionado");
+            return;
+        }
+
+        Console.WriteLine($"[seleccion] {path}");
+        _panel = Panel.Open(front, Preview.For(path));
     }
 
     private static void EnsureClassRegistered()

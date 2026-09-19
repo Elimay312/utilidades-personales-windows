@@ -1,5 +1,6 @@
 using System.Text;
 using QuickLook;
+using Windows.Win32.Foundation;
 
 internal static class Program
 {
@@ -7,7 +8,7 @@ internal static class Program
     // handlers de miniatura del shell son ThreadingModel=Apartment — desde un hilo MTA
     // devuelven basura sin fallar, que es peor que fallar.
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         // Compilado como WinExe no hay consola propia. Si nos lanzaron desde una
         // terminal, enganchamos la suya; si se arranco al iniciar sesion no hay donde
@@ -19,9 +20,21 @@ internal static class Program
             Windows.Win32.PInvoke.AttachConsole(AttachParentProcess);
         }
 
+        // OleInitialize LO PRIMERO, antes de tocar nada de COM: [STAThread] hace que el
+        // CLR inicialice COM en cuanto se usa, y hay que ganarle la mano.
+        HRESULT ole = Windows.Win32.PInvoke.OleInitialize();
+        if (ole.Failed) Console.WriteLine($"[ole] OleInitialize fallo: 0x{(uint)ole.Value:X8}");
+
         // La consola de Windows usa la codificacion ANSI del sistema por defecto y
         // destroza los acentos.
         try { Console.OutputEncoding = Encoding.UTF8; } catch { /* sin consola */ }
+
+        if (args.Contains("--check"))
+        {
+            SelfCheck.Run();
+            Windows.Win32.PInvoke.OleUninitialize();
+            return;
+        }
 
         Console.WriteLine("QuickLook - espacio sobre un archivo del Explorador para verlo");
         Console.WriteLine();
@@ -34,6 +47,8 @@ internal static class Program
         Console.WriteLine("[hook] instalado, solo mira la barra espaciadora");
 
         host.RunMessageLoop();
+
+        Windows.Win32.PInvoke.OleUninitialize();
 
         Console.WriteLine("[quicklook] salida limpia");
     }

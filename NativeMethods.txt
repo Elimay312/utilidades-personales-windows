@@ -64,3 +64,74 @@ GetDpiForWindow
 ICompositorDesktopInterop
 CreateDispatcherQueueController
 DispatcherQueueOptions
+
+// --- Que archivo esta seleccionado en el Explorador (M2). Ver SEGURIDAD.md §3.2 ---
+// COM publico FUERA DE PROCESO: es la via que Microsoft documenta para automatizar el
+// Explorador. No se inyecta nada (la regla 4 sigue intacta), no se lee memoria ajena y
+// no se toca el portapapeles. Solo se pregunta por SVGIO_SELECTION, nunca por
+// SVGIO_ALLVIEW: no se enumera la carpeta ni nada que el usuario no tenga abierto.
+OleInitialize
+OleUninitialize
+CoCreateInstance
+CLSCTX
+IShellWindows
+IServiceProvider
+IShellBrowser
+IShellView
+IFolderView2
+IShellItemArray
+IShellItem
+SIGDN
+
+// El Explorador con pestañas de Windows 11 no da el HWND del marco: IShellBrowser
+// devuelve el de la pestaña, que cuelga de el. GetAncestor sube hasta la raiz para
+// poder emparejarlas, e IsWindowVisible distingue la pestaña activa de las demas.
+GetAncestor
+IsWindowVisible
+
+// --- Pixeles del archivo (M2, M3). Ver SEGURIDAD.md §3.3 ---
+// La MISMA llamada sirve para el icono del tipo (con SIIGBF_ICONONLY) y para la
+// miniatura real del contenido (sin ella). De ahi que imagenes, PDFs, videos y Office
+// salgan de un solo camino sin decodificador propio.
+SHCreateItemFromParsingName
+IShellItemImageFactory
+SIIGBF
+GetObject
+GetDIBits
+BITMAPINFO
+DIB_USAGE
+BITMAP
+BI_COMPRESSION
+DeleteObject
+GetDC
+ReleaseDC
+
+// --- Superficie de Composition para dibujar esos pixeles (M2) ---
+D3D11CreateDevice
+D2D1CreateDevice
+ID2D1Device
+ID2D1DeviceContext
+ID2D1Bitmap1
+ID2D1SolidColorBrush
+IDXGIDevice
+ID3D11Device
+D3D_DRIVER_TYPE
+D3D11_CREATE_DEVICE_FLAG
+D2D1_BITMAP_PROPERTIES1
+D2D1_ALPHA_MODE
+DXGI_FORMAT
+D2D1_BITMAP_INTERPOLATION_MODE
+ICompositionDrawingSurfaceInterop
+ICompositorInterop
+
+// --- Texto del panel, sobre nuestra propia superficie (M2) ---
+DWriteCreateFactory
+IDWriteFactory
+IDWriteTextFormat
+IDWriteTextLayout
+DWRITE_FACTORY_TYPE
+DWRITE_TEXT_METRICS
+DWRITE_FONT_WEIGHT
+DWRITE_FONT_STYLE
+DWRITE_FONT_STRETCH
+D2D1_DRAW_TEXT_OPTIONS

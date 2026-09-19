@@ -1,0 +1,58 @@
+// Lista auditable de P/Invokes (M1). Todas son APIs publicas documentadas y actuan
+// sobre el propio proceso o el propio HWND. Cada grupo lleva encima para que es:
+// ahi es donde mira un auditor, y cada entrada tiene que poder senalarse a una
+// seccion de SEGURIDAD.md §3.
+
+// --- Ventana propia ---
+RegisterClassExW
+CreateWindowExW
+DefWindowProcW
+DestroyWindow
+PostQuitMessage
+ShowWindow
+SetWindowPos
+GetWindowLongPtr
+SetWindowLongPtr
+LoadCursorW
+IDC_ARROW
+WINDOWPOS
+
+// --- Bucle de mensajes propio ---
+GetMessageW
+TranslateMessage
+DispatchMessageW
+
+// --- Modulo propio (para hInstance) ---
+GetModuleHandleW
+
+// --- Geometria de pantalla (solo lectura) ---
+// No se enumera ninguna ventana ni ningun proceso: solo se pregunta donde esta el
+// monitor y a que escala, para colocarnos encima.
+MonitorFromPoint
+GetMonitorInfoW
+GetDpiForMonitor
+
+// --- Zona caliente: donde esta el cursor, y nada mas ---
+// SEGURIDAD.md §1.2: con WS_EX_TRANSPARENT no llegan mensajes de raton, asi que el
+// hover no se puede detectar con WM_MOUSEMOVE. GetCursorPos devuelve un punto; no
+// observa botones, no observa teclas, y no es un hook.
+GetCursorPos
+SetTimer
+KillTimer
+
+// --- Atajo de teclado (SEGURIDAD.md §3.4) ---
+// NO es un hook: no se observa el teclado, se le pide a Windows que mande WM_HOTKEY a
+// NUESTRA ventana cuando se pulse UNA combinacion. Sin DLL en otros procesos y sin ver
+// ninguna otra tecla. Es como registra su atajo cualquier app.
+RegisterHotKey
+UnregisterHotKey
+
+// --- Composition interop, sobre el HWND propio ---
+// El puente Win32 -> Windows.UI.Composition. Toda la animacion vive aqui y no en el
+// hilo de UI.
+ICompositorDesktopInterop
+CreateDispatcherQueueController
+DispatcherQueueOptions
+
+// --- Consola estando compilado como WinExe ---
+AttachConsole

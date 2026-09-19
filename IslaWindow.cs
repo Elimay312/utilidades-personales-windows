@@ -57,6 +57,11 @@ internal sealed unsafe class IslaWindow : IDisposable
     private const nuint TimerReloj = 3;
     private const uint RelojMs = 1000;
 
+    // La onda, y SOLO con el panel desplegado. En brasa el latido se cuelga del
+    // temporizador que ya existe (TimerMs), asi que ahi no se despierta nada nuevo.
+    private const nuint TimerOnda = 4;
+    private const uint OndaMs = 50;
+
     // Cuantos latidos seguidos hay que estar dentro para que se abra. Dos son 240 ms:
     // bastante para que pasar de largo no cuente, poco para que no se note al esperar.
     private const int TicksParaAbrir = 2;
@@ -100,6 +105,7 @@ internal sealed unsafe class IslaWindow : IDisposable
     private bool _atajo;
     private bool _visible;
     private string? _sonando;
+    private string _firma = string.Empty;
     private bool _arrastrando;
     private DateTime _leido;
     private TimeSpan _duracion;
@@ -244,6 +250,7 @@ internal sealed unsafe class IslaWindow : IDisposable
             case WM_TIMER:
                 if (wParam.Value == TimerAsoma) isla?.OnFinAsoma();
                 else if (wParam.Value == TimerReloj) isla?.OnReloj();
+                else if (wParam.Value == TimerOnda) isla?.OnOnda();
                 else isla?.OnTick();
                 return new LRESULT(0);
 
@@ -300,6 +307,11 @@ internal sealed unsafe class IslaWindow : IDisposable
 
         PInvoke.GetCursorPos(out System.Drawing.Point p);
 
+        // El latido de la brasa se cuelga de este mismo tic en vez de traerse un
+        // temporizador propio: son 8 lecturas por segundo, y para una tira de 5 px de
+        // alto eso sobra. Asi el reposo no gasta ni una vuelta de reloj de mas.
+        if (_visible && _actual == Estado.Brasa) Latir();
+
         // La zona crece al estar abierta: eso es la histeresis, y sale gratis.
         RECT z = ZonaCaliente(_hover);
         bool dentro = p.X >= z.left && p.X < z.right && p.Y >= z.top && p.Y < z.bottom;
@@ -322,6 +334,19 @@ internal sealed unsafe class IslaWindow : IDisposable
         if (++_seguidos < TicksParaAbrir) return;
         _hover = true;
         Aplicar();
+    }
+
+    private void OnOnda() => Latir();
+
+    /// <summary>
+    /// Una lectura del medidor y una vuelta de la onda. Si no suena nada no se le
+    /// pregunta al audio siquiera: la isla en reposo con la musica parada no tiene por
+    /// que gastar nada.
+    /// </summary>
+    private void Latir()
+    {
+        bool sonando = Medios.Ultima is { Sonando: true };
+        _visuals.Pulso(sonando ? Audio.Pico() : 0f, sonando);
     }
 
     private void OnHotkey()
@@ -348,7 +373,20 @@ internal sealed unsafe class IslaWindow : IDisposable
         _sonando = c.Titulo;
         _leido = DateTime.UtcNow;
         _duracion = c.Duracion;
-        _visuals.Mostrar(c);
+
+        // Repintar SOLO si cambio algo que se dibuja.
+        //
+        // Spotify empuja la linea de tiempo cada dos por tres, y Mostrar rehace las
+        // siete superficies de texto mas la caratula. Hacerlo en cada aviso costaba
+        // CPU en reposo para redibujar exactamente los mismos pixeles. La posicion no
+        // entra en la firma: de eso se encarga Progreso, que es una sola animacion.
+        string firma = string.Join('|', c.Titulo, c.Artista, c.App, c.Sonando,
+            c.PuedeAnterior, c.PuedeSiguiente, c.PuedePlayPausa, c.Duracion.Ticks, c.Tinte);
+        if (firma != _firma)
+        {
+            _firma = firma;
+            _visuals.Mostrar(c);
+        }
         _visuals.Progreso(
             c.Duracion > TimeSpan.Zero ? c.Posicion / c.Duracion : 0d,
             c.Duracion - c.Posicion,
@@ -411,6 +449,9 @@ internal sealed unsafe class IslaWindow : IDisposable
         // temporizador de mas.
         if (efectivo == Estado.Abierta) PInvoke.SetTimer(_hwnd, TimerReloj, RelojMs, null);
         else PInvoke.KillTimer(_hwnd, TimerReloj);
+
+        if (efectivo == Estado.Brasa) PInvoke.KillTimer(_hwnd, TimerOnda);
+        else PInvoke.SetTimer(_hwnd, TimerOnda, OndaMs, null);
     }
 
     // --- los mandos ----------------------------------------------------------------
@@ -505,6 +546,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         PInvoke.KillTimer(_hwnd, TimerId);
         PInvoke.KillTimer(_hwnd, TimerAsoma);
         PInvoke.KillTimer(_hwnd, TimerReloj);
+        PInvoke.KillTimer(_hwnd, TimerOnda);
         if (_atajo) PInvoke.UnregisterHotKey(_hwnd, HotkeyId);
         _visuals.Dispose();
         if (!_hwnd.IsNull) PInvoke.DestroyWindow(_hwnd);

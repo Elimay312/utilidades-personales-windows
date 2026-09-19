@@ -104,3 +104,14 @@ SetCapture
 ReleaseCapture
 CreateRectRgn
 SetWindowRgn
+
+// --- Medidor de pico de la SALIDA de audio (SEGURIDAD.md �3.3) ---
+// GetPeakValue devuelve UN float. No hay ningun IAudioCaptureClient aqui, ni
+// AUDCLNT_STREAMFLAGS_LOOPBACK, ni eCapture, y no los va a haber: eso seria grabar.
+IMMDeviceEnumerator
+MMDeviceEnumerator
+IMMDevice
+IAudioMeterInformation
+EDataFlow
+ERole
+CLSCTX

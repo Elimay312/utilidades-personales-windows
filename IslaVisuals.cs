@@ -93,6 +93,19 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private const float GolpeLado = 36f;
     private static readonly float[] BotonCx = [140f, 190f, 240f];
 
+    // La onda: cuatro barras a la derecha del nombre de la app.
+    private const float OndaX = 336f;
+    private const float OndaBase = 80f;
+    private const float OndaAncho = 3f;
+    private const float OndaHueco = 4f;
+    private const float OndaAlto = 14f;
+    private const float OndaMinima = 0.14f;
+
+    // Inercia distinta por barra: si todas siguieran al pico igual, se moverian como un
+    // bloque y pareceria un medidor de VU, no una onda.
+    private static readonly float[] Inercia = [0.55f, 0.74f, 0.62f, 0.81f];
+    private static readonly float[] Ganancia = [1.00f, 0.82f, 0.94f, 0.70f];
+
     // Glifos de Segoe Fluent Icons: anterior, siguiente, play y pausa.
     private const string GlifoAnterior = "\uE100";
     private const string GlifoSiguiente = "\uE101";
@@ -122,6 +135,13 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private SpriteVisual _botAnterior;
     private SpriteVisual _botPlay;
     private SpriteVisual _botSiguiente;
+    private SpriteVisual[] _onda = [];
+    private readonly float[] _nivel = new float[4];
+    private readonly SpriteVisual _aura;
+    private readonly CompositionRadialGradientBrush _degradado;
+    private Estado _estado = Estado.Brasa;
+    private float _latido = 1f;
+    private float _techo = 0.05f;
     private readonly CompositionColorBrush _grisCaratula;
     private readonly ShapeVisual _borde;
     private readonly CompositionRoundedRectangleGeometry _forma;
@@ -188,6 +208,16 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _macizo = Capa(_compositor.CreateColorBrush(Color.FromArgb(255, 0, 0, 0)));
         _cristal = Capa(_compositor.CreateColorBrush(Color.FromArgb(245, 14, 14, 16)));
 
+        // El aura: el color que manda en la caratula, difuminado detras de la mitad
+        // izquierda. Es lo que hace que cada cancion se sienta distinta sin cambiar
+        // nada mas, y cuesta una media de pixeles que ya se hizo en el pool.
+        _degradado = _compositor.CreateRadialGradientBrush();
+        _degradado.EllipseCenter = new Vector2(0.17f, 0.36f);
+        _degradado.EllipseRadius = new Vector2(0.85f, 1.25f);
+        _degradado.ColorStops.Insert(0, _compositor.CreateColorGradientStop(0f, Color.FromArgb(0, 0, 0, 0)));
+        _degradado.ColorStops.Insert(1, _compositor.CreateColorGradientStop(1f, Color.FromArgb(0, 0, 0, 0)));
+        _aura = Capa(_degradado);
+
         // ponytail: cuadrado gris cuando la cancion no trae caratula. Un icono
         // generico quedaria mejor, pero eso es un recurso que hay que empaquetar.
         _grisCaratula = _compositor.CreateColorBrush(Color.FromArgb(38, 255, 255, 255));
@@ -239,13 +269,89 @@ internal sealed unsafe class IslaVisuals : IDisposable
     }
 
     /// <summary>
+    /// El latido del audio. Un solo float por lectura, ver Audio y SEGURIDAD.md §3.3.
+    ///
+    /// <para>
+    /// En brasa mueve el ANCHO de la tira; abierta o asomada, las cuatro barras. Cada
+    /// barra lleva su propia inercia y su propia ganancia, porque cuatro barras que
+    /// siguen al pico exactamente igual se mueven como un bloque y eso no parece una
+    /// onda, parece un vumetro roto.
+    /// </para>
+    /// </summary>
+    public void Pulso(float pico, bool sonando)
+    {
+        if (!sonando)
+        {
+            Reposar();
+            return;
+        }
+
+        // Ganancia automatica. El pico que devuelve Windows depende del volumen del
+        // sistema: con musica a media potencia ronda 0.05, medido, asi que multiplicar
+        // por una constante fija dejaria la onda plana en unos equipos y saturada en
+        // otros. Normalizar contra un techo que decae despacio hace que se vea igual de
+        // viva a cualquier volumen, y el suelo evita amplificar el ruido del silencio.
+        _techo = Math.Max(pico, _techo * 0.992f);
+        float nivel = _techo > 0.004f ? Math.Clamp(pico / _techo, 0f, 1f) : 0f;
+
+        if (_estado == Estado.Brasa)
+        {
+            // La tira respira entre el 82% y el 100% de su ancho.
+            float objetivo = 0.82f + nivel * 0.18f;
+            float antes = _latido;
+            _latido += (objetivo - _latido) * 0.35f;
+
+            // Solo se escribe si el cambio se nota. Cada asignacion a una propiedad del
+            // compositor es una confirmacion que cruza a DWM, y a 8 por segundo eso se
+            // ve en el medidor de CPU; medio pixel de 140 no se ve en la pantalla.
+            if (Math.Abs(_latido - antes) > 0.004f) _panel.Scale = new Vector3(_latido, 1f, 1f);
+            return;
+        }
+
+        Enderezar();
+
+        for (int i = 0; i < _onda.Length; i++)
+        {
+            float objetivo = OndaMinima + Math.Clamp(nivel * Ganancia[i], 0f, 1f) * (1f - OndaMinima);
+            float antes = _nivel[i];
+            _nivel[i] += (objetivo - _nivel[i]) * (1f - Inercia[i]);
+            if (Math.Abs(_nivel[i] - antes) > 0.004f)
+                _onda[i].Scale = new Vector3(1f, Math.Max(_nivel[i], OndaMinima), 1f);
+        }
+    }
+
+    /// <summary>Sin audio: la tira a su ancho entero y las barras al minimo.</summary>
+    private void Reposar()
+    {
+        Enderezar();
+        for (int i = 0; i < _onda.Length; i++)
+        {
+            if (_nivel[i] <= OndaMinima + 0.001f) continue;
+            _nivel[i] = OndaMinima;
+            _onda[i].Scale = new Vector3(1f, OndaMinima, 1f);
+        }
+    }
+
+    private void Enderezar()
+    {
+        if (Math.Abs(_panel.Scale.X - 1f) <= 0.001f) return;
+        _latido = 1f;
+        _panel.Scale = Vector3.One;
+    }
+
+    /// <summary>
     /// Lleva al estado pedido. <paramref name="abriendo"/> elige el muelle: con rebote
     /// al crecer, sin rebote al encogerse.
     /// </summary>
     public void GoTo(Estado estado, bool abriendo, bool instantaneo = false)
     {
+        _estado = estado;
         (float w, float h, float r, float lift) = IslaWindow.Medidas(estado);
         Vector2 tam = new(S(w), S(h));
+
+        // El latido escala el panel en X, asi que el centro tiene que estar en su medio
+        // o la tira crece solo hacia la derecha y se descoloca.
+        _panel.CenterPoint = new Vector3(tam.X * 0.5f, 0f, 0f);
         Vector2 radio = new(S(r), S(r));
         float y = S(lift);
 
@@ -315,7 +421,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// Lo que se ve dentro del panel. Las posiciones son fijas respecto a su esquina
     /// superior izquierda, asi que no hace falta ninguna expresion para colocarlas.
     /// </summary>
-    [MemberNotNull(nameof(_cajaTitulo), nameof(_caratula),
+    [MemberNotNull(nameof(_onda), nameof(_cajaTitulo), nameof(_caratula),
                    nameof(_rotTitulo), nameof(_rotArtista), nameof(_rotApp),
                    nameof(_barra), nameof(_relleno), nameof(_rotPasado), nameof(_rotTotal),
                    nameof(_botAnterior), nameof(_botPlay), nameof(_botSiguiente))]
@@ -376,6 +482,20 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _rotPasado = Hueco(new Vector2(S(BarraX), S(TiempoY)), raiz);
         _rotTotal = Hueco(Vector2.Zero, raiz);
 
+        // Las barras de la onda. Escalan en Y desde su base, que esta clavada.
+        _onda = new SpriteVisual[Inercia.Length];
+        for (int i = 0; i < _onda.Length; i++)
+        {
+            SpriteVisual barra = _compositor.CreateSpriteVisual();
+            barra.Size = new Vector2(S(OndaAncho), S(OndaAlto));
+            barra.Offset = new Vector3(S(OndaX + i * (OndaAncho + OndaHueco)), S(OndaBase - OndaAlto), 0);
+            barra.CenterPoint = new Vector3(0, S(OndaAlto), 0);
+            barra.Scale = new Vector3(1f, OndaMinima, 1f);
+            barra.Brush = _compositor.CreateColorBrush(Color.FromArgb(150, 255, 255, 255));
+            raiz.Children.InsertAtTop(barra);
+            _onda[i] = barra;
+        }
+
         _botAnterior = Hueco(Vector2.Zero, raiz);
         _botPlay = Hueco(Vector2.Zero, raiz);
         _botSiguiente = Hueco(Vector2.Zero, raiz);
@@ -403,6 +523,12 @@ internal sealed unsafe class IslaVisuals : IDisposable
         CompositionBrush? arteVieja = _caratula.Brush;
         _caratula.Brush = c.Arte is null ? _grisCaratula : PincelArte(c.Arte);
         Soltar(arteVieja);
+
+        // El aura se tine del color de la caratula. Alfa bajo a proposito: tiene que
+        // notarse que la cancion cambio, no leerse como un fondo de color.
+        Color tinte = Color.FromArgb(56, (byte)(c.Tinte >> 16), (byte)(c.Tinte >> 8), (byte)c.Tinte);
+        _degradado.ColorStops[0].Color = c.Tinte == 0 ? Color.FromArgb(0, 0, 0, 0) : tinte;
+        _degradado.ColorStops[1].Color = Color.FromArgb(0, tinte.R, tinte.G, tinte.B);
 
         Tiempos(c.Posicion, c.Duracion);
 

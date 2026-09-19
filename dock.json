@@ -2,7 +2,16 @@
 //
 // "target" puede ser:
 //   - la ruta de un ejecutable            -> "C:/Windows/System32/notepad.exe"
+//   - una carpeta                         -> "C:/Users/tu/Escritorio/renpy"
+//   - un script o un documento            -> "C:/scripts/backup.ps1"
 //   - un elemento del shell (apps Store)  -> "shell:AppsFolder/<AppUserModelID>"
+//   - una direccion o un protocolo        -> "https://claude.ai", "ms-settings:display"
+//
+// Y con "arguments" se le pasan parametros. El icono de una direccion es el de la
+// app que la va a abrir, que es lo que ensena el propio Windows.
+//
+//   { "name": "Copia", "target": "C:/Windows/System32/cmd.exe",
+//     "arguments": "/c C:\\scripts\\backup.cmd" }
 //
 // Usa siempre barras normales: el dock las convierte solo, así no hay que
 // escapar barras invertidas en JSON.

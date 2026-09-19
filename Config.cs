@@ -30,8 +30,28 @@ internal sealed class DockApp
     /// </summary>
     public bool Separator { get; init; }
 
+    /// <summary>
+    /// Argumentos con los que se lanza. Se pasan al shell entre comillas si hace falta,
+    /// y existen solo para lo que el usuario escriba a mano en dock.json: nada de lo que
+    /// se arrastra al dock los lleva.
+    /// </summary>
+    public string Arguments { get; init; } = "";
+
     [JsonIgnore]
     public bool IsShellItem => Target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Una dirección web u otro protocolo: <c>https://…</c>, <c>mailto:…</c>,
+    /// <c>ms-settings:…</c>. No es un fichero, así que ni se le normalizan las barras ni
+    /// se comprueba que exista — quien sabe si existe es el shell al abrirla.
+    ///
+    /// La <c>C:</c> de una ruta también encaja en "letra más dos puntos", por eso el
+    /// esquema tiene que traer al menos dos caracteres.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsUrl => !IsShellItem
+        && Target.IndexOf(':') > 1
+        && Target[..Target.IndexOf(':')].All(c => char.IsAsciiLetterOrDigit(c) || c is '+' or '.' or '-');
 
     /// <summary>
     /// Si esto es una app, o un documento o carpeta que solo se abre.
@@ -44,7 +64,7 @@ internal sealed class DockApp
     /// documentos. Si algún día molesta, la lista de extensiones se amplía aquí.
     /// </summary>
     [JsonIgnore]
-    public bool IsApp => Target != DockConfig.TrashTarget
+    public bool IsApp => Target != DockConfig.TrashTarget && !IsUrl
         && (IsShellItem || Target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
@@ -52,7 +72,7 @@ internal sealed class DockApp
     /// abrirse en el Explorador. La papelera cuenta: también tiene contenido.
     /// </summary>
     [JsonIgnore]
-    public bool IsFolder => Target == DockConfig.TrashTarget || Directory.Exists(Target);
+    public bool IsFolder => Target == DockConfig.TrashTarget || (!IsUrl && Directory.Exists(Target));
 
     /// <summary>
     /// Con qué se identifica esta entrada en <c>dock.local.json</c>. Los separadores
@@ -72,7 +92,10 @@ internal sealed class DockApp
         //
         // Antes se lanzaban con explorer.exe como proceso intermedio, y eso dejaba
         // un explorer.exe suelto apareciendo en Alt+Tab.
-        Process.Start(new ProcessStartInfo(Target) { UseShellExecute = true });
+        ProcessStartInfo info = new(Target) { UseShellExecute = true };
+        if (Arguments.Length > 0) info.Arguments = Arguments;
+
+        Process.Start(info);
     }
 
     /// <summary>
@@ -385,6 +408,14 @@ internal sealed record DockConfig
                 continue;
             }
 
+            // Una URL se queda tal cual: normalizarle las barras convertiria
+            // https:// en https:\ y el shell dejaria de reconocerla.
+            if (app.IsUrl)
+            {
+                valid.Add(app);
+                continue;
+            }
+
             // SHCreateItemFromParsingName NO acepta barras normales: son nombres de
             // parsing del shell, no rutas de archivo. File.Exists sí las acepta, así
             // que sin normalizar aquí la entrada pasa la validación y revienta
@@ -403,7 +434,7 @@ internal sealed record DockConfig
                 continue;
             }
 
-            valid.Add(new DockApp { Name = app.Name, Target = target });
+            valid.Add(new DockApp { Name = app.Name, Target = target, Arguments = app.Arguments });
         }
 
         return valid;

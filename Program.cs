@@ -146,7 +146,8 @@ internal static class Program
                     else if (icon.Bgra[i] == 0) transparent++;
                 }
                 Console.WriteLine($"[check] {app.Name,-16} {icon.Width}x{icon.Height} " +
-                    $"opacos={opaque} transparentes={transparent}");
+                    $"opacos={opaque} transparentes={transparent}" +
+                    (app.Arguments.Length > 0 ? $" args=[{app.Arguments}]" : ""));
             }
             catch (Exception ex)
             {

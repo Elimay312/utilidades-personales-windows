@@ -23,6 +23,14 @@ internal static class Icons
     /// </summary>
     public static unsafe IconBitmap Extract(string target)
     {
+        // Una URL no es un elemento del shell: SHCreateItemFromParsingName la rechaza.
+        // Se le pone la cara de la app que la va a abrir, que es lo que el usuario
+        // espera ver y lo que enseña el propio Windows en sus accesos directos.
+        if (SchemeOf(target) is string scheme && HandlerOf(scheme) is string handler)
+        {
+            target = handler;
+        }
+
         Guid iid = typeof(IShellItemImageFactory).GUID;
         object item;
         fixed (char* path = target)
@@ -50,6 +58,48 @@ internal static class Icons
         {
             PInvoke.DeleteObject((HGDIOBJ)(nint)hbmp);
         }
+    }
+
+    /// <summary>El esquema de una URL (<c>https</c>, <c>mailto</c>), o null si no lo es.</summary>
+    private static string? SchemeOf(string target)
+    {
+        int colon = target.IndexOf(':');
+        if (colon <= 1) return null;
+
+        string scheme = target[..colon];
+        return scheme.All(c => char.IsAsciiLetterOrDigit(c) || c is '+' or '.' or '-')
+            && !scheme.Equals("shell", StringComparison.OrdinalIgnoreCase)
+            ? scheme
+            : null;
+    }
+
+    /// <summary>
+    /// Qué ejecutable tiene asociado ese protocolo. Es LECTURA de las asociaciones del
+    /// shell: no se toca ninguna, y ni siquiera se lee el registro a mano — lo contesta
+    /// la API que existe para preguntarlo.
+    /// </summary>
+    private static string? HandlerOf(string scheme)
+    {
+        // Primera llamada para saber el tamaño. Un protocolo sin asociar devuelve error
+        // y se descarta solo.
+        uint length = 0;
+        if (PInvoke.AssocQueryString(
+                ASSOCF.ASSOCF_NONE, ASSOCSTR.ASSOCSTR_EXECUTABLE,
+                scheme, null, default, ref length).Failed || length == 0)
+        {
+            return null;
+        }
+
+        Span<char> buffer = new char[length];
+        if (PInvoke.AssocQueryString(
+                ASSOCF.ASSOCF_NONE, ASSOCSTR.ASSOCSTR_EXECUTABLE,
+                scheme, null, buffer, ref length).Failed)
+        {
+            return null;
+        }
+
+        string path = new string(buffer).TrimEnd('\0');
+        return File.Exists(path) ? path : null;
     }
 
     private static unsafe IconBitmap ReadPixels(HBITMAP hbmp)

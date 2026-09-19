@@ -116,6 +116,10 @@ GetPackageFamilyName
 EnumWindows
 GetShellWindow
 GetCurrentProcessId
+
+// Que app abre un protocolo. Solo LECTURA de asociaciones del shell: sirve para
+// ponerle al icono de una URL la cara del navegador que la va a abrir.
+AssocQueryStringW
 GetWindowThreadProcessId
 IsWindowVisible
 IsIconic

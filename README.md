@@ -5,8 +5,8 @@
 Un buscador estilo Fluent Search para Windows 11: aplicaciones, ficheros a través de
 **Everything**, prefijos web y un ranking que aprende de lo que abres.
 
-> **Estado: en construcción, pero ya se usa.** `Alt+Espacio`, escribes, Enter y abre.
-> Faltan los ficheros de Everything, los prefijos web, los comandos del sistema, la
+> **Estado: en construcción, pero ya se usa.** `Alt+Espacio`, escribes, Enter y abre —
+> aplicaciones y ficheros. Faltan los prefijos web, los comandos del sistema, la
 > calculadora y los iconos. Lo que hay hecho está en el [CHANGELOG](CHANGELOG.md).
 
 ---
@@ -28,6 +28,11 @@ Un buscador estilo Fluent Search para Windows 11: aplicaciones, ficheros a trav�
 - **[Everything](https://www.voidtools.com/) de voidtools**, si quieres buscar ficheros. Sin
   él el lanzador funciona igual, pero solo enseña aplicaciones, y lo dice. No se instala ni se
   arranca desde aquí.
+
+  Un detalle que cuesta encontrar: **tiene que estar abierta la aplicación, no basta con el
+  servicio.** Everything instala las dos cosas; el servicio mantiene el índice, pero el buzón
+  al que se le pregunta lo publica la aplicación. Si solo corre el servicio, el lanzador no
+  encuentra ficheros. Con "Start Everything on system startup" marcado queda resuelto.
 
 ## Cómo se usa desde la consola
 

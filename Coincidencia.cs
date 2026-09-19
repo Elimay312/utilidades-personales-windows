@@ -34,6 +34,7 @@ internal static class Coincidencia
     private const int PenaHueco    = 4;   // por cada letra saltada entre dos coincidencias
     private const int BonoPrefijo  = 64;  // el candidato empieza por la consulta entera
     private const int PenaLongitud = 1;   // por letra del candidato: a igualdad, gana el corto
+    private const int PenaFichero  = 40;  // un fichero de Everything, frente a una aplicacion
 
     /// <summary>Lo que devuelve el nucleo cuando una letra no puede caer en esa posicion.</summary>
     private const int Imposible = int.MinValue / 2;
@@ -63,6 +64,8 @@ internal static class Coincidencia
             if (!Contiene(e.Buscable, q)) continue;
             int texto = Puntuar(e.Buscable, q);
             if (texto == NoCoincide) continue;
+
+            if (e.EsFichero) texto -= PenaFichero;
 
             int costumbre = uso?.Refuerzo(e.Destino, ahora) ?? 0;
             if (fijado is not null && e.Destino == fijado) costumbre += Uso.BonoDeFijado;

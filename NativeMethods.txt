@@ -130,3 +130,18 @@ SetBkColor
 // --- Realce de la fila elegida (H4) ---
 ID2D1SolidColorBrush
 D2D1_ROUNDED_RECT
+
+// --- Preguntarle a Everything (H5, SEGURIDAD.md §3.7) ---
+// FindWindow busca UN buzon concreto, el que Everything publica para esto y que su
+// propia linea de comandos usa. No se enumera nada: se pregunta por una clase y ya.
+// WM_COPYDATA es el unico mensaje que este programa manda fuera de si mismo, y va a un
+// destinatario que existe solo para recibirlo.
+FindWindowW
+COPYDATASTRUCT
+WM_COPYDATA
+
+// --- Rebote de la consulta (H5) ---
+// Sin el, cada pulsacion seria una pregunta a Everything. Es un temporizador sobre
+// nuestra propia ventana.
+SetTimer
+KillTimer

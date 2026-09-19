@@ -176,6 +176,23 @@ if ($urls) {
 }
 Write-Output ("  {0,-34} {1}" -f '10 esquema de las plantillas', $esq)
 
+# FindWindow no esta en la regla 15 porque §3.7 lo permite para UNA cosa: el buzon que
+# Everything publica. Igual que con SetForegroundWindow, la API esta permitida y lo que
+# hay que vigilar es a quien se aplica -- un grep a secas no sirve de puerta.
+$fw = $codigo | Where-Object { $_.Texto -match 'FindWindow' -and $_.Fichero -like '*.cs' }
+if (-not $fw) {
+    $buscar = 'todavia no se usa'
+} elseif ((Veces $fw 'FindWindow') -gt 1) {
+    $buscar = "APARECE $(Veces $fw 'FindWindow') VECES, solo se permite 1"; $fallos++
+} elseif ($fw[0].Fichero -ne 'Everything.cs') {
+    $buscar = "FUERA DE Everything.cs ($($fw[0].Fichero))"; $fallos++
+} else {
+    $clase = $codigo | Where-Object { $_.Fichero -eq 'Everything.cs' -and $_.Texto -match 'EVERYTHING_TASKBAR_NOTIFICATION' }
+    if ($clase) { $buscar = 'si, 1 vez y sobre el buzon de Everything' }
+    else { $buscar = 'NO SE VE LA CLASE EVERYTHING_TASKBAR_NOTIFICATION'; $fallos++ }
+}
+Write-Output ("  {0,-34} {1}" -f '15 FindWindow', $buscar)
+
 if (Test-Path 'NativeMethods.txt') {
     $pinvokes = (Get-Content NativeMethods.txt | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('//') }).Count
     $lista = "$pinvokes entradas en NativeMethods.txt"

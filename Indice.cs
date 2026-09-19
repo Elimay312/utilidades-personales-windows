@@ -10,7 +10,14 @@ namespace Lanzador;
 /// ruta de un .lnk, un shell:AppsFolder\AUMID o, mas adelante, una URL. Nunca una cadena
 /// que haya escrito el usuario (SEGURIDAD.md regla 10).
 /// </summary>
-internal sealed record Entrada(string Nombre, string Destino)
+/// <param name="EsFichero">
+/// Lo trajo Everything, no el menu Inicio. Puntua algo por debajo de una aplicacion: si
+/// escribes tres letras casi siempre quieres abrir un programa, y el fichero que se llama
+/// parecido es ruido — pero un fichero que encaja mucho mejor sigue ganando.
+/// </param>
+/// <param name="EsCarpetaDeDisco">Para el icono (H7) y para no prometer lo que no es.</param>
+internal sealed record Entrada(string Nombre, string Destino,
+                               bool EsFichero = false, bool EsCarpetaDeDisco = false)
 {
     /// <summary>
     /// El nombre sin acentos, que es contra lo que se busca. Se calcula una vez al

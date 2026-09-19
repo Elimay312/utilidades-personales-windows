@@ -6,6 +6,7 @@ using Windows.Win32.Graphics.Dwm;
 using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.UI.HiDpi;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
+using Windows.Win32.System.DataExchange;
 using Windows.Win32.UI.Shell;
 using Windows.Win32.UI.WindowsAndMessaging;
 
@@ -33,6 +34,26 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     private const int HotkeyId = 1;
     private const int EditId = 100;
 
+    // --- Everything -----------------------------------------------------------------
+    private const nuint TemporizadorEverything = 1;
+
+    /// <summary>
+    /// Cuanto se espera desde la ultima tecla antes de preguntar. Sin rebote, escribir
+    /// "documento" serian nueve preguntas y ocho respuestas que se tiran.
+    /// </summary>
+    private const uint ReboteMs = 60;
+
+    /// <summary>Cuantos ficheros se piden. Se ensenan 8 como mucho, pero el ranking necesita elegir.</summary>
+    private const uint FicherosQuePedir = 30;
+
+    /// <summary>
+    /// Marca de nuestras respuestas. El header deja elegir el dwData con el que Everything
+    /// contesta, asi que le metemos un numero de serie en los 16 bits bajos: si llega la
+    /// respuesta de una consulta que ya no es la de ahora, se tira sin mirarla. Sin esto,
+    /// escribir rapido hace que la lista parpadee con resultados viejos.
+    /// </summary>
+    private const uint MarcaRespuesta = 0x4C5A0000;
+
     // Mensajes. CsWin32 no genera las constantes WM_*, asi que van a mano.
     private const uint WM_DESTROY = 0x0002;
     private const uint WM_SETFONT = 0x0030;
@@ -42,6 +63,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     private const uint WM_COMMAND = 0x0111;
     private const uint WM_KEYDOWN = 0x0100;
     private const uint WM_ACTIVATE = 0x0006;
+    private const uint WM_TIMER = 0x0113;
     private const uint WM_HOTKEY = 0x0312;
     private const uint EM_SETSEL = 0x00B1;
     private const uint EM_SETMARGINS = 0x00D3;
@@ -75,6 +97,9 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     private uint _dpi;
     private int _ancho;
 
+    private List<Entrada> _ficheros = [];
+    private ushort _serie;
+    private long _preguntado;
     private List<Resultado> _resultados = [];
     private int _elegido;
     private string _consulta = string.Empty;
@@ -224,7 +249,9 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         // en ningun sitio (SEGURIDAD.md Â§5).
         _consulta = string.Empty;
         _resultados = [];
+        _ficheros = [];
         _elegido = 0;
+        PInvoke.KillTimer(_hwnd, TemporizadorEverything);
     }
 
     /// <summary>En la pantalla donde esta el cursor, centrado y a un tercio de arriba.</summary>
@@ -324,7 +351,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     {
         _resultados = _consulta.Length == 0
             ? []
-            : Coincidencia.Buscar(_indice, _consulta, _config.MaxResultados, _uso, DateTimeOffset.UtcNow);
+            : Coincidencia.Buscar(Candidatos(), _consulta, _config.MaxResultados, _uso, DateTimeOffset.UtcNow);
 
         _elegido = 0;
         _visuals.Pintar(_resultados, _elegido);
@@ -341,6 +368,94 @@ internal sealed unsafe class LanzadorWindow : IDisposable
                 SET_WINDOW_POS_FLAGS.SWP_NOMOVE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER
                 | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
         }
+    }
+
+    /// <summary>Las aplicaciones y, si ya llegaron, los ficheros de la consulta de ahora.</summary>
+    private List<Entrada> Candidatos()
+    {
+        if (_ficheros.Count == 0) return _indice;
+
+        List<Entrada> todos = new(_indice.Count + _ficheros.Count);
+        todos.AddRange(_indice);
+        todos.AddRange(_ficheros);
+        return todos;
+    }
+
+    /// <summary>
+    /// Programa la pregunta a Everything, o la cancela. Con menos de tres letras no se
+    /// pregunta: devolveria medio disco y ninguno seria lo que buscas.
+    /// </summary>
+    private void PedirFicheros()
+    {
+        PInvoke.KillTimer(_hwnd, TemporizadorEverything);
+
+        if (_consulta.Trim().Length < 3)
+        {
+            _ficheros = [];
+            return;
+        }
+
+        PInvoke.SetTimer(_hwnd, TemporizadorEverything, ReboteMs, null);
+    }
+
+    private void Preguntar()
+    {
+        PInvoke.KillTimer(_hwnd, TemporizadorEverything);
+
+        // Se busca el buzon en cada consulta y no una vez al arrancar: Everything puede
+        // abrirse despues que nosotros, y cachear el handle dejaria los ficheros muertos
+        // hasta reiniciar el lanzador.
+        HWND buzon = Everything.Buzon();
+        if (buzon.IsNull)
+        {
+            if (Traza) Console.WriteLine("[traza] Everything no esta corriendo");
+            _ficheros = [];
+            return;
+        }
+
+        _serie++;
+        _preguntado = Stopwatch.GetTimestamp();
+        bool aceptada = Everything.Preguntar(buzon, _hwnd, MarcaRespuesta | _serie, _consulta.Trim(), FicherosQuePedir);
+
+        // Cuanto se queda bloqueado NUESTRO hilo dentro del SendMessage. Es el numero que
+        // importa: si Everything hiciera la busqueda ahi dentro, escribir daria tirones.
+        if (Traza) Console.WriteLine($"[traza] SendMessage devolvio en {Milisegundos(_preguntado):0.0} ms");
+
+        if (!aceptada)
+        {
+            // Aqui es donde se veria el bloqueo por UIPI si Everything corriera elevado.
+            Console.Error.WriteLine("[lanzador] Everything no acepto la consulta " +
+                                    "(corre elevado y nosotros no?). Solo aplicaciones.");
+            _ficheros = [];
+        }
+    }
+
+    /// <summary>
+    /// Deshace la respuesta de Everything. Devuelve false si el mensaje no era nuestro,
+    /// para que siga su camino en vez de comerselo.
+    /// </summary>
+    private bool Respuesta(LPARAM lParam)
+    {
+        COPYDATASTRUCT* sobre = (COPYDATASTRUCT*)(nint)lParam.Value;
+        if (sobre is null) return false;
+
+        uint marca = (uint)sobre->dwData;
+        if ((marca & 0xFFFF0000) != MarcaRespuesta) return false;
+
+        double ms = Milisegundos(_preguntado);
+
+        // Una respuesta de una consulta que ya no es la de ahora se tira sin mirarla.
+        if ((ushort)(marca & 0xFFFF) != _serie)
+        {
+            if (Traza) Console.WriteLine($"[traza] respuesta vieja (serie {marca & 0xFFFF}, voy por {_serie})");
+            return true;
+        }
+
+        _ficheros = Everything.Leer(sobre->lpData, sobre->cbData);
+        if (Traza) Console.WriteLine($"[traza] Everything: {_ficheros.Count} ficheros en {ms:0.0} ms");
+
+        Refrescar();
+        return true;
     }
 
     private void Mover(int cuanto)
@@ -439,7 +554,9 @@ internal sealed unsafe class LanzadorWindow : IDisposable
                 if (Traza) Console.WriteLine($"[traza] WM_COMMAND aviso {(wParam.Value >> 16)}");
                 if ((wParam.Value >> 16) != EN_CHANGE) break;
                 v._consulta = v.LeerCaja();
+                v._ficheros = [];     // los de la consulta anterior ya no valen
                 v.Refrescar();
+                v.PedirFicheros();
                 return new LRESULT(0);
 
             // Al perder el foco se esconde, que es lo que espera cualquiera de un
@@ -447,6 +564,15 @@ internal sealed unsafe class LanzadorWindow : IDisposable
             case WM_ACTIVATE when v is not null && (wParam.Value & 0xFFFF) == 0:
                 v.Esconder();
                 return new LRESULT(0);
+
+            case WM_TIMER when v is not null && (nuint)wParam.Value == TemporizadorEverything:
+                v.Preguntar();
+                return new LRESULT(0);
+
+            // La respuesta de Everything. Es el unico WM_COPYDATA que esperamos, y solo
+            // se mira si lleva nuestra marca y el numero de serie de la consulta de ahora.
+            case PInvoke.WM_COPYDATA when v is not null:
+                return v.Respuesta(lParam) ? new LRESULT(1) : PInvoke.DefWindowProc(hwnd, msg, wParam, lParam);
 
             // El EDIT pregunta de que color pintarse justo antes de hacerlo. Se le
             // contesta con el pincel de la franja, que es el mismo color solido.

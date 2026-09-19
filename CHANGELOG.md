@@ -10,6 +10,40 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H5 — Los ficheros, por IPC con Everything
+
+- **El riesgo que el plan marcaba como el primero a medir, resuelto a favor.** Everything
+  instala un **servicio** que indexa con permisos y una **aplicación** que corre como tú;
+  la ventana de IPC es de la aplicación, así que nuestro `SendMessage` no lo bloquea UIPI.
+  Cinco consultas, cinco respuestas, ningún error. Si algún día corriera elevado, el
+  programa lo dice en vez de quedarse mudo.
+- **Medido, y la distinción importa**: la ida y vuelta completa es de **62–124 ms**, pero
+  `SendMessage` devuelve en **0,3–0,8 ms**. O sea: Everything trabaja por su cuenta y
+  nuestra ventana no se bloquea. Escribir no da tirones; los ficheros llegan un poco
+  después que las aplicaciones, que salen en 0,5 ms.
+- **Las constantes salen del header, no de memoria.** `ipc/everything_ipc.h` del
+  Everything-SDK oficial, con el reparto de bytes copiado en un comentario al lado del
+  código que lo usa.
+- **Número de serie en la respuesta.** El header deja elegir el `dwData` con el que
+  Everything contesta, así que lleva un contador en los 16 bits bajos: una respuesta de una
+  consulta que ya no es la de ahora se tira sin mirarla. Sin eso, escribir rápido hace
+  parpadear la lista con resultados viejos.
+- **Rebote de 60 ms y mínimo de 3 letras.** Sin rebote, escribir "documento" serían nueve
+  preguntas y ocho respuestas tiradas; con menos de tres letras Everything devolvería medio
+  disco.
+- **El buzón se busca en cada consulta**, no una vez al arrancar: Everything puede abrirse
+  después que el lanzador, y cachear el handle dejaría los ficheros muertos hasta reiniciar.
+- **Los ficheros puntúan 40 por debajo de las aplicaciones.** Con `seguridad`: primero
+  "Seguridad de Windows" y detrás los cinco `SEGURIDAD.md`, cada uno con su ruta para poder
+  distinguirlos.
+- **El reparto de bytes tiene comprobación propia**, que es el código de más riesgo del
+  proyecto: una respuesta armada a mano, más los casos en que la respuesta miente sobre su
+  propio tamaño (un `numitems` imposible, un offset fuera del sobre, un sobre vacío, un
+  puntero nulo). Un campo mal alineado no da un error, da basura.
+- **La auditoría vigila `FindWindow` como vigila `SetForegroundWindow`**: la API está
+  permitida, lo que se comprueba es que se use una sola vez, en `Everything.cs`, y sobre la
+  clase del buzón.
+
 ### H4b — El diseño, a estilo Spotlight
 
 - **Hueco de icono a la izquierda y la caja de búsqueda alineada con la columna de

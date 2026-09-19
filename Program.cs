@@ -243,10 +243,103 @@ internal static class Program
         fallos += Exige("registrar guarda el destino, no la consulta suelta",
                         fijado.Lanzamientos.ContainsKey("brave.lnk") && fijado.Lanzamientos.Count == 1);
 
+        // --- El reparto de bytes de Everything (H5) ----------------------------------
+        // Es el codigo con mas riesgo del proyecto: un campo mal alineado no da un error,
+        // da basura, y eso se tarda mucho mas en ver. Se le da una respuesta armada a
+        // mano, con el mismo reparto que dice ipc/everything_ipc.h.
+        Console.WriteLine();
+        Console.WriteLine("Everything — deshacer una respuesta");
+        fallos += ComprobarEverything();
+
         Console.WriteLine();
         if (fallos == 0) { Console.WriteLine("TODO BIEN"); return 0; }
         Console.WriteLine($"{fallos} comprobacion(es) fallan");
         return 1;
+    }
+
+    /// <summary>
+    /// Arma un EVERYTHING_IPC_LISTW a mano y comprueba que se deshace bien, incluidos los
+    /// casos en que la respuesta miente sobre su propio tamano.
+    /// </summary>
+    private static unsafe int ComprobarEverything()
+    {
+        const int Cabecera = 28;
+        const int TamItem = 12;
+
+        // Dos resultados: un fichero en una carpeta y una carpeta raiz sin ruta.
+        string[] nombres = ["notas.txt", "Proyectos"];
+        string[] rutas = [@"C:\Users\yo\Documentos", ""];
+        uint[] marcas = [0, 1];   // 1 = EVERYTHING_IPC_FOLDER
+
+        int textos = Cabecera + nombres.Length * TamItem;
+        int total = textos;
+        foreach (string s in nombres.Concat(rutas)) total += (s.Length + 1) * 2;
+
+        byte[] buffer = new byte[total];
+        int fallos = 0;
+
+        fixed (byte* p = buffer)
+        {
+            uint* cab = (uint*)p;
+            cab[0] = 1; cab[1] = 1; cab[2] = 2;   // totfolders, totfiles, totitems
+            cab[3] = 1; cab[4] = 1; cab[5] = 2;   // numfolders, numfiles, numitems
+            cab[6] = 0;                           // offset
+
+            int escribiendo = textos;
+            for (int i = 0; i < nombres.Length; i++)
+            {
+                uint* item = (uint*)(p + Cabecera + i * TamItem);
+                item[0] = marcas[i];
+
+                item[1] = (uint)escribiendo;
+                escribiendo += Poner(p, escribiendo, nombres[i]);
+
+                item[2] = (uint)escribiendo;
+                escribiendo += Poner(p, escribiendo, rutas[i]);
+            }
+
+            List<Entrada> leidos = Everything.Leer(p, (uint)total);
+
+            fallos += Exige("salen los dos resultados", leidos.Count == 2);
+            if (leidos.Count == 2)
+            {
+                fallos += Exige("nombre y ruta se juntan bien",
+                                leidos[0].Destino == @"C:\Users\yo\Documentos\notas.txt");
+                fallos += Exige("sin ruta, el destino es el nombre a secas",
+                                leidos[1].Destino == "Proyectos");
+                fallos += Exige("la marca de carpeta se lee",
+                                !leidos[0].EsCarpetaDeDisco && leidos[1].EsCarpetaDeDisco);
+                fallos += Exige("vienen marcados como fichero, no como aplicacion",
+                                leidos.TrueForAll(e => e.EsFichero));
+            }
+
+            // Y los casos en que la respuesta miente. Un numitems que no cabe en el sobre
+            // significaria leer memoria que no es nuestra.
+            cab[5] = 100000;
+            fallos += Exige("un numitems imposible no se lee", Everything.Leer(p, (uint)total).Count == 0);
+            cab[5] = 2;
+
+            uint* primero = (uint*)(p + Cabecera);
+            uint bueno = primero[1];
+            primero[1] = (uint)total + 500;
+            fallos += Exige("un offset fuera del sobre salta ese item",
+                            Everything.Leer(p, (uint)total).Count == 1);
+            primero[1] = bueno;
+
+            fallos += Exige("un sobre vacio no revienta", Everything.Leer(p, 4).Count == 0);
+            fallos += Exige("un puntero nulo no revienta", Everything.Leer(null, 999).Count == 0);
+        }
+
+        return fallos;
+    }
+
+    /// <summary>Copia una cadena terminada en cero y devuelve cuantos bytes ocupo.</summary>
+    private static unsafe int Poner(byte* baseP, int en, string s)
+    {
+        char* destino = (char*)(baseP + en);
+        s.AsSpan().CopyTo(new Span<char>(destino, s.Length));
+        destino[s.Length] = '\0';
+        return (s.Length + 1) * 2;
     }
 
     private static int Exige(string que, bool secumple)

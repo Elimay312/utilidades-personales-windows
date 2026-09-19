@@ -16,8 +16,13 @@ namespace Lanzador;
 /// parecido es ruido — pero un fichero que encaja mucho mejor sigue ganando.
 /// </param>
 /// <param name="EsCarpetaDeDisco">Para el icono (H7) y para no prometer lo que no es.</param>
+/// <param name="SoloSeMira">
+/// El resultado de una cuenta: se ensena y ya. Enter no abre nada, porque no hay nada que
+/// abrir — y copiarlo seria el portapapeles, que es la regla 14.
+/// </param>
 internal sealed record Entrada(string Nombre, string Destino,
-                               bool EsFichero = false, bool EsCarpetaDeDisco = false)
+                               bool EsFichero = false, bool EsCarpetaDeDisco = false,
+                               bool SoloSeMira = false)
 {
     /// <summary>
     /// El nombre sin acentos, que es contra lo que se busca. Se calcula una vez al
@@ -44,6 +49,7 @@ internal static class Indice
     public static List<Entrada> Construir()
     {
         List<Entrada> todo = AppsFolder();
+        todo.AddRange(Proveedores.Sistema());
 
         // AppsFolder gana el empate: su nombre visible es el que ensena el menu Inicio, y
         // su destino vale igual para una app de la Store que para una de escritorio.

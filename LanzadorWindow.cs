@@ -349,9 +349,22 @@ internal sealed unsafe class LanzadorWindow : IDisposable
 
     private void Refrescar()
     {
-        _resultados = _consulta.Length == 0
-            ? []
-            : Coincidencia.Buscar(Candidatos(), _consulta, _config.MaxResultados, _uso, DateTimeOffset.UtcNow);
+        _resultados = [];
+
+        if (_consulta.Trim().Length > 0)
+        {
+            // La cuenta y el prefijo web van arriba del todo y sin puntuar: si escribes
+            // "2+2" no hay nada que rankear, has pedido una cosa concreta.
+            Entrada? especial = Proveedores.Especial(_consulta, _config.Web);
+            if (especial is not null) _resultados.Add(new Resultado(especial, 0, 0, 0));
+
+            int hueco = _config.MaxResultados - _resultados.Count;
+            if (hueco > 0)
+            {
+                _resultados.AddRange(
+                    Coincidencia.Buscar(Candidatos(), _consulta, hueco, _uso, DateTimeOffset.UtcNow));
+            }
+        }
 
         _elegido = 0;
         _visuals.Pintar(_resultados, _elegido);
@@ -474,9 +487,21 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         if (_elegido >= _resultados.Count) return;
 
         Entrada que = _resultados[_elegido].Entrada;
+        if (que.SoloSeMira) return;   // una cuenta: se lee, no se abre
+
         string consulta = Coincidencia.Normalizar(_consulta).ToLowerInvariant().Trim();
 
         Esconder();
+
+        // SEGURIDAD.md §3.10: bloquear la sesion es lo mismo que Win+L. Apagar y
+        // reiniciar NO estan, y no por descuido: §4 dice por que.
+        if (que.Destino == Proveedores.DestinoBloquear)
+        {
+            _uso.Registrar(consulta, que.Destino, DateTimeOffset.UtcNow);
+            _uso.Guardar();
+            PInvoke.LockWorkStation();
+            return;
+        }
 
         SHELLEXECUTEINFOW info = new()
         {

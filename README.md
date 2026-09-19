@@ -6,8 +6,8 @@ Un buscador estilo Fluent Search para Windows 11: aplicaciones, ficheros a trav�
 **Everything**, prefijos web y un ranking que aprende de lo que abres.
 
 > **Estado: en construcción, pero ya se usa.** `Alt+Espacio`, escribes, Enter y abre —
-> aplicaciones y ficheros. Faltan los prefijos web, los comandos del sistema, la
-> calculadora y los iconos. Lo que hay hecho está en el [CHANGELOG](CHANGELOG.md).
+> aplicaciones, ficheros, prefijos web, sitios del sistema y cuentas. Faltan los iconos y
+> el pulido. Lo que hay hecho está en el [CHANGELOG](CHANGELOG.md).
 
 ---
 
@@ -18,8 +18,8 @@ Un buscador estilo Fluent Search para Windows 11: aplicaciones, ficheros a trav�
 | **Aplicaciones** | Los dos menús Inicio y las apps de la Store |
 | **Ficheros** | Lo que tenga indexado Everything, preguntándoselo por IPC mientras escribes |
 | **Web** | `g gatos` → Google, `y ...` → YouTube. Los prefijos los pones tú en `lanzador.json` |
-| **Sistema** | `apagar`, `bloquear`, `bluetooth`… abren lo que toque de Windows |
-| **Cuentas** | `2+2*7` y la primera fila es el resultado |
+| **Sistema** | `bluetooth`, `papelera`, `descargas`, `bloquear`… 18 sitios de Windows |
+| **Cuentas** | `1234*0,15` y la primera fila es `185,1` |
 | **Ranking** | Lo que más abres sube. Y si para `br` elegiste Brave, `br` da Brave siempre |
 
 ## Qué necesita
@@ -61,6 +61,9 @@ salida. Todo lo Win32 sale de `NativeMethods.txt`, que es una lista cerrada y au
 No lee tus marcadores del navegador. No busca dentro de los ficheros. No ejecuta comandos
 arbitrarios. No hace ni una sola llamada de red. No guarda lo que escribes — solo lo que
 lanzas, y `--olvidar` lo borra.
+
+**Y no apaga ni reinicia el ordenador.** Bloquear la sesión sí, porque no puede salir mal.
+Apagar no: Enter sobre una coincidencia difusa no es sitio para perder trabajo.
 
 El razonamiento de cada una de esas líneas está en **[SEGURIDAD.md](SEGURIDAD.md)**, que se
 escribió antes de la primera línea de código y se comprueba con `auditar.ps1` en cada commit.

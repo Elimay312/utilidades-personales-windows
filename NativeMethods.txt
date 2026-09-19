@@ -145,3 +145,9 @@ WM_COPYDATA
 // nuestra propia ventana.
 SetTimer
 KillTimer
+
+// --- Bloquear la sesion (H6, SEGURIDAD.md §3.10) ---
+// Lo mismo que Win+L: no cierra nada, no termina ningun proceso y se deshace con tu
+// contrasena. ExitWindowsEx NO esta aqui y no va a estar: apagar y reiniciar siguen
+// prohibidos por la regla 16.
+LockWorkStation

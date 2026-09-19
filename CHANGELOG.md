@@ -10,6 +10,30 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H6 — Prefijos web, sitios del sistema y calculadora
+
+- **18 sitios del sistema en el índice**, y ni un P/Invoke nuevo: son `ms-settings:` y
+  `shell:`, que `ShellExecuteEx` ya sabía abrir. `papelera` → 343 puntos, `descargas` → 391.
+- **`bloquear` sí; `apagar` y `reiniciar` no.** Va con su enmienda escrita antes del código
+  (`SEGURIDAD.md §3.10`): `LockWorkStation` es lo mismo que `Win+L`, no pierde nada y se
+  deshace con tu contraseña. Apagar y reiniciar siguen prohibidos por la regla 16, y no por
+  tecnicismo: **Enter sobre una coincidencia difusa no es sitio para perder trabajo.**
+- **Los prefijos web validan el esquema.** La plantilla sale de `lanzador.json`, que lo
+  escribes tú, así que una con `file:` o con un esquema de aplicación convertiría el fichero
+  de configuración en una forma de abrir cualquier cosa. Solo pasan `http` y `https`, y el
+  término va escapado. Comprobado con las tres plantillas.
+- **Calculadora con parser propio de descenso recursivo**, sin dependencias. Precedencia,
+  paréntesis, unario, potencia asociativa por la derecha (`2^3^2` = 512, no 64), y la coma
+  decimal de aquí (`1,5+1,5` = 3). `1234*0,15` → **185,1**.
+- **Dos cosas que la calculadora no hace, y están escritas en `SEGURIDAD.md §4` para que no
+  parezcan olvidos**: el `%`, porque no se sabe si quien lo escribe quiere un porcentaje o un
+  módulo; y copiar el resultado, porque es la regla 14 — con la enmienda que haría falta ya
+  redactada, por si algún día se quiere.
+- **Un número suelto no es una cuenta.** Sin esa regla, escribir `5` sacaba una fila con un
+  5. Hace falta al menos un operador y al menos un dígito.
+- **21 comprobaciones nuevas**, incluidas las nueve de "esto NO es una cuenta": `1/0`,
+  `(2+3`, `2+3)`, `a+b`, `10%3`.
+
 ### H5 — Los ficheros, por IPC con Everything
 
 - **El riesgo que el plan marcaba como el primero a medir, resuelto a favor.** Everything

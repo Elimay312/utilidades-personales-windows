@@ -251,6 +251,76 @@ internal static class Program
         Console.WriteLine("Everything — deshacer una respuesta");
         fallos += ComprobarEverything();
 
+        // --- La calculadora y los prefijos web (H6) ----------------------------------
+        Console.WriteLine();
+        Console.WriteLine("Cuentas — lo que sale");
+        foreach ((string expr, double esperado) in new (string, double)[]
+                 {
+                     ("2+2", 4),
+                     ("2+2*7", 16),            // precedencia, no 28
+                     ("(2+2)*7", 28),
+                     ("10/4", 2.5),
+                     ("10:4", 2.5),            // los dos por si acaso
+                     ("2^3^2", 512),           // asociativa por la derecha, no 64
+                     ("-3+5", 2),
+                     ("2 * -3", -6),
+                     ("1,5+1,5", 3),           // la coma decimal de aqui
+                     ("1.5+1.5", 3),
+                     ("3x4", 12),
+                     ("100-(20+30)", 50),
+                 })
+        {
+            double? sale = Cuentas.Evaluar(expr);
+            bool bien = sale is not null && Math.Abs(sale.Value - esperado) < 1e-9;
+            if (!bien) fallos++;
+            Console.WriteLine($"  {(bien ? "ok  " : "FALLA")} {expr,-14} = {(sale is null ? "(nada)" : Cuentas.Escribir(sale.Value))}" +
+                              (bien ? "" : $"   esperaba {esperado}"));
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Cuentas — lo que NO es una cuenta");
+        foreach (string no in new[]
+                 {
+                     "5",            // un numero suelto no es una cuenta
+                     "brave",
+                     "a+b",
+                     "1/0",          // infinito no informa de nada
+                     "2+",
+                     "(2+3",
+                     "2+3)",
+                     "10%3",         // el % no existe a proposito (SEGURIDAD.md §4)
+                     "g gatos",      // esto es un prefijo web, no una cuenta
+                 })
+        {
+            bool bien = Cuentas.Evaluar(no) is null;
+            if (!bien) fallos++;
+            Console.WriteLine($"  {(bien ? "ok  " : "FALLA")} \"{no}\"" +
+                              (bien ? "" : $"   pero devolvio {Cuentas.Evaluar(no)}"));
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Web — la plantilla y su esquema");
+        Dictionary<string, string> plantillas = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["g"] = "https://www.google.com/search?q={}",
+            ["mal"] = "file:///C:/{}",
+            ["raro"] = "loquesea:{}",
+        };
+
+        Entrada? buscado = Proveedores.Especial("g gatos con sombrero", plantillas);
+        fallos += Exige("el prefijo construye la URL",
+                        buscado?.Destino == "https://www.google.com/search?q=gatos%20con%20sombrero");
+        fallos += Exige("y el termino va escapado",
+                        buscado is not null && !buscado.Destino.Contains(' '));
+        fallos += Exige("una plantilla file: no se abre", Proveedores.Especial("mal cosa", plantillas) is null);
+        fallos += Exige("un esquema inventado tampoco", Proveedores.Especial("raro cosa", plantillas) is null);
+        fallos += Exige("un prefijo que no existe no hace nada",
+                        Proveedores.Especial("zz cosa", plantillas) is null);
+        fallos += Exige("un prefijo sin termino no hace nada",
+                        Proveedores.Especial("g ", plantillas) is null);
+        fallos += Exige("la cuenta gana al prefijo web",
+                        Proveedores.Especial("2+2", plantillas)?.SoloSeMira == true);
+
         Console.WriteLine();
         if (fallos == 0) { Console.WriteLine("TODO BIEN"); return 0; }
         Console.WriteLine($"{fallos} comprobacion(es) fallan");

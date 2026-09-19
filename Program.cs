@@ -156,7 +156,10 @@ internal static class Program
                     if (icon.Bgra[i] == 255) opaque++;
                     else if (icon.Bgra[i] == 0) transparent++;
                 }
+                // El lado que ocupa el dibujo es lo que delata al icono que el shell no
+                // supo agrandar: por debajo de la mitad del lienzo sale como un sello.
                 Console.WriteLine($"[check] {app.Name,-16} {icon.Width}x{icon.Height} " +
+                    $"ocupa={100 * Icons.Side(icon) / icon.Width}% " +
                     $"opacos={opaque} transparentes={transparent}" +
                     (app.Arguments.Length > 0 ? $" args=[{app.Arguments}]" : ""));
             }

@@ -18,6 +18,13 @@ internal static class Icons
     public const int ExtractSize = 256;
 
     /// <summary>
+    /// A qué tamaño se vuelve a pedir cuando el fichero no da para 256. Es el tamaño de
+    /// icono grande de Windows y el último que el shell sirve como icono: por encima
+    /// pasa a servir miniatura, que es de donde sale el problema.
+    /// </summary>
+    private const int FallbackSize = 48;
+
+    /// <summary>
     /// Extrae el icono de un ejecutable o de un elemento del shell.
     /// La doc de Microsoft avisa de que esto "can be time consuming" y que no debe
     /// hacerse en el hilo de UI: la llamada va en background.
@@ -82,14 +89,35 @@ internal static class Icons
         }
 
         var factory = (IShellItemImageFactory)item;
+        IconBitmap icon = Image(factory, ExtractSize);
 
+        // El shell NO agranda un icono pequeño. Si lo más grande que trae el fichero es
+        // de 32 o 48, a 256 devuelve ese mismo dibujo a tamaño nativo, centrado en el
+        // lienzo y con el marco de miniatura alrededor. En el dock eso es un sello
+        // diminuto al lado de iconos que llenan su hueco: los .url de Steam de un juego
+        // viejo salen así, porque su .ico solo trae 16 y 32.
+        //
+        // Medido sobre 23 entradas del dock, lado de la caja del dibujo sobre el lienzo:
+        // los sanos van del 87 % al 100 %, y los pequeños dan 14 %, 18 % y 18 %. No hay
+        // nada entre medias, así que el corte a la mitad no roza ningún caso real.
+        //
+        // Pidiéndolo a 48 —el tamaño de icono grande de Windows, el último que el shell
+        // sirve como icono y no como miniatura— sí viene escalado y sin marco: Alice
+        // Madness Returns pasa de ocupar el 14 % a ocupar el 83 %.
+        if (Side(icon) * 2 < ExtractSize) icon = Image(factory, FallbackSize);
+
+        return icon;
+    }
+
+    private static unsafe IconBitmap Image(IShellItemImageFactory factory, int size)
+    {
         HBITMAP hbmp;
         // ICONONLY es obligatorio: por defecto GetImage devuelve el THUMBNAIL, no el
         // icono, así que un .exe con vista previa daría la miniatura.
         // BIGGERSIZEOK deja que el shell devuelva su tamaño nativo mayor en vez de
         // estirarlo con StretchBlt, que da mala calidad.
         factory.GetImage(
-            new SIZE(ExtractSize, ExtractSize),
+            new SIZE(size, size),
             SIIGBF.SIIGBF_ICONONLY | SIIGBF.SIIGBF_BIGGERSIZEOK,
             &hbmp);
 
@@ -101,6 +129,33 @@ internal static class Icons
         {
             PInvoke.DeleteObject((HGDIOBJ)(nint)hbmp);
         }
+    }
+
+    /// <summary>
+    /// Lado de la caja que ocupa el dibujo dentro de su lienzo, en píxeles.
+    ///
+    /// Solo cuenta lo bien opaco a propósito: el marco que el shell pinta alrededor de
+    /// una miniatura viene con alfa 38, y contándolo la caja saldría siempre del lienzo
+    /// entero y esto no distinguiría nada.
+    /// </summary>
+    internal static int Side(IconBitmap icon)
+    {
+        int minX = icon.Width, minY = icon.Height, maxX = -1, maxY = -1;
+
+        for (int y = 0; y < icon.Height; y++)
+        {
+            for (int x = 0; x < icon.Width; x++)
+            {
+                if (icon.Bgra[((y * icon.Width) + x) * 4 + 3] < 128) continue;
+
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+
+        return maxX < 0 ? 0 : Math.Max(maxX - minX + 1, maxY - minY + 1);
     }
 
     /// <summary>El esquema de una URL (<c>https</c>, <c>mailto</c>), o null si no lo es.</summary>
@@ -248,6 +303,32 @@ internal static class IconsSelfCheck
         Assert(opaque[0] == 10 && opaque[1] == 20 && opaque[2] == 30, "toco un pixel opaco");
 
         Console.WriteLine("[check] premultiplicado: OK");
+
+        // Caja del dibujo. Es lo que decide si el shell devolvio un icono de verdad o el
+        // sello pequeno dentro del lienzo grande, asi que si esto miente el dock se
+        // queda con iconos diminutos sin avisar.
+        Assert(Icons.Side(Canvas(8, (x, y) => x >= 2 && x <= 4 && y >= 1 && y <= 5 ? (byte)255 : (byte)0)) == 5,
+            "la caja de un bloque de 3x5 tiene que dar 5");
+        Assert(Icons.Side(Canvas(8, (_, _) => 255)) == 8, "un lienzo lleno ocupa el lienzo");
+        Assert(Icons.Side(Canvas(8, (_, _) => 0)) == 0, "un lienzo vacio no ocupa nada");
+
+        // El marco de miniatura del shell viene con alfa 38. Si contara, la caja saldria
+        // del lienzo entero y el dock nunca pediria el icono mas pequeno.
+        Assert(Icons.Side(Canvas(8, (x, y) => x == 0 || y == 0 || x == 7 || y == 7 ? (byte)38 : (byte)0)) == 0,
+            "el marco de alfa 38 no cuenta como dibujo");
+
+        Console.WriteLine("[check] caja del dibujo: OK");
+    }
+
+    /// <summary>Un lienzo cuadrado con el alfa que diga <paramref name="alpha"/>.</summary>
+    private static IconBitmap Canvas(int side, Func<int, int, byte> alpha)
+    {
+        byte[] bgra = new byte[side * side * 4];
+        for (int y = 0; y < side; y++)
+            for (int x = 0; x < side; x++)
+                bgra[((y * side) + x) * 4 + 3] = alpha(x, y);
+
+        return new IconBitmap(side, side, bgra);
     }
 
     private static void Assert(bool condition, string message)

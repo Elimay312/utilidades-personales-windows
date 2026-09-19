@@ -13,11 +13,54 @@ DefWindowProcW
 DestroyWindow
 PostQuitMessage
 GetModuleHandleW
+ShowWindow
+SetWindowPos
+LoadCursorW
 
 // --- Bucle de mensajes propio (M0) ---
 GetMessageW
 TranslateMessage
 DispatchMessageW
+PostMessageW
 
 // --- Consola para --check estando compilado como WinExe (M0) ---
 AttachConsole
+
+// --- El hook de teclado (M1). Ver SEGURIDAD.md §3.1 ---
+// WH_KEYBOARD_LL NO carga ninguna DLL en ningun proceso ajeno: la doc dice que el
+// callback "is called in the context of the thread that installed it", mandandole un
+// mensaje a ese hilo. Es lo contrario de los hooks que si inyectan (WH_CBT,
+// WH_GETMESSAGE, WH_SHELL), que siguen prohibidos por la regla 3.
+//
+// Solo se mira VK_SPACE. GetKeyState esta aqui unicamente para poder DEJAR PASAR
+// Ctrl+Espacio, Alt+Espacio y Shift+Espacio, que son atajos de otros.
+// GetAsyncKeyState no esta aqui y no va a estar: se puede consultar en cualquier
+// momento sin que haya ocurrido ningun evento, y esa es justo la diferencia.
+SetWindowsHookExW
+UnhookWindowsHookEx
+CallNextHookEx
+KBDLLHOOKSTRUCT
+WINDOWS_HOOK_ID
+VIRTUAL_KEY
+GetKeyState
+
+// --- Con quien hay que estar hablando para que el espacio cuente (M1) ---
+// Solo lectura, y solo para decidir si el espacio es nuestro o no lo es.
+// GetGUIThreadInfo es lo que impide que el programa se cruce con lo que el usuario
+// escribe: si hay un cursor de texto parpadeando, la tecla pasa de largo.
+GetForegroundWindow
+GetClassNameW
+GetWindowThreadProcessId
+GetGUIThreadInfo
+GUITHREADINFO
+
+// --- Donde cae el panel (M1) ---
+MonitorFromWindow
+GetMonitorInfoW
+MONITORINFO
+GetDpiForWindow
+
+// --- Composition interop, sobre el HWND propio (M1) ---
+ICompositorDesktopInterop
+CreateDispatcherQueueController
+DispatcherQueueOptions

@@ -38,7 +38,12 @@ internal sealed unsafe class HostWindow : IDisposable
 
     private static ushort _classAtom;
 
+    // Solo hay una ventana-host, asi que el WndProc estatico la encuentra por aqui en
+    // vez de montar un diccionario para una sola entrada.
+    private static HostWindow? _instance;
+
     private HWND _hwnd;
+    private Panel? _panel;
     private bool _disposed;
 
     public HostWindow()
@@ -58,6 +63,7 @@ internal sealed unsafe class HostWindow : IDisposable
         }
 
         if (_hwnd.IsNull) throw new InvalidOperationException("no se pudo crear la ventana-host");
+        _instance = this;
     }
 
     /// <summary>Donde el hook deja su aviso. Nunca se muestra.</summary>
@@ -79,12 +85,35 @@ internal sealed unsafe class HostWindow : IDisposable
     {
         switch (msg)
         {
+            // El aviso del hook. Aqui ya estamos fuera del callback, asi que se puede
+            // tardar lo que haga falta sin que Windows desinstale el hook.
+            case WM_APP_QUICKLOOK:
+                _instance?.Toggle();
+                return new LRESULT(0);
+
             case WM_DESTROY:
                 PInvoke.PostQuitMessage(0);
                 return new LRESULT(0);
         }
 
         return PInvoke.DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+
+    /// <summary>
+    /// Espacio: si no hay panel lo abre, y si lo hay lo cierra. Es el gesto entero.
+    /// </summary>
+    private void Toggle()
+    {
+        if (_panel is not null)
+        {
+            _panel.Dispose();
+            _panel = null;
+            return;
+        }
+
+        // La ventana en primer plano es la del Explorador: el hook ya lo comprobo, y de
+        // ella sale en que monitor y a que escala se dibuja el panel.
+        _panel = Panel.Open(PInvoke.GetForegroundWindow());
     }
 
     private static void EnsureClassRegistered()
@@ -110,10 +139,15 @@ internal sealed unsafe class HostWindow : IDisposable
         if (_disposed) return;
         _disposed = true;
 
+        _panel?.Dispose();
+        _panel = null;
+
         if (!_hwnd.IsNull)
         {
             PInvoke.DestroyWindow(_hwnd);
             _hwnd = default;
         }
+
+        _instance = null;
     }
 }

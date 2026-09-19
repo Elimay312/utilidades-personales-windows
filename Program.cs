@@ -27,6 +27,12 @@ internal static class Program
         Console.WriteLine();
 
         using HostWindow host = new();
+
+        // El hook despues de la ventana: necesita a donde mandar el aviso. Y si no se
+        // puede instalar, se dice y se sale, porque sin el no hay programa.
+        using Hook hook = new(host.Handle);
+        Console.WriteLine("[hook] instalado, solo mira la barra espaciadora");
+
         host.RunMessageLoop();
 
         Console.WriteLine("[quicklook] salida limpia");

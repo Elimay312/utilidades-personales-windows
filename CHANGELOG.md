@@ -57,3 +57,59 @@ hito.
 **Ficheros:** `QuickLook.csproj`, `app.manifest`, `NativeMethods.txt`, `SEGURIDAD.md`,
 `auditar.ps1`, `README.md`, `CLAUDE.md`, `CHANGELOG.md`, `quicklook.json`, `.gitignore`,
 `Program.cs`, `HostWindow.cs`.
+
+---
+
+## M1 — Espacio → panel
+
+El hook, la ventana-host y el panel acrílico vacío. Ya se abre y se cierra con el mismo
+gesto; todavía no enseña nada dentro.
+
+**`Hook.cs`, 88 líneas de código.** El §5 dice que se queda pequeño y el script avisa a las
+90, así que el margen es de dos líneas a propósito: la siguiente función que quiera entrar
+ahí tendrá que justificarse.
+
+El filtro, en orden, y cada corte sale por `CallNextHookEx` sin mirar nada más:
+
+1. `code < 0`, o no es `WM_KEYDOWN` / `WM_SYSKEYDOWN`.
+2. No es `VK_SPACE`.
+3. Hay Ctrl, Alt o Shift pulsado — `Ctrl+Espacio` y compañía son de otros.
+4. La ventana en primer plano no es `CabinetWClass`, `ExploreWClass`, `WorkerW` ni
+   `Progman`.
+5. Se está escribiendo: hay un cursor de texto (`hwndCaret`) o el foco está en un `Edit`,
+   `ComboBox`, `RichEditD2DPT` o la caja de búsqueda.
+
+El 5 es el que decide si esto se puede usar a diario. **Se comprueba primero con
+`hwndCaret`, no con el nombre de la clase**: un caret parpadeando significa que hay alguien
+escribiendo, y no depende de acertar con el nombre interno de un control que Microsoft puede
+cambiar. La lista de clases queda como red de seguridad debajo.
+
+**`SetWindowsHookEx` no devuelve un SafeHandle**, devuelve un `HHOOK` pelado, así que
+`UnhookWindowsHookEx` se llama a mano en `Dispose`. Mejor para la auditoría: la llamada
+aparece literal en el código en vez de escondida en el `Dispose` de un tipo generado.
+
+**Medido con una sonda** (`scratchpad/sonda-panel.ps1`, que manda el `WM_APP` con
+`PostMessage` en vez de pulsar la tecla): el panel abre a 1587x777 centrado en el área de
+trabajo, `IsWindowVisible` = true, **`GetForegroundWindow` no devuelve el panel** —no roba
+el foco, que es el criterio de aceptación— y el segundo aviso lo cierra.
+
+**La sonda se equivocó dos veces antes de que el código se equivocara ninguna**, que es
+exactamente lo que avisa el `CLAUDE.md`:
+
+- `GetClassNameW` declarado sin `CharSet=CharSet.Unicode`: el `StringBuilder` se marshala
+  como ANSI, la función W escribe UTF-16 dentro, y al leerlo todas las clases salían
+  cortadas en la primera letra (`QuickLookHostClass` → `Q`). Parecía que el registro de
+  clase estaba roto.
+- PowerShell convierte `$null` en cadena vacía al pasarlo a un parámetro `string`, así que
+  `FindWindow(clase, $null)` buscaba una ventana **sin título** y no encontraba nada. Hay
+  que pasar `[NullString]::Value`. Esto dio un "la ventana-host no existe" con la ventana
+  perfectamente creada.
+
+Las dos trampas están anotadas en la cabecera de la sonda para no repetirlas.
+
+**Lo que la sonda NO prueba**, y hay que pulsar a mano porque sintetizar teclas está
+prohibido por la regla 12: que el espacio llegue entero a Word y a Chrome, y que renombrar
+con F2 siga aceptando espacios.
+
+**Ficheros:** `Hook.cs`, `Visuals.cs`, `Panel.cs`, `HostWindow.cs`, `Program.cs`,
+`NativeMethods.txt` (33 entradas).

@@ -15,14 +15,13 @@ viene en el SDK.
 
 ## Estado
 
-**M0 — andamio.** El proyecto compila, `auditar.ps1` sale limpio y `SEGURIDAD.md` está
-escrito. Todavía no hace nada.
+**M1 — espacio → panel.** El hook está puesto y filtrado, y el espacio abre y cierra un
+panel acrílico sobre el Explorador. Todavía no enseña nada dentro.
 
 Lo que viene, en orden:
 
 | | |
 |---|---|
-| M1 | Espacio → panel |
 | M2 | Selección del Explorador → ficha del archivo |
 | M3 | Miniatura del shell (imágenes, PDF, vídeo, Office) |
 | M4 | El morph |
@@ -93,5 +92,8 @@ barra de direcciones. Sin eso, el programa hace el Explorador inusable.
 |---|---|
 | `Program.cs` | Entrada. Consola, ventana-host, bucle de mensajes. |
 | `HostWindow.cs` | La ventana que nunca se ve. Donde aterriza el aviso del hook. |
+| `Hook.cs` | Lo único que ve una tecla. 88 líneas, y así se queda. |
+| `Visuals.cs` | El compositor del proceso y el material acrílico. |
+| `Panel.cs` | El panel. No roba el foco, sí recibe ratón. |
 | `NativeMethods.txt` | La lista cerrada de P/Invokes. Si algo no está aquí, no compila. |
 | `auditar.ps1` | Comprueba `SEGURIDAD.md` contra el código. Tiene que decir `TODO LIMPIO`. |

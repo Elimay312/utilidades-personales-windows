@@ -1,0 +1,11 @@
+// Lista auditable de P/Invokes. Todas son APIs publicas documentadas y actuan sobre el
+// propio proceso o el propio HWND. Cada grupo lleva encima para que es: ahi es donde
+// mira un auditor, y cada entrada tiene que poder senalarse a una seccion de
+// SEGURIDAD.md §3.
+//
+// Crece un grupo por hito. Si una entrada no se puede senalar a una seccion, o sobra la
+// entrada o falta la seccion.
+
+// --- Consola estando compilado como WinExe (H0) ---
+// Sin esto, --check y --buscar no tendrian donde escribir al lanzarse desde una terminal.
+AttachConsole

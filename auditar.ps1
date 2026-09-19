@@ -176,6 +176,18 @@ if ($urls) {
 }
 Write-Output ("  {0,-34} {1}" -f '10 esquema de las plantillas', $esq)
 
+# §3.10: bloquear la sesion esta permitido, apagarla no. ExitWindowsEx sigue en la regla
+# 16 de arriba; aqui se comprueba la cara positiva, que LockWorkStation no se multiplique.
+$lock = $codigo | Where-Object { $_.Texto -match 'LockWorkStation' -and $_.Fichero -like '*.cs' }
+if (-not $lock) {
+    $bloqueo = 'todavia no se usa'
+} elseif ((Veces $lock 'LockWorkStation') -gt 1) {
+    $bloqueo = "APARECE $(Veces $lock 'LockWorkStation') VECES, solo se permite 1"; $fallos++
+} else {
+    $bloqueo = 'si, 1 vez (apagar y reiniciar siguen prohibidos)'
+}
+Write-Output ("  {0,-34} {1}" -f '16 LockWorkStation', $bloqueo)
+
 # FindWindow no esta en la regla 15 porque §3.7 lo permite para UNA cosa: el buzon que
 # Everything publica. Igual que con SetForegroundWindow, la API esta permitida y lo que
 # hay que vigilar es a quien se aplica -- un grep a secas no sirve de puerta.

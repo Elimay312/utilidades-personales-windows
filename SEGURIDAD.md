@@ -251,6 +251,26 @@ por parte del shell. Y siempre detrás de un Enter tuyo sobre una fila que está
 cual, solo una entrada del índice con su destino ya resuelto (regla 10). Y el proceso hijo se
 lanza y se suelta: no se le espera, no se le vigila, no se le mata (regla 16).
 
+### 3.10 Bloquear la sesión
+
+`LockWorkStation()`.
+
+**Por qué se sostiene:** es exactamente lo que hace `Win+L`. No cierra nada, no termina
+ningún proceso, no pierde ni un carácter de lo que estuvieras escribiendo, y se deshace
+poniendo tu contraseña. De todas las cosas que un lanzador podría hacerle a la sesión, es
+la única que no puede salir mal.
+
+**Los cortes, y son el motivo de que esta sección exista en vez de relajar la regla 16:**
+
+- **Apagar, reiniciar y cerrar sesión siguen prohibidos.** `ExitWindowsEx` no entra en
+  `NativeMethods.txt` y `auditar.ps1` lo sigue buscando. Ahí sí se pierde trabajo, y un
+  lanzador que abre con Enter sobre una coincidencia difusa es el peor sitio del escritorio
+  para poner esa acción. Si algún día entran, entran **con una confirmación delante** y con
+  su propia enmienda.
+- **Ni `shutdown.exe` por la puerta de atrás.** Lanzar el apagado como proceso sería saltarse
+  esta misma sección, y la regla 10 ya prohíbe montar comandos.
+- `auditar.ps1` comprueba que `LockWorkStation` aparece **como mucho una vez**.
+
 ### 3.9 Autoarranque
 
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, y nada más. Sale en la pestaña Inicio
@@ -262,6 +282,9 @@ del Administrador de tareas, se puede quitar desde ahí, y **se pregunta antes d
 
 | Se quería | Por qué no está |
 |---|---|
+| Apagar y reiniciar desde el lanzador | Regla 16, y no por tecnicismo: se pierde trabajo. Enter sobre una coincidencia difusa no es sitio para eso. Bloquear sí está, en §3.10, porque no puede salir mal |
+| El `%` en la calculadora | No está claro si quien lo escribe quiere un porcentaje o un módulo, y una calculadora que adivina mal es peor que una que no tiene la tecla |
+| Copiar el resultado de la cuenta | Regla 14. El resultado se lee en pantalla; copiarlo necesitaría `SetClipboardData` y eso es una enmienda, no un descuido. Ver la nota al final de §4 |
 | Modo comando: escribir algo y que se ejecute tal cual | Regla 10. Es la diferencia entre un lanzador y una shell. Si alguna vez entra, entra con su enmienda y con la confirmación delante |
 | Indexar marcadores del navegador | Regla 13. Es la carpeta más sensible del perfil, y ya hay prefijos web para lo mismo |
 | Buscar dentro de los ficheros | Regla 12. Everything tampoco lo hace por defecto, y por la misma razón |
@@ -270,6 +293,14 @@ del Administrador de tareas, se puede quitar desde ahí, y **se pregunta antes d
 | Plugins o extensiones | Regla 9. Sería ejecutar el código de otro dentro de nuestro proceso |
 | Arrancar Everything si no está corriendo | No es asunto nuestro lanzar el programa de otro sin que lo pidas. Se dice que falta y ya |
 | Un índice de ficheros propio, en disco | Para eso está Everything, que ya lo hace mejor. Y un índice propio en disco *sí* sería un inventario de tus ficheros guardado por nosotros |
+
+> **Sobre copiar el resultado de la calculadora.** Es lo que hacen todos los lanzadores y
+> aquí no está, porque la regla 14 prohíbe el portapapeles entero. La regla se escribió
+> pensando en **leerlo**, que es lo sensible; **escribirlo** detrás de un Enter tuyo es otra
+> cosa. Si se quiere, la enmienda sería: permitir `SetClipboardData` y solo eso, con
+> `GetClipboardData` y `OpenClipboard` para leer siguiendo prohibidos, y `auditar.ps1`
+> comprobando que solo se escribe. **No se ha hecho porque no se ha pedido**, no porque no
+> se pueda.
 
 ---
 

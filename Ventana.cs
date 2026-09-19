@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Dwm;
+using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.System.Com;
 using Windows.Win32.System.Ole;
 using Windows.Win32.System.SystemServices;
@@ -20,8 +22,16 @@ internal sealed unsafe class Ventana : IDisposable
 
     private const uint WM_DESTROY = 0x0002;
     private const uint WM_SIZE = 0x0005;
+    private const uint WM_ERASEBKGND = 0x0014;
+    private const uint WM_COMMAND = 0x0111;
+    private const uint WM_TIMER = 0x0113;
     private const uint WM_MOUSEWHEEL = 0x020A;
     private const uint WM_DPICHANGED = 0x02E0;
+
+    private const ushort EN_CHANGE = 0x0300;
+
+    /// <summary>El temporizador que espera a que dejes de teclear.</summary>
+    private const nuint Retardo = 1;
 
     // El delegado se guarda en un campo estatico a proposito: pasandolo directamente a
     // WNDCLASSEXW, el GC podria recogerlo mientras Windows todavia tiene el puntero, y el
@@ -35,11 +45,13 @@ internal sealed unsafe class Ventana : IDisposable
 
     private HWND _hwnd;
     private Visuales? _visuales;
+    private Controles? _controles;
     private Soltar? _soltar;
+    private HBRUSH _fondoFranja;
 
     private string _carpeta = "";
     private List<Fichero> _ficheros = [];
-    private List<Regla> _reglas = [];
+    private List<Fila> _filas = [];
 
     internal Ventana(string carpeta, string plantilla)
     {
@@ -60,13 +72,22 @@ internal sealed unsafe class Ventana : IDisposable
         if (_hwnd.IsNull) throw new InvalidOperationException("no se pudo crear la ventana");
         _unica = this;
 
-        _visuales = new Visuales(_hwnd, PInvoke.GetDpiForWindow(_hwnd) / 96f);
+        // La barra de titulo en oscuro. Una llamada, y sin ella la ventana lleva una franja
+        // blanca encima de un programa entero en oscuro.
+        BOOL si = true;
+        PInvoke.DwmSetWindowAttribute(_hwnd, DWMWINDOWATTRIBUTE.DWMWA_USE_IMMERSIVE_DARK_MODE, &si, (uint)sizeof(BOOL));
+
+        _fondoFranja = PInvoke.CreateSolidBrush(new COLORREF(0x00211C1C));
+
+        float escala = PInvoke.GetDpiForWindow(_hwnd) / 96f;
+        _visuales = new Visuales(_hwnd, escala);
+        _controles = new Controles(_hwnd, escala);
 
         _soltar = new Soltar(this);
         HRESULT hr = PInvoke.RegisterDragDrop(_hwnd, _soltar);
         if (hr.Failed) Console.WriteLine($"[soltar] RegisterDragDrop -> 0x{(uint)hr.Value:X8}");
 
-        if (plantilla.Length > 0) _reglas = [new Regla(Tipo.Plantilla, plantilla, Desde: 1)];
+        if (plantilla.Length > 0) _controles.Escribe(plantilla);
         if (carpeta.Length > 0) Carga(carpeta);
 
         PInvoke.ShowWindow(_hwnd, SHOW_WINDOW_CMD.SW_SHOW);
@@ -118,22 +139,57 @@ internal sealed unsafe class Ventana : IDisposable
 
     private void Recalcula()
     {
-        if (_visuales is null) return;
+        if (_visuales is null || _controles is null) return;
 
-        if (_ficheros.Count == 0)
-        {
-            _visuales.Ensena([]);
-            _visuales.Cabecera("Suelta aquí archivos o una carpeta");
-            return;
-        }
+        _filas = _ficheros.Count == 0
+            ? []
+            : Previa.Calcular(_ficheros, _controles.Reglas(), Carpeta.Ocupados(_carpeta));
 
-        List<Fila> filas = Previa.Calcular(_ficheros, _reglas, Carpeta.Ocupados(_carpeta));
-        _visuales.Ensena(filas);
+        _visuales.Ensena(_filas);
 
-        int cambian = filas.Count(f => f.Estado == Estado.Ok);
-        int malas = filas.Count(f => f.Estado is not (Estado.Ok or Estado.SinCambio));
-        string cuenta = $"{Path.GetFileName(_carpeta)} — {filas.Count} archivos, {cambian} cambian";
-        _visuales.Cabecera(malas == 0 ? cuenta : $"{cuenta}, {malas} no pueden");
+        int cambian = _filas.Count(f => f.Estado == Estado.Ok);
+        int malas = _filas.Count(f => f.Estado is not (Estado.Ok or Estado.SinCambio));
+
+        _visuales.Cabecera(_ficheros.Count == 0
+            ? "Suelta aquí archivos o una carpeta"
+            : $"{Path.GetFileName(_carpeta)} — {_filas.Count} archivos, {cambian} cambian" +
+              (malas == 0 ? "" : $", {malas} no pueden"));
+
+        _controles.Activa(Controles.Aplicar, cambian > 0);
+        _controles.Activa(Controles.Deshacer, Aplicar.Ultimo(Aplicar.DiarioPorDefecto)?.Pares.Count > 0);
+    }
+
+    /// <summary>El boton Aplicar. La tabla lleva delante desde antes de que lo pulses, que es todo el argumento de este programa.</summary>
+    private void Renombra()
+    {
+        if (_controles is null || _filas.Count == 0) return;
+
+        Resultado r = Aplicar.Ejecutar(_carpeta, _filas, Aplicar.DiarioPorDefecto);
+        foreach (string p in r.Problemas) Console.WriteLine($"[renombrar] {p}");
+
+        Recarga(r.Problemas.Count > 0 ? $"{r.Hechos.Count} renombrados, {r.Problemas.Count} no se pudieron" : null);
+    }
+
+    private void Revierte()
+    {
+        Lote? lote = Aplicar.Ultimo(Aplicar.DiarioPorDefecto);
+        if (lote is null || lote.Pares.Count == 0) return;
+
+        Resultado r = Aplicar.Revertir(lote, Aplicar.DiarioPorDefecto);
+        foreach (string p in r.Problemas) Console.WriteLine($"[renombrar] {p}");
+
+        if (_carpeta.Length == 0) _carpeta = lote.Carpeta;
+        Recarga(r.Problemas.Count > 0 ? $"{r.Hechos.Count} devueltos, {r.Problemas.Count} no se pudieron" : null);
+    }
+
+    /// <summary>Vuelve a mirar la carpeta despues de tocarla. Los nombres cambiaron; la tabla tiene que dejar de hablar de los viejos.</summary>
+    private void Recarga(string? aviso)
+    {
+        if (_carpeta.Length == 0 || !Directory.Exists(_carpeta)) return;
+
+        _ficheros = Carpeta.Reunir(_carpeta);
+        Recalcula();
+        if (aviso is not null) _visuales?.Cabecera(aviso);
     }
 
     private void Mide()
@@ -142,7 +198,10 @@ internal sealed unsafe class Ventana : IDisposable
 
         RECT r;
         PInvoke.GetClientRect(_hwnd, &r);
-        _visuales.Redimensiona(r.right - r.left, r.bottom - r.top, PInvoke.GetDpiForWindow(_hwnd) / 96f);
+        float escala = PInvoke.GetDpiForWindow(_hwnd) / 96f;
+
+        _visuales.Redimensiona(r.right - r.left, r.bottom - r.top, escala);
+        _controles?.Coloca(r.right - r.left, escala);
     }
 
     private static LRESULT Procedimiento(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam)
@@ -151,6 +210,41 @@ internal sealed unsafe class Ventana : IDisposable
         {
             case WM_SIZE:
                 _unica?.Mide();
+                return new LRESULT(0);
+
+            // La banda de los controles la pinta el WndProc, no Composition: el arbol de
+            // visuals se compone POR ENCIMA del contenido del HWND, asi que un rectangulo
+            // de Composition ahi arriba tapaba las cajas de texto y los botones. Se veian
+            // en el arbol de accesibilidad y no en la pantalla.
+            case WM_ERASEBKGND:
+            {
+                RECT r;
+                PInvoke.GetClientRect(hwnd, &r);
+                if (_unica is not null) PInvoke.FillRect((HDC)(nint)wParam.Value, &r, _unica._fondoFranja);
+                return new LRESULT(1);
+            }
+
+            // Al teclear no se recalcula en la tecla: se arma un temporizador y se recalcula
+            // cuando paras. Sin esto, cada letra de una plantilla recorre la carpeta entera
+            // y repinta la tabla, y escribir se vuelve pegajoso.
+            case WM_COMMAND:
+            {
+                int id = (int)(wParam.Value & 0xFFFF);
+                ushort aviso = (ushort)(wParam.Value >> 16);
+
+                if (aviso == EN_CHANGE) PInvoke.SetTimer(hwnd, Retardo, 140, null);
+                else if (id == Controles.Aplicar) _unica?.Renombra();
+                else if (id == Controles.Deshacer) _unica?.Revierte();
+
+                return new LRESULT(0);
+            }
+
+            case WM_TIMER:
+                if (wParam.Value == Retardo)
+                {
+                    PInvoke.KillTimer(hwnd, Retardo);
+                    _unica?.Recalcula();
+                }
                 return new LRESULT(0);
 
             // Un clic de rueda son 120 unidades, y puede llegar fraccionado desde un

@@ -10,6 +10,32 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H4 — Escribir en la ventana
+
+- **Composition se compone POR ENCIMA del contenido del HWND.** Los controles existían en el
+  árbol de accesibilidad y no se veían en la pantalla: el rectángulo de la franja los tapaba.
+  Ahora la raíz del árbol de visuals va recortada por arriba justo la altura de la banda de
+  controles, y **esa banda la pinta el `WndProc`** con una brocha. Es la restricción que
+  decide el reparto entre lo que dibuja Composition y lo que dibuja Windows.
+- **`CreateInsetClip(a, b, c, d)` no recorta por donde parece.** Pasando la altura como
+  primer argumento, el recorte se fue al lado **izquierdo**: la tabla salía con los primeros
+  cuatro caracteres comidos y una franja de 52 px de fondo pelado a la izquierda. Medido en la
+  captura, el borde estaba exactamente en x=52. Se pone por la propiedad `TopInset`, que no se
+  puede leer mal.
+- **Las cajas de texto necesitaban el manifiesto.** Sin declarar `Microsoft.Windows.Common-Controls`
+  v6, `EM_SETCUEBANNER` no hace nada y `SetWindowTheme` tampoco: tres cajas blancas y vacías,
+  sin decir para qué era cada una. Con la dependencia declarada, las pistas aparecen dentro de
+  las cajas y no hacen falta etiquetas que colocar.
+- **Las cajas se quedan blancas, y está marcado como deuda.** Para que un `EDIT` se pinte
+  oscuro hace falta además declarar el proceso en modo oscuro, y eso solo existe como función
+  **sin documentar** de `uxtheme` importada por ordinal. En un proyecto cuya gracia es que
+  `NativeMethods.txt` sea una lista auditable, eso es justo lo que no se mete.
+- **Al teclear no se recalcula en cada tecla**: se arma un temporizador de 140 ms y se
+  recalcula cuando paras. Sin eso, cada letra recorre la carpeta entera y repinta la tabla.
+- **Medido, el ciclo completo desde la ventana**: escribir `Recibo_{fecha}_{n:000}` →
+  `36 archivos, 36 cambian` y el botón Aplicar se enciende → Aplicar → los 36 ficheros
+  renombrados en el disco → Deshacer → los 36 nombres vuelven exactos, `CON.pdf` incluido.
+
 ### H3 — La ventana
 
 - **Dos fallos de Composition, y los dos daban una ventana que no fallaba: solo estaba

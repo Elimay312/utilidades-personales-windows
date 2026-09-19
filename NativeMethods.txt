@@ -86,3 +86,33 @@ IShellItemArray
 IShellItem
 SIGDN
 
+
+// --- Los controles de la franja (H4, SEGURIDAD.md §3.5) ---
+// Cajas de texto y botones del sistema, hijos del HWND propio. Son controles de verdad
+// para que el caret, la seleccion, las teclas muertas y Ctrl+V los haga el control y no
+// este programa: aqui NO se leen teclas (regla 10), se le pregunta al control que pone.
+SendMessageW
+SetWindowTextW
+GetWindowTextW
+GetWindowTextLengthW
+EnableWindow
+SetWindowTheme
+SystemParametersInfoForDpi
+SYSTEM_PARAMETERS_INFO_ACTION
+NONCLIENTMETRICSW
+CreateFontIndirectW
+DeleteObject
+
+// Recalcular cuando dejas de teclear, no en cada tecla.
+SetTimer
+KillTimer
+
+// Los controles pintan su propio fondo, y el suyo es claro: esto es lo que evita los
+// parches blancos sobre la franja oscura.
+CreateSolidBrush
+DwmSetWindowAttribute
+DWMWINDOWATTRIBUTE
+
+// La banda de los controles la pinta el WndProc: Composition se compone por encima
+// del HWND y taparia los controles hijos.
+FillRect

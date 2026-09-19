@@ -28,8 +28,16 @@ internal sealed unsafe class Visuales : IDisposable
 {
     private const uint VersionSdkD3D11 = 7;
 
-    /// <summary>Alto de la franja de arriba, a 96 ppp. Es la que lleva los controles del sistema, que pintan su propio fondo.</summary>
-    internal const float AltoFranja = 52f;
+    /// <summary>
+    /// La banda de los controles, que la fija <see cref="Controles"/>. <b>Composition no
+    /// pinta ahi</b>: la raiz va recortada por arriba justo esta altura, porque el arbol de
+    /// visuals se compone POR ENCIMA del contenido del HWND y tapaba los controles hijos.
+    /// Esa banda la pinta el propio WndProc con una brocha.
+    /// </summary>
+    internal const float AltoFranja = Controles.AltoFranja;
+
+    /// <summary>La linea de estado, justo debajo de los controles. Esta si es nuestra.</summary>
+    private const float AltoEstado = 26f;
 
     // Si se recoge, el compositor se queda sin cola de despacho en este hilo.
     private static object? _cola;
@@ -37,8 +45,8 @@ internal sealed unsafe class Visuales : IDisposable
     private readonly Compositor _compositor;
     private readonly DesktopWindowTarget _destino;
     private readonly ContainerVisual _raiz;
+    private readonly InsetClip _recorte;
     private readonly SpriteVisual _fondo;
-    private readonly SpriteVisual _franja;
     private readonly SpriteVisual _titulo;
     private readonly ContainerVisual _marco;
     private readonly ContainerVisual _lista;
@@ -66,6 +74,13 @@ internal sealed unsafe class Visuales : IDisposable
 
         _raiz = _compositor.CreateContainerVisual();
         _raiz.RelativeSizeAdjustment = Vector2.One;
+        // Por la PROPIEDAD y no por los cuatro argumentos de CreateInsetClip: pasandolos
+        // en orden, el 52 se fue al lado izquierdo y la tabla aparecia con los primeros
+        // cuatro caracteres comidos. Medido en la captura: la franja gris del WndProc
+        // llegaba hasta x=52 y la Composition empezaba ahi.
+        _recorte = _compositor.CreateInsetClip();
+        _recorte.TopInset = AltoFranja * escala;
+        _raiz.Clip = _recorte;
         _destino.Root = _raiz;
 
         // El acrilico va DEBAJO de la franja, no detras: un control EDIT del sistema pinta
@@ -81,15 +96,10 @@ internal sealed unsafe class Visuales : IDisposable
         velo.RelativeSizeAdjustment = new Vector2(1f, 1f);
         _raiz.Children.InsertAtTop(velo);
 
-        _franja = _compositor.CreateSpriteVisual();
-        _franja.Brush = _compositor.CreateColorBrush(Color.FromArgb(255, 28, 28, 33));
-        _franja.RelativeSizeAdjustment = new Vector2(1f, 0f);
-        _franja.Size = new Vector2(0f, AltoFranja * escala);
-        _raiz.Children.InsertAtTop(_franja);
-
         _titulo = _compositor.CreateSpriteVisual();
-        _titulo.Size = new Vector2(0f, AltoFranja * escala);
-        _franja.Children.InsertAtTop(_titulo);
+        _titulo.Offset = new Vector3(0f, AltoFranja * escala, 0f);
+        _titulo.Size = new Vector2(0f, AltoEstado * escala);
+        _raiz.Children.InsertAtTop(_titulo);
 
         // Dos contenedores y no uno: el marco se queda quieto y recorta, y la lista se
         // desplaza dentro. Con uno solo, el recorte viaja con el desplazamiento —un
@@ -107,7 +117,7 @@ internal sealed unsafe class Visuales : IDisposable
     internal float Escala => _escala;
 
     /// <summary>Alto util de la lista, en pixeles reales.</summary>
-    private float Hueco => MathF.Max(_alto - AltoFranja * _escala, 1f);
+    private float Hueco => MathF.Max(_alto - (AltoFranja + AltoEstado) * _escala, 1f);
 
     private float AltoFila => Texto.AltoFila * _escala;
 
@@ -118,9 +128,10 @@ internal sealed unsafe class Visuales : IDisposable
         _ancho = ancho;
         _alto = alto;
         _escala = escala;
-        _franja.Size = new Vector2(0f, AltoFranja * escala);
-        _titulo.Size = new Vector2(ancho, AltoFranja * escala);
-        _marco.Offset = new Vector3(0f, AltoFranja * escala, 0f);
+        _recorte.TopInset = AltoFranja * escala;
+        _titulo.Offset = new Vector3(0f, AltoFranja * escala, 0f);
+        _titulo.Size = new Vector2(ancho, AltoEstado * escala);
+        _marco.Offset = new Vector3(0f, (AltoFranja + AltoEstado) * escala, 0f);
         _marco.Size = new Vector2(ancho, Hueco);
         _lista.Offset = new Vector3(0f, _desplazamiento, 0f);
 
@@ -142,9 +153,10 @@ internal sealed unsafe class Visuales : IDisposable
         _cabecera = texto;
         if (_ancho <= 0f) return;
 
-        _titulo.Size = new Vector2(_ancho, AltoFranja * _escala);
+        float alto = AltoEstado * _escala;
+        _titulo.Size = new Vector2(_ancho, alto);
         _titulo.Brush = _compositor.CreateSurfaceBrush(
-            Dibuja(_ancho, AltoFranja * _escala, ctx => Texto.Cabecera(ctx, texto, _ancho, AltoFranja * _escala, _escala)));
+            Dibuja(_ancho, alto, ctx => Texto.Cabecera(ctx, texto, _ancho, alto, _escala)));
     }
 
     internal void Ensena(List<Fila> filas)

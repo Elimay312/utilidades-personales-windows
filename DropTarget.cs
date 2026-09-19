@@ -142,6 +142,14 @@ internal sealed unsafe class DockDropTarget(DockWindow dock) : IDropTarget
 
         if (path is null) return AsApp(aumid, name);
 
+        // Un .url es el acceso directo que Steam deja por cada juego. Se guarda por
+        // su URL y con su icono, no por la ruta del fichero: ver InternetShortcutOf.
+        if (path.EndsWith(".url", StringComparison.OrdinalIgnoreCase)
+            && InternetShortcut.Read(path) is { } internet)
+        {
+            return new DroppedItem(internet.Url, name, null, internet.Icon);
+        }
+
         if (!path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
             return new DroppedItem(path, name, path);
 
@@ -320,3 +328,62 @@ internal sealed unsafe class DockDropTarget(DockWindow dock) : IDropTarget
 /// </summary>
 internal readonly record struct DroppedItem(
     string Target, string Name, string? FilePath, string? IconSource = null, string Arguments = "");
+
+/// <summary>Lee un acceso directo de internet. Lo usan la suelta y <see cref="Steam"/>.</summary>
+internal static class InternetShortcut
+{
+    /// <summary>
+    /// A dónde apunta un acceso directo de internet (<c>.url</c>), y de dónde saca su
+    /// icono.
+    ///
+    /// Es lo que Steam deja en el menú Inicio por cada juego instalado, y no es un
+    /// <c>.lnk</c>: es un fichero de texto plano estilo INI, con su
+    /// <c>URL=steam://rungameid/19680</c> y su <c>IconFile=…\xxxx.ico</c>. Guardarlo por
+    /// la ruta del <c>.url</c> —que es lo que se hacía— ataba la entrada del dock a un
+    /// fichero que Steam reescribe al actualizar la biblioteca, y encima dejaba el icono
+    /// en manos del manejador del shell.
+    ///
+    /// Se lee a mano y no con <c>IUniformResourceLocator</c> porque es un INI de cuatro
+    /// líneas y la interfaz COM pide además <c>IPropertySetStorage</c> para sacar el
+    /// icono: más P/Invokes para leer lo mismo.
+    /// </summary>
+    public static (string Url, string? Icon)? Read(string path)
+    {
+        try
+        {
+            string? url = null;
+            string? icon = null;
+            int index = 0;
+
+            foreach (string line in File.ReadLines(path))
+            {
+                int equals = line.IndexOf('=');
+                if (equals <= 0) continue;
+
+                string key = line[..equals].Trim();
+                string value = line[(equals + 1)..].Trim();
+
+                if (key.Equals("URL", StringComparison.OrdinalIgnoreCase)) url ??= value;
+                else if (key.Equals("IconFile", StringComparison.OrdinalIgnoreCase)) icon ??= value;
+                else if (key.Equals("IconIndex", StringComparison.OrdinalIgnoreCase)) int.TryParse(value, out index);
+            }
+
+            if (string.IsNullOrEmpty(url)) return null;
+
+            // Mismo corte que con los .lnk: el icono solo vale si es un fichero entero.
+            // "shell32.dll,3" apunta a un índice dentro de un recurso y el extractor del
+            // dock no sabe de índices.
+            if (index != 0 || string.IsNullOrEmpty(icon)) return (url, null);
+
+            string expanded = Environment.ExpandEnvironmentVariables(icon).Replace("/", "\\");
+            return (url, File.Exists(expanded) ? expanded : null);
+        }
+        catch (Exception ex)
+        {
+            // Un .url ilegible no es un error: se cae al camino de siempre y la entrada
+            // se guarda por la ruta del fichero.
+            Console.WriteLine($"[drop] no se pudo leer '{Path.GetFileName(path)}': {ex.Message}");
+            return null;
+        }
+    }
+}

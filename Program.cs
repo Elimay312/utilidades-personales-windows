@@ -130,6 +130,7 @@ internal static class Program
     private static void SelfCheck()
     {
         ConfigSelfCheck.Run();
+        SteamSelfCheck.Run();
         IconsSelfCheck.Run();
         MagnifySelfCheck.Run();
         GenieSelfCheck.Run();

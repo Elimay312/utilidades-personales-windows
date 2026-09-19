@@ -141,9 +141,23 @@ internal static class Running
         Dictionary<string, int> byExeName = new(StringComparer.OrdinalIgnoreCase);
         Dictionary<string, int> byFamily = new(StringComparer.OrdinalIgnoreCase);
 
+        // Los juegos de Steam no caben en ninguno de los dos de arriba: su acceso
+        // directo no nombra ningun ejecutable, solo steam://rungameid/19680. Van por
+        // la carpeta en la que estan instalados. Lista y no diccionario porque se
+        // comparan por prefijo de ruta, no por igualdad.
+        List<(string Folder, int Index)> byFolder = [];
+
         for (int i = 0; i < apps.Count; i++)
         {
             if (apps[i].Separator) continue;
+
+            // Antes del corte de IsApp: para el dock un steam:// es una URL, o sea
+            // un documento, y ahi se quedaria fuera.
+            if (Steam.FolderOf(apps[i].Target) is string folder)
+            {
+                byFolder.Add((folder, i));
+                continue;
+            }
 
             // Un documento o una carpeta no pueden estar "abiertos": no tienen proceso
             // propio. Sin este corte, un notas.txt en el dock se indexaría por el nombre
@@ -184,6 +198,22 @@ internal static class Running
 
             if (family is not null && byFamily.TryGetValue(family, out int packaged))
                 owners[pid] = packaged;
+        }
+
+        // Los juegos, por la ruta del ejecutable. Solo se mira a los procesos que
+        // TIENEN ventana: resolver la ruta de todos los del sistema serian cientos de
+        // OpenProcess por barrido para descartar casi todos.
+        foreach ((HWND _, uint pid) in byFolder.Count > 0 ? snapshot.Windows : [])
+        {
+            if (owners.ContainsKey(pid) || PathOf(pid, snapshot) is not string path) continue;
+
+            foreach ((string folder, int index) in byFolder)
+            {
+                if (!path.StartsWith(folder + "\\", StringComparison.OrdinalIgnoreCase)) continue;
+
+                owners[pid] = index;
+                break;
+            }
         }
 
         return owners;

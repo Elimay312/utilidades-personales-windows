@@ -555,7 +555,15 @@ internal sealed record DockConfig
             // https:// en https:\ y el shell dejaria de reconocerla.
             if (app.IsUrl)
             {
-                valid.Add(app);
+                // Al icono sí se le normalizan, que no es una URL sino una ruta: es
+                // el .ico que declara un acceso directo de Steam.
+                valid.Add(new DockApp
+                {
+                    Name = app.Name,
+                    Target = app.Target,
+                    Arguments = app.Arguments,
+                    IconTarget = Repair(app.IconTarget.Replace('/', '\\')),
+                });
                 continue;
             }
 

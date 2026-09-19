@@ -5,8 +5,9 @@
 Un buscador estilo Fluent Search para Windows 11: aplicaciones, ficheros a través de
 **Everything**, prefijos web y un ranking que aprende de lo que abres.
 
-> **Estado: en construcción.** Va por hitos; lo que hay hecho está en el
-> [CHANGELOG](CHANGELOG.md). Hoy hay andamio y reglas, todavía no hay ventana.
+> **Estado: en construcción, pero ya se usa.** `Alt+Espacio`, escribes, Enter y abre.
+> Faltan los ficheros de Everything, los prefijos web, los comandos del sistema, la
+> calculadora y los iconos. Lo que hay hecho está en el [CHANGELOG](CHANGELOG.md).
 
 ---
 

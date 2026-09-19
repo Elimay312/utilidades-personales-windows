@@ -10,7 +10,10 @@ namespace Lanzador;
 /// </remarks>
 internal sealed record Lanzamiento
 {
+    [JsonPropertyName("veces")]
     public int Veces { get; init; }
+
+    [JsonPropertyName("ultimo")]
     public DateTimeOffset Ultimo { get; init; }
 }
 

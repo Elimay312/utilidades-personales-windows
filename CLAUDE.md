@@ -59,7 +59,12 @@ De ahí, las costumbres:
    desde la consola: `--indice` dice cuántas apps hay, `--buscar` dice qué puntúa cada
    resultado y por qué, `--check` dice si el algoritmo sigue dando lo mismo. Un diff de
    capturas es el último recurso, y aquí casi nunca hace falta.
-4. **Las sondas van en el scratchpad, no en el repo.** Lo que sí vive en el repo son los modos
+4. **Con varias pantallas, la sonda tiene que ser DPI-aware.** PowerShell no lo es: mide
+   coordenadas virtualizadas y da números que no son. `SetProcessDpiAwarenessContext(-4)`
+   antes de medir nada. Costó un rato en H4.
+5. **`LANZADOR_LOG=1` traza lo que se escribe y lo que sale.** Es la primera parada cuando
+   la ventana hace algo raro, antes de cualquier captura.
+6. **Las sondas van en el scratchpad, no en el repo.** Lo que sí vive en el repo son los modos
    de consola, para lo que es lógica pura.
 
 Y al reportar: si algo no se pudo medir, se dice. Nada de dar por bueno lo que no se vio.

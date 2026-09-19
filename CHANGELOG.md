@@ -10,6 +10,37 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H4 — La ventana
+
+- **Funciona de punta a punta**: `Alt+Espacio` → escribes → flechas → Enter abre la
+  aplicación, y el lanzamiento queda en `uso.json`. Comprobado con la Calculadora.
+- **Medido: 70 ms el primer asomo, 28,8 ms los siguientes.** La ventana se crea al
+  arrancar y solo se enseña, que era la premisa.
+- **El fallo que solo aparece con varias pantallas.** La ventana se dimensionaba con el
+  DPI de la pantalla **principal** y se asoma en la del cursor: en el monitor al 125% salía
+  un 20% pequeña. Ahora se reescala —ancho, fuente de la caja y escala de Composition— en
+  cada asomo. No se atiende `WM_DPICHANGED` a propósito: esta ventana no se arrastra y se
+  esconde al perder el foco, así que el único momento en que cambia de pantalla es justo
+  antes de asomarse.
+- **Y la sonda volvió a mentir, por tercera vez.** Medí 528x339 donde el programa decía
+  825x530: PowerShell no es *per-monitor DPI aware* y ve coordenadas virtualizadas. Desde
+  entonces la sonda llama a `SetProcessDpiAwarenessContext` antes de medir nada.
+- **`DwmExtendFrameIntoClientArea` fuera, y está medido por qué.** Con el marco extendido a
+  toda la ventana, lo que pinta GDI queda con alfa cero y DWM lo mezcla: el `EDIT` salía
+  `#7F7F7F` en vez del color que se le daba. Sin él, sale `#2B2B2B`, que es el pedido.
+- **El acrílico se comprobó en vez de darlo por bueno**: con `DWMSBT_TRANSIENTWINDOW` el
+  cuerpo mide `#545454`; con `DWMSBT_NONE`, `#121212` (el escritorio). DWM lo está pintando.
+- **Sin `SetWindowSubclass`.** Las teclas de navegación se cazan en nuestro propio bucle de
+  mensajes antes de despachar. Menos código y una entrada menos en `NativeMethods.txt`.
+- **Una sola superficie para toda la lista**, no dos por fila. Un `BeginDraw` y una subida
+  de píxeles por pulsación en vez de dieciséis objetos nuevos.
+- **La auditoría saltó y tenía razón a medias.** Contaba la entrada de `NativeMethods.txt`
+  como una segunda llamada a `SetForegroundWindow`. Una declaración no es una llamada: la
+  regla de "a quién se le aplica" ahora mira solo los `.cs`, y **a cambio** se exige que la
+  declaración exista y esté una sola vez, que antes no se comprobaba.
+- **Traza con `LANZADOR_LOG=1`**, como el `DOCK_HOVER_LOG` del dock. Va a la consola y solo
+  si la pides: no es un registro (regla 11). Es lo que localizó que `EN_CHANGE` sí llegaba.
+
 ### H3 — El ranking por uso
 
 - **Decaimiento exponencial con semivida de 30 días**, y las veces **saturan a las 10**. Sin

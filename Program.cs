@@ -39,8 +39,26 @@ internal static class Program
             return 1;
         }
 
-        Console.Error.WriteLine("[lanzador] todavia no hay ventana: H0 es solo el andamio.");
-        return Ayuda();
+        Stopwatch reloj = Stopwatch.StartNew();
+
+        LanzadorConfig config = Config.Cargar();
+        Uso uso = Uso.Cargar();
+        List<Entrada> indice = Indice.Construir();
+        long msIndice = reloj.ElapsedMilliseconds;
+
+        LanzadorWindow? ventana = LanzadorWindow.Crear(config, indice, uso);
+        if (ventana is null)
+        {
+            Console.Error.WriteLine("[lanzador] no se pudo crear la ventana.");
+            return 2;
+        }
+
+        Console.WriteLine($"[lanzador] {indice.Count} aplicaciones en {msIndice} ms, " +
+                          $"listo en {reloj.ElapsedMilliseconds} ms.");
+
+        LanzadorWindow.Bucle();
+        ventana.Dispose();
+        return 0;
     }
 
     private static int Ayuda()

@@ -129,7 +129,12 @@ function Veces { param($Lineas, [string]$Patron)
     ($Lineas | ForEach-Object { [regex]::Matches($_.Texto, $Patron).Count } | Measure-Object -Sum).Sum
 }
 
-$fg = $codigo | Where-Object { $_.Texto -match 'SetForegroundWindow' }
+#
+# Solo los .cs: la linea de NativeMethods.txt es una DECLARACION, no una llamada, y la
+# regla habla de a quien se le aplica la API. Lo separo despues de que la auditoria
+# saltara por ella en H4 -- y aprovecho para exigir que la declaracion este, que antes
+# no se comprobaba.
+$fg = $codigo | Where-Object { $_.Texto -match 'SetForegroundWindow' -and $_.Fichero -like '*.cs' }
 $fgTotal  = Veces $fg 'SetForegroundWindow'
 $fgPropio = Veces $fg 'SetForegroundWindow\(\s*_hwnd\s*\)'
 $fgFuera  = $fg | Where-Object { $_.Fichero -ne 'LanzadorWindow.cs' }
@@ -145,7 +150,20 @@ if (-not $fg) {
 } else {
     $estado = 'si, 1 vez y sobre _hwnd'
 }
-Write-Output ("  {0,-34} {1}" -f '15 SetForegroundWindow', $estado)
+Write-Output ("  {0,-34} {1}" -f '15 SetForegroundWindow (llamadas)', $estado)
+
+# Y la otra mitad: si se llama, tiene que estar declarada -- y una sola vez. Una lista
+# cerrada con la entrada repetida o ausente deja de ser una lista cerrada.
+$decl = (Get-Content NativeMethods.txt -ErrorAction SilentlyContinue |
+         Where-Object { $_.Trim() -eq 'SetForegroundWindow' }).Count
+if ($fgTotal -eq 0 -and $decl -eq 0) {
+    $dec = 'todavia no se declara'
+} elseif ($decl -eq 1) {
+    $dec = 'si, 1 entrada'
+} else {
+    $dec = "HAY $decl ENTRADAS, tiene que haber 1"; $fallos++
+}
+Write-Output ("  {0,-34} {1}" -f '15 SetForegroundWindow (declarada)', $dec)
 
 # La cara positiva de la regla 10 y de §3.5: si se abren URLs, el esquema se valida
 # antes. Sin esa comprobacion, una plantilla del JSON abre lo que quiera.

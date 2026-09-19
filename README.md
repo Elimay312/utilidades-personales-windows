@@ -17,13 +17,18 @@ no llega a verlas. Eso ocupa la §1 de `SEGURIDAD.md` y vale la pena leerlo.
 
 ## Estado
 
-**H0 — andamio.** Compila, arranca, se coloca donde debe y sale con Ctrl+Alt+H. Todavía no
-dibuja nada ni toca el volumen: la ventana se crea pero no se enseña.
+**H1 — la cápsula.** Ya se ve: cristal oscuro, glifo de altavoz, barra con muelle y los
+cuatro morphs, con niveles falsos en `--demo`. Todavía no toca el volumen de verdad.
+
+```
+Hud.exe --demo      # niveles falsos en bucle, para mirar los muelles
+Hud.exe --check     # logica pura, no abre ventana
+```
 
 | Hito | Qué | Estado |
 |---|---|---|
 | H0 | `SEGURIDAD.md`, `auditar.ps1`, ventana, colocación por monitor y DPI | ✅ |
-| H1 | La cápsula: Composition, acrílico, barra, glifos, los cuatro morphs | |
+| H1 | La cápsula: Composition, acrílico, barra, glifos, los cuatro morphs | ✅ |
 | H2 | Volumen de verdad: `RegisterHotKey` + `IAudioEndpointVolume` | |
 | H3 | Multi-monitor, DPI mixto, pantalla completa, autoarranque | |
 
@@ -116,9 +121,13 @@ abrirse.** Todo pasa en el sitio.
    una tecla de volumen, y está prohibida (regla 3 y 4). Se usa `RegisterHotKey` sobre tres
    teclas concretas, que **consume** la pulsación — por eso el volumen lo pone el HUD, y por
    eso el paso es configurable.
-2. **El alcance lo vigila la auditoría.** El brillo se cayó midiendo, y con él WMI y la segunda
+2. **El HUD no se come los clics.** Ni siquiera encima de la cápsula. Los vecinos usan
+   `SetWindowRgn` porque la isla midió que `WS_EX_TRANSPARENT` a secas no basta; aquí se
+   volvió a medir **con `WS_EX_LAYERED` puesto** y entonces sí funciona, sin region y sin
+   perder el dibujo de Composition.
+3. **El alcance lo vigila la auditoría.** El brillo se cayó midiendo, y con él WMI y la segunda
    dependencia. `auditar.ps1` falla si reaparece `WmiMonitor`, `System.Management` o
    `ManagementObject`: un alcance que no se comprueba se vuelve a ensanchar solo.
-3. **La animación no corre en nuestro hilo.** Todo es `ExpressionAnimation` sobre un
+4. **La animación no corre en nuestro hilo.** Todo es `ExpressionAnimation` sobre un
    `CompositionPropertySet`, como el dock: el hilo de UI solo escribe escalares y el resto lo
    hace DWM. Ojo con el límite de longitud de las expresiones, que el dock alcanzó dos veces.

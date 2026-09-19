@@ -1,5 +1,37 @@
 # Changelog
 
+## H1 — la cápsula
+
+Ya se ve. Cristal oscuro redondeado abajo y centrado, glifo de altavoz, barra con relleno, y
+los cuatro morphs corriendo sobre **tres escalares** de un `CompositionPropertySet` (`V`, `A`,
+`S`): el hilo de UI no escribe nada más y el resto lo interpola DWM.
+
+`--demo` recorre niveles falsos en bucle para afinar los muelles sin tocar audio. Los cinco
+glifos son de Segoe Fluent Icons por DirectWrite sobre superficie propia, y se transforman
+entre ellos — el que sale se encoge, el que entra llega grande y asienta con muelle.
+
+**Sin region, y eso es un hallazgo.** Los cuatro vecinos usan `SetWindowRgn` para dejar pasar
+los clics, porque la isla midió que `WS_EX_TRANSPARENT` no bastaba. Aquí se volvió a medir con
+**`WS_EX_LAYERED` añadido** y entonces sí funciona: `WindowFromPoint` sobre el centro de la
+cápsula devuelve la ventana de detrás, exactamente igual que con el HUD cerrado. Y el árbol de
+Composition se sigue pintando. Eso quita `CreateRoundRectRgn`, `SetWindowRgn`, la función
+`AplicarRegion` y la obligación de acordarse de que la región cubra el squash — la región
+también recorta el dibujo.
+
+Medido, no mirado: la primera lectura a ojo de una captura dijo que la cápsula estaba 16 px
+baja y medía 298x86. Medida de verdad sobre la captura del rectángulo exacto de la ventana:
+columna central **y 24..91, 68 px**, y el perfil por filas va de 51..276 en y=24 a 25..302 en
+y=48 y vuelve simétrico — una pastilla de 280x68 en (24,24), como estaba diseñada. Los tramos
+cortos en y=54 y y=60 son la barra blanca partiendo el tramo oscuro, justo donde toca.
+
+Dos sondas se invalidaron solas y se dicen para que no se repitan: la de diferencia entre dos
+capturas no valía porque había un reproductor detrás y cambiaba el 96% de los píxeles; y la del
+umbral de oscuridad dejó de medir la cápsula en cuanto se le añadió la capa de brillo.
+
+El acrílico lleva tres capas, la receta del dock más un velo: backdrop del sistema, velo oscuro
+para que la barra blanca se lea sobre cualquier fondo, y brillo claro encima. Solo con el velo
+la cápsula salía casi negra y parecía opaca.
+
 ## El brillo sale del alcance
 
 Con el volumen el HUD queda limpio: capturamos la tecla y el aviso de Windows no sale. Con el

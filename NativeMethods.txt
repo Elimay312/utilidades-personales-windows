@@ -45,3 +45,58 @@ UnregisterHotKey
 
 // --- H0: consola estando compilado como WinExe ---
 AttachConsole
+
+// --- H1: ensenar y esconder la ventana PROPIA ---
+// El HUD vive escondido y solo se ensena cuando hay algo que decir. Una ventana
+// escondida no recibe clics, que es la forma mas barata de no estorbar: mas barata
+// que una region vacia y sin el riesgo de dejarla puesta por error.
+ShowWindow
+SHOW_WINDOW_CMD
+SetTimer
+KillTimer
+
+// --- H1: Composition interop, sobre el HWND propio ---
+// El puente Win32 -> Windows.UI.Composition. Toda la animacion vive aqui y no en el
+// hilo de UI, asi que sigue corriendo aunque nos bloqueemos.
+ICompositorDesktopInterop
+CreateDispatcherQueueController
+DispatcherQueueOptions
+
+// --- H1: superficie de dibujo propia: D3D11 -> D2D -> Composition ---
+// Fuera de XAML no existe LoadedImageSurface, asi que para pintar cualquier cosa que
+// no sea un color plano hay que montar esta cadena. Actua solo sobre nuestras
+// superficies: no lee la pantalla ni la ventana de nadie (SEGURIDAD.md §3.3).
+D3D11CreateDevice
+D2D1CreateDevice
+ID3D11Device
+ID2D1Device
+ID2D1DeviceContext
+IDXGIDevice
+D3D_DRIVER_TYPE
+D3D11_CREATE_DEVICE_FLAG
+D2D1_ALPHA_MODE
+DXGI_FORMAT
+ICompositorInterop
+ICompositionDrawingSurfaceInterop
+
+// --- H1: los cinco glifos, sobre nuestra propia superficie ---
+DWriteCreateFactory
+IDWriteFactory
+IDWriteTextFormat
+IDWriteTextLayout
+DWRITE_FACTORY_TYPE
+DWRITE_TEXT_METRICS
+DWRITE_FONT_WEIGHT
+DWRITE_FONT_STYLE
+DWRITE_FONT_STRETCH
+DWRITE_WORD_WRAPPING
+D2D1_DRAW_TEXT_OPTIONS
+ID2D1SolidColorBrush
+
+// --- H1: dejar pasar los clics, sobre la ventana PROPIA ---
+// WS_EX_TRANSPARENT solo surte efecto si la ventana es layered, y a alfa 255 eso no
+// cambia nada de como se ve. Medido: con los dos puestos, WindowFromPoint sobre el
+// centro de la capsula devuelve la ventana de detras. Esto sustituye a SetWindowRgn,
+// que era la via de los vecinos y que ademas recorta el dibujo.
+SetLayeredWindowAttributes
+LAYERED_WINDOW_ATTRIBUTES_FLAGS

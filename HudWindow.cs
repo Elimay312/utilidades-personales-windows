@@ -13,9 +13,15 @@ namespace Hud;
 /// partirla solo aniadiria saltos.
 ///
 /// <para>
-/// H0: la ventana se crea pero <b>no se ensena</b>. Todavia no hay nada que pintar, y
-/// una ventana vacia encima de todo es peor que ninguna. Lo que si se comprueba en este
-/// hito es que se coloca donde debe, en el monitor del cursor y a la escala correcta.
+/// La ventana vive <b>escondida</b> y solo se ensena cuando hay algo que decir. Y
+/// mientras esta a la vista <b>tampoco estorba</b>: los clics la atraviesan enteros,
+/// incluso sobre la capsula. Un HUD que se traga los clics del centro de la pantalla
+/// durante segundo y medio despues de cada tecla es peor que el de Windows.
+/// </para>
+///
+/// <para>
+/// H1: el nivel viene de <c>--demo</c>, no del audio. Afinar un muelle mientras peleas
+/// con COM es como se pierde un dia sin saber cual de las dos cosas esta mal.
 /// </para>
 /// </summary>
 internal sealed unsafe class HudWindow
@@ -25,6 +31,18 @@ internal sealed unsafe class HudWindow
     // El numero es el articulo de SEGURIDAD.md §3.1. Los de volumen llegan en H2.
     private const int AtajoSalir = 1;
 
+    private const nuint TimerAutoocultar = 1;
+    private const nuint TimerEsconder = 2;
+    private const nuint TimerDemo = 3;
+
+    /// <summary>
+    /// Lo que se tarda en cerrar la capsula. Pasado esto la ventana se esconde de
+    /// verdad; antes no, o se cortaria la animacion de salida a media cara.
+    /// </summary>
+    private const uint MsCierre = 340;
+
+    private const uint MsPasoDemo = 1100;
+
     // --- mensajes que nos interesan ------------------------------------------------
     // CsWin32 no genera las WM_*, y tenerlas aqui con su valor es mas legible que
     // buscarlas en winuser.h cada vez.
@@ -33,6 +51,7 @@ internal sealed unsafe class HudWindow
     private const uint WM_NCACTIVATE = 0x0086;
     private const uint WM_WINDOWPOSCHANGING = 0x0046;
     private const uint WM_MOUSEACTIVATE = 0x0021;
+    private const uint WM_TIMER = 0x0113;
     private const uint WM_DISPLAYCHANGE = 0x007E;
     private const uint WM_DPICHANGED = 0x02E0;
     private const uint WM_HOTKEY = 0x0312;
@@ -42,10 +61,9 @@ internal sealed unsafe class HudWindow
 
     // --- medidas, en px logicos (a 96 dpi) -----------------------------------------
     // La capsula es lo que se ve; la holgura es el margen invisible que necesita el
-    // squash del tope (morph 4) para no quedarse recortado contra el borde de la
-    // ventana. La region de H1 recorta sobre la capsula, no sobre la ventana.
-    private const float AnchoCapsula = 280f;
-    private const float AltoCapsula = 68f;
+    // squash del tope (morph 4) para no salirse de la ventana y quedarse cortado.
+    internal const float AnchoCapsula = 280f;
+    internal const float AltoCapsula = 68f;
     private const float Holgura = 24f;
 
     /// <summary>Separacion del borde de la pantalla. 110 deja libre la barra de tareas.</summary>
@@ -57,12 +75,22 @@ internal sealed unsafe class HudWindow
 
     private readonly HudConfig _config;
     private readonly HWND _hwnd;
+    private readonly bool _demo;
+    private HudVisuals? _visuals;
     private uint _dpi;
     private bool _atajoSalir;
 
-    private HudWindow(HudConfig config)
+    /// <summary>Si la ventana esta a la vista ahora mismo.</summary>
+    private bool _enPantalla;
+
+    private int _porcentaje = -1;
+    private bool _silenciado;
+    private int _pasoDemo;
+
+    private HudWindow(HudConfig config, bool demo)
     {
         _config = config;
+        _demo = demo;
 
         (int x, int y, int w, int h) = MedirEnElMonitorDelCursor(out _dpi, out string pantalla);
 
@@ -76,13 +104,22 @@ internal sealed unsafe class HudWindow
                 // escribes no es un detalle. TOOLWINDOW: fuera de Alt+Tab y de la barra
                 // de tareas. TOPMOST: encima de todo, que es el sitio de un aviso.
                 //
-                // Aqui NO va WS_EX_TRANSPARENT: la isla midio que NO deja pasar los
-                // clics entre procesos. Lo unico que aparta el raton es la region, y
-                // llega en H1 junto con lo que hay que recortar.
+                // LAYERED + TRANSPARENT es lo que deja pasar los clics. La isla midio
+                // que TRANSPARENT A SECAS no basta y se fue a SetWindowRgn; aqui se
+                // volvio a medir con los dos puestos y SI pasa -- WindowFromPoint sobre
+                // el centro de la capsula devuelve la ventana de detras, igual que con
+                // el HUD cerrado. Y el arbol de Composition se sigue pintando: 68 px de
+                // capsula en la columna central, empezando donde toca.
+                //
+                // Eso ahorra la region entera: SetWindowRgn tambien recorta el DIBUJO,
+                // asi que habria que acordarse de que cubra el squash del tope.
                 WINDOW_EX_STYLE.WS_EX_NOACTIVATE
                     | WINDOW_EX_STYLE.WS_EX_TOOLWINDOW
-                    | WINDOW_EX_STYLE.WS_EX_TOPMOST,
+                    | WINDOW_EX_STYLE.WS_EX_TOPMOST
+                    | WINDOW_EX_STYLE.WS_EX_LAYERED
+                    | WINDOW_EX_STYLE.WS_EX_TRANSPARENT,
                 new PCWSTR(clase), new PCWSTR(titulo),
+                // Sin WS_VISIBLE: nace escondida y se ensena cuando haga falta.
                 WINDOW_STYLE.WS_POPUP,
                 x, y, w, h,
                 default, default, ModuleHandle, null);
@@ -91,8 +128,14 @@ internal sealed unsafe class HudWindow
         if (_hwnd.IsNull) throw new InvalidOperationException("CreateWindowEx fallo");
         _instancia = this;
 
+        // WS_EX_TRANSPARENT solo surte efecto si la ventana es layered. A alfa 255 no
+        // cambia nada de como se ve: es el interruptor que hace que los clics pasen.
+        PInvoke.SetLayeredWindowAttributes(_hwnd, default, 255, LAYERED_WINDOW_ATTRIBUTES_FLAGS.LWA_ALPHA);
+
+        _visuals = new HudVisuals(_hwnd, _dpi / 96f, AnchoCapsula, AltoCapsula, Holgura);
+
         // Ctrl+Alt+H para salir. Mientras no haya icono de bandeja es la unica forma
-        // limpia de cerrarlo, y hace falta: mientras el HUD corre se traga las teclas de
+        // limpia de cerrarlo, y hace falta: desde H2 el HUD se traga las teclas de
         // volumen (SEGURIDAD.md §3.1), asi que sin forma de cerrarlo un fallo suyo te
         // deja sin volumen hasta el Administrador de tareas.
         _atajoSalir = PInvoke.RegisterHotKey(_hwnd, AtajoSalir,
@@ -106,19 +149,85 @@ internal sealed unsafe class HudWindow
 
         Console.WriteLine($"[hud] {pantalla} al {_dpi * 100 / 96}%, ventana {w}x{h} en {x},{y}");
         Console.WriteLine($"[hud] capsula {_config.Posicion}, paso {_config.PasoVolumen}%, {_config.MsAutoocultar} ms");
+
+        if (_demo)
+        {
+            Console.WriteLine($"[hud] --demo: niveles falsos cada {MsPasoDemo} ms. Ctrl+Alt+H para salir.");
+            PInvoke.SetTimer(_hwnd, TimerDemo, MsPasoDemo, null);
+        }
     }
 
-    public static HudWindow? Create(HudConfig config)
+    public static HudWindow? Create(HudConfig config, bool demo)
     {
         try
         {
-            return new HudWindow(config);
+            return new HudWindow(config, demo);
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[hud] {ex.Message}");
             return null;
         }
+    }
+
+    // --- ensenar y esconder -----------------------------------------------------------
+
+    /// <summary>
+    /// El unico camino por el que el HUD aparece. Desde H2 lo llamara la tecla; hoy lo
+    /// llama <c>--demo</c>.
+    ///
+    /// <para>
+    /// Si el nivel no ha cambiado --has subido estando ya al 100%-- no hay nada que
+    /// animar, asi que se da el squash del tope. Sin eso, pulsar en el tope no tendria
+    /// ninguna respuesta y parecerian teclas rotas.
+    /// </para>
+    /// </summary>
+    public void Mostrar(int porcentaje, bool silenciado)
+    {
+        if (_visuals is null) return;
+
+        bool cambio = porcentaje != _porcentaje || silenciado != _silenciado;
+        _porcentaje = porcentaje;
+        _silenciado = silenciado;
+
+        // Si estaba cerrandose, este timer la esconderia a media animacion de entrada.
+        PInvoke.KillTimer(_hwnd, TimerEsconder);
+
+        if (!_enPantalla)
+        {
+            // Se recoloca al aparecer, no al arrancar: el HUD sale en el monitor donde
+            // esta el cursor AHORA, no donde estaba cuando se lanzo el programa.
+            Recolocar();
+            PInvoke.ShowWindow(_hwnd, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
+            _enPantalla = true;
+        }
+
+        _visuals.Abrir(true);
+        _visuals.Nivel(silenciado ? 0f : porcentaje / 100f);
+        _visuals.Glifo(Glifos.Indice(porcentaje, silenciado));
+        if (!cambio) _visuals.Tope();
+
+        PInvoke.SetTimer(_hwnd, TimerAutoocultar, (uint)_config.MsAutoocultar, null);
+    }
+
+    private void Ocultar()
+    {
+        if (!_enPantalla) return;
+
+        PInvoke.KillTimer(_hwnd, TimerAutoocultar);
+        _visuals?.Abrir(false);
+        _enPantalla = false;
+
+        // La ventana no se esconde ya: primero tiene que verse la salida. El timer es
+        // lo que separa "la capsula se ha ido" de "la ventana ya no existe para el
+        // raton".
+        PInvoke.SetTimer(_hwnd, TimerEsconder, MsCierre, null);
+    }
+
+    private void Esconder()
+    {
+        PInvoke.KillTimer(_hwnd, TimerEsconder);
+        if (!_enPantalla) PInvoke.ShowWindow(_hwnd, SHOW_WINDOW_CMD.SW_HIDE);
     }
 
     // --- donde va la ventana ---------------------------------------------------------
@@ -149,8 +258,7 @@ internal sealed unsafe class HudWindow
     private (int X, int Y, int W, int H) MedirEnElMonitorDelCursor(out uint dpi, out string pantalla)
     {
         // El monitor del cursor, no el primario: un HUD que sale en otra pantalla es un
-        // HUD que no ves. GetCursorPos devuelve un punto y nada mas (SEGURIDAD.md §3.4
-        // del dock, misma justificacion).
+        // HUD que no ves. GetCursorPos devuelve un punto y nada mas.
         PInvoke.GetCursorPos(out System.Drawing.Point cursor);
         HMONITOR monitor = PInvoke.MonitorFromPoint(cursor, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
 
@@ -166,14 +274,48 @@ internal sealed unsafe class HudWindow
     }
 
     /// <summary>
-    /// Vuelve a medir y se mueve. Se llama al cambiar de pantallas o de escala, y en H1
-    /// pasara a llamarse tambien cada vez que el HUD se ensene, para seguir al cursor.
+    /// Vuelve a medir y se mueve. Se llama cada vez que el HUD va a aparecer, para
+    /// seguir al cursor entre pantallas, y al cambiar de monitores o de escala.
     /// </summary>
     private void Recolocar()
     {
+        uint dpiAntes = _dpi;
         (int x, int y, int w, int h) = MedirEnElMonitorDelCursor(out _dpi, out _);
-        PInvoke.SetWindowPos(_hwnd, HWND_TOPMOST, x, y, w, h,
-            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
+        PInvoke.SetWindowPos(_hwnd, HWND_TOPMOST, x, y, w, h, SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
+
+        if (_dpi == dpiAntes) return;
+
+        // Un cambio de escala invalida todas las medidas en pixeles, y estan horneadas
+        // en los visuals. Se rehacen enteros, que es bruto pero es una sola capsula y
+        // pasa una vez al arrastrar entre pantallas de distinto DPI.
+        _visuals?.Dispose();
+        _visuals = new HudVisuals(_hwnd, _dpi / 96f, AnchoCapsula, AltoCapsula, Holgura);
+        _visuals.Abrir(_enPantalla);
+        if (_porcentaje >= 0)
+        {
+            _visuals.Nivel(_silenciado ? 0f : _porcentaje / 100f);
+            _visuals.Glifo(Glifos.Indice(_porcentaje, _silenciado));
+        }
+    }
+
+    // --- demo --------------------------------------------------------------------------
+
+    /// <summary>
+    /// El guion de <c>--demo</c>. Pasa por los cuatro cortes de glifo, por el silencio,
+    /// y repite el 100 dos veces seguidas para que se vea el squash del tope.
+    /// </summary>
+    private static readonly (int Pct, bool Mudo)[] Guion =
+    [
+        (0, false), (12, false), (33, false), (34, false), (50, false),
+        (66, false), (67, false), (85, false), (100, false), (100, false),
+        (100, true), (100, false), (20, false),
+    ];
+
+    private void PasoDemo()
+    {
+        (int pct, bool mudo) = Guion[_pasoDemo % Guion.Length];
+        _pasoDemo++;
+        Mostrar(pct, mudo);
     }
 
     // --- mensajes ------------------------------------------------------------------
@@ -204,6 +346,12 @@ internal sealed unsafe class HudWindow
             case WM_WINDOWPOSCHANGING:
                 ((WINDOWPOS*)lParam.Value)->hwndInsertAfter = HWND_TOPMOST;
                 break;
+
+            case WM_TIMER:
+                if (wParam.Value == TimerAutoocultar) hud?.Ocultar();
+                else if (wParam.Value == TimerEsconder) hud?.Esconder();
+                else if (wParam.Value == TimerDemo) hud?.PasoDemo();
+                return new LRESULT(0);
 
             case WM_HOTKEY:
                 if (wParam.Value == AtajoSalir) Salir();
@@ -244,6 +392,8 @@ internal sealed unsafe class HudWindow
             hud._atajoSalir = false;
         }
 
+        hud._visuals?.Dispose();
+        hud._visuals = null;
         PInvoke.DestroyWindow(hud._hwnd);
         _instancia = null;
     }
@@ -276,8 +426,9 @@ internal sealed unsafe class HudWindow
     // --- autocomprobacion -------------------------------------------------------------
 
     /// <summary>
-    /// Lo que se rompe en silencio: la colocacion. Un HUD tres pixeles descentrado no
-    /// falla, solo se ve mal, y eso no lo detecta nadie hasta que lleva un mes asi.
+    /// Lo que se rompe en silencio: la colocacion, y la relacion entre constantes que
+    /// viven en ficheros distintos. Un HUD tres pixeles descentrado no falla, solo se ve mal, y
+    /// eso no lo detecta nadie hasta que lleva un mes asi.
     /// </summary>
     public static void SelfCheck()
     {
@@ -308,7 +459,15 @@ internal sealed unsafe class HudWindow
         var f = Colocar(0, 0, 800, 600, 96, abajo: true);
         Assert(f.X >= 0 && f.Y >= 0 && f.X + f.W <= 800 && f.Y + f.H <= 600, $"800x600 -> {f}");
 
-        Console.WriteLine("[hud] colocacion: 6 comprobaciones OK");
+        // El squash del tope ensancha la capsula un 5% desde su centro, asi que se sale
+        // 7 px por lado en horizontal. La ventana tiene que tener holgura de sobra o el
+        // borde se corta justo en el momento en que el HUD llama la atencion. Son dos
+        // constantes que viven en ficheros distintos (el 5% esta en HudVisuals.Tope) y
+        // nadie se entera si alguien toca una.
+        Assert(AnchoCapsula * 0.05f / 2f <= Holgura, "el squash horizontal no cabe en la holgura");
+        Assert(AltoCapsula * 0.05f / 2f <= Holgura, "el squash vertical no cabe en la holgura");
+
+        Console.WriteLine("[hud] colocacion: 8 comprobaciones OK");
     }
 
     private static void Assert(bool condicion, string queFallo)

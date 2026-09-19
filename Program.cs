@@ -25,6 +25,7 @@ internal static class Program
         if (args.Contains("--check"))
         {
             HudWindow.SelfCheck();
+            Glifos.SelfCheck();
             Console.WriteLine("[hud] --check OK");
             return 0;
         }
@@ -43,7 +44,8 @@ internal static class Program
         HudConfig config = Config.Cargar();
         Config.AplicarAutoArranque(config.AutoArranque);
 
-        if (HudWindow.Create(config) is null)
+        // --demo: niveles falsos en bucle, para afinar los muelles sin tocar audio.
+        if (HudWindow.Create(config, args.Contains("--demo")) is null)
         {
             Console.Error.WriteLine("[hud] no se pudo crear la ventana.");
             return 2;

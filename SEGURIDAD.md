@@ -232,6 +232,44 @@ quedarse callado. Se libera con `UnregisterHotKey` al cerrar.
 **Sigue cerrado:** más de una combinación, registrar cualquiera que el usuario no haya
 escrito, y cualquier forma de leer el teclado que no sea esta.
 
+### 3.8 Saber qué carpeta ocupa un juego de Steam
+
+**Qué se hace:** de un acceso directo de Steam que el usuario ha soltado en el dock se lee
+su `URL=steam://rungameid/19680`, y con ese número se leen **dos ficheros de texto de
+Steam**: `steamapps\libraryfolders.vdf`, que dice dónde están las bibliotecas, y
+`steamapps\appmanifest_19680.acf`, que dice en qué carpeta está instalado ese juego.
+
+**Por qué hace falta:** el dock reconoce que una app está abierta por el nombre de su
+ejecutable, y el acceso directo de un juego de Steam **no nombra ningún ejecutable**: dice
+`steam://rungameid/19680` y nada más. Sin esto, un juego anclado nunca se encendía y, al
+abrirlo, aparecía un **segundo** icono en la zona de apps abiertas sin anclar: el del `.exe`
+del juego, que el dock no sabía relacionar con el icono que el usuario ya tenía puesto.
+
+**Por qué es defendible:** son ficheros de texto plano, de lectura, sin nada de la cuenta
+del usuario dentro —un `.acf` dice el id, el nombre y la carpeta de un juego instalado— y se
+consultan por la misma razón por la que el dock ya mira el nombre de un `.exe`: para dibujar
+un punto debajo de un icono. Es lo mismo que hace la barra de tareas al agrupar la ventana
+de un juego con su botón.
+
+**Cortafuegos:**
+
+- **Solo el appid que ya está en `dock.json`.** No se enumera la biblioteca del usuario ni
+  se lee ningún `.acf` que no sea el del juego que el propio usuario ancló.
+- **Solo se saca de ahí una ruta de carpeta.** El nombre, el tiempo jugado, las fechas y
+  todo lo demás que traiga el fichero se ignora.
+- **Se lee y se tira**, como el inventario de ventanas: no se guarda, no se escribe, no sale
+  del proceso. La regla 6 sigue intacta.
+- **Nunca se escribe** nada dentro de la carpeta de Steam.
+
+**Sigue cerrado:** `loginusers.vdf`, `config.vdf`, `localconfig.vdf`, los `ssfn*` y todo
+`Steam\userdata`. Ahí sí hay cuentas, tokens de sesión y datos personales, y leerlos es
+exactamente lo que hace el malware que roba cuentas de Steam. No hacen ninguna falta para
+saber en qué carpeta está un juego, así que la línea está donde tiene que estar. Lo
+comprueba `auditar.ps1`.
+
+**Y sigue cerrado** hacer esto con ningún otro lanzador por su cuenta: Epic, GOG y
+Battle.net no se tocan. Si algún día hace falta, se enmienda otra vez.
+
 ---
 
 ## 4. Descartado, y por qué

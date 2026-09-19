@@ -48,6 +48,7 @@ $reglas = @(
     @{ n = '9  codigo en runtime';           p = 'Assembly\.Load|Reflection\.Emit|DynamicMethod' }
     @{ n = '10 portapapeles';                p = 'OleGetClipboard|GetClipboardData|OpenClipboard|SetClipboardData' }
     @{ n = '10 ficheros internos del perfil'; p = 'AutomaticDestinations|CustomDestinations' }
+    @{ n = '10 datos de cuenta de Steam';  p = 'loginusers|localconfig|config\.vdf|ssfn|Steam..userdata' }
     @{ n = 'A  matar procesos';              p = 'TerminateProcess|TerminateThread|EndTask|ExitWindowsEx|NtTerminate' }
     @{ n = 'A  cloak sobre ventanas ajenas'; p = 'DWMWA_CLOAK\b' }
     @{ n = 'A  ajuste global de la barra';   p = 'ABM_SETSTATE' }

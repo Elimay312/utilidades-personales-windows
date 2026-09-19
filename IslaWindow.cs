@@ -44,8 +44,12 @@ internal sealed unsafe class IslaWindow : IDisposable
 
     private const string ClassName = "IslaDinamica";
     private const int HotkeyId = 1;
-    private const int TimerId = 1;
+    private const nuint TimerId = 1;
     private const uint TimerMs = 120;
+
+    // El asomo por cancion nueva: sale, se lee, y se va solo.
+    private const nuint TimerAsoma = 2;
+    private const uint AsomaMs = 4000;
 
     // Cuantos latidos seguidos hay que estar dentro para que se abra. Dos son 240 ms:
     // bastante para que pasar de largo no cuente, poco para que no se note al esperar.
@@ -59,6 +63,10 @@ internal sealed unsafe class IslaWindow : IDisposable
     private const uint WM_NCACTIVATE = 0x0086;
     private const uint WM_TIMER = 0x0113;
     private const uint WM_HOTKEY = 0x0312;
+
+    // WM_APP + 1. Lo manda Medios desde el pool de hilos para avisar de que hay
+    // algo nuevo que pintar; el dato viaja aparte, en Medios.Ultima.
+    private const uint WM_APP_MEDIA = 0x8001;
 
     private const int MA_NOACTIVATE = 3;
     private const nint WS_EX_TRANSPARENT = 0x00000020;
@@ -81,6 +89,8 @@ internal sealed unsafe class IslaWindow : IDisposable
     private bool _hover;
     private int _seguidos;
     private bool _atajo;
+    private bool _visible;
+    private string? _sonando;
 
     public static IslaWindow? Create()
     {
@@ -144,7 +154,10 @@ internal sealed unsafe class IslaWindow : IDisposable
         }
 
         PInvoke.SetTimer(_hwnd, TimerId, TimerMs, null);
-        PInvoke.ShowWindow(_hwnd, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
+
+        // Todavia no se ensena: la isla no existe mientras no haya nada que decir.
+        // Medios avisa con WM_APP_MEDIA en cuanto encuentra una sesion de audio.
+        Medios.Arrancar(_hwnd, WM_APP_MEDIA);
 
         Console.WriteLine($"[isla] {_dpi * 100 / 96}% de escala, ventana {_w}x{h} en {_x},{_y}");
     }
@@ -206,7 +219,12 @@ internal sealed unsafe class IslaWindow : IDisposable
                 break;
 
             case WM_TIMER:
-                isla?.OnTick();
+                if (wParam.Value == TimerAsoma) isla?.OnFinAsoma();
+                else isla?.OnTick();
+                return new LRESULT(0);
+
+            case WM_APP_MEDIA:
+                isla?.OnMedios();
                 return new LRESULT(0);
 
             case WM_HOTKEY:
@@ -268,9 +286,52 @@ internal sealed unsafe class IslaWindow : IDisposable
 
     private void OnHotkey()
     {
+        // El atajo tambien sirve para invocarla cuando no suena nada.
+        Ensenar(true);
         _base = (Estado)(((int)_base + 1) % 3);
         Console.WriteLine($"[isla] atajo -> {_base}");
         Aplicar();
+    }
+
+    /// <summary>
+    /// Llega por PostMessage desde el pool de hilos, asi que aqui ya estamos en el
+    /// hilo que tiene la DispatcherQueue y se pueden tocar los visuales.
+    /// </summary>
+    private void OnMedios()
+    {
+        Cancion? c = Medios.Ultima;
+        Ensenar(c is not null);
+
+        if (c is null) { _sonando = null; return; }
+
+        bool otra = c.Titulo != _sonando;
+        _sonando = c.Titulo;
+        _visuals.Mostrar(c);
+
+        if (!otra) return;
+        Console.WriteLine($"[isla] {c.App}: {c.Titulo} - {c.Artista} ({c.Duracion:mm\\:ss})");
+
+        // Cancion nueva: asoma y se vuelve a ir sola. Si el raton ya esta encima no
+        // se toca nada, que bastante esta viendo.
+        if (_hover) return;
+        _base = Estado.Asomada;
+        Aplicar();
+        PInvoke.SetTimer(_hwnd, TimerAsoma, AsomaMs, null);
+    }
+
+    private void OnFinAsoma()
+    {
+        PInvoke.KillTimer(_hwnd, TimerAsoma);
+        if (_base != Estado.Asomada) return;
+        _base = Estado.Brasa;
+        Aplicar();
+    }
+
+    private void Ensenar(bool si)
+    {
+        if (si == _visible) return;
+        _visible = si;
+        PInvoke.ShowWindow(_hwnd, si ? SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE : SHOW_WINDOW_CMD.SW_HIDE);
     }
 
     private RECT ZonaCaliente(bool abierta)
@@ -328,6 +389,7 @@ internal sealed unsafe class IslaWindow : IDisposable
     public void Dispose()
     {
         PInvoke.KillTimer(_hwnd, TimerId);
+        PInvoke.KillTimer(_hwnd, TimerAsoma);
         if (_atajo) PInvoke.UnregisterHotKey(_hwnd, HotkeyId);
         _visuals.Dispose();
         if (!_hwnd.IsNull) PInvoke.DestroyWindow(_hwnd);

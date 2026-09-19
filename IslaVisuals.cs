@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Numerics;
 using Windows.Graphics.DirectX;
@@ -11,6 +12,7 @@ using Windows.Win32.Graphics.Direct2D.Common;
 using Windows.Win32.Graphics.Direct3D;
 using Windows.Win32.Graphics.Direct3D11;
 using Windows.Win32.Graphics.Dxgi;
+using Windows.Win32.Graphics.Dxgi.Common;
 using Windows.Win32.System.WinRT;
 using Windows.Win32.System.WinRT.Composition;
 using WinRT;
@@ -68,11 +70,6 @@ internal sealed unsafe class IslaVisuals : IDisposable
 
     private const uint D3D11SdkVersion = 7;
 
-    // Texto de prueba de M2. En M3 lo sustituye lo que este sonando de verdad; el
-    // largo es a proposito, para ver si la marquesina funciona.
-    private const string Titulo = "WINDOW MANAGERS y ENTORNOS de ESCRITORIO en Linux";
-    private const string Artista = "LinuxChad";
-    private const string App = "Brave";
 
     private readonly Compositor _compositor;
     private readonly DesktopWindowTarget _target;
@@ -82,6 +79,12 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private readonly SpriteVisual _macizo;
     private readonly SpriteVisual _cristal;
     private readonly ContainerVisual _contenido;
+    private ContainerVisual _cajaTitulo;
+    private SpriteVisual _caratula;
+    private SpriteVisual _rotTitulo;
+    private SpriteVisual _rotArtista;
+    private SpriteVisual _rotApp;
+    private readonly CompositionColorBrush _relleno;
     private readonly ShapeVisual _borde;
     private readonly CompositionRoundedRectangleGeometry _forma;
     private readonly CompositionRoundedRectangleGeometry _formaBorde;
@@ -137,11 +140,19 @@ internal sealed unsafe class IslaVisuals : IDisposable
         // negro. Los comentarios del dock dicen que tiene acrilico; la pantalla dice
         // que no.
         //
-        // Asi que el "cristal" es alfa a secas: el 12% de lo que hay detras se ve, sin
-        // desenfocar. A este tamano cuela, y la isla de macOS es opaca de todas formas.
+        // Asi que el "cristal" es alfa a secas, y POCO: 4%.
+        //
+        // Empezo en 226 (11% de fondo) y se veia demasiado: con una ventana detras se
+        // leian sus botones de minimizar y cerrar a traves del panel. Sin desenfoque
+        // que los disuelva, un fantasma de otra interfaz distrae mas de lo que aporta.
+        // Lo que de verdad da sensacion de cristal a este tamano no es la transparencia,
+        // es el borde iluminado de abajo.
         _macizo = Capa(_compositor.CreateColorBrush(Color.FromArgb(255, 0, 0, 0)));
-        _cristal = Capa(_compositor.CreateColorBrush(Color.FromArgb(226, 14, 14, 16)));
+        _cristal = Capa(_compositor.CreateColorBrush(Color.FromArgb(245, 14, 14, 16)));
 
+        // ponytail: cuadrado gris cuando la cancion no trae caratula. Un icono
+        // generico quedaria mejor, pero eso es un recurso que hay que empaquetar.
+        _relleno = _compositor.CreateColorBrush(Color.FromArgb(38, 255, 255, 255));
         _contenido = Contenido();
 
         // Borde interior de 1 px. Sin el, un panel oscuro parece un agujero en la
@@ -266,52 +277,140 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// Lo que se ve dentro del panel. Las posiciones son fijas respecto a su esquina
     /// superior izquierda, asi que no hace falta ninguna expresion para colocarlas.
     /// </summary>
+    [MemberNotNull(nameof(_cajaTitulo), nameof(_caratula),
+                   nameof(_rotTitulo), nameof(_rotArtista), nameof(_rotApp))]
     private ContainerVisual Contenido()
     {
         ContainerVisual raiz = _compositor.CreateContainerVisual();
         raiz.RelativeSizeAdjustment = Vector2.One;
         _panel.Children.InsertAtTop(raiz);
 
-        // ponytail: cuadrado de relleno donde ira la caratula. M3 trae la de verdad.
-        // Esta aqui porque sin el no se puede juzgar la colocacion del texto, que es
-        // justo de lo que va este hito.
-        SpriteVisual caratula = _compositor.CreateSpriteVisual();
-        caratula.Size = new Vector2(S(CaratulaLado), S(CaratulaLado));
-        caratula.Offset = new Vector3(S(Margen), S(Margen), 0);
-        caratula.Brush = _compositor.CreateColorBrush(Color.FromArgb(38, 255, 255, 255));
+        // La caratula. El clip redondeado se pone una vez y se queda: lo que cambia
+        // en cada cancion es solo el pincel.
+        _caratula = _compositor.CreateSpriteVisual();
+        _caratula.Size = new Vector2(S(CaratulaLado), S(CaratulaLado));
+        _caratula.Offset = new Vector3(S(Margen), S(Margen), 0);
+        _caratula.Brush = _relleno;
         CompositionRoundedRectangleGeometry marco = _compositor.CreateRoundedRectangleGeometry();
-        marco.Size = caratula.Size;
+        marco.Size = _caratula.Size;
         marco.CornerRadius = new Vector2(S(CaratulaRadio), S(CaratulaRadio));
-        caratula.Clip = _compositor.CreateGeometricClip(marco);
-        raiz.Children.InsertAtTop(caratula);
+        _caratula.Clip = _compositor.CreateGeometricClip(marco);
+        raiz.Children.InsertAtTop(_caratula);
 
         // El titulo va dentro de una caja que lo recorta. Si no cabe se pasea: cortarlo
         // con puntos suspensivos esconde justo la parte que distingue dos canciones del
         // mismo disco.
-        ContainerVisual caja = _compositor.CreateContainerVisual();
-        caja.Size = new Vector2(S(TituloAncho), S(TituloPx) * 1.7f);
-        caja.Offset = new Vector3(S(TextoX), S(TituloY), 0);
-        caja.Clip = _compositor.CreateInsetClip();
-        raiz.Children.InsertAtTop(caja);
-        Marquesina(Rotulo(Titulo, TituloPx, true, 1f, Vector2.Zero, caja), caja.Size.X);
+        _cajaTitulo = _compositor.CreateContainerVisual();
+        _cajaTitulo.Size = new Vector2(S(TituloAncho), S(TituloPx) * 1.7f);
+        _cajaTitulo.Offset = new Vector3(S(TextoX), S(TituloY), 0);
+        _cajaTitulo.Clip = _compositor.CreateInsetClip();
+        raiz.Children.InsertAtTop(_cajaTitulo);
 
-        Rotulo(Artista, ArtistaPx, false, 0.62f, new Vector2(S(TextoX), S(ArtistaY)), raiz);
-        Rotulo(App, AppPx, false, 0.38f, new Vector2(S(TextoX), S(AppY)), raiz);
+        _rotTitulo = Hueco(Vector2.Zero, _cajaTitulo);
+        _rotArtista = Hueco(new Vector2(S(TextoX), S(ArtistaY)), raiz);
+        _rotApp = Hueco(new Vector2(S(TextoX), S(AppY)), raiz);
 
         return raiz;
     }
 
-    private SpriteVisual Rotulo(string s, float px, bool grueso, float alpha, Vector2 en, ContainerVisual padre)
+    /// <summary>Lo que va a llevar un texto. Nace vacio y lo llena Mostrar.</summary>
+    private SpriteVisual Hueco(Vector2 en, ContainerVisual padre)
     {
-        float fisico = S(px);
-        Vector2 tam = Texto.Medir(s, fisico, grueso);
-
         SpriteVisual v = _compositor.CreateSpriteVisual();
-        v.Size = tam;
         v.Offset = new Vector3(en.X, en.Y, 0);
-        v.Brush = PincelTexto(s, fisico, grueso, alpha, tam);
         padre.Children.InsertAtTop(v);
         return v;
+    }
+
+    /// <summary>Pinta lo que suena. Se llama desde el hilo de UI, nunca desde el pool.</summary>
+    public void Mostrar(Cancion c)
+    {
+        Rotular(_rotTitulo, c.Titulo, TituloPx, true, 1f);
+        Rotular(_rotArtista, c.Artista, ArtistaPx, false, 0.62f);
+        Rotular(_rotApp, c.App, AppPx, false, 0.38f);
+        Marquesina(_rotTitulo, _cajaTitulo.Size.X);
+
+        _caratula.Brush = c.Arte is null ? _relleno : PincelArte(c.Arte);
+    }
+
+    private void Rotular(SpriteVisual v, string s, float px, bool grueso, float alpha)
+    {
+        if (string.IsNullOrWhiteSpace(s))
+        {
+            // Una superficie de tamano cero no se puede pedir, asi que se deja sin
+            // pincel: el visual sigue ahi y no pinta nada.
+            v.Size = Vector2.Zero;
+            v.Brush = null;
+            return;
+        }
+
+        float fisico = S(px);
+        Vector2 tam = Texto.Medir(s, fisico, grueso);
+        v.Size = tam;
+        v.Brush = PincelTexto(s, fisico, grueso, alpha, tam);
+    }
+
+    /// <summary>
+    /// La caratula que trajo la sesion, ya decodificada a BGRA premultiplicado. Se
+    /// decodifico a 192 y aqui se baja al tamano de pantalla, que es donde D2D
+    /// interpola mejor que hacerlo a mano.
+    /// </summary>
+    private CompositionSurfaceBrush PincelArte(byte[] bgra)
+    {
+        float lado = S(CaratulaLado);
+
+        CompositionDrawingSurface superficie = EnsureGraphicsDevice().CreateDrawingSurface(
+            new global::Windows.Foundation.Size(lado, lado),
+            DirectXPixelFormat.B8G8R8A8UIntNormalized,
+            DirectXAlphaMode.Premultiplied);
+
+        ICompositionDrawingSurfaceInterop interop = superficie.As<ICompositionDrawingSurfaceInterop>();
+        Guid iid = typeof(ID2D1DeviceContext).GUID;
+
+        System.Drawing.Point offset;
+        interop.BeginDraw(null, &iid, out object obj, &offset);
+        try
+        {
+            var ctx = (ID2D1DeviceContext)obj;
+            ctx.SetDpi(96, 96);
+            D2D1_COLOR_F nada = default;
+            ctx.Clear(&nada);
+
+            D2D1_BITMAP_PROPERTIES1 propiedades = new()
+            {
+                pixelFormat = new D2D1_PIXEL_FORMAT
+                {
+                    format = DXGI_FORMAT.DXGI_FORMAT_B8G8R8A8_UNORM,
+                    alphaMode = D2D1_ALPHA_MODE.D2D1_ALPHA_MODE_PREMULTIPLIED,
+                },
+                dpiX = 96,
+                dpiY = 96,
+            };
+
+            fixed (byte* pixeles = bgra)
+            {
+                ctx.CreateBitmap(
+                    new D2D_SIZE_U { width = (uint)Medios.ArteLado, height = (uint)Medios.ArteLado },
+                    pixeles, (uint)(Medios.ArteLado * 4), propiedades, out ID2D1Bitmap1 mapa);
+
+                D2D_RECT_F destino = new()
+                {
+                    left = offset.X,
+                    top = offset.Y,
+                    right = offset.X + lado,
+                    bottom = offset.Y + lado,
+                };
+
+                ctx.DrawBitmap(mapa, &destino, 1f,
+                    D2D1_BITMAP_INTERPOLATION_MODE.D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, null);
+            }
+        }
+        finally
+        {
+            interop.EndDraw();
+        }
+
+        return _compositor.CreateSurfaceBrush(superficie);
     }
 
     /// <summary>
@@ -321,6 +420,11 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// </summary>
     private void Marquesina(SpriteVisual v, float anchoCaja)
     {
+        // Al cambiar de cancion hay que parar la anterior y volver al principio, o
+        // el titulo nuevo arranca por donde se quedo el viejo.
+        v.StopAnimation("Offset.X");
+        v.Offset = new Vector3(0, v.Offset.Y, 0);
+
         float sobra = v.Size.X - anchoCaja;
         if (sobra <= 1f) return;
 

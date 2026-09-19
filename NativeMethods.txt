@@ -86,3 +86,12 @@ DWRITE_FONT_STYLE
 DWRITE_FONT_STRETCH
 DWRITE_WORD_WRAPPING
 D2D1_DRAW_TEXT_OPTIONS
+
+// --- Mapas de bits: la caratula, sobre nuestra propia superficie ---
+ID2D1Bitmap1
+D2D1_BITMAP_PROPERTIES1
+D2D1_BITMAP_INTERPOLATION_MODE
+
+// --- Cruzar del pool de hilos al hilo de UI (SEGURIDAD.md �3.1) ---
+// Sobre NUESTRA propia ventana y con un mensaje propio. No se manda nada a nadie.
+PostMessageW

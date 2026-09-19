@@ -129,6 +129,7 @@ internal static class Program
     /// <summary>Verificacion sin arrancar la ventana: logica pura + extraccion real.</summary>
     private static void SelfCheck()
     {
+        ConfigSelfCheck.Run();
         IconsSelfCheck.Run();
         MagnifySelfCheck.Run();
         GenieSelfCheck.Run();

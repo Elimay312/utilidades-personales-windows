@@ -454,6 +454,83 @@ internal sealed record DockConfig
         => profile.Length == 0 ? device : $"{profile}|{device}";
 
     /// <summary>
+    /// Sigue a una app que se ha mudado de carpeta al actualizarse.
+    ///
+    /// Discord, Slack, Teams y todo lo empaquetado con Squirrel se instalan en
+    /// <c>…\Discord\app-1.0.9258\Discord.exe</c>: el número de versión va EN LA RUTA,
+    /// así que la primera actualización deja la ruta anclada apuntando a una carpeta que
+    /// ya no existe. Sin esto, <see cref="Validate"/> tiraba la entrada y el icono
+    /// desaparecía del dock sin que el usuario tuviera forma de saber por qué —el aviso
+    /// va a la consola, y arrancando al iniciar sesión no hay consola que leer—.
+    ///
+    /// Se busca a la hermana de esa carpeta que empieza igual y tiene el mismo fichero
+    /// dentro, quedándose con la versión más alta.
+    ///
+    /// ponytail: solo se mira la carpeta que contiene al fichero. Un
+    /// <c>…\app-1.2.3\bin\x.exe</c> no se seguiría; si algún día aparece uno, se sube
+    /// por los padres hasta dar con el tramo que lleva número.
+    /// </summary>
+    public static string Repair(string target)
+    {
+        // Todo lo que no sea "ruta con carpeta padre versionada" sale de aquí sin tocar
+        // el disco: shell items, URLs, separadores y las rutas normales, que son casi
+        // todas.
+        string folder = Path.GetDirectoryName(target) ?? "";
+        string? prefix = VersionPrefix(Path.GetFileName(folder));
+        if (prefix is null || File.Exists(target)) return target;
+
+        string parent = Path.GetDirectoryName(folder) ?? "";
+        string file = Path.GetFileName(target);
+
+        string? best = null;
+        try
+        {
+            foreach (string sibling in Directory.EnumerateDirectories(parent, prefix + "*"))
+            {
+                if (File.Exists(Path.Combine(sibling, file)))
+                    best = Newest(prefix, best, Path.GetFileName(sibling));
+            }
+        }
+        catch (Exception ex)
+        {
+            // Sin permiso para listar, o la carpeta padre tampoco existe ya. No es un
+            // error: simplemente no hay a dónde seguir.
+            Console.WriteLine($"[config] no se pudo buscar '{file}' en {parent}: {ex.Message}");
+            return target;
+        }
+
+        // Sin traza aquí: esto se llama también por cada clave guardada en
+        // dock.local.json, y una app actualizada soltaría la misma línea seis veces
+        // con tres pantallas. Quien avisa es Validate, que sabe de qué entrada habla.
+        return best is null ? target : Path.Combine(parent, best, file);
+    }
+
+    /// <summary>
+    /// Lo que va antes del primer dígito del nombre de una carpeta, o null si no lleva
+    /// número de versión detrás. De <c>app-1.0.9258</c> sale <c>app-</c>.
+    ///
+    /// El prefijo tiene que existir: una carpeta que empieza por dígito no marca familia
+    /// ninguna, y con prefijo vacío el patrón de búsqueda se comería a todas las
+    /// hermanas.
+    /// </summary>
+    internal static string? VersionPrefix(string folder)
+    {
+        int digit = folder.AsSpan().IndexOfAnyInRange('0', '9');
+        return digit > 0 && Version.TryParse(folder[digit..], out _) ? folder[..digit] : null;
+    }
+
+    /// <summary>De dos carpetas de la misma familia, la de versión más alta.</summary>
+    internal static string? Newest(string prefix, string? a, string? b)
+    {
+        if (a is null) return b;
+        if (b is null) return a;
+
+        return Version.TryParse(a[prefix.Length..], out Version? va)
+            && Version.TryParse(b[prefix.Length..], out Version? vb)
+            && vb > va ? b : a;
+    }
+
+    /// <summary>
     /// Deja pasar solo las entradas utilizables, normalizando las rutas. Una entrada
     /// mala no debe tumbar el dock: se avisa y se omite.
     /// </summary>
@@ -490,7 +567,11 @@ internal sealed record DockConfig
             // Se normalizan todas, también las de shell:AppsFolder, para que en el
             // JSON nunca haga falta escapar una barra invertida. Los AppUserModelID
             // no contienen barras normales, así que no hay nada que romper.
-            string target = app.Target.Replace('/', '\\');
+            // Repair antes de comprobar que existe: una app que se ha actualizado
+            // sigue ahi, solo que una carpeta mas alla.
+            string stored = app.Target.Replace('/', '\\');
+            string target = Repair(stored);
+            if (target != stored) Console.WriteLine($"[config] '{app.Name}' se actualizó: {target}");
 
             // Directory.Exists además de File.Exists: en el dock caben carpetas, y
             // Process.Start con UseShellExecute las abre igual de bien que un .exe.
@@ -595,8 +676,14 @@ internal sealed record DockLocal
 
         try
         {
-            return JsonSerializer.Deserialize<DockLocal>(File.ReadAllText(DefaultPath), DockConfig.Options)
+            DockLocal local = JsonSerializer.Deserialize<DockLocal>(File.ReadAllText(DefaultPath), DockConfig.Options)
                 ?? new DockLocal();
+
+            // Las claves también pasan por Repair, y no solo los targets: si la app se
+            // ha actualizado, Validate devuelve ya la ruta nueva y la de este fichero
+            // dejaría de casar. El icono sobreviviría, pero perdería su sitio y se iría
+            // al final del dock hasta que el usuario volviera a arrastrar algo.
+            return local.Repaired();
         }
         catch (Exception ex)
         {
@@ -639,6 +726,19 @@ internal sealed record DockLocal
             Console.WriteLine($"[config] no se pudo guardar {Path.GetFileName(DefaultPath)}: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// Este mismo bloque con las rutas de las apps que se hayan actualizado ya
+    /// seguidas. Ver <see cref="DockConfig.Repair"/>.
+    /// </summary>
+    private DockLocal Repaired() => new()
+    {
+        Orden = [.. Orden.Select(DockConfig.Repair)],
+        Quitadas = [.. Quitadas.Select(DockConfig.Repair)],
+        Anadidas = Anadidas,
+        Perfil = Perfil,
+        Pantallas = Pantallas.ToDictionary(par => par.Key, par => par.Value.Repaired()),
+    };
 
     /// <summary>Aplica la superposición sobre la lista de dock.json.</summary>
     public List<DockApp> ApplyTo(IReadOnlyList<DockApp> baseApps)
@@ -688,5 +788,40 @@ internal sealed record DockLocal
         }
 
         return keys;
+    }
+}
+
+internal static class ConfigSelfCheck
+{
+    /// <summary>
+    /// Lo puro de seguir a una app que se actualiza: reconocer la carpeta versionada y
+    /// quedarse con la version mas alta. Lo que toca disco se mide con un arbol de
+    /// mentira, que no pinta en el repo.
+    /// </summary>
+    public static void Run()
+    {
+        // La familia es lo que va antes del numero.
+        Assert(DockConfig.VersionPrefix("app-1.0.9258") == "app-", "no reconocio app-1.0.9258");
+        Assert(DockConfig.VersionPrefix("Discord") is null, "una carpeta sin numero no es una familia");
+
+        // Sin prefijo no hay familia: con "" el patron de busqueda se comeria a TODAS
+        // las hermanas y la app podria acabar apuntando a cualquier cosa.
+        Assert(DockConfig.VersionPrefix("1.0.9258") is null, "un nombre que empieza por digito no es una familia");
+
+        // Un numero suelto tampoco: "Steam 2" no es una version.
+        Assert(DockConfig.VersionPrefix("Steam 2") is null, "'2' no es un numero de version");
+
+        // Comparacion por version y no por texto: "1.0.10" va DESPUES de "1.0.9",
+        // aunque ordenando como cadenas saldria antes.
+        Assert(DockConfig.Newest("app-", "app-1.0.9", "app-1.0.10") == "app-1.0.10", "1.0.10 es mas nueva que 1.0.9");
+        Assert(DockConfig.Newest("app-", "app-1.0.10", "app-1.0.9") == "app-1.0.10", "y da igual en que orden lleguen");
+        Assert(DockConfig.Newest("app-", null, "app-1.0.1") == "app-1.0.1", "la primera candidata gana a nada");
+
+        Console.WriteLine("[check] apps que se actualizan: OK");
+    }
+
+    private static void Assert(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException($"self-check: {message}");
     }
 }

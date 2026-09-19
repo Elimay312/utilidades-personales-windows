@@ -9,6 +9,9 @@ de kernel y por eso Defender lo marca. Este corre 100% en modo usuario, sin elev
 red y sin nada instalado en el sistema. Las reglas que lo garantizan están en
 [SEGURIDAD.md](SEGURIDAD.md) y se comprueban con `auditar.ps1`.
 
+Lo que ha ido cambiando está en [CHANGELOG.md](CHANGELOG.md). Si vas a tocar el código,
+las convenciones están en [CLAUDE.md](CLAUDE.md).
+
 ---
 
 ## Índice

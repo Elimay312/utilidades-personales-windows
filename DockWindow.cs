@@ -79,6 +79,7 @@ internal sealed unsafe class DockWindow : IDisposable
     private const uint WM_DISPLAYCHANGE = 0x007E;
     private const uint WM_ACTIVATE = 0x0006;
     private const uint WM_WINDOWPOSCHANGED = 0x0047;
+    private const uint WM_HOTKEY = 0x0312;
     private const uint WM_MOUSEACTIVATE = 0x0021;
     private const uint WM_NCCALCSIZE = 0x0083;
     private const uint WM_NCACTIVATE = 0x0086;
@@ -197,6 +198,9 @@ internal sealed unsafe class DockWindow : IDisposable
 
     /// <summary>Quién tiene el registro. Uno por proceso basta: los avisos son los mismos.</summary>
     private static HWND _shellHookOwner;
+
+    /// <summary>Quién tiene registrado el atajo de perfiles. Uno por proceso basta.</summary>
+    private static HWND _hotkeyOwner;
 
     /// <summary>Barrido en curso. Es uno para todos los docks, que comparten la pasada.</summary>
     private static bool _checkingRunning;
@@ -486,6 +490,8 @@ internal sealed unsafe class DockWindow : IDisposable
         ReserveAppBarSpace();
 
         RegisterShellHook();
+
+        if (_hotkeyOwner.IsNull && Profiles.Register(_hwnd, _config.AtajoPerfil)) _hotkeyOwner = _hwnd;
         PInvoke.SetTimer(_hwnd, SafetyTimerId, RunningSafetyMs, null);
 
         StartIconLoad();
@@ -837,6 +843,10 @@ internal sealed unsafe class DockWindow : IDisposable
                 self?._appBar?.Moved();
                 break;
 
+            case WM_HOTKEY:
+                self?.RotateProfile();
+                return new LRESULT(0);
+
             case WM_APP_APPBAR:
                 self?.OnAppBarNotify(wParam.Value);
                 return new LRESULT(0);
@@ -851,6 +861,12 @@ internal sealed unsafe class DockWindow : IDisposable
                 return new LRESULT(0);
 
             case WM_DESTROY:
+                if (hwnd == _hotkeyOwner)
+                {
+                    Profiles.Unregister(hwnd);
+                    _hotkeyOwner = default;
+                }
+
                 if (hwnd == _shellHookOwner)
                 {
                     PInvoke.DeregisterShellHookWindow(hwnd);
@@ -1266,6 +1282,32 @@ internal sealed unsafe class DockWindow : IDisposable
 
         _shellHookOwner = _hwnd;
         Console.WriteLine($"[shell] avisos de ventanas en {_device}");
+    }
+
+    /// <summary>
+    /// Pasa al siguiente perfil. Lo guarda y avisa a TODOS los docks, incluido este: la
+    /// lista nueva se lee del disco como cualquier otra recarga, así que no hay dos
+    /// caminos que mantener.
+    /// </summary>
+    private void RotateProfile()
+    {
+        DockConfig raw;
+        try
+        {
+            raw = DockConfig.Load(DockConfig.DefaultPath);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[perfil] no se pudo releer dock.json: {ex.Message}");
+            return;
+        }
+
+        string siguiente = Profiles.Next(raw, DockLocal.Load().Perfil);
+        DockLocal.SaveProfile(siguiente);
+
+        Console.WriteLine($"[perfil] ahora: {(siguiente.Length == 0 ? "(el de siempre)" : siguiente)}");
+
+        foreach (DockWindow dock in Instances.Values) dock.RequestReload();
     }
 
     /// <summary>

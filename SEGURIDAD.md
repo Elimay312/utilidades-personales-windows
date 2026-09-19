@@ -359,7 +359,28 @@ haga.
 ```sh
 # La unica forma de cerrar es WM_CLOSE. No debe aparecer ninguna de estas.
 git ls-files '*.cs' NativeMethods.txt | xargs grep -rnE "TerminateProcess|TerminateThread|EndTask|ExitWindowsEx|NtTerminate"
+
+# Enmienda 3: el teclado solo se toca con RegisterHotKey, y una sola combinacion.
+git ls-files '*.cs' NativeMethods.txt | xargs grep -rnE "GetAsyncKeyState|GetKeyboardState|keybd_event|SendInput|WH_KEYBOARD"
 ```
+
+### Apéndice de la enmienda 3 — el atajo de perfiles
+
+Rotar entre perfiles de dock necesita un atajo que funcione sin tener el foco, y eso
+huele a lo prohibido sin serlo. Se anota aquí para que quede claro.
+
+Se usa `RegisterHotKey`, que **no observa el teclado**: le pide a Windows que mande
+`WM_HOTKEY` a **nuestra** ventana cuando se pulse **una** combinación concreta. No se
+carga ninguna DLL en ningún proceso ajeno, no se instala ningún callback de bajo nivel y
+**no se ve ninguna otra tecla**. Es exactamente cómo registra su atajo cualquier app, y
+es lo contrario de `WH_KEYBOARD_LL`, que sigue prohibido por la regla 3.
+
+Lo único que hay que saber: la combinación queda reservada en todo el sistema mientras el
+dock vive. Si otra app ya la tenía, el registro falla y se avisa por consola en vez de
+quedarse callado. Se libera con `UnregisterHotKey` al cerrar la ventana.
+
+Sigue prohibido: registrar más de una combinación, registrarlas sin que el usuario las
+haya escrito en `dock.json`, y cualquier forma de leer el teclado que no sea esta.
 
 ## Corolarios de diseño
 

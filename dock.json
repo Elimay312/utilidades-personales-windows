@@ -58,4 +58,26 @@
   //     ]
   //   }
   // }
+
+  // Juegos de iconos entre los que rotar con un atajo. Cada perfil sustituye a
+  // "apps", y puede llevar dentro su propio bloque "pantallas". El atajo rota
+  // entre el dock de siempre y cada perfil, en este orden, y vuelve a empezar.
+  //
+  // Cada perfil recuerda SU orden y SUS anadidos por separado: mover un icono
+  // en "juegos" no toca "trabajo". Un perfil tampoco hereda lo que arrastraste
+  // estando en otro.
+  //
+  // "atajoPerfil": "Ctrl+Alt+D",
+  // "perfiles": {
+  //   "trabajo": {
+  //     "apps": [
+  //       { "name": "Explorador", "target": "C:/Windows/explorer.exe" }
+  //     ]
+  //   },
+  //   "juegos": {
+  //     "apps": [
+  //       { "name": "Steam", "target": "C:/Program Files (x86)/Steam/steam.exe" }
+  //     ]
+  //   }
+  // }
 }

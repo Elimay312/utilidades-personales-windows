@@ -226,6 +226,12 @@ internal sealed class DockApp
 internal sealed record DockScreen
 {
     public List<DockApp> Apps { get; init; } = [];
+
+    /// <summary>
+    /// Solo lo usan los perfiles: dentro de un perfil, una pantalla puede tener su
+    /// propia lista. En un bloque de <c>pantallas</c> normal se queda vacío.
+    /// </summary>
+    public Dictionary<string, DockScreen> Pantallas { get; init; } = [];
 }
 
 /// <summary>
@@ -283,6 +289,18 @@ internal sealed record DockConfig
     /// cambia cada vez.
     /// </summary>
     public Dictionary<string, DockScreen> Pantallas { get; init; } = [];
+
+    /// <summary>
+    /// Juegos de iconos entre los que rotar con un atajo: trabajo, juegos, lo que sea.
+    /// Cada uno sustituye a <see cref="Apps"/>, y puede llevar dentro su propio bloque
+    /// de pantallas. Sin perfil activo se ve la lista de siempre.
+    /// </summary>
+    public Dictionary<string, DockScreen> Perfiles { get; init; } = [];
+
+    /// <summary>
+    /// Con qué se rota entre perfiles: <c>"Ctrl+Alt+D"</c>. Vacío, no se registra nada.
+    /// </summary>
+    public string AtajoPerfil { get; init; } = "";
 
     /// <summary>
     /// Lo que decía <c>dock.json</c> antes de aplicar <c>dock.local.json</c>. Hace falta
@@ -365,8 +383,15 @@ internal sealed record DockConfig
     /// </param>
     public DockConfig For(string device)
     {
-        bool propia = Pantallas.TryGetValue(device, out DockScreen? own);
-        List<DockApp> baseApps = Validate(propia ? own!.Apps : Apps);
+        DockLocal local = DockLocal.Load();
+
+        // El perfil activo manda sobre la lista de siempre, y dentro del perfil una
+        // pantalla puede tener la suya. Si el perfil guardado ya no existe en
+        // dock.json, se ignora y se ve la lista normal.
+        Perfiles.TryGetValue(local.Perfil, out DockScreen? perfil);
+
+        bool propia = (perfil?.Pantallas ?? Pantallas).TryGetValue(device, out DockScreen? own);
+        List<DockApp> baseApps = Validate(propia ? own!.Apps : perfil?.Apps ?? Apps);
 
         // La papelera se añade aquí y no en dock.json para que esté por defecto sin
         // que el usuario tenga que escribirla. Entra en la lista BASE, así que se
@@ -383,9 +408,26 @@ internal sealed record DockConfig
             // Si la pantalla declara su propia lista en dock.json, no hereda la
             // superposicion de por defecto: seria meterle los iconos que el usuario
             // arrastro a OTRA pantalla dentro de una lista que puso a mano.
-            Apps = DockLocal.Load().For(device, fallback: !propia).ApplyTo(baseApps),
+            // La clave de la superposición lleva el perfil delante: reordenar en
+            // "juegos" no puede reordenar "trabajo". Sin perfil la clave es solo la
+            // pantalla, que es lo que ya había guardado.
+            //
+            // Y con un perfil puesto tampoco se hereda la superposición de por
+            // defecto, por lo mismo: sería meterle dentro los iconos que el usuario
+            // arrastró estando en OTRO perfil.
+            Apps = local.For(Key(local.Perfil, device), fallback: !propia && perfil is null)
+                .ApplyTo(baseApps),
         };
     }
+
+    /// <summary>
+    /// Con qué clave se guarda la superposición local. Meter el perfil en la misma
+    /// cadena que la pantalla evita un nivel más de anidamiento en dock.local.json, y
+    /// sin perfil sale exactamente la clave de antes, así que lo ya guardado sigue
+    /// valiendo.
+    /// </summary>
+    public static string Key(string profile, string device)
+        => profile.Length == 0 ? device : $"{profile}|{device}";
 
     /// <summary>
     /// Deja pasar solo las entradas utilizables, normalizando las rutas. Una entrada
@@ -454,7 +496,7 @@ internal sealed record DockConfig
 /// Build. Si algún día ese filtro se abriera, esto entraría en bucle.
 /// </para>
 /// </summary>
-internal sealed class DockLocal
+internal sealed record DockLocal
 {
     /// <summary>Claves en el orden en que se quieren ver.</summary>
     public List<string> Orden { get; init; } = [];
@@ -476,6 +518,27 @@ internal sealed class DockLocal
     /// dock.local.json que ya existía no se pierda al actualizar.
     /// </summary>
     public Dictionary<string, DockLocal> Pantallas { get; init; } = [];
+
+    /// <summary>
+    /// Qué perfil está puesto ahora mismo, o vacío para la lista de siempre. Vive aquí
+    /// y no en dock.json porque lo escribe el dock al rotar, y dock.json es del usuario.
+    /// </summary>
+    public string Perfil { get; init; } = "";
+
+    /// <summary>Deja guardado el perfil activo, sin tocar nada más del fichero.</summary>
+    public static void SaveProfile(string profile)
+    {
+        DockLocal file = Load();
+
+        try
+        {
+            File.WriteAllText(DefaultPath, JsonSerializer.Serialize(file with { Perfil = profile }, Write));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[perfil] no se pudo guardar: {ex.Message}");
+        }
+    }
 
     /// <summary>La superposición de una pantalla, o la de por defecto si no tiene.</summary>
     public DockLocal For(string device, bool fallback = true) =>
@@ -523,10 +586,10 @@ internal sealed class DockLocal
         List<string> after = KeysOf(current);
 
         // Se parte de lo que ya hay en el fichero y solo se toca el bloque de ESTA
-        // pantalla: mover un icono en una no puede reordenar las otras, que es lo que
-        // "independientes" quiere decir.
+        // pantalla y ESTE perfil: mover un icono en una pantalla no puede reordenar las
+        // otras, ni reordenar "juegos" tocar "trabajo".
         DockLocal file = Load();
-        file.Pantallas[device] = new DockLocal
+        file.Pantallas[DockConfig.Key(file.Perfil, device)] = new DockLocal
         {
             Orden = after,
             Quitadas = [.. before.Where(k => !after.Contains(k, StringComparer.OrdinalIgnoreCase))],

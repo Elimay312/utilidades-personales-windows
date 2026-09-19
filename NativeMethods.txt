@@ -39,6 +39,13 @@ RegisterShellHookWindow
 DeregisterShellHookWindow
 RegisterWindowMessageW
 
+// --- Atajo de teclado para rotar de perfil ---
+// NO es un hook: no se observa el teclado, se le pide a Windows que mande WM_HOTKEY a
+// NUESTRA ventana cuando se pulse UNA combinacion. Sin DLL en otros procesos y sin ver
+// ninguna otra tecla. Es como registra su atajo cualquier app.
+RegisterHotKey
+UnregisterHotKey
+
 // --- Raton, solo en la ventana propia (no es un hook) ---
 TrackMouseEvent
 SetCapture

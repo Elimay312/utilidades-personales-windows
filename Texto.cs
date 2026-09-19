@@ -25,17 +25,17 @@ internal static unsafe class Texto
     ///
     /// Sin candado a proposito: todo esto vive en el hilo que tiene la DispatcherQueue.
     /// </summary>
-    private static readonly Dictionary<(float, bool), IDWriteTextFormat> Formatos = [];
+    private static readonly Dictionary<(float, bool, bool), IDWriteTextFormat> Formatos = [];
 
     /// <summary>
     /// Mide antes de dibujar. Hace falta el tamano ANTES de tener superficie, porque la
     /// superficie se pide ya con ese tamano y porque de ahi sale si el titulo cabe o
     /// hay que pasearlo.
     /// </summary>
-    public static Vector2 Medir(string texto, float px, bool grueso)
+    public static Vector2 Medir(string texto, float px, bool grueso, bool iconos = false)
     {
         DWRITE_TEXT_METRICS m;
-        Disposicion(texto, px, grueso).GetMetrics(&m);
+        Disposicion(texto, px, grueso, iconos).GetMetrics(&m);
 
         // Un pixel de margen por lado: DirectWrite mide la caja de texto, pero el
         // antialiasing de una curva puede salirse de ella y quedaria recortado.
@@ -44,24 +44,24 @@ internal static unsafe class Texto
 
     /// <summary>Pinta el texto en blanco con el alfa dado, en el contexto que se le de.</summary>
     public static void Dibujar(ID2D1DeviceContext ctx, string texto, float px, bool grueso,
-                               float alpha, System.Drawing.Point en)
+                               float alpha, System.Drawing.Point en, bool iconos = false)
     {
         D2D1_COLOR_F tinta = new() { r = 1f, g = 1f, b = 1f, a = alpha };
         ctx.CreateSolidColorBrush(&tinta, null, out ID2D1SolidColorBrush pincel);
 
         ctx.DrawTextLayout(
             new D2D_POINT_2F { x = en.X + 1f, y = en.Y + 1f },
-            Disposicion(texto, px, grueso),
+            Disposicion(texto, px, grueso, iconos),
             pincel,
             D2D1_DRAW_TEXT_OPTIONS.D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
-    private static IDWriteTextLayout Disposicion(string texto, float px, bool grueso)
+    private static IDWriteTextLayout Disposicion(string texto, float px, bool grueso, bool iconos)
     {
         // El formato PRIMERO y en su propia linea. Metido como argumento de
         // CreateTextLayout no vale: C# evalua el receptor antes que los argumentos, asi
         // que se leeria _factory estando todavia a null -- y es Formato quien la crea.
-        IDWriteTextFormat formato = Formato(px, grueso);
+        IDWriteTextFormat formato = Formato(px, grueso, iconos);
 
         fixed (char* v = texto)
         {
@@ -73,9 +73,9 @@ internal static unsafe class Texto
         }
     }
 
-    private static IDWriteTextFormat Formato(float px, bool grueso)
+    private static IDWriteTextFormat Formato(float px, bool grueso, bool iconos)
     {
-        if (Formatos.TryGetValue((px, grueso), out IDWriteTextFormat? cache)) return cache;
+        if (Formatos.TryGetValue((px, grueso, iconos), out IDWriteTextFormat? cache)) return cache;
 
         if (_factory is null)
         {
@@ -87,7 +87,11 @@ internal static unsafe class Texto
 
         // Segoe UI Variable Text es la de Windows 11 para tamanos pequenos. Si no
         // estuviera, DirectWrite cae a la del sistema por su cuenta.
-        fixed (char* familia = "Segoe UI Variable Text")
+        //
+        // Los mandos de reproduccion son glifos de Segoe Fluent Icons, la fuente de
+        // iconos que trae Windows 11: sale mas barato y mas nitido que dibujar tres
+        // triangulos a mano, y ademas son los mismos simbolos que usa el sistema.
+        fixed (char* familia = iconos ? "Segoe Fluent Icons" : "Segoe UI Variable Text")
         fixed (char* local = "")
         {
             _factory.CreateTextFormat(
@@ -102,7 +106,7 @@ internal static unsafe class Texto
             // partiendolo en dos renglones.
             fmt.SetWordWrapping(DWRITE_WORD_WRAPPING.DWRITE_WORD_WRAPPING_NO_WRAP);
 
-            Formatos[(px, grueso)] = fmt;
+            Formatos[(px, grueso, iconos)] = fmt;
             return fmt;
         }
     }

@@ -19,6 +19,16 @@ using WinRT;
 
 namespace Isla;
 
+/// <summary>Que hay bajo el raton dentro del panel abierto.</summary>
+internal enum Zona
+{
+    Nada,
+    Anterior,
+    PlayPausa,
+    Siguiente,
+    Barra,
+}
+
 /// <summary>
 /// El arbol de composicion de la isla y su movimiento.
 ///
@@ -68,6 +78,27 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private const float AppY = 68f;
     private const float AppPx = 10f;
 
+    private const float BarraX = 16f;
+    private const float BarraY = 118f;
+    private const float BarraAncho = 348f;
+    private const float BarraAlto = 4f;
+    private const float TiempoY = 128f;
+    private const float TiempoPx = 10f;
+
+    private const float BotonCy = 159f;
+    private const float BotonPx = 16f;
+    private const float PlayPx = 22f;
+    // Caja de clic de cada boton. Mas grande que el glifo a proposito: apuntar a 16 px
+    // con el raton es una loteria.
+    private const float GolpeLado = 36f;
+    private static readonly float[] BotonCx = [140f, 190f, 240f];
+
+    // Glifos de Segoe Fluent Icons: anterior, siguiente, play y pausa.
+    private const string GlifoAnterior = "\uE100";
+    private const string GlifoSiguiente = "\uE101";
+    private const string GlifoPlay = "\uE102";
+    private const string GlifoPausa = "\uE103";
+
     private const uint D3D11SdkVersion = 7;
 
 
@@ -84,7 +115,14 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private SpriteVisual _rotTitulo;
     private SpriteVisual _rotArtista;
     private SpriteVisual _rotApp;
-    private readonly CompositionColorBrush _relleno;
+    private ContainerVisual _barra;
+    private SpriteVisual _relleno;
+    private SpriteVisual _rotPasado;
+    private SpriteVisual _rotTotal;
+    private SpriteVisual _botAnterior;
+    private SpriteVisual _botPlay;
+    private SpriteVisual _botSiguiente;
+    private readonly CompositionColorBrush _grisCaratula;
     private readonly ShapeVisual _borde;
     private readonly CompositionRoundedRectangleGeometry _forma;
     private readonly CompositionRoundedRectangleGeometry _formaBorde;
@@ -152,7 +190,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
 
         // ponytail: cuadrado gris cuando la cancion no trae caratula. Un icono
         // generico quedaria mejor, pero eso es un recurso que hay que empaquetar.
-        _relleno = _compositor.CreateColorBrush(Color.FromArgb(38, 255, 255, 255));
+        _grisCaratula = _compositor.CreateColorBrush(Color.FromArgb(38, 255, 255, 255));
         _contenido = Contenido();
 
         // Borde interior de 1 px. Sin el, un panel oscuro parece un agujero en la
@@ -278,7 +316,9 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// superior izquierda, asi que no hace falta ninguna expresion para colocarlas.
     /// </summary>
     [MemberNotNull(nameof(_cajaTitulo), nameof(_caratula),
-                   nameof(_rotTitulo), nameof(_rotArtista), nameof(_rotApp))]
+                   nameof(_rotTitulo), nameof(_rotArtista), nameof(_rotApp),
+                   nameof(_barra), nameof(_relleno), nameof(_rotPasado), nameof(_rotTotal),
+                   nameof(_botAnterior), nameof(_botPlay), nameof(_botSiguiente))]
     private ContainerVisual Contenido()
     {
         ContainerVisual raiz = _compositor.CreateContainerVisual();
@@ -290,7 +330,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _caratula = _compositor.CreateSpriteVisual();
         _caratula.Size = new Vector2(S(CaratulaLado), S(CaratulaLado));
         _caratula.Offset = new Vector3(S(Margen), S(Margen), 0);
-        _caratula.Brush = _relleno;
+        _caratula.Brush = _grisCaratula;
         CompositionRoundedRectangleGeometry marco = _compositor.CreateRoundedRectangleGeometry();
         marco.Size = _caratula.Size;
         marco.CornerRadius = new Vector2(S(CaratulaRadio), S(CaratulaRadio));
@@ -309,6 +349,36 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _rotTitulo = Hueco(Vector2.Zero, _cajaTitulo);
         _rotArtista = Hueco(new Vector2(S(TextoX), S(ArtistaY)), raiz);
         _rotApp = Hueco(new Vector2(S(TextoX), S(AppY)), raiz);
+
+        // La barra de progreso: carril recortado y un relleno que escala en X desde la
+        // izquierda. Escalar y no redimensionar es lo que permite que la anime el
+        // compositor sin que nadie toque nada por fotograma.
+        _barra = _compositor.CreateContainerVisual();
+        _barra.Size = new Vector2(S(BarraAncho), S(BarraAlto));
+        _barra.Offset = new Vector3(S(BarraX), S(BarraY), 0);
+        CompositionRoundedRectangleGeometry carril = _compositor.CreateRoundedRectangleGeometry();
+        carril.Size = _barra.Size;
+        carril.CornerRadius = new Vector2(S(BarraAlto * 0.5f), S(BarraAlto * 0.5f));
+        _barra.Clip = _compositor.CreateGeometricClip(carril);
+        raiz.Children.InsertAtTop(_barra);
+
+        SpriteVisual surco = _compositor.CreateSpriteVisual();
+        surco.RelativeSizeAdjustment = Vector2.One;
+        surco.Brush = _compositor.CreateColorBrush(Color.FromArgb(46, 255, 255, 255));
+        _barra.Children.InsertAtTop(surco);
+
+        _relleno = _compositor.CreateSpriteVisual();
+        _relleno.Size = _barra.Size;
+        _relleno.Brush = _compositor.CreateColorBrush(Color.FromArgb(235, 255, 255, 255));
+        _relleno.Scale = new Vector3(0f, 1f, 1f);
+        _barra.Children.InsertAtTop(_relleno);
+
+        _rotPasado = Hueco(new Vector2(S(BarraX), S(TiempoY)), raiz);
+        _rotTotal = Hueco(Vector2.Zero, raiz);
+
+        _botAnterior = Hueco(Vector2.Zero, raiz);
+        _botPlay = Hueco(Vector2.Zero, raiz);
+        _botSiguiente = Hueco(Vector2.Zero, raiz);
 
         return raiz;
     }
@@ -330,24 +400,152 @@ internal sealed unsafe class IslaVisuals : IDisposable
         Rotular(_rotApp, c.App, AppPx, false, 0.38f);
         Marquesina(_rotTitulo, _cajaTitulo.Size.X);
 
-        _caratula.Brush = c.Arte is null ? _relleno : PincelArte(c.Arte);
+        CompositionBrush? arteVieja = _caratula.Brush;
+        _caratula.Brush = c.Arte is null ? _grisCaratula : PincelArte(c.Arte);
+        Soltar(arteVieja);
+
+        Tiempos(c.Posicion, c.Duracion);
+
+        // Un boton que la sesion no admite no se dibuja.
+        Icono(_botAnterior, c.PuedeAnterior ? GlifoAnterior : null, BotonPx, BotonCx[0]);
+        Icono(_botPlay, c.PuedePlayPausa ? (c.Sonando ? GlifoPausa : GlifoPlay) : null, PlayPx, BotonCx[1]);
+        Icono(_botSiguiente, c.PuedeSiguiente ? GlifoSiguiente : null, BotonPx, BotonCx[2]);
     }
 
-    private void Rotular(SpriteVisual v, string s, float px, bool grueso, float alpha)
+    /// <summary>Los dos relojes de los extremos de la barra. Solo al cambiar de cancion.</summary>
+    public void Tiempos(TimeSpan pasado, TimeSpan total)
+    {
+        Transcurrido(pasado);
+        Rotular(_rotTotal, Reloj(total), TiempoPx, false, 0.38f);
+        // El total se alinea a la derecha, asi que su sitio depende de lo que mida.
+        _rotTotal.Offset = new Vector3(S(BarraX + BarraAncho) - _rotTotal.Size.X, S(TiempoY), 0);
+    }
+
+    /// <summary>
+    /// Solo el reloj de la izquierda, que es el unico que cambia cada segundo. Repintar
+    /// tambien la duracion total -- que no se mueve en toda la cancion -- doblaba el
+    /// trabajo del unico temporizador que corre con el panel abierto.
+    /// </summary>
+    public void Transcurrido(TimeSpan pasado)
+        => Rotular(_rotPasado, Reloj(pasado), TiempoPx, false, 0.38f);
+
+    /// <summary>
+    /// La barra avanza EN EL COMPOSITOR: se le dice donde esta y cuanto queda, y el
+    /// interpola el resto. Cero trabajo por fotograma en el hilo de UI, y por eso la
+    /// isla puede tener una barra que se mueve sola con 0% de CPU.
+    /// </summary>
+    public void Progreso(double fraccion, TimeSpan queda, bool sonando)
+    {
+        float f = (float)Math.Clamp(fraccion, 0d, 1d);
+        _relleno.StopAnimation("Scale.X");
+
+        if (!sonando || queda <= TimeSpan.Zero)
+        {
+            _relleno.Scale = new Vector3(f, 1f, 1f);
+            return;
+        }
+
+        CompositionEasingFunction lineal = _compositor.CreateLinearEasingFunction();
+        ScalarKeyFrameAnimation a = _compositor.CreateScalarKeyFrameAnimation();
+        a.InsertKeyFrame(0f, f, lineal);
+        a.InsertKeyFrame(1f, 1f, lineal);
+        a.Duration = queda;
+        _relleno.StartAnimation("Scale.X", a);
+    }
+
+    /// <summary>Mientras se arrastra, la barra sigue al dedo y no al reloj.</summary>
+    public void VistaPrevia(double fraccion)
+    {
+        _relleno.StopAnimation("Scale.X");
+        _relleno.Scale = new Vector3((float)Math.Clamp(fraccion, 0d, 1d), 1f, 1f);
+    }
+
+    /// <summary>Pasa de coordenadas de la ventana a coordenadas del panel abierto.</summary>
+    public Vector2 EnPanel(Vector2 cliente, float anchoVentana)
+    {
+        (float w, _, _, float lift) = IslaWindow.Medidas(Estado.Abierta);
+        return new Vector2(cliente.X - (anchoVentana - S(w)) * 0.5f, cliente.Y - S(lift));
+    }
+
+    public Zona Golpe(Vector2 p)
+    {
+        float mitad = S(GolpeLado) * 0.5f;
+        for (int i = 0; i < BotonCx.Length; i++)
+        {
+            if (Math.Abs(p.X - S(BotonCx[i])) <= mitad && Math.Abs(p.Y - S(BotonCy)) <= mitad)
+                return (Zona)(i + 1);
+        }
+
+        // La barra se coge con mucho mas margen del que mide: acertarle a 4 px de alto
+        // con el raton no lo hace nadie.
+        if (p.X >= S(BarraX - 6f) && p.X <= S(BarraX + BarraAncho + 6f)
+            && p.Y >= S(BarraY - 9f) && p.Y <= S(BarraY + BarraAlto + 9f))
+            return Zona.Barra;
+
+        return Zona.Nada;
+    }
+
+    public double FraccionEnX(float x) => Math.Clamp((x - S(BarraX)) / S(BarraAncho), 0d, 1d);
+
+    private static string Reloj(TimeSpan t)
+    {
+        if (t < TimeSpan.Zero) t = TimeSpan.Zero;
+        return t.TotalHours >= 1 ? t.ToString(@"h\:mm\:ss") : t.ToString(@"m\:ss");
+    }
+
+    private void Icono(SpriteVisual v, string? glifo, float px, float cx)
+    {
+        if (glifo is null)
+        {
+            v.Size = Vector2.Zero;
+            CompositionBrush? habia = v.Brush;
+            v.Brush = null;
+            Soltar(habia);
+            return;
+        }
+
+        float fisico = S(px);
+        Vector2 tam = Texto.Medir(glifo, fisico, false, iconos: true);
+
+        CompositionBrush? anterior = v.Brush;
+        v.Size = tam;
+        v.Brush = PincelTexto(glifo, fisico, false, 0.92f, tam, iconos: true);
+        v.Offset = new Vector3(S(cx) - tam.X * 0.5f, S(BotonCy) - tam.Y * 0.5f, 0);
+        Soltar(anterior);
+    }
+
+    private void Rotular(SpriteVisual v, string s, float px, bool grueso, float alpha, bool iconos = false)
     {
         if (string.IsNullOrWhiteSpace(s))
         {
             // Una superficie de tamano cero no se puede pedir, asi que se deja sin
             // pincel: el visual sigue ahi y no pinta nada.
             v.Size = Vector2.Zero;
+            CompositionBrush? habia = v.Brush;
             v.Brush = null;
+            Soltar(habia);
             return;
         }
 
         float fisico = S(px);
-        Vector2 tam = Texto.Medir(s, fisico, grueso);
+        Vector2 tam = Texto.Medir(s, fisico, grueso, iconos);
+
+        CompositionBrush? anterior = v.Brush;
         v.Size = tam;
-        v.Brush = PincelTexto(s, fisico, grueso, alpha, tam);
+        v.Brush = PincelTexto(s, fisico, grueso, alpha, tam, iconos);
+        Soltar(anterior);
+    }
+
+    /// <summary>
+    /// Suelta la superficie que habia detras de un pincel que se acaba de sustituir.
+    /// Sin esto, el reloj del panel abierto dejaba dos superficies abandonadas POR
+    /// SEGUNDO esperando al recolector.
+    /// </summary>
+    private static void Soltar(CompositionBrush? viejo)
+    {
+        if (viejo is not CompositionSurfaceBrush pincel) return;
+        if (pincel.Surface is CompositionDrawingSurface superficie) superficie.Dispose();
+        pincel.Dispose();
     }
 
     /// <summary>
@@ -454,7 +652,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// la superficie; y hay que limpiarla, porque ese hueco puede traer los pixeles del
     /// inquilino anterior.
     /// </summary>
-    private CompositionSurfaceBrush PincelTexto(string s, float px, bool grueso, float alpha, Vector2 tam)
+    private CompositionSurfaceBrush PincelTexto(string s, float px, bool grueso, float alpha, Vector2 tam, bool iconos = false)
     {
         CompositionDrawingSurface superficie = EnsureGraphicsDevice().CreateDrawingSurface(
             new global::Windows.Foundation.Size(tam.X, tam.Y),
@@ -472,7 +670,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
             ctx.SetDpi(96, 96);
             D2D1_COLOR_F nada = default;
             ctx.Clear(&nada);
-            Texto.Dibujar(ctx, s, px, grueso, alpha, offset);
+            Texto.Dibujar(ctx, s, px, grueso, alpha, offset, iconos);
         }
         finally
         {

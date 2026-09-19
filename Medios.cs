@@ -17,7 +17,11 @@ internal sealed record Cancion(
     string App,
     TimeSpan Posicion,
     TimeSpan Duracion,
-    byte[]? Arte);
+    byte[]? Arte,
+    bool Sonando,
+    bool PuedeAnterior,
+    bool PuedeSiguiente,
+    bool PuedePlayPausa);
 
 /// <summary>
 /// El puente con el canal de medios de Windows (SEGURIDAD.md §3.1 y §3.2).
@@ -128,6 +132,8 @@ internal static class Medios
             if (p is null) { Publicar(null); return; }
 
             GlobalSystemMediaTransportControlsSessionTimelineProperties t = s.GetTimelineProperties();
+            GlobalSystemMediaTransportControlsSessionPlaybackInfo info = s.GetPlaybackInfo();
+            GlobalSystemMediaTransportControlsSessionPlaybackControls mandos = info.Controls;
 
             Publicar(new Cancion(
                 string.IsNullOrWhiteSpace(p.Title) ? "Sin titulo" : p.Title,
@@ -137,7 +143,14 @@ internal static class Medios
                 s.SourceAppUserModelId ?? string.Empty,
                 t.Position,
                 t.EndTime - t.StartTime,
-                await Arte(p.Thumbnail)));
+                await Arte(p.Thumbnail),
+                info.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing,
+                // Un boton que la sesion no admite NO se dibuja, en vez de dibujarlo y
+                // que no haga nada. Lo dice la propia API y esta escrito en
+                // SEGURIDAD.md §3.2.
+                mandos.IsPreviousEnabled,
+                mandos.IsNextEnabled,
+                mandos.IsPlayEnabled || mandos.IsPauseEnabled));
         }
         catch (Exception ex)
         {
@@ -200,6 +213,34 @@ internal static class Medios
             // isla: se cae al cuadrado de relleno.
             return null;
         }
+    }
+
+    // --- lo que se le pide a la sesion (SEGURIDAD.md §3.2) -------------------------
+    //
+    // Es lo mismo que hace la tecla de play del teclado: misma API, misma sesion, y
+    // siempre detras de un clic del usuario en un boton que esta viendo. No hay ningun
+    // camino que llame a esto desde un temporizador, y asi debe seguir.
+
+    public static void Alternar() => Pedir(s => s.TryTogglePlayPauseAsync());
+
+    public static void Anterior() => Pedir(s => s.TrySkipPreviousAsync());
+
+    public static void Siguiente() => Pedir(s => s.TrySkipNextAsync());
+
+    public static void Buscar(TimeSpan donde) => Pedir(s => s.TryChangePlaybackPositionAsync(donde.Ticks));
+
+    private static void Pedir(Func<GlobalSystemMediaTransportControlsSession, IAsyncOperation<bool>> que)
+    {
+        GlobalSystemMediaTransportControlsSession? s = _sesion;
+        if (s is null) return;
+
+        // Al pool: estas llamadas cruzan a otro proceso y el hilo de UI es el que esta
+        // animando la isla.
+        _ = Task.Run(async () =>
+        {
+            try { await que(s); }
+            catch (Exception ex) { Console.Error.WriteLine($"[isla] mando: {ex.Message}"); }
+        });
     }
 
     private static void Publicar(Cancion? c)

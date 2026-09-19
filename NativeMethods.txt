@@ -95,3 +95,12 @@ D2D1_BITMAP_INTERPOLATION_MODE
 // --- Cruzar del pool de hilos al hilo de UI (SEGURIDAD.md �3.1) ---
 // Sobre NUESTRA propia ventana y con un mensaje propio. No se manda nada a nadie.
 PostMessageW
+
+// --- Raton dentro de la ventana propia y region de la misma ---
+// SetCapture es para no perder el arrastre de la barra al salirse el cursor; no es
+// un hook y solo afecta a nuestra ventana. La region recorta NUESTRA ventana para
+// que el margen que no se pinta no se trague los clics de nadie.
+SetCapture
+ReleaseCapture
+CreateRectRgn
+SetWindowRgn

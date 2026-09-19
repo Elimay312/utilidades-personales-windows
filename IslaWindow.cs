@@ -1,3 +1,4 @@
+using System.Numerics;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Gdi;
@@ -51,6 +52,11 @@ internal sealed unsafe class IslaWindow : IDisposable
     private const nuint TimerAsoma = 2;
     private const uint AsomaMs = 4000;
 
+    // El reloj de los tiempos, y SOLO mientras el panel esta abierto: el texto de
+    // los segundos no se puede animar en el compositor como si se anima la barra.
+    private const nuint TimerReloj = 3;
+    private const uint RelojMs = 1000;
+
     // Cuantos latidos seguidos hay que estar dentro para que se abra. Dos son 240 ms:
     // bastante para que pasar de largo no cuente, poco para que no se note al esperar.
     private const int TicksParaAbrir = 2;
@@ -62,6 +68,9 @@ internal sealed unsafe class IslaWindow : IDisposable
     private const uint WM_NCCALCSIZE = 0x0083;
     private const uint WM_NCACTIVATE = 0x0086;
     private const uint WM_TIMER = 0x0113;
+    private const uint WM_MOUSEMOVE = 0x0200;
+    private const uint WM_LBUTTONDOWN = 0x0201;
+    private const uint WM_LBUTTONUP = 0x0202;
     private const uint WM_HOTKEY = 0x0312;
 
     // WM_APP + 1. Lo manda Medios desde el pool de hilos para avisar de que hay
@@ -91,6 +100,9 @@ internal sealed unsafe class IslaWindow : IDisposable
     private bool _atajo;
     private bool _visible;
     private string? _sonando;
+    private bool _arrastrando;
+    private DateTime _leido;
+    private TimeSpan _duracion;
 
     public static IslaWindow? Create()
     {
@@ -140,6 +152,17 @@ internal sealed unsafe class IslaWindow : IDisposable
 
         if (_hwnd.IsNull) throw new InvalidOperationException("CreateWindowEx fallo");
         _instancia = this;
+
+        // La ventana mide 520x260 pero solo se pinta en 380x190, arriba y centrado.
+        // Sin region, estando abierta se tragaria los clics de los 70 px de margen
+        // de cada lado. Es FIJA y cubre a la vez la brasa (pegada arriba) y el panel
+        // abierto (que empieza 10 px mas abajo), asi que no hay que tocarla nunca ni
+        // puede recortar nada de lo que se dibuja.
+        (float pw, float ph, _, float plift) = Medidas(Estado.Abierta);
+        int rw = (int)Scale(pw);
+        int rh = (int)Scale(plift + ph);
+        int rx = (_w - rw) / 2;
+        PInvoke.SetWindowRgn(_hwnd, PInvoke.CreateRectRgn(rx, 0, rx + rw, rh), false);
 
         _visuals = new IslaVisuals(_hwnd, Scale(1f), _w);
         _visuals.GoTo(Estado.Brasa, abriendo: false, instantaneo: true);
@@ -220,11 +243,24 @@ internal sealed unsafe class IslaWindow : IDisposable
 
             case WM_TIMER:
                 if (wParam.Value == TimerAsoma) isla?.OnFinAsoma();
+                else if (wParam.Value == TimerReloj) isla?.OnReloj();
                 else isla?.OnTick();
                 return new LRESULT(0);
 
             case WM_APP_MEDIA:
                 isla?.OnMedios();
+                return new LRESULT(0);
+
+            case WM_LBUTTONDOWN:
+                isla?.OnPulsar(lParam);
+                return new LRESULT(0);
+
+            case WM_MOUSEMOVE:
+                isla?.OnArrastrar(lParam);
+                return new LRESULT(0);
+
+            case WM_LBUTTONUP:
+                isla?.OnSoltar(lParam);
                 return new LRESULT(0);
 
             case WM_HOTKEY:
@@ -258,6 +294,10 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// </summary>
     private void OnTick()
     {
+        // Arrastrando la barra el cursor puede salirse de la zona sin querer, y
+        // cerrar la isla en mitad del gesto seria perder el arrastre.
+        if (_arrastrando) return;
+
         PInvoke.GetCursorPos(out System.Drawing.Point p);
 
         // La zona crece al estar abierta: eso es la histeresis, y sale gratis.
@@ -306,7 +346,13 @@ internal sealed unsafe class IslaWindow : IDisposable
 
         bool otra = c.Titulo != _sonando;
         _sonando = c.Titulo;
+        _leido = DateTime.UtcNow;
+        _duracion = c.Duracion;
         _visuals.Mostrar(c);
+        _visuals.Progreso(
+            c.Duracion > TimeSpan.Zero ? c.Posicion / c.Duracion : 0d,
+            c.Duracion - c.Posicion,
+            c.Sonando);
 
         if (!otra) return;
         Console.WriteLine($"[isla] {c.App}: {c.Titulo} - {c.Artista} ({c.Duracion:mm\\:ss})");
@@ -360,6 +406,74 @@ internal sealed unsafe class IslaWindow : IDisposable
 
         _visuals.GoTo(efectivo, abriendo);
         RecogerClics(efectivo == Estado.Abierta);
+
+        // El reloj solo corre con el panel abierto. En reposo la isla no gasta ni un
+        // temporizador de mas.
+        if (efectivo == Estado.Abierta) PInvoke.SetTimer(_hwnd, TimerReloj, RelojMs, null);
+        else PInvoke.KillTimer(_hwnd, TimerReloj);
+    }
+
+    // --- los mandos ----------------------------------------------------------------
+
+    private static Vector2 Punto(LPARAM lParam)
+    {
+        int v = (int)lParam.Value;
+        return new Vector2((short)(v & 0xFFFF), (short)(v >> 16));
+    }
+
+    private void OnPulsar(LPARAM lParam)
+    {
+        Vector2 p = _visuals.EnPanel(Punto(lParam), _w);
+
+        switch (_visuals.Golpe(p))
+        {
+            case Zona.Anterior: Medios.Anterior(); break;
+            case Zona.Siguiente: Medios.Siguiente(); break;
+            case Zona.PlayPausa: Medios.Alternar(); break;
+
+            case Zona.Barra:
+                _arrastrando = true;
+                PInvoke.SetCapture(_hwnd);
+                _visuals.VistaPrevia(_visuals.FraccionEnX(p.X));
+                break;
+        }
+    }
+
+    private void OnArrastrar(LPARAM lParam)
+    {
+        if (!_arrastrando) return;
+        _visuals.VistaPrevia(_visuals.FraccionEnX(_visuals.EnPanel(Punto(lParam), _w).X));
+    }
+
+    private void OnSoltar(LPARAM lParam)
+    {
+        if (!_arrastrando) return;
+        _arrastrando = false;
+        PInvoke.ReleaseCapture();
+
+        if (_duracion <= TimeSpan.Zero) return;
+
+        // Una sola llamada, al soltar. Mandarla en cada WM_MOUSEMOVE seria pedirle a la
+        // app de turno treinta saltos por segundo.
+        double f = _visuals.FraccionEnX(_visuals.EnPanel(Punto(lParam), _w).X);
+        Medios.Buscar(_duracion * f);
+    }
+
+    /// <summary>
+    /// Los segundos que pasan. La posicion se extrapola desde la ultima que dio el
+    /// sistema, porque TimelinePropertiesChanged no llega cada segundo.
+    /// </summary>
+    private void OnReloj()
+    {
+        Cancion? c = Medios.Ultima;
+        if (c is null || _arrastrando) return;
+        _visuals.Transcurrido(Ahora(c));
+    }
+
+    private TimeSpan Ahora(Cancion c)
+    {
+        TimeSpan p = c.Sonando ? c.Posicion + (DateTime.UtcNow - _leido) : c.Posicion;
+        return p > c.Duracion ? c.Duracion : p;
     }
 
     /// <summary>
@@ -390,6 +504,7 @@ internal sealed unsafe class IslaWindow : IDisposable
     {
         PInvoke.KillTimer(_hwnd, TimerId);
         PInvoke.KillTimer(_hwnd, TimerAsoma);
+        PInvoke.KillTimer(_hwnd, TimerReloj);
         if (_atajo) PInvoke.UnregisterHotKey(_hwnd, HotkeyId);
         _visuals.Dispose();
         if (!_hwnd.IsNull) PInvoke.DestroyWindow(_hwnd);

@@ -45,7 +45,7 @@ internal static class Program
 
         DockConfig.EnsureSeeded();
         DockConfig config = DockConfig.Load(DockConfig.DefaultPath);
-        Console.WriteLine($"[config] {config.Apps.Count} apps");
+        Console.WriteLine($"[config] {config.Apps.Count} apps en dock.json");
 
         AutoStart.Sync(config.AutoStart);
 
@@ -126,8 +126,13 @@ internal static class Program
         MagnifySelfCheck.Run();
         GenieSelfCheck.Run();
 
-        DockConfig config = DockConfig.Load(DockConfig.DefaultPath);
-        Console.WriteLine($"[check] dock.json: {config.Apps.Count} apps validas");
+        // Resuelto para la pantalla principal: sin pantalla, Load ya no aplica ni la
+        // validacion ni la superposicion local, que es justo lo que se quiere probar.
+        string device = DockWindow.DeviceNameOf(
+            PInvoke.MonitorFromPoint(default, Windows.Win32.Graphics.Gdi.MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY));
+
+        DockConfig config = DockConfig.Load(DockConfig.DefaultPath).For(device);
+        Console.WriteLine($"[check] dock.json: {config.Apps.Count} apps validas en {device}");
 
         foreach (DockApp app in config.Apps)
         {

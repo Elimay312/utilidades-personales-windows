@@ -20,6 +20,7 @@ DispatchMessageW
 MonitorFromPoint
 MonitorFromWindow
 GetMonitorInfoW
+MONITORINFOEXW
 GetDpiForWindow
 GetDpiForMonitor
 

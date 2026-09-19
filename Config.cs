@@ -199,6 +199,12 @@ internal sealed class DockApp
     private const uint SeeMaskNoUi = 0x00000400;
 }
 
+/// <summary>Lo que una pantalla concreta quiere ver, dentro de dock.json.</summary>
+internal sealed record DockScreen
+{
+    public List<DockApp> Apps { get; init; } = [];
+}
+
 /// <summary>
 /// Contenido de dock.json.
 ///
@@ -243,6 +249,17 @@ internal sealed record DockConfig
     public bool Trash { get; init; } = true;
 
     public List<DockApp> Apps { get; init; } = [];
+
+    /// <summary>
+    /// Listas propias por pantalla, con el nombre de dispositivo como clave
+    /// (<c>\\.\DISPLAY2</c>). La que no tenga bloque ve <see cref="Apps"/>.
+    ///
+    /// El nombre de dispositivo no es el identificador perfecto —es posicional, así que
+    /// reordenar las salidas de la gráfica puede intercambiarlos— pero es estable entre
+    /// arranques con un montaje fijo, que es el caso que importa. El HMONITOR no vale:
+    /// cambia cada vez.
+    /// </summary>
+    public Dictionary<string, DockScreen> Pantallas { get; init; } = [];
 
     /// <summary>
     /// Lo que decía <c>dock.json</c> antes de aplicar <c>dock.local.json</c>. Hace falta
@@ -304,32 +321,46 @@ internal sealed record DockConfig
     /// </summary>
     public const string TrashTarget = "shell:RecycleBinFolder";
 
+    /// <summary>
+    /// Lee dock.json tal cual, <b>sin resolver de qué pantalla es</b>. Para eso está
+    /// <see cref="For"/>: el fichero se lee una vez y cada dock saca su lista de ahí.
+    /// </summary>
     public static DockConfig Load(string path)
     {
         DockConfig config = JsonSerializer.Deserialize<DockConfig>(File.ReadAllText(path), Options)
             ?? throw new InvalidDataException($"{path} está vacío");
 
-        List<DockApp> baseApps = Validate(config.Apps);
+        return config with { Magnification = Math.Clamp(config.Magnification, 1f, 2.5f) };
+    }
+
+    /// <summary>
+    /// La lista de iconos de UNA pantalla, ya validada y con la superposición local
+    /// aplicada. Si la pantalla no tiene bloque propio, ve la lista de por defecto.
+    /// </summary>
+    /// <param name="device">
+    /// Nombre de dispositivo del monitor, del estilo <c>\\.\DISPLAY2</c>.
+    /// </param>
+    public DockConfig For(string device)
+    {
+        bool propia = Pantallas.TryGetValue(device, out DockScreen? own);
+        List<DockApp> baseApps = Validate(propia ? own!.Apps : Apps);
 
         // La papelera se añade aquí y no en dock.json para que esté por defecto sin
         // que el usuario tenga que escribirla. Entra en la lista BASE, así que se
         // reordena y se quita arrastrando como cualquier otra: la superposición local
         // ya sabe recordar que se quitó.
-        if (config.Trash)
+        if (Trash)
         {
             baseApps.Add(new DockApp { Name = "Papelera", Target = TrashTarget, Separator = false });
         }
 
-        return new DockConfig
+        return this with
         {
-            IconSize = config.IconSize,
-            IconSpacing = config.IconSpacing,
-            AutoHide = config.AutoHide,
-            AutoStart = config.AutoStart,
-            Magnification = Math.Clamp(config.Magnification, 1f, 2.5f),
-            Trash = config.Trash,
             BaseApps = baseApps,
-            Apps = DockLocal.Load().ApplyTo(baseApps),
+            // Si la pantalla declara su propia lista en dock.json, no hereda la
+            // superposicion de por defecto: seria meterle los iconos que el usuario
+            // arrastro a OTRA pantalla dentro de una lista que puso a mano.
+            Apps = DockLocal.Load().For(device, fallback: !propia).ApplyTo(baseApps),
         };
     }
 
@@ -403,6 +434,23 @@ internal sealed class DockLocal
     /// <summary>Claves de dock.json que el usuario sacó del dock.</summary>
     public List<string> Quitadas { get; init; } = [];
 
+    /// <summary>
+    /// Una superposición por pantalla, con la misma clave que
+    /// <see cref="DockConfig.Pantallas"/>. El tipo se referencia a sí mismo porque el
+    /// bloque de una pantalla tiene exactamente la misma forma que la raíz; el
+    /// "pantallas" de dentro de un bloque no se usa y se queda vacío.
+    ///
+    /// Los tres campos de la raíz siguen valiendo, y hacen de por defecto: es lo que ve
+    /// una pantalla que todavía no se ha tocado, y es lo que hace que el
+    /// dock.local.json que ya existía no se pierda al actualizar.
+    /// </summary>
+    public Dictionary<string, DockLocal> Pantallas { get; init; } = [];
+
+    /// <summary>La superposición de una pantalla, o la de por defecto si no tiene.</summary>
+    public DockLocal For(string device, bool fallback = true) =>
+        Pantallas.TryGetValue(device, out DockLocal? own) ? own
+        : fallback ? this : new DockLocal();
+
     public static string DefaultPath => Path.Combine(DockConfig.Folder, "dock.local.json");
 
     private static readonly JsonSerializerOptions Write = new()
@@ -438,12 +486,16 @@ internal sealed class DockLocal
     /// dock.json y lo que hay ahora. Se deduce en vez de llevarla a mano para que no
     /// haya dos estados que mantener en sincronía.
     /// </summary>
-    public static void Save(IReadOnlyList<DockApp> baseApps, IReadOnlyList<DockApp> current)
+    public static void Save(string device, IReadOnlyList<DockApp> baseApps, IReadOnlyList<DockApp> current)
     {
         List<string> before = KeysOf(baseApps);
         List<string> after = KeysOf(current);
 
-        DockLocal local = new()
+        // Se parte de lo que ya hay en el fichero y solo se toca el bloque de ESTA
+        // pantalla: mover un icono en una no puede reordenar las otras, que es lo que
+        // "independientes" quiere decir.
+        DockLocal file = Load();
+        file.Pantallas[device] = new DockLocal
         {
             Orden = after,
             Quitadas = [.. before.Where(k => !after.Contains(k, StringComparer.OrdinalIgnoreCase))],
@@ -454,7 +506,7 @@ internal sealed class DockLocal
 
         try
         {
-            File.WriteAllText(DefaultPath, JsonSerializer.Serialize(local, Write));
+            File.WriteAllText(DefaultPath, JsonSerializer.Serialize(file, Write));
         }
         catch (Exception ex)
         {

@@ -33,4 +33,20 @@
     { "name": "Paint",         "target": "shell:AppsFolder/Microsoft.Paint_8wekyb3d8bbwe!App" },
     { "name": "Calculadora",   "target": "shell:AppsFolder/Microsoft.WindowsCalculator_8wekyb3d8bbwe!App" }
   ]
+
+  // Cada pantalla puede tener su propia lista. La que no tenga bloque aquí ve la
+  // de arriba. La clave es el nombre de dispositivo del monitor, que sale en la
+  // consola al arrancar: [dock] \\.\DISPLAY2 al 100%.
+  //
+  // No hace falta escribirlo a mano para tener docks distintos: arrastrar un
+  // icono a una pantalla, o sacarlo de ella, ya afecta solo a esa. Esto es para
+  // partir de una lista base distinta.
+  //
+  // "pantallas": {
+  //   "\\\\.\\DISPLAY2": {
+  //     "apps": [
+  //       { "name": "Explorador", "target": "C:/Windows/explorer.exe" }
+  //     ]
+  //   }
+  // }
 }

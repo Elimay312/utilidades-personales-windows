@@ -152,6 +152,9 @@ internal sealed unsafe class DockWindow : IDisposable
 
     private readonly HMONITOR _monitor;
 
+    /// <summary>Clave de esta pantalla en dock.json y dock.local.json.</summary>
+    private readonly string _device;
+
     /// <summary>
     /// Caché de iconos por target, compartida entre todos los docks. Sirve para dos
     /// cosas: al recargar el JSON solo se extraen los iconos nuevos, y con varios
@@ -274,13 +277,28 @@ internal sealed unsafe class DockWindow : IDisposable
     /// </summary>
     private readonly Dictionary<nint, (IconBitmap Shot, Box Source)> _shots = [];
 
-    public DockWindow(HMONITOR monitor, DockConfig config)
+    public DockWindow(HMONITOR monitor, DockConfig raw)
     {
         _monitor = monitor;
-        _config = config;
+        _device = DeviceNameOf(monitor);
+        _config = raw.For(_device);
 
         EnsureClassRegistered();
         Create();
+    }
+
+    /// <summary>
+    /// El nombre de dispositivo del monitor (<c>\\.\DISPLAY2</c>), que es la clave con
+    /// la que se guardan sus apps. El HMONITOR no sirve: cambia entre arranques.
+    /// </summary>
+    public static string DeviceNameOf(HMONITOR monitor)
+    {
+        MONITORINFOEXW info = default;
+        info.monitorInfo.cbSize = (uint)sizeof(MONITORINFOEXW);
+
+        if (!PInvoke.GetMonitorInfo(monitor, (MONITORINFO*)&info)) return "";
+
+        return new string((char*)&info.szDevice).TrimEnd('\0');
     }
 
     /// <summary>
@@ -555,7 +573,8 @@ internal sealed unsafe class DockWindow : IDisposable
     {
         // SW_SHOWNOACTIVATE: mostrar sin activar, coherente con WS_EX_NOACTIVATE.
         PInvoke.ShowWindow(_hwnd, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
-        Console.WriteLine($"[dock] HWND=0x{(nint)_hwnd.Value:X} DPI={_dpi} ({_dpi * 100 / 96}%)");
+        Console.WriteLine($"[dock] {_device} al {_dpi * 100 / 96}%, {_config.Apps.Count} iconos " +
+            $"(HWND=0x{(nint)_hwnd.Value:X})");
     }
 
     private static LRESULT WndProc(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam)
@@ -752,7 +771,7 @@ internal sealed unsafe class DockWindow : IDisposable
         DockConfig fresh;
         try
         {
-            fresh = DockConfig.Load(DockConfig.DefaultPath);
+            fresh = DockConfig.Load(DockConfig.DefaultPath).For(_device);
         }
         catch (Exception ex)
         {
@@ -1161,7 +1180,7 @@ internal sealed unsafe class DockWindow : IDisposable
         _visuals?.Puff(_menuIndex);
         Console.WriteLine($"[dock] quitada '{fuera.Name}'");
 
-        DockLocal.Save(_config.BaseApps, apps);
+        DockLocal.Save(_device, _config.BaseApps, apps);
         ReloadSiblings();
         _config = _config with { Apps = apps };
 
@@ -1304,7 +1323,7 @@ internal sealed unsafe class DockWindow : IDisposable
             quitado = true;
         }
 
-        DockLocal.Save(_config.BaseApps, apps);
+        DockLocal.Save(_device, _config.BaseApps, apps);
         ReloadSiblings();
 
         // Reconstruir con el orden nuevo. Los Shift vuelven a cero al crearse los
@@ -1581,7 +1600,7 @@ internal sealed unsafe class DockWindow : IDisposable
 
         if (!changed) return;
 
-        DockLocal.Save(_config.BaseApps, apps);
+        DockLocal.Save(_device, _config.BaseApps, apps);
         ReloadSiblings();
         _config = _config with { Apps = apps };
 

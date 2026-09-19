@@ -52,6 +52,9 @@ internal sealed unsafe class DockMenu(Compositor compositor, ContainerVisual par
 
     public bool IsOpen => _menu is not null;
 
+    /// <summary>Por dónde empieza el menú, en coordenadas de cliente del dock.</summary>
+    public float Top => _origin.Y;
+
     /// <summary>
     /// Cuántas filas caben en el hueco que hay encima de la barra. Con más, el menú se
     /// dibuja fuera de la ventana y las de arriba quedan cortadas y sin poder clicarse:

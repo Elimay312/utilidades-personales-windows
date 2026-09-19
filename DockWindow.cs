@@ -125,6 +125,16 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Identificador del temporizador de red de seguridad del inventario.
     private const nuint SafetyTimerId = 5;
 
+    /// Cada cuánto se vuelve a capturar la ventana que se está previsualizando.
+    ///
+    /// No es vídeo: es para que la miniatura no se quede congelada si la ventana cambia
+    /// mientras la miras. Medio segundo basta y cuesta un PrintWindow, no una sesión de
+    /// captura abierta (ver la enmienda 3 de SEGURIDAD.md).
+    private const uint PreviewRefreshMs = 500;
+
+    /// Identificador del temporizador que refresca la miniatura.
+    private const nuint PreviewTimerId = 6;
+
     /// Identificador del temporizador de un disparo que esconde el dock.
     private const nuint HideTimerId = 2;
 
@@ -230,6 +240,9 @@ internal sealed unsafe class DockWindow : IDisposable
 
     /// <summary>Primera ventana de las que se están viendo, porque no caben todas.</summary>
     private int _wheelFirst;
+
+    /// <summary>La miniatura de la ventana elegida, mientras la lista está abierta.</summary>
+    private PreviewOverlay? _preview;
 
     /// <summary>
     /// Icono que está botando porque su app se está abriendo, y hasta cuándo. El tope
@@ -696,6 +709,10 @@ internal sealed unsafe class DockWindow : IDisposable
                 self?.OnWatchdogTick();
                 return new LRESULT(0);
 
+            case WM_TIMER when wParam.Value == PreviewTimerId:
+                self?.ShowPreview();
+                return new LRESULT(0);
+
             case WM_TIMER when wParam.Value == RunningTimerId:
                 PInvoke.KillTimer(hwnd, RunningTimerId);
                 RefreshRunning();
@@ -1107,6 +1124,7 @@ internal sealed unsafe class DockWindow : IDisposable
     {
         _visuals?.CloseMenu();
         _wheelIndex = -1;
+        ClosePreview();
     }
 
     /// <summary>Cierra lo que esté abierto encima del dock antes de hacer otra cosa.</summary>
@@ -1474,6 +1492,7 @@ internal sealed unsafe class DockWindow : IDisposable
     private void OnMenuChoice(int choice)
     {
         _visuals?.CloseMenu();
+        ClosePreview();
 
         // El menú de la rueda es una lista de ventanas, no el del clic derecho. Aquí
         // sí se puede activar: el clic es lo que da el permiso que la rueda no da.
@@ -2158,6 +2177,54 @@ internal sealed unsafe class DockWindow : IDisposable
         }
 
         _visuals.MenuHot(_wheelAt - first);
+        ShowPreview();
+    }
+
+    /// <summary>
+    /// Captura la ventana elegida y la enseña encima de la lista.
+    ///
+    /// Va en el hilo de UI a propósito: PrintWindow sobre una ventana cuesta unos pocos
+    /// milisegundos y hacerlo en otro hilo obligaría a sincronizar con el compositor,
+    /// que solo se puede tocar desde aquí.
+    /// </summary>
+    private void ShowPreview()
+    {
+        if (_visuals is null || _wheelIndex < 0 || _wheelAt >= _wheelWindows.Length) return;
+
+        IconBitmap? shot = WindowCapture.Capture(_wheelWindows[_wheelAt]);
+        if (shot is null)
+        {
+            // Una ventana minimizada no se deja capturar. Mejor quitar la miniatura que
+            // dejar ahí la de OTRA ventana, que se leería como si fuera esta.
+            ClosePreview();
+            return;
+        }
+
+        MONITORINFO info = new() { cbSize = (uint)sizeof(MONITORINFO) };
+        if (!PInvoke.GetMonitorInfo(_monitor, &info)) return;
+
+        float anchor = _windowLeft + _curve.Project(
+            (_curve.RestLeft(_wheelIndex) + _curve.RestRight(_wheelIndex)) * 0.5f, _windowWidth, _lastRest);
+        int top = (int)(_windowTop + _visuals.MenuTop);
+
+        if (_preview is null)
+        {
+            _preview = PreviewOverlay.Show(_visuals, shot, _dpi / 96f, anchor, top, info.rcMonitor);
+            if (_preview is not null) PInvoke.SetTimer(_hwnd, PreviewTimerId, PreviewRefreshMs, null);
+        }
+        else
+        {
+            _preview.Update(shot, anchor, top, info.rcMonitor);
+        }
+    }
+
+    private void ClosePreview()
+    {
+        if (_preview is null) return;
+
+        PInvoke.KillTimer(_hwnd, PreviewTimerId);
+        _preview.Dispose();
+        _preview = null;
     }
 
     /// <summary>El título de una ventana, recortado para que quepa en una fila.</summary>
@@ -2309,6 +2376,7 @@ internal sealed unsafe class DockWindow : IDisposable
         PInvoke.KillTimer(_hwnd, HideTimerId);
         PInvoke.KillTimer(_hwnd, RunningTimerId);
         PInvoke.KillTimer(_hwnd, SafetyTimerId);
+        ClosePreview();
         CloseStack();
 
         if (!_hwnd.IsNull && _dropTarget is not null) PInvoke.RevokeDragDrop(_hwnd);

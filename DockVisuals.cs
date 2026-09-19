@@ -559,6 +559,8 @@ internal sealed unsafe class DockVisuals : IDisposable
 
     public int MenuHitTestClose(float x, float y) => _menu?.HitTestClose(x, y) ?? -1;
 
+    public float MenuTop => _menu?.Top ?? 0f;
+
     public void MenuHot(int index) => _menu?.SetHot(index);
 
     /// <summary>

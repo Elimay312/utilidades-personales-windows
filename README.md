@@ -17,11 +17,13 @@ no llega a verlas. Eso ocupa la §1 de `SEGURIDAD.md` y vale la pena leerlo.
 
 ## Estado
 
-**H1 — la cápsula.** Ya se ve: cristal oscuro, glifo de altavoz, barra con muelle y los
-cuatro morphs, con niveles falsos en `--demo`. Todavía no toca el volumen de verdad.
+**H2 — funciona.** Las teclas de volumen son suyas, el aviso de Windows no sale, y el HUD
+aparece también cuando el volumen lo cambia otra cosa — el mezclador, Spotify, unos
+auriculares. Falta pulirlo con varias pantallas (H3).
 
 ```
-Hud.exe --demo      # niveles falsos en bucle, para mirar los muelles
+Hud.exe             # lo normal
+Hud.exe --demo      # niveles falsos en bucle, sin tocar el volumen ni las teclas
 Hud.exe --check     # logica pura, no abre ventana
 ```
 
@@ -29,7 +31,7 @@ Hud.exe --check     # logica pura, no abre ventana
 |---|---|---|
 | H0 | `SEGURIDAD.md`, `auditar.ps1`, ventana, colocación por monitor y DPI | ✅ |
 | H1 | La cápsula: Composition, acrílico, barra, glifos, los cuatro morphs | ✅ |
-| H2 | Volumen de verdad: `RegisterHotKey` + `IAudioEndpointVolume` | |
+| H2 | Volumen de verdad: `RegisterHotKey` + `IAudioEndpointVolume` | ✅ |
 | H3 | Multi-monitor, DPI mixto, pantalla completa, autoarranque | |
 
 El plan original tenía dos hitos más, **el brillo y apartar el aviso nativo**, y los dos
@@ -82,7 +84,7 @@ qué este programa no toca ninguna ventana ajena — y por qué no le hace falta
 
 | Clave | Por defecto | Qué hace |
 |---|---|---|
-| `pasoVolumen` | `2` | Cuánto sube o baja por pulsación, en %. Windows usa 2 y no deja cambiarlo; aquí sí |
+| `pasoVolumen` | `2` | Cuánto sube o baja por pulsación, en %. Windows usa 2 y no deja cambiarlo; aquí sí. La primera pulsación alinea a la rejilla: desde un 37% con paso 5 se va a 40, no a 42 |
 | `msAutoocultar` | `1600` | Cuánto se queda en pantalla tras la última pulsación |
 | `posicion` | `"abajo"` | `"abajo"` como macOS, o `"arriba"` |
 | `autoArranque` | `false` | `HKCU\...\Run`, visible en la pestaña Inicio del Administrador de tareas |
@@ -91,7 +93,7 @@ qué este programa no toca ninguna ventana ajena — y por qué no le hace falta
 
 | | |
 |---|---|
-| Subir / bajar / silenciar | Las teclas de volumen del teclado (desde H2) — sin aviso de Windows |
+| Subir / bajar / silenciar | Las teclas de volumen del teclado — sin aviso de Windows |
 | Ctrl+Alt+H | Salir |
 
 Ctrl+Alt+H es hoy la única forma limpia de cerrarlo: no hay icono de bandeja. Mientras el HUD

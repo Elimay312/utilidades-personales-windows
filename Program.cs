@@ -26,6 +26,7 @@ internal static class Program
         {
             HudWindow.SelfCheck();
             Glifos.SelfCheck();
+            Volumen.SelfCheck();
             Console.WriteLine("[hud] --check OK");
             return 0;
         }

@@ -28,12 +28,40 @@ internal sealed unsafe class HudWindow
 {
     private const string ClassName = "HudVolumen";
 
-    // El numero es el articulo de SEGURIDAD.md §3.1. Los de volumen llegan en H2.
+    // Los atajos. Los tres de volumen son SEGURIDAD.md §3.1: no es un hook, es pedirle
+    // a Windows que mande WM_HOTKEY a NUESTRA ventana cuando se pulse una de tres
+    // teclas concretas. Y al registrarlas, Windows deja de verlas -- que es lo que hace
+    // que no salga su aviso gris.
     private const int AtajoSalir = 1;
+    private const int AtajoSubir = 2;
+    private const int AtajoBajar = 3;
+    private const int AtajoMudo = 4;
+
+    // Las tres teclas, con su valor, en vez de traerse el enum VIRTUAL_KEY entero de
+    // CsWin32. Tres constantes a la vista dicen "solo estas tres" mucho mejor que 250
+    // nombres generados, y esto es justo lo que va a mirar un auditor.
+    private const uint VK_VOLUME_MUTE = 0xAD;
+    private const uint VK_VOLUME_DOWN = 0xAE;
+    private const uint VK_VOLUME_UP = 0xAF;
 
     private const nuint TimerAutoocultar = 1;
     private const nuint TimerEsconder = 2;
     private const nuint TimerDemo = 3;
+    private const nuint TimerVigilar = 4;
+
+    /// <summary>
+    /// Cada cuanto se mira si el volumen ha cambiado por su cuenta: el mezclador, una
+    /// app, el mando de unos auriculares. Nuestras propias pulsaciones no pasan por
+    /// aqui, que para eso esta el atajo.
+    ///
+    /// <para>
+    /// ponytail: sondeo a 250 ms en vez de IAudioEndpointVolumeCallback. La isla ya
+    /// sondea audio ocho veces por segundo sin coste medible, y el callback de COM
+    /// entrega en un hilo ajeno y habria que marshalarlo. Si el retardo llega a
+    /// notarse, el techo es implementar la interfaz.
+    /// </para>
+    /// </summary>
+    private const uint MsVigilar = 250;
 
     /// <summary>
     /// Lo que se tarda en cerrar la capsula. Pasado esto la ventana se esconde de
@@ -79,6 +107,7 @@ internal sealed unsafe class HudWindow
     private HudVisuals? _visuals;
     private uint _dpi;
     private bool _atajoSalir;
+    private bool _teclas;
 
     /// <summary>Si la ventana esta a la vista ahora mismo.</summary>
     private bool _enPantalla;
@@ -147,6 +176,28 @@ internal sealed unsafe class HudWindow
             Console.Error.WriteLine("[hud] Ctrl+Alt+H ya esta cogido; se cierra desde el Administrador de tareas.");
         }
 
+        // En --demo no se registran las teclas ni se vigila nada: el modo de afinar
+        // muelles no tiene por que quedarse con las teclas de volumen de nadie.
+        if (!_demo)
+        {
+            _teclas = RegistrarVolumen();
+
+            Estado inicial = LeerVolumen();
+            if (inicial.Hay)
+            {
+                // Se guarda sin ensenar nada: el HUD no tiene por que saltar al arrancar.
+                _porcentaje = inicial.Porcentaje;
+                _silenciado = inicial.Mudo;
+                Console.WriteLine($"[hud] volumen al {inicial.Porcentaje}%{(inicial.Mudo ? " (silenciado)" : "")}");
+            }
+            else
+            {
+                Console.Error.WriteLine("[hud] no hay dispositivo de salida; se reintenta solo.");
+            }
+
+            PInvoke.SetTimer(_hwnd, TimerVigilar, MsVigilar, null);
+        }
+
         Console.WriteLine($"[hud] {pantalla} al {_dpi * 100 / 96}%, ventana {w}x{h} en {x},{y}");
         Console.WriteLine($"[hud] capsula {_config.Posicion}, paso {_config.PasoVolumen}%, {_config.MsAutoocultar} ms");
 
@@ -168,6 +219,87 @@ internal sealed unsafe class HudWindow
             Console.Error.WriteLine($"[hud] {ex.Message}");
             return null;
         }
+    }
+
+    // --- el volumen -------------------------------------------------------------------
+
+    private readonly record struct Estado(bool Hay, int Porcentaje, bool Mudo);
+
+    private static Estado LeerVolumen()
+    {
+        var v = Volumen.Leer();
+        return v is null ? default : new Estado(true, v.Value.Porcentaje, v.Value.Mudo);
+    }
+
+    /// <summary>
+    /// Las tres teclas, sin modificadores y <b>sin MOD_NOREPEAT</b>: al mantenerla
+    /// pulsada tiene que repetir, como hace Windows.
+    ///
+    /// <para>
+    /// Registrarlas es lo que hace que no salga el aviso gris del sistema: el shell
+    /// deja de recibir la pulsacion. Si fallan, el HUD sigue arrancando y se limita a
+    /// reflejar lo que pase -- pero entonces si se veran dos avisos, y por eso se dice
+    /// en la consola en vez de fallar en silencio.
+    /// </para>
+    /// </summary>
+    private bool RegistrarVolumen()
+    {
+        bool arriba = PInvoke.RegisterHotKey(_hwnd, AtajoSubir, 0, VK_VOLUME_UP);
+        bool abajo = PInvoke.RegisterHotKey(_hwnd, AtajoBajar, 0, VK_VOLUME_DOWN);
+        bool mudo = PInvoke.RegisterHotKey(_hwnd, AtajoMudo, 0, VK_VOLUME_MUTE);
+
+        if (arriba && abajo && mudo) return true;
+
+        Console.Error.WriteLine(
+            $"[hud] teclas de volumen no registradas (subir={arriba}, bajar={abajo}, silenciar={mudo}). " +
+            "Otro programa las tiene cogidas: el HUD solo reflejara los cambios, y saldra tambien el aviso de Windows.");
+        return arriba || abajo || mudo;
+    }
+
+    /// <summary>
+    /// Una de las tres teclas. El nivel se lee del sistema cada vez en vez de confiar
+    /// en el nuestro: entre pulsacion y pulsacion ha podido cambiarlo otro.
+    /// </summary>
+    private void OnTeclaVolumen(nuint atajo)
+    {
+        Estado e = LeerVolumen();
+        if (!e.Hay) return;
+
+        if (atajo == AtajoMudo)
+        {
+            bool mudo = !e.Mudo;
+            Volumen.Silenciar(mudo);
+            Mostrar(e.Porcentaje, mudo);
+            return;
+        }
+
+        int destino = Volumen.Paso(e.Porcentaje, _config.PasoVolumen, atajo == AtajoSubir);
+        if (destino != e.Porcentaje) Volumen.Poner(destino);
+
+        // Tocar el volumen quita el silencio, como hace Windows. Bajar a cero no: eso
+        // es bajar a cero, no silenciar.
+        bool sigueMudo = e.Mudo;
+        if (e.Mudo && destino > 0)
+        {
+            Volumen.Silenciar(false);
+            sigueMudo = false;
+        }
+
+        // Si no ha cambiado nada -- ya estabas en el tope -- Mostrar da el squash.
+        Mostrar(destino, sigueMudo);
+    }
+
+    /// <summary>
+    /// Lo ha cambiado otro: el mezclador, una app, el mando de unos auriculares. El
+    /// HUD sale igual, que es algo que el de Windows no hace.
+    /// </summary>
+    private void Vigilar()
+    {
+        Estado e = LeerVolumen();
+        if (!e.Hay) return;
+        if (e.Porcentaje == _porcentaje && e.Mudo == _silenciado) return;
+
+        Mostrar(e.Porcentaje, e.Mudo);
     }
 
     // --- ensenar y esconder -----------------------------------------------------------
@@ -350,11 +482,13 @@ internal sealed unsafe class HudWindow
             case WM_TIMER:
                 if (wParam.Value == TimerAutoocultar) hud?.Ocultar();
                 else if (wParam.Value == TimerEsconder) hud?.Esconder();
+                else if (wParam.Value == TimerVigilar) hud?.Vigilar();
                 else if (wParam.Value == TimerDemo) hud?.PasoDemo();
                 return new LRESULT(0);
 
             case WM_HOTKEY:
                 if (wParam.Value == AtajoSalir) Salir();
+                else hud?.OnTeclaVolumen(wParam.Value);
                 return new LRESULT(0);
 
             // Llega al enchufar y desenchufar pantallas. Un cambio de escala invalida
@@ -390,6 +524,16 @@ internal sealed unsafe class HudWindow
         {
             PInvoke.UnregisterHotKey(hud._hwnd, AtajoSalir);
             hud._atajoSalir = false;
+        }
+
+        // Devolver las teclas importa: mientras el HUD las tiene, Windows no las ve.
+        // Si se saliera sin soltarlas quedarian muertas hasta cerrar sesion.
+        if (hud._teclas)
+        {
+            PInvoke.UnregisterHotKey(hud._hwnd, AtajoSubir);
+            PInvoke.UnregisterHotKey(hud._hwnd, AtajoBajar);
+            PInvoke.UnregisterHotKey(hud._hwnd, AtajoMudo);
+            hud._teclas = false;
         }
 
         hud._visuals?.Dispose();

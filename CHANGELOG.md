@@ -1,5 +1,39 @@
 # Changelog
 
+## H2 — el volumen de verdad
+
+Las tres teclas son del HUD (`RegisterHotKey`, sin modificadores y **sin `MOD_NOREPEAT`**,
+que al mantenerlas pulsadas tienen que repetir), y el nivel se pone con
+`IAudioEndpointVolume` sobre `eRender`. Eso es lo que hace que el aviso gris de Windows no
+salga: el shell no llega a ver la tecla.
+
+**El paso se alinea a la rejilla en vez de sumar.** Desde un 37% con paso 5 se va a 40, no a
+42: si otra app te dejó el volumen en un valor raro, la primera pulsación lo cuadra. El
+`--check` recorre 1212 caminos — seis tamaños de paso por 101 puntos de partida, subiendo y
+bajando — y comprueba que desde cualquier sitio se llega al 0 y al 100 sin atascarse. Es lo
+que caza el clasico "con 99 y paso 2 nunca llegas al 100".
+
+Tocar el volumen quita el silencio, como hace Windows. Bajar a cero no: eso es bajar a cero.
+
+**El HUD sale también cuando lo cambia otro** — el mezclador, una app, el mando de unos
+auriculares — con un sondeo de 250 ms. `ponytail: sondeo en vez de
+IAudioEndpointVolumeCallback`; la isla ya sondea audio ocho veces por segundo sin coste
+medible, y el callback entrega en un hilo ajeno y habría que marshalarlo.
+
+Si las teclas no se pueden registrar porque otro programa las tiene, **el HUD arranca igual**
+en modo solo-reflejo y lo dice en la consola. Es el único caso en que se verían dos avisos.
+
+Medido de punta a punta sin inyectar teclas, cambiando el volumen por la misma API pública
+que usaría el mezclador: en reposo no se ve nada; al poner 25% el HUD sale solo con una onda
+y la barra a un cuarto; al poner 80%, tres ondas y la barra casi llena; y el volumen queda
+como estaba. La sonda también se estrelló una vez — violacion de segmento — por declarar un
+hueco de más en la vtable de `IMMDeviceEnumerator`: `GetDefaultAudioEndpoint` es el segundo
+método, no el tercero.
+
+Las tres teclas van como constantes a la vista (`0xAD`, `0xAE`, `0xAF`) en vez de traerse el
+enum `VIRTUAL_KEY` entero: tres números dicen "solo estas tres" mejor que 250 nombres
+generados, y es justo lo que mira un auditor.
+
 ## H1 — la cápsula
 
 Ya se ve. Cristal oscuro redondeado abajo y centrado, glifo de altavoz, barra con relleno, y

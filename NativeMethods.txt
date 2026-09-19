@@ -100,3 +100,15 @@ ID2D1SolidColorBrush
 // que era la via de los vecinos y que ademas recorta el dibujo.
 SetLayeredWindowAttributes
 LAYERED_WINDOW_ATTRIBUTES_FLAGS
+
+// --- H2: volumen maestro de la SALIDA (SEGURIDAD.md §3.2) ---
+// La misma API publica que usa el control de volumen de la barra de tareas. Un escalar
+// de 0 a 1: no se abre ningun flujo de audio, no hay nada que grabar. El endpoint es
+// eRender; eCapture no aparece en este proyecto y la auditoria lo comprueba.
+IMMDeviceEnumerator
+MMDeviceEnumerator
+IMMDevice
+IAudioEndpointVolume
+EDataFlow
+ERole
+CLSCTX

@@ -33,9 +33,9 @@ GetMonitorInfoW
 GetDpiForMonitor
 
 // --- Zona caliente: donde esta el cursor, y nada mas ---
-// SEGURIDAD.md §1.2: con WS_EX_TRANSPARENT no llegan mensajes de raton, asi que el
-// hover no se puede detectar con WM_MOUSEMOVE. GetCursorPos devuelve un punto; no
-// observa botones, no observa teclas, y no es un hook.
+// Recogida, la region de la ventana son los 140x5 px que se dibujan, asi que el hover
+// sobre la franja no se puede detectar con WM_MOUSEMOVE: no llega. GetCursorPos
+// devuelve un punto; no observa botones, no observa teclas, y no es un hook.
 GetCursorPos
 SetTimer
 KillTimer

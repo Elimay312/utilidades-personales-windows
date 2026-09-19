@@ -43,10 +43,10 @@ La isla tiene cuatro estados y solo enseña uno a la vez.
 | **Asomada** | cambió la canción, saltó un aviso, corre un pomodoro | 320 × 56 | ninguno |
 | **Abierta** | ratón quieto en el borde, o `Ctrl+Alt+I` | 380 × 180, despegada 10 px | los suyos |
 
-**En reposo no roba ni un clic.** Recogida, la ventana lleva `WS_EX_TRANSPARENT`, así que
-las pestañas del navegador siguen siendo del navegador. Solo al abrirse lo quita. Y para
-abrirse hay que **quedarse** 240 ms en la franja: cruzar el borde de camino al botón de
-cerrar no la despierta.
+**En reposo no roba ni un clic.** La ventana mide 520 × 260 pero `SetWindowRgn` la recorta
+a lo que se está dibujando: recogida son 140 × 5 px, así que las pestañas del navegador
+siguen siendo del navegador. Y para abrirse hay que **quedarse** 240 ms en la franja:
+cruzar el borde de camino al botón de cerrar no la despierta.
 
 | Gesto | Qué pasa |
 |---|---|
@@ -235,6 +235,14 @@ dibuja.
 **Cada asignación a una propiedad del compositor cruza a DWM.** El latido y la onda solo
 escriben si el cambio supera medio píxel. A ocho lecturas por segundo, escribir siempre
 se notaba en el medidor.
+
+**`WS_EX_TRANSPARENT` no deja pasar los clics.** Con el bit puesto y la isla recogida, un
+clic a 129 px de alto le llegaba igual y movía la barra de progreso 123 segundos — porque
+la región cubría 380 × 190 aunque solo se dibujaran 5 px de alto. **Lo único que de verdad
+aparta el ratón es `SetWindowRgn`**, que es lo que el dock tenía escrito en su README
+desde el primer día y yo no leí. La región se ajusta ahora a cada estado: al crecer se
+pone ya, y al encogerse se espera a que el muelle termine o recortaría la animación de
+cierre.
 
 **`WS_EX_TOOLWINDOW` es lo que la mantiene fuera del dock** y de la barra de tareas. Es
 la forma documentada que tiene una ventana de decir "no soy una app". El dock tuvo que

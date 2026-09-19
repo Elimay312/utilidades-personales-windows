@@ -95,7 +95,6 @@ internal sealed unsafe class IslaWindow : IDisposable
     private const uint WM_APP_REHACER = 0x8003;
 
     private const int MA_NOACTIVATE = 3;
-    private const nint WS_EX_TRANSPARENT = 0x00000020;
 
     private static readonly HWND HWND_TOPMOST = new(-1);
 
@@ -135,6 +134,8 @@ internal sealed unsafe class IslaWindow : IDisposable
     private DateTime _leido;
     private TimeSpan _duracion;
     private bool _apartada;
+    private DateTime _regionCuando;
+    private Estado _regionEstado = Estado.Brasa;
 
     public static IslaWindow? Create(IslaConfig config)
     {
@@ -172,13 +173,17 @@ internal sealed unsafe class IslaWindow : IDisposable
         fixed (char* titulo = "Isla")
         {
             _hwnd = PInvoke.CreateWindowEx(
-                // NOACTIVATE: nunca roba el foco. TOOLWINDOW: fuera de Alt+Tab y de la
-                // barra de tareas. TOPMOST: siempre encima. TRANSPARENT: arranca sin
-                // recoger un solo clic, que es el estado en el que mas tiempo esta.
+                // NOACTIVATE: nunca roba el foco. TOOLWINDOW: fuera de Alt+Tab, de la
+                // barra de tareas y del dock. TOPMOST: siempre encima.
+                //
+                // Aqui NO va WS_EX_TRANSPARENT, y es una correccion: NO deja pasar los
+                // clics. Medido -- con el bit puesto y la isla recogida, un clic a 129
+                // px de alto le llegaba igual y movia la barra de progreso 123 s. Lo
+                // unico que de verdad aparta el raton es la region, que es lo que el
+                // dock tenia escrito en su README desde el primer dia.
                 WINDOW_EX_STYLE.WS_EX_NOACTIVATE
                     | WINDOW_EX_STYLE.WS_EX_TOOLWINDOW
-                    | WINDOW_EX_STYLE.WS_EX_TOPMOST
-                    | WINDOW_EX_STYLE.WS_EX_TRANSPARENT,
+                    | WINDOW_EX_STYLE.WS_EX_TOPMOST,
                 new PCWSTR(clase), new PCWSTR(titulo),
                 WINDOW_STYLE.WS_POPUP,
                 _x, _y, _w, h,
@@ -188,16 +193,9 @@ internal sealed unsafe class IslaWindow : IDisposable
         if (_hwnd.IsNull) throw new InvalidOperationException("CreateWindowEx fallo");
         _instancia = this;
 
-        // La ventana mide 520x260 pero solo se pinta en 380x190, arriba y centrado.
-        // Sin region, estando abierta se tragaria los clics de los 70 px de margen
-        // de cada lado. Es FIJA y cubre a la vez la brasa (pegada arriba) y el panel
-        // abierto (que empieza 10 px mas abajo), asi que no hay que tocarla nunca ni
-        // puede recortar nada de lo que se dibuja.
-        (float pw, float ph, _, float plift) = Medidas(Estado.Abierta);
-        int rw = (int)Scale(pw);
-        int rh = (int)Scale(plift + ph);
-        int rx = (_w - rw) / 2;
-        PInvoke.SetWindowRgn(_hwnd, PInvoke.CreateRectRgn(rx, 0, rx + rw, rh), false);
+        // La region ES el hit-test de esta ventana, no un adorno: recorta los 520x260
+        // a lo que se este dibujando de verdad. Empieza en la brasa, que son 140x5.
+        AplicarRegion(Estado.Brasa);
 
         _visuals = new IslaVisuals(_hwnd, Scale(1f), _w);
         _visuals.GoTo(Estado.Brasa, abriendo: false, instantaneo: true);
@@ -427,9 +425,10 @@ internal sealed unsafe class IslaWindow : IDisposable
     // --- estado --------------------------------------------------------------------
 
     /// <summary>
-    /// Con WS_EX_TRANSPARENT no llegan mensajes de raton, asi que el hover se mira
-    /// preguntando donde esta el cursor. Una llamada cada 120 ms no se mide, y a cambio
-    /// la isla recogida no le quita un solo clic a las pestanas del navegador.
+    /// Recogida, la region de la ventana son 140x5 px, asi que por ahi no llegan
+    /// mensajes de raton de la franja entera. El hover se mira preguntando donde esta
+    /// el cursor: una llamada cada 120 ms no se mide, y a cambio la isla no tiene que
+    /// ocupar con region una zona que no dibuja para enterarse de que te acercas.
     /// </summary>
     private void OnTick()
     {
@@ -662,6 +661,12 @@ internal sealed unsafe class IslaWindow : IDisposable
             _volumenAnterior = v;
         }
 
+        if (_regionCuando != default && ahora > _regionCuando)
+        {
+            _regionCuando = default;
+            AplicarRegion(_regionEstado);
+        }
+
         // Una vez por segundo: apartarse de lo que este a pantalla completa y volver
         // al principio de la banda topmost.
         if ((_tic & 7) == 0)
@@ -772,7 +777,20 @@ internal sealed unsafe class IslaWindow : IDisposable
         _actual = efectivo;
 
         _visuals.GoTo(efectivo, abriendo);
-        RecogerClics(efectivo == Estado.Abierta);
+
+        // Al CRECER la region se pone ya, o recortaria lo que esta creciendo. Al
+        // ENCOGERSE hay que esperar a que el muelle termine, o se recortaria la
+        // animacion de cierre a media carrera. La espera la vigila el tic de 120 ms.
+        _regionEstado = efectivo;
+        if (abriendo)
+        {
+            _regionCuando = default;
+            AplicarRegion(efectivo);
+        }
+        else
+        {
+            _regionCuando = DateTime.UtcNow.AddMilliseconds(380);
+        }
 
         // El reloj solo corre con el panel abierto. En reposo la isla no gasta ni un
         // temporizador de mas.
@@ -847,15 +865,22 @@ internal sealed unsafe class IslaWindow : IDisposable
     }
 
     /// <summary>
-    /// WS_EX_TRANSPARENT es lo unico que deja pasar el raton cruzando procesos: el
-    /// HTTRANSPARENT del hit-test no lo hace, medido en el dock poniendo Paint debajo.
-    /// Solo estando abierta hay botones que pulsar, asi que solo entonces se quita.
+    /// Recorta la ventana a lo que se dibuja en ese estado. <b>Es lo unico que aparta
+    /// el raton de verdad</b>: WS_EX_TRANSPARENT no lo hace, y HTTRANSPARENT tampoco
+    /// cruza procesos -- las dos cosas medidas, la primera aqui y la segunda en el dock.
+    ///
+    /// Recogida, la isla pasa de tragarse un rectangulo invisible de 380x190 a ocupar
+    /// los 140x5 que de verdad se ven.
     /// </summary>
-    private void RecogerClics(bool recibir)
+    private void AplicarRegion(Estado estado)
     {
-        nint ex = PInvoke.GetWindowLongPtr(_hwnd, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE);
-        nint nuevo = recibir ? ex & ~WS_EX_TRANSPARENT : ex | WS_EX_TRANSPARENT;
-        if (nuevo != ex) PInvoke.SetWindowLongPtr(_hwnd, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE, nuevo);
+        (float w, float h, _, float lift) = Medidas(estado);
+        int rw = (int)Scale(w);
+        int rh = (int)Scale(h);
+        int rx = (_w - rw) / 2;
+        int ry = (int)Scale(lift);
+
+        PInvoke.SetWindowRgn(_hwnd, PInvoke.CreateRectRgn(rx, ry, rx + rw, ry + rh), false);
     }
 
     /// <summary>

@@ -108,6 +108,12 @@ Todo lo que hay. Falta probarlo en otros equipos y con otras aplicaciones de mú
   de su media.
 - **La isla salía en el dock como una app abierta.** Se arregló **en el dock**, que no
   miraba `WS_EX_TOOLWINDOW`. Excluirla por nombre habría acoplado los dos proyectos.
+- **Recogida se comía los clics de un rectángulo invisible de 380 × 190.** Lo encontró el
+  usuario al no poder clicar un texto de la terminal que caía debajo. Reproducido: con la
+  isla recogida, un clic a 129 px de alto movía la barra de progreso **123 segundos**.
+  `WS_EX_TRANSPARENT` estaba puesto y **no sirve para esto** — era la única cosa que M1
+  dejó sin comprobar, tras siete sondas que ninguna pasó su control. Ahora la región se
+  ajusta a cada estado; recogida son los 140 × 5 px que se ven.
 
 ### Premisas del plan que resultaron falsas
 

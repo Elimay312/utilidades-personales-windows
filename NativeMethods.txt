@@ -31,6 +31,14 @@ SHAppBarMessage
 APPBARDATA
 ABE_BOTTOM
 
+// --- Avisos de ventanas del shell. NO es un hook ---
+// La doc lo contrasta ella misma con SetWindowsHookEx: "the messages are received
+// through the specified window's WindowProc and not through a call back procedure".
+// No carga ninguna DLL en otro proceso. Ver la enmienda 3 de SEGURIDAD.md.
+RegisterShellHookWindow
+DeregisterShellHookWindow
+RegisterWindowMessageW
+
 // --- Raton, solo en la ventana propia (no es un hook) ---
 TrackMouseEvent
 SetCapture

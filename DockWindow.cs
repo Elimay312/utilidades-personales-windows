@@ -102,10 +102,21 @@ internal sealed unsafe class DockWindow : IDisposable
     /// y a 60 ms y sale igual—, pero recupera el sitio enseguida.
     private const uint WatchdogMs = 250;
 
-    /// Un latido de cada cuántos mira qué apps están abiertas. Reafirmar el z-order es
-    /// una llamada; recorrer procesos y ventanas no, y no hace falta cinco veces por
-    /// segundo.
-    private const int RunningEveryTicks = 4;
+    /// Red de seguridad del inventario de ventanas.
+    ///
+    /// El barrido ya no va por latido sino por aviso del shell. Esto queda para el caso
+    /// que los avisos no cubren: una ventana que nace sin título, se titula después y
+    /// nadie la activa nunca. Diez segundos frente al segundo de antes.
+    private const uint RunningSafetyMs = 10000;
+
+    /// Rebote de los avisos del shell: llegan a rachas al abrir una app.
+    private const uint ShellHookDebounceMs = 400;
+
+    /// Identificador del temporizador de rebote del inventario.
+    private const nuint RunningTimerId = 4;
+
+    /// Identificador del temporizador de red de seguridad del inventario.
+    private const nuint SafetyTimerId = 5;
 
     /// Identificador del temporizador de un disparo que esconde el dock.
     private const nuint HideTimerId = 2;
@@ -155,6 +166,18 @@ internal sealed unsafe class DockWindow : IDisposable
 
     private static ushort _classAtom;
 
+    /// <summary>
+    /// Id del mensaje "SHELLHOOK". No es constante de compilación: hay que pedirlo con
+    /// RegisterWindowMessage y resolverlo en el default del switch.
+    /// </summary>
+    private static uint _shellHookMessage;
+
+    /// <summary>Quién tiene el registro. Uno por proceso basta: los avisos son los mismos.</summary>
+    private static HWND _shellHookOwner;
+
+    /// <summary>Barrido en curso. Es uno para todos los docks, que comparten la pasada.</summary>
+    private static bool _checkingRunning;
+
     private readonly HMONITOR _monitor;
 
     /// <summary>Clave de esta pantalla en dock.json y dock.local.json.</summary>
@@ -191,8 +214,7 @@ internal sealed unsafe class DockWindow : IDisposable
     /// Estado de cada app: si corre y dónde está su ventana. Se recalcula fuera del
     /// hilo de UI porque resolver las MSIX obliga a recorrer procesos y ventanas.
     private AppState[] _state = [];
-    private bool _checkingRunning;
-    private int _watchdogTicks;
+    private string _lastRunningTrace = " ";
 
     /// <summary>
     /// Icono que está botando porque su app se está abriendo, y hasta cuándo. El tope
@@ -422,6 +444,9 @@ internal sealed unsafe class DockWindow : IDisposable
 
         _appBar = new AppBar(_hwnd, WM_APP_APPBAR);
         ReserveAppBarSpace();
+
+        RegisterShellHook();
+        PInvoke.SetTimer(_hwnd, SafetyTimerId, RunningSafetyMs, null);
 
         StartIconLoad();
     }
@@ -656,6 +681,15 @@ internal sealed unsafe class DockWindow : IDisposable
                 self?.OnWatchdogTick();
                 return new LRESULT(0);
 
+            case WM_TIMER when wParam.Value == RunningTimerId:
+                PInvoke.KillTimer(hwnd, RunningTimerId);
+                RefreshRunning();
+                return new LRESULT(0);
+
+            case WM_TIMER when wParam.Value == SafetyTimerId:
+                RefreshRunning();
+                return new LRESULT(0);
+
             case WM_TIMER when wParam.Value == PuffTimerId:
                 PInvoke.KillTimer(hwnd, PuffTimerId);
                 self?.StartIconLoad();
@@ -684,6 +718,7 @@ internal sealed unsafe class DockWindow : IDisposable
             case WM_APP_RUNNING:
                 if (self is not null)
                 {
+                    self.TraceRunning();
                     self._visuals?.SetRunning([.. self._state.Select(entry => entry.HasWindow)]);
                     self.DropDeadShots();
                     self.StopBounceIfOpened();
@@ -763,12 +798,26 @@ internal sealed unsafe class DockWindow : IDisposable
                 return new LRESULT(0);
 
             case WM_DESTROY:
+                if (hwnd == _shellHookOwner)
+                {
+                    PInvoke.DeregisterShellHookWindow(hwnd);
+                    _shellHookOwner = default;
+                }
+
                 Instances.Remove((nint)hwnd.Value);
 
                 // Solo el último apaga la luz. Con un dock daba igual; con uno por
                 // pantalla, cualquier DestroyWindow inesperado se llevaba los tres.
                 if (Instances.Count == 0) PInvoke.PostQuitMessage(0);
                 return new LRESULT(0);
+        }
+
+        // El id de "SHELLHOOK" se pide en tiempo de ejecución, así que no puede ser un
+        // case del switch.
+        if (_shellHookMessage != 0 && msg == _shellHookMessage)
+        {
+            OnShellHook((nuint)wParam.Value);
+            return new LRESULT(0);
         }
 
         return PInvoke.DefWindowProc(hwnd, msg, wParam, lParam);
@@ -959,8 +1008,8 @@ internal sealed unsafe class DockWindow : IDisposable
     }
 
     /// <summary>
-    /// Latido de una vez por segundo: reafirma el z-order y mira si hay algo a
-    /// pantalla completa.
+    /// Latido: reafirma el z-order y mira si hay algo a pantalla completa. El
+    /// inventario de ventanas ya NO va aquí, va por avisos del shell.
     /// </summary>
     private void OnWatchdogTick()
     {
@@ -972,17 +1021,8 @@ internal sealed unsafe class DockWindow : IDisposable
         }
 
         EnsureTopmost();
-
-        if (++_watchdogTicks < RunningEveryTicks) return;
-
-        _watchdogTicks = 0;
-        RefreshRunning();
     }
 
-    /// <summary>
-    /// Mira qué apps están abiertas, FUERA del hilo de UI: resolver las MSIX obliga a
-    /// recorrer la lista de procesos y eso no puede bloquear el ratón.
-    /// </summary>
     /// <summary>
     /// Lee la carpeta fuera del hilo de UI y avisa cuando esté. Extraer veinte iconos
     /// del shell tarda lo suyo, y este hilo es el que atiende el ratón.
@@ -1068,26 +1108,127 @@ internal sealed unsafe class DockWindow : IDisposable
         }
     }
 
-    private void RefreshRunning()
+    /// <summary>
+    /// Pide al shell que nos avise cuando nazca o muera una ventana, en vez de sondear.
+    ///
+    /// <b>No es un hook.</b> La documentación lo contrasta ella misma con el otro:
+    /// <i>"the messages are received through the specified window's WindowProc and not
+    /// through a call back procedure"</i>. No se carga ninguna DLL en ningún proceso
+    /// ajeno y no se instala ningún callback de bajo nivel: los avisos llegan a nuestro
+    /// WndProc como cualquier otro mensaje. La regla 3 de SEGURIDAD.md sigue intacta.
+    ///
+    /// Uno por proceso basta: los avisos son los mismos para las tres pantallas.
+    /// </summary>
+    private void RegisterShellHook()
     {
-        if (_checkingRunning || _loaded.Count == 0) return;
-        _checkingRunning = true;
+        if (!_shellHookOwner.IsNull) return;
 
-        HWND hwnd = _hwnd;
-        List<DockApp> apps = [.. _loaded.Select(entry => entry.App)];
+        if (_shellHookMessage == 0)
+        {
+            fixed (char* name = "SHELLHOOK")
+            {
+                _shellHookMessage = PInvoke.RegisterWindowMessage(new PCWSTR(name));
+            }
+        }
+
+        if (_shellHookMessage == 0 || !PInvoke.RegisterShellHookWindow(_hwnd))
+        {
+            // Sin avisos queda la red de seguridad, que barre cada diez segundos.
+            Console.WriteLine("[shell] RegisterShellHookWindow rechazado");
+            return;
+        }
+
+        _shellHookOwner = _hwnd;
+        Console.WriteLine($"[shell] avisos de ventanas en {_device}");
+    }
+
+    /// <summary>
+    /// Lo que el shell cuenta de las ventanas del escritorio. No hay
+    /// HSHELL_WINDOWMINIMIZED: minimizar no está en la lista, y no hace falta, porque
+    /// el puntito significa "tiene ventana" y una minimizada la sigue teniendo.
+    /// </summary>
+    private static void OnShellHook(nuint code)
+    {
+        // RUDEAPPACTIVATED es WINDOWACTIVATED con el bit alto puesto.
+        switch (code & ~(nuint)0x8000)
+        {
+            case 1:   // HSHELL_WINDOWCREATED
+            case 2:   // HSHELL_WINDOWDESTROYED
+            case 4:   // HSHELL_WINDOWACTIVATED
+            case 13:  // HSHELL_WINDOWREPLACED
+                ScheduleRunningRefresh();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Mira qué apps están abiertas, FUERA del hilo de UI: recorrer la lista de
+    /// procesos y todas las ventanas no puede bloquear el ratón.
+    ///
+    /// Es estático y hace UNA pasada para todos los docks. Lo caro —enumerar procesos y
+    /// ventanas— no depende de qué iconos tenga cada pantalla, y con una pantalla por
+    /// dock se estaba repitiendo entero tres veces.
+    /// </summary>
+    private static void RefreshRunning()
+    {
+        if (_checkingRunning) return;
+
+        // La lista de apps se lee aquí, en el hilo de UI, no dentro de la tarea.
+        List<(DockWindow Dock, List<DockApp> Apps)> targets = [];
+        foreach (DockWindow dock in Instances.Values)
+        {
+            if (dock._loaded.Count > 0) targets.Add((dock, [.. dock._loaded.Select(entry => entry.App)]));
+        }
+
+        if (targets.Count == 0) return;
+        _checkingRunning = true;
 
         Task.Run(() =>
         {
             try
             {
-                _state = Running.Check(apps);
-                PInvoke.PostMessage(hwnd, WM_APP_RUNNING, default, default);
+                Running.Snapshot snapshot = Running.Take();
+
+                foreach ((DockWindow dock, List<DockApp> apps) in targets)
+                {
+                    dock._state = Running.Check(apps, snapshot);
+                    PInvoke.PostMessage(dock._hwnd, WM_APP_RUNNING, default, default);
+                }
             }
             finally
             {
                 _checkingRunning = false;
             }
         });
+    }
+
+    /// <summary>
+    /// Deja rastro de qué apps se ven abiertas, solo cuando cambia. Sirve para poder
+    /// comprobar que los avisos del shell llegan sin tener que mirar los puntitos.
+    /// </summary>
+    private void TraceRunning()
+    {
+        string ahora = string.Join(" ", _loaded.Select((entry, i) =>
+            i < _state.Length && _state[i].HasWindow ? $"{entry.App.Name}:{_state[i].All.Length}" : ""))
+            .Trim();
+
+        if (ahora == _lastRunningTrace) return;
+
+        _lastRunningTrace = ahora;
+        Console.WriteLine($"[abiertas] {_device}: {(ahora.Length == 0 ? "ninguna" : ahora)}");
+    }
+
+    /// <summary>
+    /// Un aviso del shell dice que algo cambió. No se barre al momento: al abrir una app
+    /// llegan varios seguidos, y SetTimer sobre el mismo id reprograma en vez de añadir,
+    /// que es el rebote de toda la vida.
+    /// </summary>
+    private static void ScheduleRunningRefresh()
+    {
+        foreach (DockWindow dock in Instances.Values)
+        {
+            PInvoke.SetTimer(dock._hwnd, RunningTimerId, ShellHookDebounceMs, null);
+        }
     }
 
     /// <summary>
@@ -1932,6 +2073,8 @@ internal sealed unsafe class DockWindow : IDisposable
         if (_hwnd.IsNull) return;
         PInvoke.KillTimer(_hwnd, TopmostTimerId);
         PInvoke.KillTimer(_hwnd, HideTimerId);
+        PInvoke.KillTimer(_hwnd, RunningTimerId);
+        PInvoke.KillTimer(_hwnd, SafetyTimerId);
         CloseStack();
 
         if (!_hwnd.IsNull && _dropTarget is not null) PInvoke.RevokeDragDrop(_hwnd);

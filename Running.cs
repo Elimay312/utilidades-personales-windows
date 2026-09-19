@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
@@ -16,9 +16,16 @@ namespace Dock;
 /// los procesos a secas el Explorador salía siempre abierto, porque explorer.exe es el
 /// shell y nunca se va, y el puntito mentía.
 /// </remarks>
-internal readonly record struct AppState(HWND MainWindow)
+internal readonly record struct AppState(HWND MainWindow, HWND[]? Windows)
 {
     public bool HasWindow => !MainWindow.IsNull;
+
+    /// <summary>
+    /// Todas las ventanas de la app, no solo la primera. La lista completa ya se
+    /// construia; lo que habia era un colapso a una al final. De aqui salen ciclar con
+    /// la rueda y las miniaturas al pasar el raton.
+    /// </summary>
+    public HWND[] All => Windows ?? [];
 }
 
 /// <summary>
@@ -57,23 +64,53 @@ internal static class Running
     private static readonly ConcurrentDictionary<nint, uint> UwpOwners = new();
 
     /// <summary>
+    /// Lo caro, hecho UNA vez: recorrer los procesos del sistema y todas las ventanas
+    /// de primer nivel. No depende de que apps tenga cada dock, y con una pantalla por
+    /// dock se repetia tres veces por segundo para sacar exactamente lo mismo.
+    /// </summary>
+    public sealed record Snapshot(
+        List<(HWND Window, uint Pid)> Windows,
+        Dictionary<uint, string> ProcessNames)
+    {
+        /// <summary>PID -> familia MSIX, resuelta como mucho una vez por barrido.</summary>
+        public Dictionary<uint, string?> Families { get; } = [];
+    }
+
+    public static Snapshot Take()
+    {
+        Dictionary<uint, string> names = [];
+        foreach (Process process in Process.GetProcesses())
+        {
+            try { names[(uint)process.Id] = process.ProcessName; }
+            catch { /* un proceso que no se deja consultar no es ninguna de nuestras apps */ }
+            finally { process.Dispose(); }
+        }
+
+        return new Snapshot(TopLevelWindows(), names);
+    }
+
+    /// <summary>
     /// Resuelve de una pasada el estado de todas las apps. De una pasada y no una por
     /// una porque tanto los procesos como las ventanas se recorren enteros: hacerlo una
     /// vez por icono sería tirar el trabajo.
     /// </summary>
-    public static AppState[] Check(IReadOnlyList<DockApp> apps)
+    public static AppState[] Check(IReadOnlyList<DockApp> apps, Snapshot snapshot)
     {
-        AppState[] result = new AppState[apps.Count];
-
         // PID -> índice de app, para poder cruzar después con las ventanas.
-        Dictionary<uint, int> owners = MapProcessesToApps(apps);
+        Dictionary<uint, int> owners = MapProcessesToApps(apps, snapshot);
 
-        foreach ((HWND window, uint pid) in TopLevelWindows())
+        List<HWND>?[] found = new List<HWND>?[apps.Count];
+        foreach ((HWND window, uint pid) in snapshot.Windows)
         {
             if (!owners.TryGetValue(pid, out int index)) continue;
-            if (result[index].HasWindow) continue;
+            (found[index] ??= []).Add(window);
+        }
 
-            result[index] = new AppState(window);
+        AppState[] result = new AppState[apps.Count];
+        for (int i = 0; i < result.Length; i++)
+        {
+            if (found[i] is not { Count: > 0 } list) continue;
+            result[i] = new AppState(list[0], [.. list]);
         }
 
         return result;
@@ -85,7 +122,7 @@ internal static class Running
     /// AppUserModelID, así que se comparan por nombre de familia del paquete: la parte
     /// anterior al signo de admiración del AUMID.
     /// </summary>
-    private static Dictionary<uint, int> MapProcessesToApps(IReadOnlyList<DockApp> apps)
+    private static Dictionary<uint, int> MapProcessesToApps(IReadOnlyList<DockApp> apps, Snapshot snapshot)
     {
         Dictionary<string, int> byExeName = new(StringComparer.OrdinalIgnoreCase);
         Dictionary<string, int> byFamily = new(StringComparer.OrdinalIgnoreCase);
@@ -111,31 +148,28 @@ internal static class Running
 
         Dictionary<uint, int> owners = [];
 
-        foreach (Process process in Process.GetProcesses())
+        foreach ((uint pid, string name) in snapshot.ProcessNames)
         {
-            try
+            if (byExeName.TryGetValue(name, out int direct))
             {
-                uint pid = (uint)process.Id;
+                owners[pid] = direct;
+                continue;
+            }
 
-                if (byExeName.TryGetValue(process.ProcessName, out int direct))
-                {
-                    owners[pid] = direct;
-                    continue;
-                }
+            if (byFamily.Count == 0) continue;
 
-                if (byFamily.Count == 0) continue;
-                if (FamilyOfProcess(pid) is string family && byFamily.TryGetValue(family, out int packaged))
-                    owners[pid] = packaged;
-            }
-            catch
+            // La familia se resuelve como mucho una vez por barrido, no una por dock:
+            // son unos cientos de OpenProcess + GetPackageFamilyName y con tres
+            // pantallas se hacian tres veces para sacar lo mismo.
+            if (!snapshot.Families.TryGetValue(pid, out string? family))
             {
-                // Un proceso que no se deja consultar no es un error: simplemente no es
-                // ninguna de nuestras apps.
+                try { family = FamilyOfProcess(pid); }
+                catch { family = null; }
+                snapshot.Families[pid] = family;
             }
-            finally
-            {
-                process.Dispose();
-            }
+
+            if (family is not null && byFamily.TryGetValue(family, out int packaged))
+                owners[pid] = packaged;
         }
 
         return owners;

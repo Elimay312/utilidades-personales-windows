@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Windows.Win32;
 
@@ -23,7 +24,7 @@ internal static class Program
         switch (args.Length > 0 ? args[0] : string.Empty)
         {
             case "--check":   return Check();
-            case "--indice":  return Indice();
+            case "--indice":  return VolcarIndice(args.Length > 1 && args[1] == "--todo");
             case "--buscar":  return Buscar(args.Length > 1 ? args[1] : string.Empty);
             case "--olvidar": return Olvidar();
             case "--ayuda" or "-h" or "/?": return Ayuda();
@@ -66,8 +67,41 @@ internal static class Program
     }
 
     private static int Check()   => NoTodavia("--check", "H2");
-    private static int Indice()  => NoTodavia("--indice", "H1");
     private static int Olvidar() => NoTodavia("--olvidar", "H3");
+
+    /// <summary>
+    /// Cuantas aplicaciones hay, de donde salen y cuanto costo. El desglose por fuente se
+    /// queda: es lo que contesta "me falta una app" sin tener que adivinar en cual de las
+    /// dos deberia estar.
+    /// </summary>
+    private static int VolcarIndice(bool todo)
+    {
+        Stopwatch reloj = Stopwatch.StartNew();
+        List<Entrada> appsFolder = Indice.AppsFolder();
+        long msFolder = reloj.ElapsedMilliseconds;
+
+        reloj.Restart();
+        List<Entrada> menus = Indice.MenusInicio();
+        long msMenus = reloj.ElapsedMilliseconds;
+
+        HashSet<string> enFolder = new(appsFolder.Select(e => e.Nombre), StringComparer.OrdinalIgnoreCase);
+        int soloEnMenus = menus.Count(e => !enFolder.Contains(e.Nombre));
+
+        Console.WriteLine($"shell:AppsFolder   {appsFolder.Count,5}   {msFolder,4} ms");
+        Console.WriteLine($"menus Inicio .lnk  {menus.Count,5}   {msMenus,4} ms   ({soloEnMenus} no estan en AppsFolder)");
+        Console.WriteLine($"indice             {appsFolder.Count + soloEnMenus,5}   {msFolder + msMenus,4} ms");
+        Console.WriteLine();
+
+        List<Entrada> indice = Indice.Construir();
+        int cuantas = todo ? indice.Count : 40;
+        foreach (Entrada e in indice.OrderBy(e => e.Nombre, StringComparer.OrdinalIgnoreCase).Take(cuantas))
+        {
+            Console.WriteLine($"  {e.Nombre,-45} {e.Destino}");
+        }
+        if (cuantas < indice.Count) Console.WriteLine($"  ... y {indice.Count - cuantas} mas (--indice --todo)");
+
+        return 0;
+    }
 
     private static int Buscar(string consulta)
     {

@@ -9,3 +9,14 @@
 // --- Consola estando compilado como WinExe (H0) ---
 // Sin esto, --check y --buscar no tendrian donde escribir al lanzarse desde una terminal.
 AttachConsole
+
+// --- Inventario de aplicaciones (H1, SEGURIDAD.md §3.1) ---
+// La misma carpeta virtual que enumera el menu Inicio para pintarse a si mismo. Se leen
+// SOLO el nombre visible y el destino; no se abre ningun ejecutable ni se mira dentro de
+// nada. IShellLink NO esta aqui a proposito: los .lnk se lanzan tal cual y el shell los
+// resuelve, asi que ni su destino se lee.
+SHCreateItemFromParsingName
+IShellItem
+IEnumShellItems
+BHID_EnumItems
+SIGDN

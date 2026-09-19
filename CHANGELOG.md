@@ -1,5 +1,25 @@
 # Changelog
 
+## El brillo sale del alcance
+
+Con el volumen el HUD queda limpio: capturamos la tecla y el aviso de Windows no sale. Con el
+brillo no se puede — las teclas Fn van por ACPI, no hay nada que capturar, y Windows enseña el
+suyo igual. Enseñar el brillo significaba ver dos indicadores, que es lo que este proyecto
+existe para evitar.
+
+Se cae el módulo de brillo, se cae H3, y se cae con ellos `System.Management`: **vuelve a haber
+una sola dependencia**. `auditar.ps1` gana un guardia de alcance que falla si reaparece
+`WmiMonitor`, `System.Management`, `ManagementObject` o `root\WMI`, porque un alcance que no se
+comprueba se vuelve a ensanchar solo.
+
+Arreglado de paso un fallo de la propia puerta: `Codigo` sabe saltar `//` y `/* */` pero no
+`<!-- -->`, así que explicar en el `.csproj` por qué **no** está `System.Management` hacía
+saltar la regla que comprueba que no está. Ahora salta los comentarios XML, y verificado que
+sigue atrapando un `PackageReference` de verdad. El `auditar.ps1` de los vecinos tiene el mismo
+agujero sin disparar.
+
+La clase de ventana pasa de `HudVolumenBrillo` a `HudVolumen`, que es lo que es.
+
 ## H4 retirado antes de escribirse
 
 El hito que justificaba la única excepción del documento no existe. Dos motivos

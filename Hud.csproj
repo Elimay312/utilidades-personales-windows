@@ -32,11 +32,10 @@
     <!-- Source generator: no aparece en la salida. Todo lo Win32 sale de
          NativeMethods.txt, que es la lista cerrada que audita SEGURIDAD.md.
 
-         La segunda dependencia de este proyecto sera System.Management, y entra en el
-         hito del brillo (SEGURIDAD.md §3.3): WmiMonitorBrightnessEvent es la unica
-         forma de enterarse de que has pulsado Fn+brillo, y hacerlo con IWbemServices
-         crudo son 250 lineas de COM contra 30. Se decidio preguntando, que es lo que
-         pide CLAUDE.md. Hasta entonces aqui solo hay una. -->
+         Iba a haber una segunda, System.Management, para leer el brillo. El brillo se
+         cayo del alcance al medirlo (SEGURIDAD.md §1) y la dependencia se cayo con el.
+         Sigue habiendo una, y auditar.ps1 comprueba que WMI no vuelve por la puerta de
+         atras. -->
     <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.333" PrivateAssets="all" />
   </ItemGroup>
 

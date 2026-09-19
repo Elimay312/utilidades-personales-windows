@@ -1,11 +1,14 @@
 # hud
 
-El aviso de volumen y brillo de Windows, rehecho. El de serie no cambia desde 2012: una caja
-gris en la esquina superior izquierda que aparece de golpe y desaparece de golpe.
+El aviso de volumen de Windows, rehecho. El de serie no cambia desde 2012: una caja gris en la
+esquina superior izquierda que aparece de golpe y desaparece de golpe.
 
 Este sale abajo, centrado, es una cápsula acrílica, y **se transforma** en vez de ir y venir:
-si pulsas brillo mientras está enseñando el volumen, no se cierra para volver a abrirse —
-cambia de icono, de color y de nivel sin moverse del sitio.
+si sigues pulsando no se cierra para volver a abrirse — la barra vuelve a muellear y el glifo
+morphea en el sitio.
+
+Y el aviso de Windows **no sale**, sin tocar nada de nadie: al registrar las teclas, el shell
+no llega a verlas. Eso ocupa la §1 de `SEGURIDAD.md` y vale la pena leerlo.
 
 .NET 10, Win32 crudo y `Windows.UI.Composition`, como el resto de la familia
 (`..\dock`, `..\isla`, `..\lanzador`, `..\quicklook`).
@@ -20,16 +23,17 @@ dibuja nada ni toca el volumen: la ventana se crea pero no se enseña.
 | Hito | Qué | Estado |
 |---|---|---|
 | H0 | `SEGURIDAD.md`, `auditar.ps1`, ventana, colocación por monitor y DPI | ✅ |
-| H1 | La cápsula: Composition, acrílico, barra, glifos, los cinco morphs | |
+| H1 | La cápsula: Composition, acrílico, barra, glifos, los cuatro morphs | |
 | H2 | Volumen de verdad: `RegisterHotKey` + `IAudioEndpointVolume` | |
-| H3 | Brillo de la pantalla interna: WMI, solo lectura | |
-| H4 | ~~Apartar el flyout nativo~~ — **no hace falta y no se puede**, ver abajo | ⚪ |
-| H5 | Multi-monitor, DPI mixto, pantalla completa, autoarranque | |
+| H3 | Multi-monitor, DPI mixto, pantalla completa, autoarranque | |
 
-## Por qué no hay H4
+El plan original tenía dos hitos más, **el brillo y apartar el aviso nativo**, y los dos
+murieron midiendo antes de costar una línea de código. Está contado justo debajo.
+
+## Los dos hitos que murieron midiendo
 
 El plan tenía un hito entero para apartar el aviso nativo de Windows, y era el que justificaba
-la única excepción de `SEGURIDAD.md`. No existe, por dos motivos independientes, los dos
+la única excepción de `SEGURIDAD.md`. No hizo falta, por dos motivos independientes, los dos
 medidos:
 
 **No se puede.** El aviso no es una ventana. Una sonda tomó 6111 muestras de la capa de
@@ -42,8 +46,10 @@ así que el shell no la ve, y cambiar el volumen por `IAudioEndpointVolume` no d
 aviso. Medido con una sonda que solo registra las tres teclas: **el recuadro gris no apareció
 ni una vez**, y el volumen tampoco se movió — que es la otra mitad de la prueba.
 
-Lo que **sigue saliendo** es el aviso de brillo, porque sus teclas van por ACPI y no hay nada
-que capturar. Eso no tiene solución permitida, y no la tiene prohibida que funcione tampoco.
+**Y por eso tampoco hay brillo.** Sus teclas van por ACPI, no se pueden capturar, y el aviso de
+Windows saldría igual: dos indicadores, que es lo que este proyecto existe para evitar. Antes
+de que se cayera, el brillo era la mitad del alcance y la única razón para una segunda
+dependencia. Ahora el HUD hace una cosa y la hace entera.
 
 ## Cómo se construye
 
@@ -80,11 +86,29 @@ qué este programa no toca ninguna ventana ajena — y por qué no le hace falta
 
 | | |
 |---|---|
-| Subir / bajar / silenciar | Las teclas de volumen del teclado (desde H2) |
+| Subir / bajar / silenciar | Las teclas de volumen del teclado (desde H2) — sin aviso de Windows |
 | Ctrl+Alt+H | Salir |
 
-Ctrl+Alt+H es hoy la única forma limpia de cerrarlo, y el cierre limpio importa: es lo que
-devuelve el aviso nativo a su sitio.
+Ctrl+Alt+H es hoy la única forma limpia de cerrarlo: no hay icono de bandeja. Mientras el HUD
+no corre, las teclas de volumen vuelven a ser de Windows, con su recuadro gris y todo.
+
+## Los cuatro morphs
+
+Es la razón de ser del proyecto, así que van escritos:
+
+1. **Entrada y salida.** La cápsula no aparece: crece desde una línea fina, con muelle
+   (damping 0.8, periodo 55 ms), deslizando hacia arriba y apareciendo. Al irse, lo contrario.
+2. **El relleno de la barra.** `ExpressionAnimation` sobre un escalar al que se escribe con
+   muelle. Nunca un keyframe lineal: la barra tiene que sentir inercia.
+3. **Silencio.** El relleno colapsa a cero con muelle, el glifo del altavoz morphea a
+   silenciado, y la cápsula se destiñe. No es un icono que se cambia: es el mismo que pierde
+   las ondas.
+4. **El tope.** Subir al 100% o bajar al 0% no cambia nada, así que sin esto no habría
+   respuesta ninguna: la cápsula da un squash de 1.03 a 1.0. Resuelve gratis el único agujero
+   de UX que tenía el diseño.
+
+Y la regla que los gobierna: **si el HUD ya está en pantalla, no se cierra para volver a
+abrirse.** Todo pasa en el sitio.
 
 ## Decisiones que explican el resto
 
@@ -92,10 +116,9 @@ devuelve el aviso nativo a su sitio.
    una tecla de volumen, y está prohibida (regla 3 y 4). Se usa `RegisterHotKey` sobre tres
    teclas concretas, que **consume** la pulsación — por eso el volumen lo pone el HUD, y por
    eso el paso es configurable.
-2. **El brillo se observa, no se escribe.** Las teclas Fn de brillo van por ACPI y no llegan
-   como tecla; Windows ya cambia el brillo solo. El HUD se entera por
-   `WmiMonitorBrightnessEvent` y lo dibuja. `WmiSetBrightness` no está en el código, y
-   `auditar.ps1` comprueba que sigue sin estar.
+2. **El alcance lo vigila la auditoría.** El brillo se cayó midiendo, y con él WMI y la segunda
+   dependencia. `auditar.ps1` falla si reaparece `WmiMonitor`, `System.Management` o
+   `ManagementObject`: un alcance que no se comprueba se vuelve a ensanchar solo.
 3. **La animación no corre en nuestro hilo.** Todo es `ExpressionAnimation` sobre un
    `CompositionPropertySet`, como el dock: el hilo de UI solo escribe escalares y el resto lo
    hace DWM. Ojo con el límite de longitud de las expresiones, que el dock alcanzó dos veces.

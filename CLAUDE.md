@@ -1,9 +1,9 @@
 # Cómo se trabaja en este proyecto
 
-El aviso de volumen y brillo de Windows, rehecho: .NET 10, Win32 crudo y
-`Windows.UI.Composition`. Lee el [README](README.md) para saber qué hace, y
-[SEGURIDAD.md](SEGURIDAD.md) **antes de escribir código** — aquí más que en los vecinos,
-porque este proyecto tiene una excepción que ellos no tienen.
+El aviso de volumen de Windows, rehecho: .NET 10, Win32 crudo y `Windows.UI.Composition`.
+Lee el [README](README.md) para saber qué hace, y [SEGURIDAD.md](SEGURIDAD.md) **antes de
+escribir código** — su §1 es la que explica por qué el proyecto acabó siendo la mitad de
+pequeño de lo que se planeó, y es la que evita volver a agrandarlo por error.
 
 ---
 
@@ -16,11 +16,12 @@ porque este proyecto tiene una excepción que ellos no tienen.
    la proporción que cuesta abrir la siguiente.
 2. **`powershell -File auditar.ps1` antes de cada commit.** Tiene que decir `TODO LIMPIO`.
 3. **Comentarios en español, código en inglés.** Los tipos de dominio van en español, como en
-   la isla: `Volumen`, `Brillo`, `Glifos`, `FlyoutNativo`.
+   la isla: `Volumen`, `Glifos`, `Capsula`.
 4. **Solo lo que se pide.** Sin features extra, sin abstracciones especulativas, sin capas ni
    ficheros de más. No hay interfaces con una implementación ni fábricas de un producto.
-5. **Dos dependencias, y la segunda costó preguntarlo.** `CsWin32` y, desde H3,
-   `System.Management` para `WmiMonitorBrightnessEvent`. No hay una tercera sin preguntar.
+5. **Una dependencia: `CsWin32`, que es un generador y no aparece en la salida.** Hubo una
+   segunda aprobada —`System.Management`, para el brillo— y se cayó con el brillo. No hay
+   una segunda sin preguntar.
 
 ### Parar y preguntar antes de
 
@@ -47,6 +48,9 @@ Los hitos están en el README. El orden no es negociable por una razón concreta
 con datos falsos** (`--demo`), antes de tocar audio. Afinar un muelle mientras peleas con COM
 es cómo se pierde un día sin saber cuál de las dos cosas está mal.
 
+Y antes de dar por hecho algo del sistema operativo, se mide con una sonda del scratchpad. Dos
+hitos enteros del plan original murieron así, y los dos antes de costar una línea de código.
+
 ---
 
 ## Medir, no suponer
@@ -60,15 +64,16 @@ sabe que la intuición falla:
    La versión buena mide su propio intervalo y se declara no concluyente si hay un hueco de
    más de 900 ms. Y antes de eso, la versión cero no sabía distinguir "no hay ventana" de
    "nadie pulsó nada". **Dos mentiras distintas de la misma sonda, en la misma tarde.**
-2. **`WmiMonitorBrightnessEvent` puede no llegar** en algunas máquinas, o pedir permisos que no
-   tenemos. Se comprueba en H3 antes de construir nada encima. El plan B es sondeo, nunca
-   elevar el proceso.
+2. **Lo que el sistema te da no es lo que crees.** El aviso nativo parecía una ventana que
+   apartar: no lo es. Las teclas Fn de brillo parecían teclas: no lo son. Las dos cosas
+   costaron una sonda cada una y las dos cambiaron el alcance del proyecto. Antes de diseñar
+   sobre una suposición del sistema operativo, mídela.
 3. **`WS_EX_TRANSPARENT` no deja pasar los clics entre procesos.** Lo midió la isla con Paint
    detrás. Lo único que aparta el ratón es `SetWindowRgn`, y la región **también recorta el
    dibujo**, así que tiene que cubrir la cápsula entera incluido el squash del tope.
 
 Y la costumbre que va con todo esto: **cuando arregles algo, mete el fallo a propósito otra
-vez** y comprueba que la prueba lo detecta. Así se validó la regla 17 en H0.
+vez** y comprueba que la prueba lo detecta. Así se validaron las reglas 15 y 17.
 
 Las sondas van en el scratchpad, no en el repo. Lo que sí vive en el repo es `--check`, para lo
 que es lógica pura.
@@ -97,9 +102,9 @@ que es lógica pura.
    precalculados en el property set.
 2. **El HUD nunca roba el foco.** Sale mientras escribes. `WS_EX_NOACTIVATE` no basta: hay que
    responder `MA_NOACTIVATE` a `WM_MOUSEACTIVATE`.
-3. **Se transforma, no va y viene.** Es la razón de ser del proyecto. Cualquier cambio que haga
-   que el HUD se cierre y se vuelva a abrir para cambiar de volumen a brillo está mal, aunque
-   funcione.
+3. **Se transforma, no va y viene.** Es la razón de ser del proyecto. Si pulsas volumen otra
+   vez con el HUD abierto, no se cierra y se reabre: la barra vuelve a muellear y el glifo
+   morphea en el sitio. Cualquier cambio que rompa eso está mal, aunque funcione.
 
 ---
 

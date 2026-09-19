@@ -66,15 +66,17 @@ regla 15 vuelve a ser absoluta. No hay `FlyoutNativo.cs`, no hay `FindWindow`, n
 
 La función que parecía necesitar el permiso más caro del documento **no necesitaba existir**.
 
-### Lo que queda sin resolver, dicho en voz alta
+### Y el brillo se cayó del proyecto por la misma medición
 
-**Con el brillo no funciona.** Las teclas Fn de brillo van por ACPI, no llegan como tecla, y no
-hay nada que registrar — medido: la sonda no las ve. Windows sigue enseñando su aviso al
-pulsarlas. Si el HUD enseña el brillo, ahí sí habrá dos indicadores, y no hay ninguna forma
-permitida de evitarlo: el aviso de brillo tampoco es una ventana.
+Con el brillo el truco no funciona: las teclas Fn van por ACPI, no llegan como tecla —medido,
+la sonda que sí mira el teclado no las ve— y no hay nada que registrar. Windows sigue
+enseñando su aviso al pulsarlas, y ese tampoco es una ventana.
 
-Eso es una decisión de producto, no de seguridad, y se toma fuera de este documento. Lo que
-este documento fija es que **no se resuelve tocando nada de nadie**.
+Así que enseñar el brillo significaba ver dos indicadores, que es exactamente lo que este
+proyecto existe para evitar. **Se decidió quitarlo del alcance**: el HUD es de volumen y solo
+de volumen. Con eso desaparecen el módulo de brillo, la dependencia `System.Management` y la
+tentación de escribir `WmiSetBrightness` — y `auditar.ps1` lo vigila, porque un alcance que no
+se comprueba se vuelve a ensanchar solo.
 
 ---
 
@@ -82,7 +84,7 @@ este documento fija es que **no se resuelve tocando nada de nadie**.
 
 | # | Prohibido | Por qué |
 |---|---|---|
-| 1 | Driver de kernel (`.sys`), servicio de Windows, tarea programada, o cualquier componente elevado | Es lo que hace que un antivirus marque a un programa de escritorio. Corre siempre como usuario normal, `requestedExecutionLevel` `asInvoker`. Y el brillo **no lo necesita**: WMI lo deja leer al usuario de la sesión interactiva |
+| 1 | Driver de kernel (`.sys`), servicio de Windows, tarea programada, o cualquier componente elevado | Es lo que hace que un antivirus marque a un programa de escritorio. Corre siempre como usuario normal, `requestedExecutionLevel` `asInvoker` |
 | 2 | Leer sensores de hardware: temperaturas, voltajes, RPM, puertos I/O, MSR, SMBus | Requiere driver. No existe forma en modo usuario |
 | 3 | `SetWindowsHookEx` global y `SetWinEventHook` | Un hook global carga una DLL nuestra dentro de otros procesos, o instala un callback de bajo nivel. *Ese* es el patrón de keylogger. Para las teclas de volumen se usa `RegisterHotKey`, que es otra cosa — ver §3.1 |
 | 4 | Leer el teclado: `GetAsyncKeyState`, `GetKeyboardState`, `keybd_event`, `SendInput`, `WH_KEYBOARD` | **La prohibición que más caro parecía.** Un HUD de volumen quiere saber cuándo pulsas una tecla, y la forma fácil es un hook de bajo nivel. La forma fácil está prohibida: se registran tres teclas concretas y nada más. Resultó ser además la forma **mejor**, ver §1 |
@@ -142,22 +144,7 @@ A diferencia de la isla, aquí sí se **escribe**. Se sostiene porque siempre vi
 que acabas de pulsar: no hay ningún camino que llame a `SetMasterVolumeLevelScalar` desde un
 temporizador, y así debe seguir.
 
-### 3.3 Leer el brillo de la pantalla interna
-
-WMI, espacio `root\WMI`: `WmiMonitorBrightness` para el nivel actual y
-`WmiMonitorBrightnessEvent` para enterarse de que has pulsado Fn+brillo.
-
-**Solo se lee.** Las teclas de brillo van por ACPI y Windows ya lo cambia solo, así que
-`WmiSetBrightness` no aporta nada y **no entra en el código**. Si algún día se quiere un atajo
-propio de brillo, se añade esa llamada y se enmienda este párrafo.
-
-Medido en esta máquina: el panel interno (AUO) responde con 101 niveles y su valor actual, sin
-elevación. **No hace falta elevación** y no se pide. Si en otra máquina la suscripción de
-eventos fuese denegada, la función se degrada a sondeo; **no se eleva el proceso** (regla 1).
-
-Este es el motivo de la segunda dependencia del proyecto, `System.Management`.
-
-### 3.4 Dibujar
+### 3.3 Dibujar
 
 `Windows.UI.Composition` del sistema sobre un `DesktopWindowTarget` de **nuestro propio HWND**,
 y la cadena D3D11 → D2D1 → `CreateDrawingSurface` para los glifos. Actúa solo sobre nuestras
@@ -168,7 +155,7 @@ El fondo acrílico es `CreateHostBackdropBrush()`, que desenfoca lo que hay detr
 tenerlo escrito porque suena a leer la pantalla y no lo es: **el desenfoque lo hace DWM y el
 resultado nunca vuelve a nuestro proceso.** No hay ningún píxel de nadie en nuestra memoria.
 
-### 3.5 Autoarranque
+### 3.4 Autoarranque
 
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, y nada más. Sale en la pestaña Inicio del
 Administrador de tareas, se puede quitar desde ahí, y **se pregunta antes de escribirlo**.
@@ -180,9 +167,8 @@ Administrador de tareas, se puede quitar desde ahí, y **se pregunta antes de es
 | Se quería | Por qué no está |
 |---|---|
 | Apartar el aviso nativo de Windows | No es una ventana: medido, 6111 muestras y cero eventos. Y no hace falta para el volumen, porque capturar la tecla ya lo suprime. Ver §1 |
-| Que el aviso de **brillo** de Windows tampoco salga | Mismo motivo: no es una ventana. Y sus teclas no se pueden capturar porque van por ACPI. No hay forma permitida, y tampoco prohibida que funcione |
-| Brillo de monitores externos por DDC/CI | No es un problema de seguridad: `dxva2.dll` es API pública y no pide permisos. Es que va lento (50-200 ms por llamada), funciona en unos monitores sí y en otros no, y hoy no hace falta |
-| Teclas de brillo capturadas como las de volumen | No llegan al teclado: van por ACPI. Medido con una sonda que sí mira el teclado — no aparecen. La alternativa, un hook, es la regla 3 y la 4, y tampoco las vería |
+| **El brillo, entero** | Sus teclas van por ACPI y no se pueden capturar (medido: la sonda que sí mira el teclado no las ve), así que el aviso de Windows saldría igual y verías dos. Ver §1. Con él se caen `System.Management` y todo WMI |
+| Brillo de monitores externos por DDC/CI | Lo mismo, y además `dxva2.dll` va lento (50-200 ms por llamada) y funciona en unos monitores sí y en otros no |
 | Un HUD que también controle el micrófono | Abriría `eCapture`, que la regla 11 veta. Y el indicador de micrófono de Windows 11 ya existe y funciona |
 | Historial de volumen, "tu media de esta semana" | Regla 12 |
 
@@ -195,6 +181,9 @@ Cosas que el código hace de una forma concreta **porque este documento existe**
 - **El HUD no tiene inventario de ventanas.** No hay ninguna estructura que guarde qué ventanas
   hay, ni una sola llamada que pregunte por una que no sea la nuestra. Es la propiedad más
   fuerte del programa y la más fácil de comprobar: `auditar.ps1` regla 15.
+- **Una sola dependencia, `CsWin32`, y es un generador.** La segunda iba a ser
+  `System.Management`, para el brillo; al caerse el brillo del alcance se cayó con él. Que el
+  programa no tenga WMI no es casualidad, es una consecuencia, y la auditoría la comprueba.
 - **Nada de lo que el HUD lee se escribe a disco.** `hud.json` guarda ajustes. Nunca estado.
 - **`NativeMethods.txt` es la lista cerrada de P/Invokes.** Si no está ahí, no se genera y no
   compila. Cada grupo lleva encima un comentario que dice para qué es, y cada entrada tiene que

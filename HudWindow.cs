@@ -20,7 +20,7 @@ namespace Hud;
 /// </summary>
 internal sealed unsafe class HudWindow
 {
-    private const string ClassName = "HudVolumenBrillo";
+    private const string ClassName = "HudVolumen";
 
     // El numero es el articulo de SEGURIDAD.md §3.1. Los de volumen llegan en H2.
     private const int AtajoSalir = 1;
@@ -42,7 +42,7 @@ internal sealed unsafe class HudWindow
 
     // --- medidas, en px logicos (a 96 dpi) -----------------------------------------
     // La capsula es lo que se ve; la holgura es el margen invisible que necesita el
-    // squash del tope (morph 5) para no quedarse recortado contra el borde de la
+    // squash del tope (morph 4) para no quedarse recortado contra el borde de la
     // ventana. La region de H1 recorta sobre la capsula, no sobre la ventana.
     private const float AnchoCapsula = 280f;
     private const float AltoCapsula = 68f;
@@ -92,8 +92,9 @@ internal sealed unsafe class HudWindow
         _instancia = this;
 
         // Ctrl+Alt+H para salir. Mientras no haya icono de bandeja es la unica forma
-        // limpia de cerrar el HUD, y el cierre limpio importa aqui mas que en el dock:
-        // es lo que devuelve el flyout nativo a su sitio (SEGURIDAD.md §3.5).
+        // limpia de cerrarlo, y hace falta: mientras el HUD corre se traga las teclas de
+        // volumen (SEGURIDAD.md §3.1), asi que sin forma de cerrarlo un fallo suyo te
+        // deja sin volumen hasta el Administrador de tareas.
         _atajoSalir = PInvoke.RegisterHotKey(_hwnd, AtajoSalir,
             HOT_KEY_MODIFIERS.MOD_CONTROL | HOT_KEY_MODIFIERS.MOD_ALT, 'H');
         if (!_atajoSalir)

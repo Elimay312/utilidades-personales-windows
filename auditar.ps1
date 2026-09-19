@@ -20,11 +20,17 @@ function Codigo {
         if (-not (Test-Path $ruta)) { continue }
         $n = 0
         $bloque = $false
+        $cierre = '\*/'
         foreach ($l in Get-Content $ruta) {
             $n++
             $t = $l.Trim()
-            if ($bloque) { if ($t -match '\*/') { $bloque = $false }; continue }
-            if ($t -match '^/\*') { if ($t -notmatch '\*/') { $bloque = $true }; continue }
+            if ($bloque) { if ($t -match $cierre) { $bloque = $false }; continue }
+            if ($t -match '^/\*') { if ($t -notmatch '\*/') { $bloque = $true; $cierre = '\*/' }; continue }
+            # Los comentarios XML del .csproj tambien son comentarios. Sin esto, explicar
+            # en el csproj por que NO esta una dependencia hace saltar la regla que
+            # comprueba que no esta -- le paso a este mismo fichero el dia que se quito
+            # System.Management. El auditar.ps1 de los vecinos tiene el mismo agujero.
+            if ($t -match '^<!--') { if ($t -notmatch '-->') { $bloque = $true; $cierre = '-->' }; continue }
             if ($t.StartsWith('//') -or $t.StartsWith('*')) { continue }
             $lineas += [pscustomobject]@{ Fichero = $ruta; Linea = $n; Texto = $l }
         }
@@ -109,15 +115,17 @@ if ($audio) {
 }
 Write-Output ("  {0,-34} {1}" -f '11 volumen maestro', $dir)
 
-# La cara positiva de s.3.3: el brillo se LEE. Si aparece WmiSetBrightness, o se ha
-# enmendado el documento o alguien se ha pasado de lo acordado.
-$escribeBrillo = $codigo | Where-Object { $_.Texto -match 'WmiSetBrightness' }
-if ($escribeBrillo) {
+# Guardia de ALCANCE, no de seguridad, y esta aqui a proposito. El brillo se cayo del
+# proyecto midiendo (SEGURIDAD.md s.1): sus teclas van por ACPI, no se pueden capturar, y
+# el aviso de Windows saldria igual. Un alcance que no se comprueba se vuelve a ensanchar
+# solo, y con el volveria System.Management y todo WMI.
+$brillo = $codigo | Where-Object { $_.Texto -match 'WmiMonitor|WmiSetBrightness|System\.Management|ManagementObject|ManagementEventWatcher|root\+WMI' }
+if ($brillo) {
     $fallos++
-    Write-Output ("  {0,-34} SE ESCRIBE (s.3.3 dice que no)" -f '3.3 brillo de solo lectura')
-    $escribeBrillo | ForEach-Object { Write-Output ("      {0}:{1}  {2}" -f $_.Fichero, $_.Linea, $_.Texto.Trim()) }
+    Write-Output ("  {0,-34} FUERA DE ALCANCE (s.1 y s.4)" -f 'alcance: solo volumen')
+    $brillo | ForEach-Object { Write-Output ("      {0}:{1}  {2}" -f $_.Fichero, $_.Linea, $_.Texto.Trim()) }
 } else {
-    Write-Output ("  {0,-34} {1}" -f '3.3 brillo de solo lectura', 'si')
+    Write-Output ("  {0,-34} {1}" -f 'alcance: solo volumen', 'si, nada de brillo ni WMI')
 }
 
 if (Test-Path 'NativeMethods.txt') {

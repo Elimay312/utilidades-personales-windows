@@ -9,7 +9,7 @@ internal static class Program
     // Local\ y no Global\: el ambito es la sesion del usuario, que es donde hay un
     // teclado y una pantalla. Global\ necesitaria permisos que esta app no tiene ni
     // quiere (SEGURIDAD.md regla 1).
-    private const string MutexName = @"Local\HudVolumenBrillo.instancia";
+    private const string MutexName = @"Local\HudVolumen.instancia";
 
     [STAThread]
     private static int Main(string[] args)

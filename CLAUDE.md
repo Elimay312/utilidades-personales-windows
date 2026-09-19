@@ -11,8 +11,9 @@ porque este proyecto tiene una excepción que ellos no tienen.
 
 1. **`SEGURIDAD.md` manda.** Si algo necesita una API prohibida, o se rediseña o se enmienda
    el documento **por escrito y antes** de tocar código. No se piden excepciones de palabra.
-   Ya hay una excepción abierta (§1) y ocupa la sección más larga del documento. Esa es la
-   proporción que cuesta abrir la segunda.
+   Hubo una excepción abierta durante unas horas, con todo el papeleo hecho, y **al medirla
+   resultó que sobraba** (§1). Escribirla obligó a medirla y medirla ahorró un fichero. Esa es
+   la proporción que cuesta abrir la siguiente.
 2. **`powershell -File auditar.ps1` antes de cada commit.** Tiene que decir `TODO LIMPIO`.
 3. **Comentarios en español, código en inglés.** Los tipos de dominio van en español, como en
    la isla: `Volumen`, `Brillo`, `Glifos`, `FlyoutNativo`.
@@ -28,7 +29,8 @@ porque este proyecto tiene una excepción que ellos no tienen.
 - Escribir en el registro fuera de `HKCU\...\Run`.
 - Cualquier cosa que pida elevación.
 - Tocar algo fuera de la carpeta del proyecto.
-- **Tocar una ventana ajena de cualquier forma que no sea la de `SEGURIDAD.md` §1.**
+- **Tocar una ventana ajena, de cualquier forma.** No hay excepciones y `FindWindow` es el
+  centinela: es el primer paso de cualquier intento de reabrir la grieta.
 - Desviarse de lo acordado.
 
 ---
@@ -52,9 +54,12 @@ es cómo se pierde un día sin saber cuál de las dos cosas está mal.
 La regla que más veces salva a los proyectos de esta carpeta. Aquí hay tres sitios donde ya se
 sabe que la intuición falla:
 
-1. **La clase y el título del flyout nativo se miden en la máquina, no se copian de un foro.**
-   El título puede estar localizado. Si el criterio de búsqueda no identifica exactamente esa
-   ventana, no se toca nada — `SEGURIDAD.md` §1 punto 4.
+1. **Una sonda que no reporta su cadencia no vale.** La primera sonda de la §1 dijo "no hay
+   ninguna ventana" muestreando **una vez cada cinco segundos**, porque hacía
+   `Process.GetProcessById` sobre las 417 ventanas en cada pasada. El aviso dura dos segundos.
+   La versión buena mide su propio intervalo y se declara no concluyente si hay un hueco de
+   más de 900 ms. Y antes de eso, la versión cero no sabía distinguir "no hay ventana" de
+   "nadie pulsó nada". **Dos mentiras distintas de la misma sonda, en la misma tarde.**
 2. **`WmiMonitorBrightnessEvent` puede no llegar** en algunas máquinas, o pedir permisos que no
    tenemos. Se comprueba en H3 antes de construir nada encima. El plan B es sondeo, nunca
    elevar el proceso.

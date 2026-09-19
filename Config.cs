@@ -10,12 +10,9 @@ namespace Hud;
 /// </summary>
 internal sealed record HudConfig
 {
-    /// <summary>
-    /// Si el HUD aparta el aviso nativo de Windows. Es la unica funcion del programa que
-    /// toca una ventana que no es suya, esta razonada entera en SEGURIDAD.md §1, y por
-    /// eso tiene interruptor: con esto en false, <c>FlyoutNativo</c> no hace nada.
-    /// </summary>
-    public bool OcultarFlyoutNativo { get; init; } = true;
+    // Aqui hubo un "ocultarFlyoutNativo" y ya no hace falta: capturar las teclas con
+    // RegisterHotKey suprime el aviso nativo de volumen por si solo, porque el shell
+    // nunca llega a ver la pulsacion. SEGURIDAD.md §1 cuenta la medicion entera.
 
     /// <summary>
     /// Cuanto sube o baja el volumen por pulsacion, en porcentaje. Windows usa 2 y no se

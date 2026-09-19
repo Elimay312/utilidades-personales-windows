@@ -61,14 +61,18 @@ $reglas = @(
     @{ n = '13 notificaciones ajenas';       p = 'UserNotificationListener|UserNotification\b' }
     @{ n = '14 portapapeles y perfil';       p = 'OleGetClipboard|GetClipboardData|OpenClipboard|SetClipboardData|AutomaticDestinations' }
 
-    # SEGURIDAD.md s.1 abrio UNA grieta en esta regla: mover el host del flyout nativo con
-    # SetWindowPos. Todo lo demas que solo tiene sentido sobre ventanas de otros sigue
-    # aqui, y la grieta tiene su propia puerta mas abajo (regla 17).
+    # ABSOLUTA. Hubo una excepcion durante unas horas -- apartar el host del aviso nativo
+    # con SetWindowPos -- y se retiro al medirla: el aviso no es una ventana, y ademas no
+    # hacia falta porque RegisterHotKey ya suprime el aviso de volumen. SEGURIDAD.md s.1.
+    #
+    # FindWindow entra aqui a proposito y es el centinela que importa: es el primer paso
+    # de cualquier intento de volver a abrir esa grieta. El HUD no conoce la existencia
+    # de ninguna ventana que no sea la suya.
     #
     # ShowWindow y SetWindowPos sobre la ventana PROPIA son necesarios y no estan aqui;
-    # no se pueden distinguir por regex de los que van sobre la ajena, y por eso el
-    # control real de la excepcion es "solo en FlyoutNativo.cs".
-    @{ n = '15 tocar ventanas ajenas';       p = 'EnumWindows|EnumChildWindows|PrintWindow|SetForegroundWindow|ShowWindowAsync|AttachThreadInput|DWMWA_CLOAK\b|OpenProcess|GetWindowThreadProcessId' }
+    # sin FindWindow ni EnumWindows no hay forma de obtener un HWND ajeno al que
+    # aplicarlos, asi que la regla se sostiene sola.
+    @{ n = '15 tocar ventanas ajenas';       p = 'FindWindowW?\b|FindWindowExW?\b|EnumWindows|EnumChildWindows|PrintWindow|SetForegroundWindow|ShowWindowAsync|AttachThreadInput|DWMWA_CLOAK\b|OpenProcess|GetWindowThreadProcessId' }
 
     @{ n = '16 matar procesos';              p = 'TerminateProcess|TerminateThread|EndTask|ExitWindowsEx|NtTerminate' }
 )
@@ -86,22 +90,6 @@ foreach ($r in $reglas) {
     } else {
         Write-Output ("  {0,-34} limpio" -f $r.n)
     }
-}
-
-# --- la excepcion de s.1, confinada -------------------------------------------------
-# La unica operacion permitida sobre una ventana ajena vive en UN fichero. Esta regla es
-# la que hace que la excepcion sea auditable: quien quiera saberlo todo sobre ella lee
-# FlyoutNativo.cs y ya esta. Si se escapa de ahi, deja de ser una excepcion y pasa a ser
-# una costumbre.
-$busqueda = $codigo | Where-Object { $_.Texto -match 'FindWindowW?\b|FindWindowExW?\b' }
-$fugas    = $busqueda | Where-Object { $_.Fichero -ne 'FlyoutNativo.cs' -and $_.Fichero -ne 'NativeMethods.txt' }
-if ($fugas) {
-    $fallos++
-    Write-Output ("  {0,-34} INCUMPLE" -f '17 buscar ventanas fuera de sitio')
-    $fugas | ForEach-Object { Write-Output ("      {0}:{1}  {2}" -f $_.Fichero, $_.Linea, $_.Texto.Trim()) }
-} else {
-    if ($busqueda) { $d = 'confinada a FlyoutNativo.cs' } else { $d = 'todavia no se busca ninguna' }
-    Write-Output ("  {0,-34} {1}" -f '17 excepcion del flyout', $d)
 }
 
 # --- lo que SI tiene que estar ----------------------------------------------------

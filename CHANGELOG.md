@@ -1,5 +1,30 @@
 # Changelog
 
+## H4 retirado antes de escribirse
+
+El hito que justificaba la única excepción del documento no existe. Dos motivos
+independientes, los dos medidos antes de escribir una línea de `FlyoutNativo.cs`:
+
+- **El aviso no es una ventana.** 6111 muestras en 20 s (mediana 3 ms, peor hueco 36 ms) con 22
+  teclas de volumen pulsadas: cero ventanas top-level nuevas, movidas o hechas visibles. La
+  clase `NativeHWNDHost` de las soluciones que circulan ya no existe en Windows 11 26200.
+- **Y no hacía falta.** `RegisterHotKey` consume la tecla, así que el shell no la ve y no
+  enseña nada; cambiar el volumen por `IAudioEndpointVolume` tampoco dispara aviso. Medido: el
+  recuadro gris no apareció ni una vez, y el volumen no se movió — la segunda mitad de la
+  prueba, la que demuestra que la tecla se la tragó el registro.
+
+Retirado: la excepción de `SEGURIDAD.md` §1, la regla 17 de `auditar.ps1`, el fichero
+`FlyoutNativo.cs` que nunca llegó a existir y la clave `ocultarFlyoutNativo` de `hud.json`. La
+regla 15 vuelve a ser absoluta y ahora veta también `FindWindow`, que es el centinela: es el
+primer paso de cualquier intento de reabrir la grieta.
+
+Queda dicho en voz alta lo que no se resuelve: **el aviso de brillo de Windows sigue saliendo**,
+porque sus teclas van por ACPI y no hay nada que capturar.
+
+También medido de paso: es un portátil (chasis 10, batería) con panel AUO interno de 101
+niveles de brillo legibles sin elevación, así que H3 sí existe. Y las tres teclas de volumen se
+registran sin que ningún otro programa las tenga cogidas, que el plan daba por hecho.
+
 ## H0 — andamio y SEGURIDAD.md
 
 Lo primero es el documento, no el código.

@@ -1,10 +1,8 @@
 // Configuracion del HUD. Vive en %LOCALAPPDATA%\Hud\hud.json.
 // Admite comentarios y comas finales. Se recarga sola al guardarla.
 {
-  // Si el HUD aparta el aviso de volumen y brillo de Windows para no tener dos.
-  // Ponlo en false y vuelve el de siempre, tal cual. Lo que hace y por que se puede
-  // hacer esta en SEGURIDAD.md §1, que es la seccion mas larga del documento por algo.
-  "ocultarFlyoutNativo": true,
+  // El aviso gris de Windows no sale con el volumen y no hay nada que configurar:
+  // al capturar las teclas, el shell nunca llega a verlas. SEGURIDAD.md §1.
 
   // Cuanto sube o baja el volumen cada pulsacion, en porcentaje. Windows usa 2.
   // Como las teclas las registramos nosotros, el paso lo decides tu.

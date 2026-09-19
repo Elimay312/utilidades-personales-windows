@@ -13,78 +13,68 @@ por qué cada API que se llama está donde está.
 > renunciar a ello.
 
 **Este documento es del HUD y solo del HUD.** El dock y la isla tienen los suyos, con reglas
-distintas, porque hacen cosas distintas. Lo que comparten es el método, no la lista. Y este
-proyecto tiene **una regla más abierta** que sus vecinos, la 15, por un motivo que ocupa la §1
-entera.
+distintas, porque hacen cosas distintas. Lo que comparten es el método, no la lista.
 
 ---
 
-## 1. El criterio, y la regla que este proyecto tuvo que abrir
+## 1. La excepción que se abrió y se cerró el mismo día
 
-El HUD hace cuatro cosas: **escucha** las teclas de volumen, **cambia** el volumen, **dibuja**
-un indicador, y **aparta el aviso que Windows dibuja encima del nuestro**. Las tres primeras
-son triviales de defender. La cuarta no lo es, y es la razón de ser de este apartado.
+Este apartado ocupaba la mitad del documento y hoy no concede nada. Se queda escrito porque el
+razonamiento es el que impide volver a abrirla dentro de seis meses.
 
-### El problema
+### Lo que se temía
 
-Si el HUD no oculta el flyout nativo, salen dos indicadores a la vez y el proyecto no sirve
-para nada. Se puede vivir con eso, pero entonces esto no es un reemplazo: es un adorno. La
-isla lo resolvió por diseño —reflejaba el volumen solo si ya estaba abierta— y su
-`SEGURIDAD.md` §4 llegó a anotar que ocultarlo *"no tiene forma documentada; las que circulan
-pasan por tocar `explorer.exe`"*. **Esa anotación sigue siendo correcta sobre los métodos que
-describe, y ninguno de ellos es el que se usa aquí.**
+El HUD no sirve de nada si Windows dibuja su propio aviso encima del nuestro: eso no es un
+reemplazo, es un adorno. Así que la primera versión de este documento **abrió una grieta en la
+regla 15**: permitía localizar el host del aviso nativo y apartarlo con `SetWindowPos`, acotado
+a un solo fichero y comprobado por una regla propia de `auditar.ps1`.
 
-### Lo que NO se hace
+### Lo que se midió
 
-Las tres familias de soluciones que circulan por internet, y por qué las tres están prohibidas
-aquí igual que en los otros dos proyectos:
+Antes de escribir ese fichero se midió, porque la clase de ventana que usan las soluciones que
+circulan por internet (`NativeHWNDHost`) **ya no existe** en este Windows.
 
-| Método que circula | Por qué no |
-|---|---|
-| Parchear o reemplazar componentes de `explorer.exe` / `ShellExperienceHost.exe` | Reglas 5 y 6. Inyección y reemplazo del shell. Es la definición de malware |
-| Matar `ShellExperienceHost.exe` en un bucle | Regla 16. Además rompe el centro de notificaciones del usuario |
-| `DWMWA_CLOAK` sobre la ventana ajena, o `SetWindowsHookEx` para adelantarse a que se muestre | Reglas 3 y 15. El cloaking de ventanas de otros y los hooks globales siguen vetados |
+Una sonda de scratchpad capturó 20 segundos de la capa de ventanas mientras se pulsaban las
+teclas de volumen. Resultado: **6111 muestras, mediana de 3 ms, peor hueco de 36 ms, 22 teclas
+pulsadas, y ni una sola ventana top-level apareció, se movió o se hizo visible.** El aviso dura
+unos 2 segundos, así que con ese muestreo no se pudo escapar.
 
-### Lo que sí se hace, y el corte exacto
+> La primera versión de esa sonda decía lo mismo y estaba mintiendo: hacía
+> `Process.GetProcessById` por cada una de las 417 ventanas y por cada muestra, y muestreaba
+> **una vez cada cinco segundos**. La segunda versión mide y reporta su propia cadencia, y se
+> declara no concluyente si algún hueco pasa de 900 ms. Esto es el caso de libro de
+> *"comprueba que la sonda mide lo que crees"*, y costó dos intentos.
 
-**Una sola operación, sobre una sola ventana, y de las que cualquier gestor de ventanas hace
-cien veces al día:** localizar el host del flyout por su clase de ventana y moverlo fuera del
-área visible con `SetWindowPos`.
+**El aviso no es una ventana.** Se dibuja dentro de algo que ya estaba ahí. Apartar eso sería
+apartar a su dueño entero, que es explorer.
 
-Lo que hace que se sostenga:
+### Lo que resultó ser la respuesta
 
-1. **No se entra en el proceso ajeno.** Ni DLL, ni hilo remoto, ni memoria, ni handle de
-   proceso. `SetWindowPos` es una petición al gestor de ventanas del sistema, no un acceso al
-   programa dueño. Es la misma API con la que el HUD se coloca a sí mismo.
-2. **No se lee nada.** No se capturan sus píxeles, no se lee su texto, no se mira su contenido.
-   Mover no es observar, y esa distinción es la que separa esto de la regla 15 original.
-3. **No se destruye nada.** La ventana sigue existiendo, viva y funcionando. Se aparta. Al
-   cerrar el HUD **se devuelve a su sitio** (§3.5), y si el HUD muere de golpe, el propio
-   `ShellExperienceHost` la recoloca la próxima vez que la muestra.
-4. **Es una ventana, no cualquier ventana.** El criterio de búsqueda es cerrado y literal, y se
-   fija **midiendo en la máquina**, no copiando de un foro. Si no encuentra exactamente esa, no
-   toca nada: no hay ningún camino que mueva una ventana no identificada.
-5. **Se pregunta.** `ocultarFlyoutNativo` existe en `hud.json` y el usuario lo pone en `false`
-   cuando quiera. Un programa que aparta una ventana del sistema sin decirlo es otra cosa.
+**El aviso nativo sale porque el shell recibe la tecla.** Si la capturamos nosotros con
+`RegisterHotKey` (§3.1), el shell no la recibe, y cambiar el volumen por
+`IAudioEndpointVolume` (§3.2) no dispara ningún aviso porque no es una pulsación.
 
-### Los cortes, escritos para que `auditar.ps1` los pueda comprobar
+Medido con una segunda sonda que registra las tres teclas y no hace nada más:
+**el recuadro gris de Windows no apareció ni una vez.** El volumen tampoco se movió, que es la
+otra mitad de la prueba: demuestra que la tecla se la tragó el registro y no llegó a nadie.
 
-- **Vive en un solo fichero: `FlyoutNativo.cs`.** Si `FindWindowW` o `FindWindowExW` aparecen
-  en cualquier otro `.cs`, la auditoría falla. Un auditor tiene que poder leer un fichero y
-  saberlo todo sobre esta excepción.
-- **`EnumWindows` y `EnumChildWindows` siguen prohibidos.** No se recorre el escritorio de
-  nadie: se pregunta por una clase concreta. Barrer la lista de ventanas para ver qué hay es
-  exactamente lo que la regla 15 quería impedir, y sigue impedido.
-- **`ShowWindowAsync`, `DWMWA_CLOAK`, `SetForegroundWindow`, `AttachThreadInput`, `PrintWindow`
-  y `DestroyWindow` sobre ventana ajena: siguen prohibidos.** De todo lo que se puede hacer con
-  un HWND que no es tuyo, aquí se permite **uno**: `SetWindowPos` para moverlo.
-- **No se abre el proceso dueño.** `OpenProcess`, `GetWindowThreadProcessId` y
-  `QueryFullProcessImageName` no entran en `NativeMethods.txt`. Ni siquiera se comprueba de
-  quién es la ventana: para eso habría que mirar dentro de otro proceso, y la clase de ventana
-  ya identifica lo que buscamos sin salir del gestor de ventanas.
+### La conclusión
 
-**Esta es la única excepción del documento y ocupa su §1 a propósito.** Si algún día hace falta
-una segunda, se escribe aquí con el mismo nivel de detalle o no se hace.
+**La excepción se retira entera.** El HUD no toca ninguna ventana ajena, de ninguna forma, y la
+regla 15 vuelve a ser absoluta. No hay `FlyoutNativo.cs`, no hay `FindWindow`, no hay
+`ocultarFlyoutNativo` en la configuración: no hay nada que apagar porque no hay nada que hacer.
+
+La función que parecía necesitar el permiso más caro del documento **no necesitaba existir**.
+
+### Lo que queda sin resolver, dicho en voz alta
+
+**Con el brillo no funciona.** Las teclas Fn de brillo van por ACPI, no llegan como tecla, y no
+hay nada que registrar — medido: la sonda no las ve. Windows sigue enseñando su aviso al
+pulsarlas. Si el HUD enseña el brillo, ahí sí habrá dos indicadores, y no hay ninguna forma
+permitida de evitarlo: el aviso de brillo tampoco es una ventana.
+
+Eso es una decisión de producto, no de seguridad, y se toma fuera de este documento. Lo que
+este documento fija es que **no se resuelve tocando nada de nadie**.
 
 ---
 
@@ -95,7 +85,7 @@ una segunda, se escribe aquí con el mismo nivel de detalle o no se hace.
 | 1 | Driver de kernel (`.sys`), servicio de Windows, tarea programada, o cualquier componente elevado | Es lo que hace que un antivirus marque a un programa de escritorio. Corre siempre como usuario normal, `requestedExecutionLevel` `asInvoker`. Y el brillo **no lo necesita**: WMI lo deja leer al usuario de la sesión interactiva |
 | 2 | Leer sensores de hardware: temperaturas, voltajes, RPM, puertos I/O, MSR, SMBus | Requiere driver. No existe forma en modo usuario |
 | 3 | `SetWindowsHookEx` global y `SetWinEventHook` | Un hook global carga una DLL nuestra dentro de otros procesos, o instala un callback de bajo nivel. *Ese* es el patrón de keylogger. Para las teclas de volumen se usa `RegisterHotKey`, que es otra cosa — ver §3.1 |
-| 4 | Leer el teclado: `GetAsyncKeyState`, `GetKeyboardState`, `keybd_event`, `SendInput`, `WH_KEYBOARD` | **La prohibición que más caro salió.** Un HUD de volumen quiere saber cuándo pulsas una tecla, y la forma fácil es un hook de bajo nivel. La forma fácil está prohibida: se registran tres teclas concretas y nada más |
+| 4 | Leer el teclado: `GetAsyncKeyState`, `GetKeyboardState`, `keybd_event`, `SendInput`, `WH_KEYBOARD` | **La prohibición que más caro parecía.** Un HUD de volumen quiere saber cuándo pulsas una tecla, y la forma fácil es un hook de bajo nivel. La forma fácil está prohibida: se registran tres teclas concretas y nada más. Resultó ser además la forma **mejor**, ver §1 |
 | 5 | `CreateRemoteThread`, `WriteProcessMemory`, `VirtualAllocEx`, o cualquier código dentro de otro proceso | Inyección. Bandera roja inmediata de EDR |
 | 6 | Reemplazo del shell (`Winlogon\Shell`), IFEO, `AppInit_DLLs`, parcheo de binarios | Persistencia de malware por definición |
 | 7 | **Cualquier** llamada de red: sin telemetría, sin updater, sin comprobación de versión | 100% offline. Verificable con `netstat` mientras corre |
@@ -106,8 +96,8 @@ una segunda, se escribe aquí con el mismo nivel de detalle o no se hace.
 | 12 | Guardar historial a disco | `hud.json` guarda ajustes. Nada de qué volumen tuviste a qué hora: es un perfil de comportamiento barato de construir y sin ninguna razón para existir |
 | 13 | Leer las notificaciones de otras apps (`UserNotificationListener`) | El HUD no tiene ningún motivo para tocarlas |
 | 14 | Portapapeles, credenciales, navegadores, documentos | Prohibición gratis: no hay ninguna función que los quiera |
-| 15 | Tocar ventanas ajenas — **con la única excepción de §1** | Se permite mover el host del flyout nativo con `SetWindowPos`, desde `FlyoutNativo.cs` y solo desde ahí. **Enumerarlas, leer sus píxeles, cerrarlas, minimizarlas, ocultarlas con cloaking o robarles el foco sigue prohibido** |
-| 16 | Matar procesos: `TerminateProcess`, `TerminateThread`, `EndTask`, `ExitWindowsEx` | Pierde datos sin preguntar. Y es la tentación evidente de este proyecto: matar `ShellExperienceHost` haría desaparecer el flyout. También rompería el centro de notificaciones |
+| 15 | **Tocar ventanas ajenas, de cualquier forma.** Enumerarlas (`EnumWindows`), buscarlas (`FindWindow`), moverlas, cerrarlas, minimizarlas, ocultarlas con cloaking, leer sus píxeles o robarles el foco | Absoluta, sin excepciones. Hubo una durante unas horas y la §1 cuenta por qué se abrió y por qué se cerró. **El HUD no conoce la existencia de ninguna ventana que no sea la suya** |
+| 16 | Matar procesos: `TerminateProcess`, `TerminateThread`, `EndTask`, `ExitWindowsEx` | Pierde datos sin preguntar. Y era la tentación evidente de este proyecto: matar `ShellExperienceHost` haría desaparecer el aviso. También rompería el centro de notificaciones |
 
 ---
 
@@ -123,13 +113,19 @@ tecla, y **no puede verlas**: el sistema entrega el mensaje ya filtrado. Es lo c
 `SetWindowsHookEx`, que está prohibido en la regla 3, y es lo mismo que hacen el dock
 (Ctrl+Alt+D) y la isla (Ctrl+Alt+I).
 
-**Consecuencia que hay que tener escrita:** `RegisterHotKey` **consume** la tecla, así que
-Windows ya no cambia el volumen — lo cambia el HUD (§3.2). Eso no es un efecto secundario que
-haya que disimular, es el diseño: es lo que permite tener un paso propio.
+Medido antes de escribir el código: las tres se registran sin problema en esta máquina, ninguna
+estaba cogida por otro programa, y `MOD_NOREPEAT` **no** se usa — al mantener pulsada la tecla
+tiene que repetir.
 
-Si el registro falla porque otro programa ya tiene esas teclas, **se dice en la consola y el
-HUD sigue arrancando** en modo solo-observación. Un atajo global que falla en silencio es media
-hora perdida.
+**Consecuencia, y es la que sostiene el proyecto entero:** `RegisterHotKey` **consume** la
+tecla. Windows ya no la ve, así que ni cambia el volumen ni enseña su aviso. Lo cambia el HUD
+(§3.2). Eso no es un efecto secundario que haya que disimular: es lo que hace innecesario todo
+lo que la §1 temía.
+
+**Si el registro falla** porque otro programa se adelantó, se dice en la consola y el HUD sigue
+arrancando en modo solo-observación. Ahí sí saldrían dos avisos, el suyo y el nuestro; es el
+único caso en que pasa, y es preferible a no arrancar. Un atajo global que falla en silencio es
+media hora perdida.
 
 ### 3.2 Leer y cambiar el volumen maestro
 
@@ -151,16 +147,15 @@ temporizador, y así debe seguir.
 WMI, espacio `root\WMI`: `WmiMonitorBrightness` para el nivel actual y
 `WmiMonitorBrightnessEvent` para enterarse de que has pulsado Fn+brillo.
 
-**Solo se lee.** El HUD no cambia el brillo: las teclas de brillo van por ACPI y Windows ya lo
-cambia solo, así que `WmiSetBrightness` no aporta nada y **no entra en el código**. Si algún
-día se quiere un atajo propio de brillo, se añade esa llamada y se enmienda este párrafo.
+**Solo se lee.** Las teclas de brillo van por ACPI y Windows ya lo cambia solo, así que
+`WmiSetBrightness` no aporta nada y **no entra en el código**. Si algún día se quiere un atajo
+propio de brillo, se añade esa llamada y se enmienda este párrafo.
 
-**No hace falta elevación** y no se pide: se consulta el espacio WMI de la sesión interactiva
-como usuario normal. Si en alguna máquina la suscripción de eventos fuese denegada, la función
-se degrada a sondeo; **no se eleva el proceso** (regla 1).
+Medido en esta máquina: el panel interno (AUO) responde con 101 niveles y su valor actual, sin
+elevación. **No hace falta elevación** y no se pide. Si en otra máquina la suscripción de
+eventos fuese denegada, la función se degrada a sondeo; **no se eleva el proceso** (regla 1).
 
-Este es el motivo de la segunda dependencia del proyecto, `System.Management`. Está anotado en
-`Hud.csproj` y en `CLAUDE.md`.
+Este es el motivo de la segunda dependencia del proyecto, `System.Management`.
 
 ### 3.4 Dibujar
 
@@ -173,20 +168,7 @@ El fondo acrílico es `CreateHostBackdropBrush()`, que desenfoca lo que hay detr
 tenerlo escrito porque suena a leer la pantalla y no lo es: **el desenfoque lo hace DWM y el
 resultado nunca vuelve a nuestro proceso.** No hay ningún píxel de nadie en nuestra memoria.
 
-### 3.5 Apartar el flyout nativo
-
-Justificado entero en §1. Los detalles operativos:
-
-- Búsqueda por clase de ventana, criterio literal y cerrado, fijado midiendo en la máquina.
-- `SetWindowPos` con `SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER` a una coordenada fuera de
-  todos los monitores.
-- **Se restaura al salir.** El HUD guarda la posición original y la devuelve en el cierre
-  limpio. Si el proceso muere de golpe no pasa nada: `ShellExperienceHost` la recoloca solo.
-- Re-comprobación periódica por si `ShellExperienceHost` se reinicia. Un temporizador nuestro,
-  no un hook.
-- Con `ocultarFlyoutNativo: false` en `hud.json`, este fichero **no hace nada en absoluto**.
-
-### 3.6 Autoarranque
+### 3.5 Autoarranque
 
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, y nada más. Sale en la pestaña Inicio del
 Administrador de tareas, se puede quitar desde ahí, y **se pregunta antes de escribirlo**.
@@ -197,9 +179,10 @@ Administrador de tareas, se puede quitar desde ahí, y **se pregunta antes de es
 
 | Se quería | Por qué no está |
 |---|---|
-| Brillo de monitores externos por DDC/CI | No es un problema de seguridad: `dxva2.dll` es API pública y no pide permisos. Es que va lento (50-200 ms por llamada), funciona en unos monitores sí y en otros no, y hoy no hace falta. Si entra, entra con su párrafo en §3 |
-| Teclas de brillo capturadas como las de volumen | No llegan al teclado: van por ACPI. No hay VK que registrar, y la alternativa —un hook— es la regla 3 y la 4 |
-| Quitar el flyout nativo de verdad, no apartarlo | No hay API. Todo lo que lo consigue de verdad pasa por dentro de `ShellExperienceHost`, que es la regla 5 |
+| Apartar el aviso nativo de Windows | No es una ventana: medido, 6111 muestras y cero eventos. Y no hace falta para el volumen, porque capturar la tecla ya lo suprime. Ver §1 |
+| Que el aviso de **brillo** de Windows tampoco salga | Mismo motivo: no es una ventana. Y sus teclas no se pueden capturar porque van por ACPI. No hay forma permitida, y tampoco prohibida que funcione |
+| Brillo de monitores externos por DDC/CI | No es un problema de seguridad: `dxva2.dll` es API pública y no pide permisos. Es que va lento (50-200 ms por llamada), funciona en unos monitores sí y en otros no, y hoy no hace falta |
+| Teclas de brillo capturadas como las de volumen | No llegan al teclado: van por ACPI. Medido con una sonda que sí mira el teclado — no aparecen. La alternativa, un hook, es la regla 3 y la 4, y tampoco las vería |
 | Un HUD que también controle el micrófono | Abriría `eCapture`, que la regla 11 veta. Y el indicador de micrófono de Windows 11 ya existe y funciona |
 | Historial de volumen, "tu media de esta semana" | Regla 12 |
 
@@ -209,22 +192,24 @@ Administrador de tareas, se puede quitar desde ahí, y **se pregunta antes de es
 
 Cosas que el código hace de una forma concreta **porque este documento existe**:
 
-- **`FlyoutNativo.cs` es un fichero entero para veinte líneas.** No se mezcla con nada: es el
-  sitio donde mira un auditor, y `auditar.ps1` falla si `FindWindow` se escapa de ahí.
 - **El HUD no tiene inventario de ventanas.** No hay ninguna estructura que guarde qué ventanas
-  hay. Solo un `HWND` —el del flyout— y su posición original.
+  hay, ni una sola llamada que pregunte por una que no sea la nuestra. Es la propiedad más
+  fuerte del programa y la más fácil de comprobar: `auditar.ps1` regla 15.
 - **Nada de lo que el HUD lee se escribe a disco.** `hud.json` guarda ajustes. Nunca estado.
 - **`NativeMethods.txt` es la lista cerrada de P/Invokes.** Si no está ahí, no se genera y no
   compila. Cada grupo lleva encima un comentario que dice para qué es, y cada entrada tiene que
   poder señalarse a una sección de §3. Si una no se puede, o sobra la entrada o falta una
   sección.
+- **Las sondas de medición no viven en el repo.** Van al scratchpad. Pueden usar APIs que la app
+  tiene prohibidas —`EnumWindows`, `GetAsyncKeyState`— porque no son el programa; así se midió
+  todo lo de la §1. Lo que sí vive en el repo es `--check`, para lógica pura.
 
 ---
 
 ## 6. Cómo se audita
 
 ```powershell
-pwsh -File auditar.ps1        # tiene que decir TODO LIMPIO y salir con 0
+pwsh -File auditar.ps1        # o powershell -File, si no hay PowerShell 7
 ```
 
 Mira **solo código**, saltando comentarios y bloques `/* */`. Hace falta: este documento nombra
@@ -241,9 +226,6 @@ Get-NetTCPConnection | Where-Object { $_.OwningProcess -eq (Get-Process Hud).Id 
 # Sin microfono: Configuracion > Privacidad > Microfono, lista de apps recientes.
 # El HUD no debe aparecer nunca.
 
-# El flyout se devuelve a su sitio: cerrar el HUD y comprobar que el aviso nativo
-# de volumen vuelve a salir donde siempre.
-
 # Y un escaneo de Defender sobre el binario publicado.
 ```
 
@@ -259,3 +241,7 @@ Get-NetTCPConnection | Where-Object { $_.OwningProcess -eq (Get-Process Hud).Id 
 
 Nunca al revés. Un documento que se actualiza después de escribir el código no es una regla, es
 un parte de daños.
+
+Y la lección de la §1, que es por lo que este procedimiento vale la pena: **la excepción se
+abrió con todo el papeleo hecho, y aun así sobraba.** Escribirla obligó a medirla, y medirla
+demostró que la función no hacía falta. El documento no frenó el proyecto; le ahorró un fichero.

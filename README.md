@@ -23,8 +23,27 @@ dibuja nada ni toca el volumen: la ventana se crea pero no se enseña.
 | H1 | La cápsula: Composition, acrílico, barra, glifos, los cinco morphs | |
 | H2 | Volumen de verdad: `RegisterHotKey` + `IAudioEndpointVolume` | |
 | H3 | Brillo de la pantalla interna: WMI, solo lectura | |
-| H4 | Apartar el flyout nativo + `hud.json` en caliente | |
+| H4 | ~~Apartar el flyout nativo~~ — **no hace falta y no se puede**, ver abajo | ⚪ |
 | H5 | Multi-monitor, DPI mixto, pantalla completa, autoarranque | |
+
+## Por qué no hay H4
+
+El plan tenía un hito entero para apartar el aviso nativo de Windows, y era el que justificaba
+la única excepción de `SEGURIDAD.md`. No existe, por dos motivos independientes, los dos
+medidos:
+
+**No se puede.** El aviso no es una ventana. Una sonda tomó 6111 muestras de la capa de
+ventanas en 20 segundos (mediana 3 ms, peor hueco 36 ms) mientras se pulsaban 22 teclas de
+volumen: ni una sola ventana top-level apareció, se movió ni se hizo visible. La clase
+`NativeHWNDHost` que usan las soluciones de internet ya no existe en Windows 11 26200.
+
+**No hace falta.** El aviso sale porque el shell recibe la tecla. `RegisterHotKey` la consume,
+así que el shell no la ve, y cambiar el volumen por `IAudioEndpointVolume` no dispara ningún
+aviso. Medido con una sonda que solo registra las tres teclas: **el recuadro gris no apareció
+ni una vez**, y el volumen tampoco se movió — que es la otra mitad de la prueba.
+
+Lo que **sigue saliendo** es el aviso de brillo, porque sus teclas van por ACPI y no hay nada
+que capturar. Eso no tiene solución permitida, y no la tiene prohibida que funcione tampoco.
 
 ## Cómo se construye
 
@@ -42,10 +61,9 @@ dotnet publish -c Release -o "$env:LOCALAPPDATA\Hud\app"
 
 ## Lo que hay que leer antes de tocar código
 
-**[SEGURIDAD.md](SEGURIDAD.md), y en particular su §1.** Este proyecto tiene una regla más
-abierta que sus vecinos: es el único que mueve una ventana que no es suya —la del aviso
-nativo— y esa excepción está razonada, acotada a un solo fichero, y comprobada por
-`auditar.ps1` (regla 17). Si esa sección no convence, el proyecto entero no se sostiene.
+**[SEGURIDAD.md](SEGURIDAD.md), y en particular su §1.** Cuenta una excepción que se abrió
+con todo el papeleo hecho y se cerró el mismo día al medirla. Es la sección que explica por
+qué este programa no toca ninguna ventana ajena — y por qué no le hace falta.
 
 ## Ajustes
 
@@ -53,7 +71,6 @@ nativo— y esa excepción está razonada, acotada a un solo fichero, y comproba
 
 | Clave | Por defecto | Qué hace |
 |---|---|---|
-| `ocultarFlyoutNativo` | `true` | Aparta el aviso de Windows para no tener dos. En `false`, vuelve el de siempre |
 | `pasoVolumen` | `2` | Cuánto sube o baja por pulsación, en %. Windows usa 2 y no deja cambiarlo; aquí sí |
 | `msAutoocultar` | `1600` | Cuánto se queda en pantalla tras la última pulsación |
 | `posicion` | `"abajo"` | `"abajo"` como macOS, o `"arriba"` |

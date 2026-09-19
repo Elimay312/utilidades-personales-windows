@@ -15,8 +15,8 @@ internal sealed unsafe class LanzadorWindow : IDisposable
 {
     // --- medidas, en unidades logicas (96 ppp) -------------------------------------
     private const int AnchoLogico = 660;
-    private const int AltoFranja = 56;      // la caja de texto
-    private const int AltoFila = 44;        // cada resultado
+    private const int AltoFranja = 64;      // la caja de texto
+    private const int AltoFila = 48;        // cada resultado
     private const int MargenLista = 8;      // aire arriba y abajo de la lista
 
     /// <summary>A que altura de la pantalla se asoma, en tanto por uno del alto util.</summary>
@@ -44,7 +44,9 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     private const uint WM_ACTIVATE = 0x0006;
     private const uint WM_HOTKEY = 0x0312;
     private const uint EM_SETSEL = 0x00B1;
+    private const uint EM_SETMARGINS = 0x00D3;
     private const uint WM_CTLCOLOREDIT = 0x0133;
+    private const uint WM_CTLCOLORSTATIC = 0x0138;
     private const int EN_CHANGE = 0x0300;
 
     private const uint VK_ESCAPE = 0x1B;
@@ -61,6 +63,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
 
     private readonly LanzadorConfig _config;
     private readonly HWND _hwnd;
+    private readonly HWND _franja;
     private readonly HWND _edit;
     private DeleteObjectSafeHandle _fuente;
     private readonly LanzadorVisuals _visuals;
@@ -140,6 +143,9 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         // es la forma documentada de darle otros, y el pincel tiene que sobrevivir a la
         // llamada -- por eso es un campo y no una variable local.
         _fondoCaja = PInvoke.CreateSolidBrush(new COLORREF(ColorFranja));
+        // El orden importa: el hermano creado antes queda por debajo, asi que la franja
+        // va primero y la caja encima.
+        _franja = CrearFranja();
         _edit = CrearCaja();
         _visuals = new LanzadorVisuals(_hwnd, _dpi / 96f, _ancho);
 
@@ -270,10 +276,14 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         PInvoke.SendMessage(_edit, WM_SETFONT, (nuint)_fuente.DangerousGetHandle(), 1);
         vieja.Dispose();
 
-        int margen = Escalar(18);
-        PInvoke.SetWindowPos(_edit, default, margen, Escalar(14),
-            _ancho - margen * 2, Escalar(28),
+        PInvoke.SetWindowPos(_franja, default, 0, 0, _ancho, Escalar(AltoFranja),
             SET_WINDOW_POS_FLAGS.SWP_NOZORDER | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
+
+        PInvoke.SetWindowPos(_edit, default,
+            0, Escalar((AltoFranja - LanzadorVisuals.AltoDelTexto) / 2),
+            _ancho, Escalar(LanzadorVisuals.AltoDelTexto),
+            SET_WINDOW_POS_FLAGS.SWP_NOZORDER | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
+        Sangrar(_edit);
 
         _visuals.Reescalar(dpi / 96f, _ancho);
     }
@@ -440,7 +450,9 @@ internal sealed unsafe class LanzadorWindow : IDisposable
 
             // El EDIT pregunta de que color pintarse justo antes de hacerlo. Se le
             // contesta con el pincel de la franja, que es el mismo color solido.
-            case WM_CTLCOLOREDIT when v is not null:
+            // Los dos hermanos de la franja piden su color por mensajes distintos, y los
+            // dos tienen que dar el mismo o se ve la costura.
+            case WM_CTLCOLOREDIT or WM_CTLCOLORSTATIC when v is not null:
                 PInvoke.SetTextColor(new HDC((nint)wParam.Value), new COLORREF(0x00F0F0F0));
                 PInvoke.SetBkColor(new HDC((nint)wParam.Value), new COLORREF(ColorFranja));
                 return new LRESULT((nint)v._fondoCaja.Value);
@@ -488,14 +500,22 @@ internal sealed unsafe class LanzadorWindow : IDisposable
             metricas.cbSize, &metricas, 0);
 
         LOGFONTW lf = metricas.lfMessageFont;
-        lf.lfHeight = -Escalar(20);
+        lf.lfHeight = -Escalar(22);
         return PInvoke.CreateFontIndirect(lf);
     }
 
+    /// <summary>
+    /// La caja ocupa todo el ancho y el texto se mete hacia dentro con EM_SETMARGINS,
+    /// para que quede alineado con la columna de nombres de los resultados.
+    /// <para>
+    /// De alto <b>solo lo que mide el texto</b>, y centrada a mano: un EDIT de una linea
+    /// no centra su contenido en vertical si el control es mucho mas alto, se pega
+    /// arriba. Medido en la captura de H4. El color de la franja de borde a borde lo pone
+    /// un visual de Composition detras, no este control.
+    /// </para>
+    /// </summary>
     private HWND CrearCaja()
     {
-        int margen = Escalar(18);
-
         HWND edit;
         fixed (char* clase = "EDIT")
         fixed (char* vacio = "")
@@ -503,15 +523,45 @@ internal sealed unsafe class LanzadorWindow : IDisposable
             edit = PInvoke.CreateWindowEx(
                 0, new PCWSTR(clase), new PCWSTR(vacio),
                 WINDOW_STYLE.WS_CHILD | WINDOW_STYLE.WS_VISIBLE
-                    | (WINDOW_STYLE)0x0080     // ES_AUTOHSCROLL
-                    | (WINDOW_STYLE)0x0000,    // ES_LEFT
-                margen, Escalar(14), _ancho - margen * 2, Escalar(28),
+                    | (WINDOW_STYLE)0x0080,    // ES_AUTOHSCROLL
+                0, Escalar((AltoFranja - LanzadorVisuals.AltoDelTexto) / 2),
+                _ancho, Escalar(LanzadorVisuals.AltoDelTexto),
                 _hwnd, (HMENU)(nint)EditId, Modulo, null);
         }
 
         if (edit.IsNull) throw new InvalidOperationException("no se pudo crear la caja de texto");
         PInvoke.SendMessage(edit, WM_SETFONT, (nuint)_fuente.DangerousGetHandle(), 1);
+        Sangrar(edit);
         return edit;
+    }
+
+    /// <summary>
+    /// El fondo solido de la franja, como ventana hermana y no como visual de
+    /// Composition: lo que dibuja Composition tapa a las ventanas hijas, asi que un
+    /// SpriteVisual ahi encima hacia desaparecer lo que escribes. Medido en H4.
+    /// </summary>
+    private HWND CrearFranja()
+    {
+        HWND fondo;
+        fixed (char* clase = "STATIC")
+        fixed (char* vacio = "")
+        {
+            fondo = PInvoke.CreateWindowEx(
+                0, new PCWSTR(clase), new PCWSTR(vacio),
+                WINDOW_STYLE.WS_CHILD | WINDOW_STYLE.WS_VISIBLE,
+                0, 0, _ancho, Escalar(AltoFranja),
+                _hwnd, default, Modulo, null);
+        }
+
+        if (fondo.IsNull) throw new InvalidOperationException("no se pudo crear la franja");
+        return fondo;
+    }
+
+    private void Sangrar(HWND edit)
+    {
+        int izq = Escalar((int)LanzadorVisuals.Sangria);
+        int der = Escalar(16);
+        PInvoke.SendMessage(edit, EM_SETMARGINS, 3, (izq & 0xFFFF) | (der << 16));
     }
 
     private static void RegistrarClase()

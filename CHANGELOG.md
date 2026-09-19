@@ -10,6 +10,21 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H4b — El diseño, a estilo Spotlight
+
+- **Hueco de icono a la izquierda y la caja de búsqueda alineada con la columna de
+  nombres.** Los iconos llegan en H7, pero el hueco se reserva ya: así el texto no se
+  mueve cuando aparezcan, y mientras tanto se marca con un cuadrado apenas visible para
+  que la sangría se lea como intencionada y no como un margen mal puesto.
+- **Lo que dibuja Composition tapa a las ventanas hijas.** Pinté la franja con un
+  `SpriteVisual` y desapareció lo que se escribía: el `EDIT` quedó debajo. El fondo de la
+  franja lo pone ahora un `STATIC` hermano creado **antes** que la caja, que es lo que lo
+  deja por debajo en el orden Z.
+- **Un `EDIT` de una línea no centra su texto en vertical** si el control es mucho más
+  alto que la letra: se pega arriba. Por eso el control mide solo lo que el texto y va
+  centrado a mano, y el color de borde a borde lo pone el hermano de detrás.
+- La franja pasa de 56 a 64 px y las filas de 44 a 48, con el texto de la caja a 22.
+
 ### H4 — La ventana
 
 - **Funciona de punta a punta**: `Alt+Espacio` → escribes → flechas → Enter abre la

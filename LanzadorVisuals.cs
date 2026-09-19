@@ -33,10 +33,27 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
     // Las mismas medidas logicas que usa la ventana. Estan repetidas a proposito y no
     // compartidas en una clase de constantes: son dos cosas distintas que hoy coinciden,
     // y una clase "Medidas" con seis campos es la abstraccion que sobra.
-    private const float AltoFila = 44f;
-    private const float AltoFranja = 56f;
+    private const float AltoFila = 48f;
+    private const float AltoFranja = 64f;
     private const float MargenLista = 8f;
-    private const float MargenTexto = 18f;
+
+    /// <summary>Margen exterior: donde empieza el icono y donde acaba el realce.</summary>
+    private const float MargenTexto = 16f;
+
+    /// <summary>
+    /// El icono todavia no existe (llega en H7), pero su hueco si. Reservarlo desde ahora
+    /// es lo que hace que el texto no se mueva cuando lleguen, y de paso la columna de
+    /// nombres queda alineada con lo que se escribe arriba.
+    /// </summary>
+    private const float LadoIcono = 32f;
+    private const float HuecoIcono = 14f;
+
+    /// <summary>Donde empieza el texto de cada fila. La caja de busqueda usa el mismo.</summary>
+    public const float Sangria = MargenTexto + LadoIcono + HuecoIcono;
+
+    /// <summary>Alto de la franja y del control de texto, que la ventana necesita saber.</summary>
+    public const int AltoDeLaFranja = (int)AltoFranja;
+    public const int AltoDelTexto = 34;
 
     private static Windows.System.DispatcherQueueController? _cola;
 
@@ -63,6 +80,10 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
         _raiz.RelativeSizeAdjustment = Vector2.One;
         _target.Root = _raiz;
 
+        // Aqui NO va ningun visual sobre la franja, y es una correccion medida: el
+        // contenido de Composition se dibuja POR ENCIMA de las ventanas hijas, asi que un
+        // SpriteVisual cubriendo la franja tapa el EDIT y desaparece lo que escribes. El
+        // fondo de la franja lo pone un STATIC hermano, en LanzadorWindow.
         _lista = _compositor.CreateSpriteVisual();
         _lista.Offset = new Vector3(0, S(AltoFranja), 0);
         _raiz.Children.InsertAtTop(_lista);
@@ -146,33 +167,42 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
         {
             // Un rectangulo claro a poca opacidad: sobre el acrilico oscuro se lee como
             // un realce y no tapa lo de detras.
-            D2D1_COLOR_F realce = new() { r = 1f, g = 1f, b = 1f, a = 0.14f };
-            ctx.CreateSolidColorBrush(&realce, null, out ID2D1SolidColorBrush pincel);
-
-            D2D1_ROUNDED_RECT caja = new()
-            {
-                rect = new D2D_RECT_F
-                {
-                    left = x + S(MargenTexto) - S(8f),
-                    top = y + S(2f),
-                    right = x + _ancho - S(MargenTexto) + S(8f),
-                    bottom = y + S(AltoFila) - S(2f),
-                },
-                radiusX = S(8f),
-                radiusY = S(8f),
-            };
-            ctx.FillRoundedRectangle(caja, pincel);
+            Redondeado(ctx, x + S(8f), y + S(2f), x + _ancho - S(8f), y + S(AltoFila) - S(2f),
+                       S(10f), 1f, 1f, 1f, 0.14f);
         }
 
-        float izquierda = x + S(MargenTexto);
+        // El hueco del icono, marcado con un cuadrado apenas visible. No es decoracion:
+        // sin el, la sangria del texto parece un margen mal puesto hasta que en H7
+        // aparezcan los iconos de verdad.
+        float arribaIcono = y + (S(AltoFila) - S(LadoIcono)) / 2f;
+        Redondeado(ctx, x + S(MargenTexto), arribaIcono,
+                   x + S(MargenTexto) + S(LadoIcono), arribaIcono + S(LadoIcono),
+                   S(7f), 1f, 1f, 1f, 0.07f);
+
+        float izquierda = x + S(Sangria);
 
         // El nombre a plena opacidad; el destino debajo y apagado, que es donde miras
         // solo cuando dos resultados se llaman parecido.
         Texto.Dibujar(ctx, r.Entrada.Nombre, S(15f), grueso: true, 1f,
-                      new System.Drawing.Point((int)izquierda, (int)(y + S(4f))));
+                      new System.Drawing.Point((int)izquierda, (int)(y + S(6f))));
 
-        Texto.Dibujar(ctx, Acortar(r.Entrada.Destino), S(11f), grueso: false, 0.55f,
-                      new System.Drawing.Point((int)izquierda, (int)(y + S(24f))));
+        Texto.Dibujar(ctx, Acortar(r.Entrada.Destino), S(11f), grueso: false, 0.5f,
+                      new System.Drawing.Point((int)izquierda, (int)(y + S(27f))));
+    }
+
+    private void Redondeado(ID2D1DeviceContext ctx, float izq, float arr, float der, float aba,
+                            float radio, float r, float g, float b, float a)
+    {
+        D2D1_COLOR_F color = new() { r = r, g = g, b = b, a = a };
+        ctx.CreateSolidColorBrush(&color, null, out ID2D1SolidColorBrush pincel);
+
+        D2D1_ROUNDED_RECT caja = new()
+        {
+            rect = new D2D_RECT_F { left = izq, top = arr, right = der, bottom = aba },
+            radiusX = radio,
+            radiusY = radio,
+        };
+        ctx.FillRoundedRectangle(caja, pincel);
     }
 
     /// <summary>

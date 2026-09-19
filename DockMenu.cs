@@ -31,6 +31,12 @@ internal sealed unsafe class DockMenu(Compositor compositor, ContainerVisual par
     private const float PaddingX = 12f;
     private const float PaddingY = 5f;
 
+    /// <summary>Ancho reservado a la derecha para la ✕ de cerrar, en unidades lógicas.</summary>
+    private const float CloseWidth = 30f;
+
+    /// <summary>El aspa. Se dibuja con la misma letra que el resto: no hace falta fuente de iconos.</summary>
+    private const string CloseGlyph = "✕";
+
     private readonly Compositor _compositor = compositor;
     private readonly ContainerVisual _parent = parent;
     private readonly CompositionGraphicsDevice _graphics = graphics;
@@ -42,8 +48,17 @@ internal sealed unsafe class DockMenu(Compositor compositor, ContainerVisual par
     private Vector2 _origin;
     private Vector2 _size;
     private int _hotIndex = -1;
+    private bool _closable;
 
     public bool IsOpen => _menu is not null;
+
+    /// <summary>
+    /// Cuántas filas caben en el hueco que hay encima de la barra. Con más, el menú se
+    /// dibuja fuera de la ventana y las de arriba quedan cortadas y sin poder clicarse:
+    /// pasó con una app de seis ventanas, de las que solo se llegaba a las tres últimas.
+    /// </summary>
+    public static int RowsThatFit(float height, float scale)
+        => Math.Max(1, (int)((height - PaddingY * 2f * scale) / (RowHeight * scale)));
 
     /// <summary>Qué entrada eligió el usuario, o -1 si clicó fuera.</summary>
     public int HitTest(float x, float y)
@@ -55,6 +70,22 @@ internal sealed unsafe class DockMenu(Compositor compositor, ContainerVisual par
 
         int row = (int)((local - PaddingY * _scale) / (RowHeight * _scale));
         return row >= 0 && row < _items.Length ? row : -1;
+    }
+
+    /// <summary>
+    /// Sobre qué ✕ está el punto, o -1. Se pregunta ANTES que <see cref="HitTest"/>:
+    /// la ✕ vive dentro de su fila, así que las dos darían la misma fila y hay que
+    /// saber cuál de las dos cosas quería el usuario.
+    /// </summary>
+    public int HitTestClose(float x, float y)
+    {
+        if (!_closable) return -1;
+
+        int row = HitTest(x, y);
+        if (row < 0) return -1;
+
+        float right = _origin.X + _size.X - PaddingY * _scale;
+        return x >= right - CloseWidth * _scale && x <= right ? row : -1;
     }
 
     /// <summary>Resalta la entrada bajo el cursor.</summary>
@@ -77,7 +108,8 @@ internal sealed unsafe class DockMenu(Compositor compositor, ContainerVisual par
     /// <summary>
     /// Abre el menú encima del punto dado, sin salirse de los límites que se le pasan.
     /// </summary>
-    public void Open(string[] items, float anchorX, float bottom, float scale, float left, float right)
+    public void Open(string[] items, float anchorX, float bottom, float scale, float left, float right,
+        bool closable = false)
     {
         Close();
 
@@ -85,11 +117,14 @@ internal sealed unsafe class DockMenu(Compositor compositor, ContainerVisual par
 
         _items = items;
         _scale = scale;
+        _closable = closable;
 
         float width = 0f;
         foreach (string item in items) width = MathF.Max(width, Labels.Measure(item, scale).X);
 
-        width += PaddingX * 2f * scale;
+        // Con ✕ hay que reservarle su hueco a la derecha, o se comeria el final del
+        // titulo, que es justo lo que distingue una ventana de otra.
+        width += (PaddingX * 2f + (closable ? CloseWidth : 0f)) * scale;
         float height = items.Length * RowHeight * scale + PaddingY * 2f * scale;
         _size = new Vector2(MathF.Ceiling(width), MathF.Ceiling(height));
 
@@ -177,6 +212,17 @@ internal sealed unsafe class DockMenu(Compositor compositor, ContainerVisual par
                     items[i],
                     scale,
                     new System.Drawing.Point((int)(offset.X + PaddingX * scale), (int)top),
+                    RowHeight * scale);
+
+                if (!_closable) continue;
+
+                Labels.DrawRow(
+                    context,
+                    CloseGlyph,
+                    scale,
+                    new System.Drawing.Point(
+                        (int)(offset.X + _size.X - (PaddingY + CloseWidth * 0.62f) * scale),
+                        (int)top),
                     RowHeight * scale);
             }
         }

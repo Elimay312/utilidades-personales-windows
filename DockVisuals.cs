@@ -546,15 +546,18 @@ internal sealed unsafe class DockVisuals : IDisposable
 
     public bool MenuOpen => _menu?.IsOpen == true;
 
-    public void OpenMenu(string[] items, float anchorX, float bottom, float left, float right)
+    public void OpenMenu(string[] items, float anchorX, float bottom, float left, float right,
+        bool closable = false)
     {
         _menu ??= new DockMenu(_compositor, _root, EnsureGraphicsDevice());
-        _menu.Open(items, anchorX, bottom, _scale, left, right);
+        _menu.Open(items, anchorX, bottom, _scale, left, right, closable);
     }
 
     public void CloseMenu() => _menu?.Close();
 
     public int MenuHitTest(float x, float y) => _menu?.HitTest(x, y) ?? -1;
+
+    public int MenuHitTestClose(float x, float y) => _menu?.HitTestClose(x, y) ?? -1;
 
     public void MenuHot(int index) => _menu?.SetHot(index);
 

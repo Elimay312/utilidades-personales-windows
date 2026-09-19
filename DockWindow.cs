@@ -30,14 +30,18 @@ internal sealed unsafe class DockWindow : IDisposable
     /// exactamente lo que el icono más grande, así que sin esto ni la etiqueta ni el
     /// menú cabrían.
     ///
-    /// Lo dimensiona el MENÚ, no la etiqueta: dos filas de 30 más sus márgenes. Al
-    /// bajar la magnificación la ventana encogió y el menú pasó a dibujarse fuera de
-    /// ella, donde queda recortado y no se puede clicar. La etiqueta sola necesitaría
-    /// menos de la mitad.
+    /// Lo dimensiona el MENÚ, no la etiqueta: al bajar la magnificación la ventana
+    /// encogió y el menú pasó a dibujarse fuera de ella, donde queda recortado y no se
+    /// puede clicar. La etiqueta sola necesitaría menos de la mitad.
+    ///
+    /// Eran 76, dos filas de 30 más sus márgenes, que es lo que pide el menú del clic
+    /// derecho. La lista de ventanas de la rueda pide más: con 76 solo entraban DOS
+    /// filas y una app con seis ventanas enseñaba dos. Con 106 entran tres a cualquier
+    /// magnificación, y de ahí en adelante la lista se desplaza con la selección.
     ///
     /// Que el hueco sea generoso no le quita sitio al escritorio: la región de la
     /// ventana solo sube hasta aquí mientras el ratón está encima (ver ApplyRegion).
-    private const int LogicalLabelRoom = 76;
+    private const int LogicalLabelRoom = 106;
 
     /// Margen antes de esconderse al salir el ratón. Sin él, rozar el dock de paso
     /// lo haría parpadear.
@@ -78,6 +82,7 @@ internal sealed unsafe class DockWindow : IDisposable
     private const uint WM_CAPTURECHANGED = 0x0215;
     private const uint WM_RBUTTONUP = 0x0205;
     private const uint WM_MBUTTONUP = 0x0208;
+    private const uint WM_CLOSE = 0x0010;
     private const uint WM_MOUSEWHEEL = 0x020A;
     private const uint WM_MOUSELEAVE = 0x02A3;
     private const uint WM_TIMER = 0x0113;
@@ -222,6 +227,9 @@ internal sealed unsafe class DockWindow : IDisposable
     private int _wheelIndex = -1;
     private int _wheelAt;
     private HWND[] _wheelWindows = [];
+
+    /// <summary>Primera ventana de las que se están viendo, porque no caben todas.</summary>
+    private int _wheelFirst;
 
     /// <summary>
     /// Icono que está botando porque su app se está abriendo, y hasta cuándo. El tope
@@ -1372,7 +1380,7 @@ internal sealed unsafe class DockWindow : IDisposable
             // rueda acababa de elegir. Solo manda el ratón cuando de verdad está encima
             // de una fila.
             int hot = _visuals.MenuHitTest(LoWord(lParam), HiWord(lParam));
-            if (hot >= 0) { _wheelAt = hot; _visuals.MenuHot(hot); }
+            if (hot >= 0) { _wheelAt = hot + _wheelFirst; _visuals.MenuHot(hot); }
             else if (_wheelIndex < 0) _visuals.MenuHot(-1);
 
             _visuals.SetLabel(-1);
@@ -1429,6 +1437,40 @@ internal sealed unsafe class DockWindow : IDisposable
     }
 
     /// <summary>Ejecuta lo que se eligió en el menú.</summary>
+    /// <summary>
+    /// La ✕ de una fila de la lista de ventanas: le pide a esa ventana que se cierre.
+    ///
+    /// <b>Pedir, no cerrar.</b> Es <c>WM_CLOSE</c>, el mismo mensaje que manda el botón
+    /// de cerrar de la propia ventana: la app puede ignorarlo o preguntar si guardar los
+    /// cambios, y entonces contesta el usuario. Nunca se mata un proceso — ver la
+    /// enmienda 4 de SEGURIDAD.md, que es lo que autoriza esto y con qué límites.
+    /// </summary>
+    private void OnCloseWindow(int row)
+    {
+        int at = row + _wheelFirst;
+        if (_wheelIndex < 0 || at < 0 || at >= _wheelWindows.Length) return;
+
+        PInvoke.PostMessage(_wheelWindows[at], WM_CLOSE, default, default);
+        Console.WriteLine($"[cerrar] pedida la ventana {at + 1} de {_wheelWindows.Length}");
+
+        // La fila desaparece al momento aunque la app tarde en cerrarse, o aunque acabe
+        // negándose: si se negara, la siguiente vuelta de rueda la vuelve a enseñar.
+        // Esperar a que muera de verdad dejaría una fila muerta durante todo el diálogo
+        // de "¿guardar los cambios?".
+        HWND[] quedan = [.. _wheelWindows.Where((_, i) => i != at)];
+
+        if (quedan.Length < 2)
+        {
+            CloseMenu();
+            return;
+        }
+
+        _wheelWindows = quedan;
+        _wheelAt = Math.Min(at, quedan.Length - 1);
+        _wheelFirst = -1;
+        ShowWheelList();
+    }
+
     private void OnMenuChoice(int choice)
     {
         _visuals?.CloseMenu();
@@ -1438,12 +1480,13 @@ internal sealed unsafe class DockWindow : IDisposable
         if (_wheelIndex >= 0)
         {
             HWND[] windows = _wheelWindows;
+            int at = choice + _wheelFirst;
             _wheelIndex = -1;
 
-            if (choice < 0 || choice >= windows.Length) return;
+            if (at < 0 || at >= windows.Length) return;
 
-            WindowActions.BringToFront(windows[choice]);
-            Console.WriteLine($"[rueda] al frente la ventana {choice + 1}");
+            WindowActions.BringToFront(windows[at]);
+            Console.WriteLine($"[rueda] al frente la ventana {at + 1}");
             return;
         }
 
@@ -1492,9 +1535,16 @@ internal sealed unsafe class DockWindow : IDisposable
     {
         if (_visuals?.MenuOpen == true)
         {
-            int choice = _visuals.MenuHitTest(LoWord(lParam), HiWord(lParam));
-            if (choice >= 0) OnMenuChoice(choice);
-            else CloseMenu();
+            // La aspa va antes: vive DENTRO de su fila, así que el hit-test normal
+            // devolvería la misma fila y no se sabría cuál de las dos cosas se quería.
+            int cerrar = _visuals.MenuHitTestClose(LoWord(lParam), HiWord(lParam));
+            if (cerrar >= 0) OnCloseWindow(cerrar);
+            else
+            {
+                int choice = _visuals.MenuHitTest(LoWord(lParam), HiWord(lParam));
+                if (choice >= 0) OnMenuChoice(choice);
+                else CloseMenu();
+            }
 
             _pressedIndex = -1;
             return;
@@ -2062,24 +2112,52 @@ internal sealed unsafe class DockWindow : IDisposable
             _wheelIndex = index;
             _wheelWindows = windows;
             _wheelAt = 0;
+            _wheelFirst = -1;
             _menuIndex = -1;
-
-            _visuals.SetLabel(-1);
-            (float left, float right) = BarBounds();
-            _visuals.OpenMenu(
-                [.. windows.Select(TitleOf)],
-                _curve.Project((_curve.RestLeft(index) + _curve.RestRight(index)) * 0.5f, _windowWidth, _lastRest),
-                _windowHeight - BarHeight,
-                left,
-                right);
         }
         else
         {
             _wheelAt = ((_wheelAt + step) % _wheelWindows.Length + _wheelWindows.Length) % _wheelWindows.Length;
         }
 
-        _visuals.MenuHot(_wheelAt);
+        ShowWheelList();
         Console.WriteLine($"[rueda] '{_loaded[index].App.Name}' ventana {_wheelAt + 1} de {_wheelWindows.Length}");
+    }
+
+    /// <summary>
+    /// Dibuja el trozo de la lista que contiene a la ventana elegida.
+    ///
+    /// Encima de la barra solo caben tres filas, y una app puede tener diez ventanas. En
+    /// vez de crecer la ventana del dock —cuyo alto va horneado dentro de las
+    /// expresiones de la animación— la lista se desplaza con la selección, que es lo
+    /// natural cuando quien navega es la rueda.
+    /// </summary>
+    private void ShowWheelList()
+    {
+        if (_visuals is null || _wheelIndex < 0) return;
+
+        int total = _wheelWindows.Length;
+        int fit = Math.Min(total, DockMenu.RowsThatFit(_windowHeight - BarHeight, _dpi / 96f));
+        int first = Math.Clamp(_wheelAt - fit / 2, 0, total - fit);
+
+        if (first != _wheelFirst || !_visuals.MenuOpen)
+        {
+            _wheelFirst = first;
+
+            // La etiqueta ocupa el mismo hueco que la lista: se quita o se solapan.
+            _visuals.SetLabel(-1);
+
+            (float left, float right) = BarBounds();
+            _visuals.OpenMenu(
+                [.. _wheelWindows.Skip(first).Take(fit).Select(TitleOf)],
+                _curve.Project((_curve.RestLeft(_wheelIndex) + _curve.RestRight(_wheelIndex)) * 0.5f, _windowWidth, _lastRest),
+                _windowHeight - BarHeight,
+                left,
+                right,
+                closable: true);
+        }
+
+        _visuals.MenuHot(_wheelAt - first);
     }
 
     /// <summary>El título de una ventana, recortado para que quepa en una fila.</summary>

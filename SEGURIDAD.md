@@ -88,7 +88,7 @@ Dicho de otro modo: aunque alguien modificara el dock para llamar a
 
 ### Lo que la enmienda NO autoriza
 
-- Cerrar ventanas ajenas.
+- Cerrar ventanas ajenas. <sup>(la enmienda 4 abre una sola vía: `WM_CLOSE` desde la ✕ de la lista de ventanas)</sup>
 - Enumerar ventanas para algo que no sea localizar la app del icono clicado.
 - Guardar, transmitir o analizar la imagen capturada.
 - Hooks de ningún tipo.
@@ -275,7 +275,7 @@ parece a un infostealer aunque la API sea pública.
 | **`SetWindowsHookEx` global y `SetWinEventHook`** (regla 3, intacta) | Un hook global carga una DLL nuestra dentro de otros procesos. *Ese* es el patrón de keylogger, y con `RegisterShellHookWindow` no hace falta para nada. |
 | Persistencia oculta (regla 7) | El autoarranque sigue en `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, visible y preguntado. |
 | Portapapeles y credenciales (regla 10 y enmienda 2) | Sin cambios. |
-| Cerrar ventanas ajenas | La enmienda 1 ya lo prohibía y sigue. El inventario es para saber, no para matar. |
+| Matar procesos ajenos (`TerminateProcess`, `EndTask`) | La **enmienda 4** abre `WM_CLOSE`, que es *pedir* que se cierre y la app puede negarse. Matar un proceso pierde datos sin preguntar. |
 | Guardar, transmitir o analizar una imagen capturada | Sin cambios respecto a la enmienda 1. |
 | Parsear a mano los ficheros de `AutomaticDestinations` | Formato no documentado, ficheros internos del perfil del usuario. Es lo que hacen las herramientas forenses y el malware de exfiltración — y existiendo `IApplicationDocumentLists` no tiene defensa. |
 | **`ABM_SETSTATE`** | Escribe el ajuste **global** de la barra de tareas del usuario, el mismo checkbox de sus propiedades. Devuelve siempre `TRUE`, así que no se puede detectar el fallo, y **no hay ninguna API que lo restaure**. Cambiar un ajuste global sin pedirlo y sin poder deshacerlo es el perfil del adware de barras de herramientas. Además no consigue lo que se quería: apagar el autoocultar deja la barra *permanentemente* visible. |
@@ -309,6 +309,57 @@ fantasma del inventario.
 `HWND` propio. No existe ningún método `Get*` en `ITaskbarList` 1, 2, 3 ni 4: el estado
 vive dentro de `explorer.exe` y no está expuesto. Leer el progreso que publicó otra app
 no se puede con ninguna API documentada. No se añade el P/Invoke.
+
+## Enmienda 4 — cerrar una ventana desde la lista de la rueda (2026-09-18)
+
+La rueda sobre un icono despliega la lista de ventanas de esa app (ver M5). El usuario
+pide una **✕ en cada fila para cerrar esa ventana**, que es lo que hacen la barra de
+tareas de Windows y el dock de macOS.
+
+Eso choca de frente con una prohibición escrita. La enmienda 1 decía, textualmente, que
+la enmienda **NO autoriza** *"cerrar ventanas ajenas"*, y la enmienda 3 lo repitió en su
+tabla: *"El inventario es para saber, no para matar"*. Se enmienda ahora, y con límites.
+
+### Qué se abre
+
+**Pedirle a una ventana ajena que se cierre**, con `PostMessage(hwnd, WM_CLOSE, 0, 0)`.
+
+### Por qué es defendible
+
+`WM_CLOSE` **no cierra nada por la fuerza: lo pide**. Es el mismo mensaje que manda el
+botón de cerrar de la propia ventana, y la app es libre de ignorarlo, de enseñar un
+"¿guardar los cambios?" o de no hacer nada. Si el usuario dice que no, la ventana se
+queda. No hay pérdida de datos que la app no haya aceptado.
+
+Es exactamente lo que ofrece el menú del clic derecho de la barra de tareas de Windows
+sobre cualquier botón, y lo que ofrece el dock de macOS. No hay nada aquí que un dock no
+haga.
+
+### Los límites, que son los mismos tres de siempre
+
+- **Solo `PostMessage(WM_CLOSE)`.** Quedan prohibidos, y esto es lo importante:
+  `TerminateProcess`, `TerminateThread`, `EndTask`, `ExitWindowsEx`, `NtTerminateProcess`
+  y cualquier otra forma de matar un proceso o forzar el cierre. Matar un proceso pierde
+  datos sin preguntar; `WM_CLOSE` no.
+- **Solo ventanas de apps que están en `dock.json`.** La lista sale del inventario, que
+  ya está acotado a los iconos del dock.
+- **Solo como respuesta directa a un clic del usuario sobre esa ✕.** Nunca desde un
+  temporizador, nunca desde un hilo de fondo, nunca en lote, y **no existe ningún
+  "cerrar todas"**.
+
+### Lo que la enmienda NO autoriza
+
+- Matar procesos, por ninguna vía.
+- Cerrar la ventana de una app que no esté en `dock.json`.
+- Cerrar nada sin un clic encima de la ✕ de esa fila concreta.
+- Responder que sí a los diálogos de la app. Si pregunta si guardar, contesta el usuario.
+
+### Cómo se audita
+
+```sh
+# La unica forma de cerrar es WM_CLOSE. No debe aparecer ninguna de estas.
+git ls-files '*.cs' NativeMethods.txt | xargs grep -rnE "TerminateProcess|TerminateThread|EndTask|ExitWindowsEx|NtTerminate"
+```
 
 ## Corolarios de diseño
 

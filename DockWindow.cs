@@ -34,14 +34,20 @@ internal sealed unsafe class DockWindow : IDisposable
     /// encogió y el menú pasó a dibujarse fuera de ella, donde queda recortado y no se
     /// puede clicar. La etiqueta sola necesitaría menos de la mitad.
     ///
-    /// Eran 76, dos filas de 30 más sus márgenes, que es lo que pide el menú del clic
-    /// derecho. La lista de ventanas de la rueda pide más: con 76 solo entraban DOS
-    /// filas y una app con seis ventanas enseñaba dos. Con 106 entran tres a cualquier
-    /// magnificación, y de ahí en adelante la lista se desplaza con la selección.
+    /// Eran 76, dos filas de 30 más sus márgenes, que es lo que pedía el menú del clic
+    /// derecho cuando solo tenía dos entradas. Ahora ese menú lleva además los
+    /// documentos recientes de la app, y la lista de ventanas de la rueda quiere sitio
+    /// para varias: con 200 entran SEIS filas a cualquier magnificación, y de ahí en
+    /// adelante la lista se desplaza con la selección.
     ///
-    /// Que el hueco sea generoso no le quita sitio al escritorio: la región de la
-    /// ventana solo sube hasta aquí mientras el ratón está encima (ver ApplyRegion).
-    private const int LogicalLabelRoom = 106;
+    /// Que el hueco sea generoso no le quita sitio al escritorio: cuando el ratón no
+    /// está encima, la región de la ventana llega solo hasta la barra más lo que crece
+    /// el icono magnificado, sin contar esto (ver ApplyRegion).
+    private const int LogicalLabelRoom = 200;
+
+    /// Cuántos recientes caben en el menú del clic derecho, dejando sitio a sus dos
+    /// entradas de siempre.
+    private const int MenuJumpLimit = 4;
 
     /// Margen antes de esconderse al salir el ratón. Sin él, rozar el dock de paso
     /// lo haría parpadear.
@@ -254,6 +260,9 @@ internal sealed unsafe class DockWindow : IDisposable
 
     /// <summary>Icono sobre el que se abrió el menú, o -1 si se abrió en hueco.</summary>
     private int _menuIndex = -1;
+
+    /// <summary>Documentos recientes que enseña el menú abierto ahora mismo.</summary>
+    private List<JumpItem> _menuJumps = [];
 
     /// <summary>La rejilla desplegada ahora mismo, si hay alguna.</summary>
     private StackOverlay? _stack;
@@ -1167,6 +1176,7 @@ internal sealed unsafe class DockWindow : IDisposable
     {
         _visuals?.CloseMenu();
         _wheelIndex = -1;
+        _menuJumps = [];
         ClosePreview();
     }
 
@@ -1391,6 +1401,10 @@ internal sealed unsafe class DockWindow : IDisposable
         PInvoke.SetWindowPos(_hwnd, HWND.Null, 0, 0, 0, 0, quieto);
     }
 
+    /// <summary>Nombres largos recortados: el menú se hace tan ancho como su fila mayor.</summary>
+    private static string Shorten(string name)
+        => name.Length <= 34 ? name : string.Concat(name.AsSpan(0, 33), "…");
+
     private static short LoWord(LPARAM lParam) => (short)(lParam.Value & 0xFFFF);
 
     private static short HiWord(LPARAM lParam) => (short)((lParam.Value >> 16) & 0xFFFF);
@@ -1482,8 +1496,40 @@ internal sealed unsafe class DockWindow : IDisposable
         bool sobreIcono = index >= 0 && index < _loaded.Count && !_loaded[index].App.Separator;
 
         _menuIndex = sobreIcono ? index : -1;
+
+        // Los documentos recientes de la app, encima de sus dos entradas. Es la mitad
+        // de la lista de saltos que la barra de tareas enseña en este mismo gesto: la
+        // API no da los anclados ni las tareas, y está escrito en la doc.
+        //
+        // Aquí es donde se sostienen los tres cortafuegos de la enmienda 3: se pregunta
+        // por UNA app, la del icono clicado, que por definición está en dock.json, y
+        // solo desde este gesto. No hay ningún otro camino que llegue a JumpList.
+        _menuJumps = [];
+        if (sobreIcono)
+        {
+            HWND ventana = index < _state.Length ? _state[index].MainWindow : default;
+            string? appId = JumpList.AppIdOf(_loaded[index].App, ventana);
+            if (appId is not null)
+            {
+                // Los recientes primero; si la app no los registra —el Explorador, por
+                // ejemplo, lleva carpetas frecuentes y no documentos— se prueba con los
+                // frecuentes antes de rendirse.
+                List<JumpItem> jumps = JumpList.Read(appId);
+                if (jumps.Count == 0) jumps = JumpList.Read(appId, APPDOCLISTTYPE.ADLT_FREQUENT);
+
+                _menuJumps = [.. jumps.Take(MenuJumpLimit)];
+            }
+
+            if (Environment.GetEnvironmentVariable("DOCK_HOVER_LOG") is not null)
+            {
+                Console.WriteLine($"[saltos] '{_loaded[index].App.Name}' appId={appId ?? "(ninguno)"} " +
+                    $"ventana=0x{(nint)ventana.Value:X} recientes={_menuJumps.Count}");
+            }
+        }
+
         string[] items = sobreIcono
-            ? [$"Quitar '{_loaded[index].App.Name}' del dock", "Salir del dock"]
+            ? [.. _menuJumps.Select(j => Shorten(j.Name)),
+               $"Quitar '{_loaded[index].App.Name}' del dock", "Salir del dock"]
             : ["Salir del dock"];
 
         float anchor = sobreIcono
@@ -1554,8 +1600,25 @@ internal sealed unsafe class DockWindow : IDisposable
 
         bool sobreIcono = _menuIndex >= 0;
 
-        // La última entrada siempre es salir, tenga el menú una o dos.
-        if (!sobreIcono || choice == 1)
+        // Arriba van los documentos recientes, si los hay.
+        if (sobreIcono && choice < _menuJumps.Count && _menuIndex < _loaded.Count)
+        {
+            DockApp dueño = _loaded[_menuIndex].App;
+            JumpItem doc = _menuJumps[choice];
+            _menuJumps = [];
+
+            Console.WriteLine($"[saltos] abriendo '{doc.Name}' con '{dueño.Name}'");
+
+            // Fuera del hilo de UI, como lanzar: acaba en ShellExecuteEx.
+            Task.Run(() => dueño.OpenWith([doc.Target]));
+            return;
+        }
+
+        int resto = choice - _menuJumps.Count;
+        _menuJumps = [];
+
+        // La última entrada siempre es salir, tenga el menú una entrada o seis.
+        if (!sobreIcono || resto == 1)
         {
             PInvoke.PostQuitMessage(0);
             return;

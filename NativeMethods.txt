@@ -120,6 +120,20 @@ GetCurrentProcessId
 // Que app abre un protocolo. Solo LECTURA de asociaciones del shell: sirve para
 // ponerle al icono de una URL la cara del navegador que la va a abrir.
 AssocQueryStringW
+
+// Listas de saltos: los documentos recientes de una app. API publica, implementada
+// por el sistema. Es LECTURA de datos del usuario, asi que va con los tres
+// cortafuegos de la enmienda 3: solo apps de dock.json, solo tras un gesto, nunca
+// en un temporizador.
+IApplicationDocumentLists
+ApplicationDocumentLists
+IObjectArray
+
+// El AppUserModelID que declara una ventana. Es la unica forma de preguntar por la
+// lista de saltos de una app de siempre: la ruta del .exe NO vale como AppID, medido.
+SHGetPropertyStoreForWindow
+IPropertyStore
+PropVariantToStringAlloc
 GetWindowThreadProcessId
 IsWindowVisible
 IsIconic

@@ -124,6 +124,11 @@ comodidad. La tabla tiene que marcar, antes de que el botón Aplicar se pueda pu
   también con extensión: `CON.txt` está igual de prohibido),
 - una ruta que se pasa de 260 caracteres cuando la original no lo hacía (**largo**).
 
+Y las filas van **en el orden del Explorador**, no en el alfabético: `StrCmpLogicalW`, que es
+una comparación de cadenas de `shlwapi` y no toca el disco. No es cosmético — ese orden es el
+que la ficha `{n}` usa para repartir la numeración, y renumerar cien facturas en orden
+alfabético las deja barajadas sin que la tabla parezca decir nada raro.
+
 **Un estado que la previa no marque es exactamente el fallo que este programa existe para
 evitar.** Por eso van en `--check` con su caso, y por eso la costumbre de la casa —meter el
 fallo a propósito y comprobar que la prueba lo detecta— se aplica aquí antes que en ningún

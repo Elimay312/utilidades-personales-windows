@@ -10,6 +10,37 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H1 — El motor y la vista previa
+
+- **Siete tipos de regla se quedaron en cinco, y hacen más.** El primer diseño tenía
+  `Numerar`, `Insertar` y `Fecha` por separado, y cada una necesitaba su posición, su formato
+  y su origen. Con fichas dentro de `Plantilla` — `{nombre}`, `{n:000}`, `{fecha:yyyy-MM}` —
+  las tres se colapsan en una y encima **se combinan**, que es justo lo que pide un recibo:
+  `Recibo_{fecha}_{n:000}`. La caja (MAYÚS/minús/Título) tampoco es un campo: son tres
+  valores del enum, y así no hay un campo que solo signifique algo para un tipo.
+- **La previa no toca el disco, y por eso `--check` comprueba los seis estados sin crear un
+  solo fichero.** Los nombres ya ocupados de la carpeta entran como parámetro en vez de
+  preguntarle al disco. Es lo que permite que el caso "el destino ya existe" —el que solo se
+  ve con un disco de verdad— tenga su comprobación como todos los demás.
+- **Un fallo real, encontrado escribiendo el caso y no leyendo el código.** `1.txt → 2.txt`
+  salía `Ok` cuando `2.txt` estaba en el lote pero **no se movía**: el código miraba "está en
+  el lote" en vez de "va a quedar libre". Al aplicarlo, Windows habría dado error y el lote se
+  habría parado a mitad. Arreglado, y metido otra vez a propósito para ver a `--check`
+  detectarlo: `FALLA un destino del lote que NO se mueve sigue estando ocupado`.
+- **`SinCambio` va antes que `Invalido`.** Una carpeta con un `CON.pdf` dentro salía entera en
+  rojo y `--previa` devolvía 1 aunque el lote no fuese a tocarlo. Si el nombre no cambia no
+  hay nada que validar: ya existe en el disco.
+- **El orden de las filas es el del Explorador, con `StrCmpLogicalW`.** Medido con la carpeta
+  de prueba: `FACTURA acme 2`, `3`, `10` — en orden alfabético el 10 va antes que el 2, y la
+  numeración habría salido barajada sin que la tabla pareciera decir nada raro. Una entrada en
+  `NativeMethods.txt` sale más barata y es más correcta que escribir el comparador a mano.
+- **`--previa` imprime la misma tabla que la ventana**, con los mismos estados y la misma
+  llamada a `Previa.Calcular`. No es una versión reducida para depurar: es lo que la hace
+  valer como sonda. Devuelve 1 si alguna fila no se podría renombrar.
+- **36 comprobaciones en `--check`, todas en verde**, incluidas la ñ subiendo a mayúsculas
+  (que es lo que se pierde sin ICU), los nombres reservados con extensión, y las dos caras del
+  intercambio `A→B, B→A`.
+
 ### H0 — Las reglas, antes del código
 
 - **`SEGURIDAD.md` propio**, escrito antes de la primera línea. No es el del lanzador con

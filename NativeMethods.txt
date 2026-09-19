@@ -9,3 +9,10 @@
 // --- Consola estando compilado como WinExe (H0) ---
 // Sin esto, --previa y --check no tendrian donde escribir al lanzarse desde una terminal.
 AttachConsole
+
+// --- Orden de las filas (H1, SEGURIDAD.md §3.2) ---
+// La comparacion que usa el Explorador para ordenar: numeros como numeros, foto2 antes
+// que foto10. Es una funcion de comparar cadenas de shlwapi, no toca el disco. Esta aqui
+// en vez de escrita a mano porque el orden de las filas es el orden en el que {n} reparte
+// la numeracion, y lo que el usuario espera es lo que ve en la ventana de al lado.
+StrCmpLogicalW

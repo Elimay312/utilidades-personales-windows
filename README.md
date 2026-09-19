@@ -17,7 +17,8 @@ viene en el SDK.
 
 **M3 — miniaturas.** El espacio abre el panel sobre el archivo seleccionado y enseña su
 miniatura real: imágenes, PDFs, vídeos y documentos de Office. Lo que no tiene miniatura
-cae a una ficha con su icono, nombre, tamaño y fecha. Todavía sin animación.
+cae a una ficha con su icono, nombre, tamaño y fecha. Se cierra con otro espacio, con un
+clic, con la ✕, o solo en cuanto te vas a otra app. Todavía sin animación.
 
 Lo que viene, en orden:
 
@@ -99,6 +100,7 @@ barra de direcciones. Sin eso, el programa hace el Explorador inusable.
 | `Text.cs` | El texto del panel, con DirectWrite. |
 | `Content/Preview.cs` | Qué trato le toca a cada extensión. |
 | `Panel.cs` | El panel. No roba el foco, sí recibe ratón. |
+| `Foreground.cs` | Quién está delante. Lo preguntan el hook, el panel y la selección. |
 | `SelfCheck.cs` | Lo que `--check` comprueba: la lógica pura. |
 | `NativeMethods.txt` | La lista cerrada de P/Invokes. Si algo no está aquí, no compila. |
 | `auditar.ps1` | Comprueba `SEGURIDAD.md` contra el código. Tiene que decir `TODO LIMPIO`. |

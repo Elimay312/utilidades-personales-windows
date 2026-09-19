@@ -27,6 +27,15 @@ internal sealed unsafe class HostWindow : IDisposable
     private const string ClassName = "QuickLookHostClass";
 
     private const uint WM_DESTROY = 0x0002;
+    private const uint WM_TIMER = 0x0113;
+
+    /// <summary>
+    /// Cada cuanto se mira quien esta delante mientras hay panel abierto. 200 ms es por
+    /// debajo de lo que se nota y solo corre mientras el panel existe: con el panel
+    /// cerrado no hay temporizador, no hay hilos y no hay sondeo. Ver SEGURIDAD.md §5.
+    /// </summary>
+    private const uint WatchTimer = 1;
+    private const uint WatchMs = 200;
 
     /// <summary>El hook pide abrir o cerrar el panel. Lo manda <c>Hook.cs</c>.</summary>
     internal const uint WM_APP_QUICKLOOK = 0x8001;
@@ -64,6 +73,7 @@ internal sealed unsafe class HostWindow : IDisposable
 
         if (_hwnd.IsNull) throw new InvalidOperationException("no se pudo crear la ventana-host");
         _instance = this;
+        Panel.Host = _hwnd;
     }
 
     /// <summary>Donde el hook deja su aviso. Nunca se muestra.</summary>
@@ -91,6 +101,13 @@ internal sealed unsafe class HostWindow : IDisposable
                 _instance?.Toggle();
                 return new LRESULT(0);
 
+            // Mientras hay panel: si el usuario se ha ido a otra app, el panel sobra.
+            // Sin esto la unica salida era volver al Explorador y pulsar espacio otra
+            // vez, que es lo que hacia que la ventana pareciese imposible de cerrar.
+            case WM_TIMER when wParam.Value == WatchTimer:
+                _instance?.CloseIfAway();
+                return new LRESULT(0);
+
             case WM_DESTROY:
                 PInvoke.PostQuitMessage(0);
                 return new LRESULT(0);
@@ -106,8 +123,7 @@ internal sealed unsafe class HostWindow : IDisposable
     {
         if (_panel is not null)
         {
-            _panel.Dispose();
-            _panel = null;
+            Close();
             return;
         }
 
@@ -127,6 +143,35 @@ internal sealed unsafe class HostWindow : IDisposable
 
         Console.WriteLine($"[seleccion] {path}");
         _panel = Panel.Open(front, Preview.For(path));
+
+        if (_panel is not null) PInvoke.SetTimer(_hwnd, WatchTimer, WatchMs, null);
+    }
+
+    /// <summary>Cierra el panel y para el temporizador. Es el unico camino de cierre.</summary>
+    private void Close()
+    {
+        if (_panel is null) return;
+
+        PInvoke.KillTimer(_hwnd, WatchTimer);
+        _panel.Dispose();
+        _panel = null;
+    }
+
+    /// <summary>
+    /// Si delante ya no hay ni el Explorador ni nuestro propio panel, el usuario se ha ido
+    /// a otra cosa y el panel se cierra solo.
+    ///
+    /// El panel cuenta como "delante" aunque nunca tome el foco: se comprueba por HWND, no
+    /// por foco, precisamente porque no lo roba.
+    /// </summary>
+    private void CloseIfAway()
+    {
+        if (_panel is null) return;
+
+        HWND front = PInvoke.GetForegroundWindow();
+        if (front == _panel.Handle || Foreground.IsExplorer(front)) return;
+
+        Close();
     }
 
     private static void EnsureClassRegistered()
@@ -152,8 +197,7 @@ internal sealed unsafe class HostWindow : IDisposable
         if (_disposed) return;
         _disposed = true;
 
-        _panel?.Dispose();
-        _panel = null;
+        Close();
 
         if (!_hwnd.IsNull)
         {

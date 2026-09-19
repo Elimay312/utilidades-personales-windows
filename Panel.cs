@@ -34,7 +34,12 @@ internal sealed unsafe class Panel : IDisposable
     private const string ClassName = "QuickLookPanelClass";
 
     private const uint WM_MOUSEACTIVATE = 0x0021;
+    private const uint WM_LBUTTONDOWN = 0x0201;
+    private const uint WM_RBUTTONDOWN = 0x0204;
     private const int MA_NOACTIVATE = 3;
+
+    /// <summary>Donde avisar de que hay que cerrar. Lo pone HostWindow al arrancar.</summary>
+    internal static HWND Host;
 
     /// <summary>IDC_ARROW. CsWin32 no proyecta los cursores del sistema como constante.</summary>
     private const int IdcArrow = 32512;
@@ -52,6 +57,9 @@ internal sealed unsafe class Panel : IDisposable
     /// <summary>La ficha no depende del contenido, asi que tiene tamano fijo.</summary>
     private const float CardWidth = 460f;
     private const float CardHeight = 300f;
+
+    /// <summary>Lado del boton de cerrar, en unidades logicas.</summary>
+    private const float CloseSize = 26f;
 
     private static readonly WNDPROC WndProcThunk = WndProc;
     private static readonly Dictionary<nint, Panel> Instances = [];
@@ -99,6 +107,9 @@ internal sealed unsafe class Panel : IDisposable
     }
 
     private static HINSTANCE ModuleHandle => (HINSTANCE)(nint)PInvoke.GetModuleHandle((PCWSTR)null);
+
+    /// <summary>Su ventana, para que la host pueda saber si sigue siendo la de delante.</summary>
+    public HWND Handle => _hwnd;
 
     /// <summary>
     /// Abre el panel centrado en el monitor de <paramref name="near"/>, que es la ventana
@@ -261,6 +272,53 @@ internal sealed unsafe class Panel : IDisposable
         pie.Offset = new Vector3(pad, size.Y - caption - pad * 0.4f, 0f);
         pie.Brush = Visuals.CreateCaptionBrush(preview.Title, preview.Detail, captionSize, _scale);
         _root.Children.InsertAtTop(pie);
+
+        BuildClose(size);
+    }
+
+    /// <summary>
+    /// La X de cerrar, arriba a la izquierda como en macOS.
+    ///
+    /// No es un boton: el panel entero se cierra al clicarlo. Esta aqui porque hacia falta
+    /// que se VIERA que se puede cerrar — sin ella la unica salida era volver al
+    /// Explorador y pulsar espacio otra vez, y eso no se adivina.
+    /// </summary>
+    private void BuildClose(Vector2 size)
+    {
+        float side = CloseSize * _scale;
+        float margin = 12f * _scale;
+
+        ContainerVisual button = _compositor.CreateContainerVisual();
+        button.Size = new Vector2(side, side);
+        button.Offset = new Vector3(margin, margin, 0f);
+
+        CompositionRoundedRectangleGeometry circle = _compositor.CreateRoundedRectangleGeometry();
+        circle.Size = button.Size;
+        circle.CornerRadius = new Vector2(side * 0.5f);
+        button.Clip = _compositor.CreateGeometricClip(circle);
+
+        SpriteVisual disc = _compositor.CreateSpriteVisual();
+        disc.RelativeSizeAdjustment = Vector2.One;
+        disc.Brush = _compositor.CreateColorBrush(Color.FromArgb(70, 0, 0, 0));
+        button.Children.InsertAtBottom(disc);
+
+        // Dos barras cruzadas: la misma receta que la zona de soltar del dock.
+        float thick = MathF.Max(1.5f, side * 0.075f);
+        float arm = side * 0.40f;
+        CompositionColorBrush ink = _compositor.CreateColorBrush(Color.FromArgb(220, 255, 255, 255));
+
+        foreach (float angle in (float[])[45f, -45f])
+        {
+            SpriteVisual bar = _compositor.CreateSpriteVisual();
+            bar.Size = new Vector2(arm, thick);
+            bar.Offset = new Vector3((side - arm) * 0.5f, (side - thick) * 0.5f, 0f);
+            bar.Brush = ink;
+            bar.CenterPoint = new Vector3(arm * 0.5f, thick * 0.5f, 0f);
+            bar.RotationAngleInDegrees = angle;
+            button.Children.InsertAtTop(bar);
+        }
+
+        _root.Children.InsertAtTop(button);
     }
 
     private static LRESULT WndProc(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam)
@@ -270,6 +328,15 @@ internal sealed unsafe class Panel : IDisposable
             // Se puede clicar sin que el Explorador pierda el foco.
             case WM_MOUSEACTIVATE:
                 return new LRESULT(MA_NOACTIVATE);
+
+            // Un clic en cualquier parte del panel lo cierra. Se avisa a la ventana-host
+            // en vez de cerrarse aqui: es ella la duena del panel y la que lleva el
+            // temporizador, y destruir la ventana desde dentro de su propio WndProc es
+            // la clase de cosa que revienta tres mensajes despues.
+            case WM_LBUTTONDOWN:
+            case WM_RBUTTONDOWN:
+                PInvoke.PostMessage(Host, HostWindow.WM_APP_QUICKLOOK, default, default);
+                return new LRESULT(0);
         }
 
         return PInvoke.DefWindowProc(hwnd, msg, wParam, lParam);

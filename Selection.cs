@@ -117,7 +117,7 @@ internal static unsafe class Selection
         if (created.Failed) return null;
 
         // El Escritorio no sale al iterar: tiene su propia consulta.
-        if (IsDesktop(front))
+        if (Foreground.IsDesktop(front))
         {
             object empty = null!;
             object? shell = windows.FindWindowSW(
@@ -184,14 +184,4 @@ internal static unsafe class Selection
         }
     }
 
-    private static bool IsDesktop(HWND front)
-    {
-        Span<char> buffer = stackalloc char[64];
-        fixed (char* p = buffer)
-        {
-            int n = PInvoke.GetClassName(front, p, buffer.Length);
-            if (n <= 0) return false;
-            return new string(p, 0, n) is "WorkerW" or "Progman";
-        }
-    }
 }

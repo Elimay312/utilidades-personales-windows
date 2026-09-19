@@ -184,3 +184,44 @@ Tres fallos de método más, todos anotados en la cabecera de `sonda-contenido.p
 
 **Ficheros:** `Selection.cs`, `Shell.cs`, `Text.cs`, `Content/Preview.cs`, `SelfCheck.cs`,
 `Visuals.cs`, `Panel.cs`, `HostWindow.cs`, `Program.cs`, `NativeMethods.txt`.
+
+---
+
+## M3.1 — Que se pueda cerrar
+
+Salio probandolo a mano: el panel se abria bien pero **la unica forma de cerrarlo era
+volver al Explorador y pulsar espacio otra vez**. Si te habias ido a otra app, la ventana
+se quedaba ahi y no habia manera. Una ventana que no se puede cerrar es peor que no
+tenerla, asi que va antes del morph.
+
+Tres caminos, y ninguno necesita enmendar `SEGURIDAD.md`:
+
+1. **Un clic en cualquier parte del panel lo cierra.** El panel ya recibia raton, asi que
+   es un caso mas en su `WndProc`. Avisa a la ventana-host con `PostMessage` en vez de
+   cerrarse el solo: la duena del panel es ella, y destruir una ventana desde dentro de su
+   propio `WndProc` es la clase de cosa que revienta tres mensajes despues.
+2. **Una ✕ arriba a la izquierda**, como en macOS. No es un boton — el panel entero cierra
+   al clicarlo— pero hacia falta que se **viera** que se puede cerrar. Eso no se adivina.
+3. **Irse a otra app lo cierra solo.** Un `SetTimer` de 200 ms que **solo existe mientras
+   hay panel abierto**: con el panel cerrado no hay temporizador, no hay hilos y no hay
+   sondeo, que es lo que dice el §5. Compara por HWND y no por foco, porque el panel nunca
+   toma el foco.
+
+**Y un cerrojo de instancia unica**, que salio del mismo rato de pruebas: cuatro copias
+lanzadas sin querer son cuatro hooks, el espacio se procesa cuatro veces y desde fuera
+parece que el filtro del hook esta roto. Un `Mutex` con nombre, en `Local\` y no en
+`Global\`: esto es por sesion de usuario, no de maquina, y `Global\` pediria permisos que
+no hacen falta.
+
+**De propina, `Hook.cs` adelgaza de 88 a 73 lineas.** La lista de clases del Explorador se
+fue a `Foreground.cs`, donde la comparten los tres sitios que la preguntan: el hook, el
+cierre automatico y `Selection`. Estaba duplicada en dos, y el dia que se anadiera una
+clase se habria arreglado en uno.
+
+**Medido** (`scratchpad/sonda-cierre.ps1`): segunda instancia dice *"ya hay una instancia
+corriendo"* y se va, quedando 1 viva; `WM_LBUTTONDOWN` sobre el panel lo cierra; y con el
+Bloc de notas en primer plano el panel ya no esta. `auditar.ps1` sigue `TODO LIMPIO` con 87
+entradas.
+
+**Ficheros:** `Foreground.cs`, `Panel.cs`, `HostWindow.cs`, `Hook.cs`, `Selection.cs`,
+`Program.cs`, `NativeMethods.txt`.

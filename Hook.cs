@@ -34,9 +34,6 @@ internal sealed unsafe class Hook : IDisposable
     private const uint WM_KEYDOWN = 0x0100;
     private const uint WM_SYSKEYDOWN = 0x0104;
 
-    // Explorador (ventana de carpeta), Explorador antiguo, y las dos del Escritorio.
-    private static readonly string[] Explorer = ["CabinetWClass", "ExploreWClass", "WorkerW", "Progman"];
-
     // Si el foco esta en uno de estos, el espacio pasa de largo: renombrar con F2, la
     // caja de busqueda y la barra de direcciones son campos de texto y el usuario esta
     // escribiendo. Sin esto el programa hace el Explorador inusable.
@@ -75,8 +72,10 @@ internal sealed unsafe class Hook : IDisposable
         if (Down(VIRTUAL_KEY.VK_CONTROL) || Down(VIRTUAL_KEY.VK_MENU) || Down(VIRTUAL_KEY.VK_SHIFT))
             return Next(code, wParam, lParam);
 
+        // La lista de clases del Explorador vive en Foreground.cs porque la comparten el
+        // hook, el cierre automatico del panel y Selection. Es el cortafuegos del §3.1.
         HWND front = PInvoke.GetForegroundWindow();
-        if (!Is(front, Explorer) || Typing(front)) return Next(code, wParam, lParam);
+        if (!Foreground.IsExplorer(front) || Typing(front)) return Next(code, wParam, lParam);
 
         PInvoke.PostMessage(_host, HostWindow.WM_APP_QUICKLOOK, default, default);
 
@@ -97,20 +96,7 @@ internal sealed unsafe class Hook : IDisposable
 
         // Un cursor de texto parpadeando es la senal mas fiable de que se esta
         // escribiendo, y no depende de acertar con el nombre de la clase.
-        return !info.hwndCaret.IsNull || Is(info.hwndFocus, Editing);
-    }
-
-    private static bool Is(HWND window, string[] classes)
-    {
-        if (window.IsNull) return false;
-
-        Span<char> buffer = stackalloc char[64];
-        fixed (char* p = buffer)
-        {
-            int n = PInvoke.GetClassName(window, p, buffer.Length);
-            if (n <= 0) return false;
-            return classes.Contains(new string(p, 0, n), StringComparer.Ordinal);
-        }
+        return !info.hwndCaret.IsNull || Foreground.Is(info.hwndFocus, Editing);
     }
 
     public void Dispose()

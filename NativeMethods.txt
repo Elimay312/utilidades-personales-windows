@@ -54,6 +54,11 @@ GetWindowThreadProcessId
 GetGUIThreadInfo
 GUITHREADINFO
 
+// --- Cerrar el panel solo cuando el usuario se va a otra app (M3.1) ---
+// Solo corre mientras hay panel abierto. Con el panel cerrado no hay temporizador.
+SetTimer
+KillTimer
+
 // --- Donde cae el panel (M1) ---
 MonitorFromWindow
 GetMonitorInfoW

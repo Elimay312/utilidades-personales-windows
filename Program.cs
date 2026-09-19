@@ -36,6 +36,18 @@ internal static class Program
             return;
         }
 
+        // Un solo QuickLook por sesion. Cada instancia instala SU hook, asi que dos
+        // copias se comen el espacio dos veces y abren dos paneles — y desde fuera parece
+        // que el filtro del hook esta roto. Local\ y no Global\: esto es por sesion de
+        // usuario, no de maquina, y Global\ pediria permisos que no hacen falta.
+        using Mutex instance = new(true, @"Local\QuickLook.SingleInstance", out bool first);
+        if (!first)
+        {
+            Console.WriteLine("[quicklook] ya hay una instancia corriendo");
+            Windows.Win32.PInvoke.OleUninitialize();
+            return;
+        }
+
         Console.WriteLine("QuickLook - espacio sobre un archivo del Explorador para verlo");
         Console.WriteLine();
 

@@ -1,10 +1,16 @@
 using System.Globalization;
 using System.Numerics;
+using Windows.Graphics.DirectX;
 using Windows.UI;
 using Windows.UI.Composition;
 using Windows.UI.Composition.Desktop;
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Direct2D;
+using Windows.Win32.Graphics.Direct2D.Common;
+using Windows.Win32.Graphics.Direct3D;
+using Windows.Win32.Graphics.Direct3D11;
+using Windows.Win32.Graphics.Dxgi;
 using Windows.Win32.System.WinRT;
 using Windows.Win32.System.WinRT.Composition;
 using WinRT;
@@ -47,6 +53,27 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private const float CristalDesde = 40f;
     private const float CristalRango = 80f;
 
+    // --- colocacion del contenido, en unidades logicas sobre el panel abierto -------
+    private const float Margen = 16f;
+    private const float CaratulaLado = 92f;
+    private const float CaratulaRadio = 10f;
+    private const float TextoX = 124f;
+    private const float TituloY = 22f;
+    private const float TituloPx = 14f;
+    private const float TituloAncho = 240f;
+    private const float ArtistaY = 46f;
+    private const float ArtistaPx = 11.5f;
+    private const float AppY = 68f;
+    private const float AppPx = 10f;
+
+    private const uint D3D11SdkVersion = 7;
+
+    // Texto de prueba de M2. En M3 lo sustituye lo que este sonando de verdad; el
+    // largo es a proposito, para ver si la marquesina funciona.
+    private const string Titulo = "WINDOW MANAGERS y ENTORNOS de ESCRITORIO en Linux";
+    private const string Artista = "LinuxChad";
+    private const string App = "Brave";
+
     private readonly Compositor _compositor;
     private readonly DesktopWindowTarget _target;
     private readonly ContainerVisual _root;
@@ -54,10 +81,12 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private readonly ContainerVisual _panel;
     private readonly SpriteVisual _macizo;
     private readonly SpriteVisual _cristal;
+    private readonly ContainerVisual _contenido;
     private readonly ShapeVisual _borde;
     private readonly CompositionRoundedRectangleGeometry _forma;
     private readonly CompositionRoundedRectangleGeometry _formaBorde;
     private readonly float _scale;
+    private CompositionGraphicsDevice? _graphics;
 
     public IslaVisuals(HWND hwnd, float scale, float anchoVentana)
     {
@@ -113,6 +142,8 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _macizo = Capa(_compositor.CreateColorBrush(Color.FromArgb(255, 0, 0, 0)));
         _cristal = Capa(_compositor.CreateColorBrush(Color.FromArgb(226, 14, 14, 16)));
 
+        _contenido = Contenido();
+
         // Borde interior de 1 px. Sin el, un panel oscuro parece un agujero en la
         // pantalla; con el, parece iluminado. Es lo mas barato que cambia la lectura.
         // Geometria propia, no la del clip: asi no hay que suponer que una geometria se
@@ -148,6 +179,14 @@ internal sealed unsafe class IslaVisuals : IDisposable
         Expresion(_cristal, "Opacity", entrada);
         Expresion(_macizo, "Opacity", $"1 - ({entrada})");
         Expresion(_borde, "Opacity", entrada);
+
+        // El contenido entra con la misma rampa y ademas crece un poco. Escalar desde
+        // el centro del panel -- que tambien se esta moviendo -- es lo que hace que
+        // parezca que sale de dentro y no que aparece pegado encima.
+        Expresion(_contenido, "Opacity", entrada);
+        Expresion(_contenido, "CenterPoint", "Vector3(P.Size.X * 0.5, P.Size.Y * 0.5, 0)");
+        Expresion(_contenido, "Scale",
+            $"Vector3(Lerp(0.92, 1, {entrada}), Lerp(0.92, 1, {entrada}), 1)");
     }
 
     /// <summary>
@@ -221,6 +260,151 @@ internal sealed unsafe class IslaVisuals : IDisposable
         m.DampingRatio = damping;
         m.Period = periodo;
         return m;
+    }
+
+    /// <summary>
+    /// Lo que se ve dentro del panel. Las posiciones son fijas respecto a su esquina
+    /// superior izquierda, asi que no hace falta ninguna expresion para colocarlas.
+    /// </summary>
+    private ContainerVisual Contenido()
+    {
+        ContainerVisual raiz = _compositor.CreateContainerVisual();
+        raiz.RelativeSizeAdjustment = Vector2.One;
+        _panel.Children.InsertAtTop(raiz);
+
+        // ponytail: cuadrado de relleno donde ira la caratula. M3 trae la de verdad.
+        // Esta aqui porque sin el no se puede juzgar la colocacion del texto, que es
+        // justo de lo que va este hito.
+        SpriteVisual caratula = _compositor.CreateSpriteVisual();
+        caratula.Size = new Vector2(S(CaratulaLado), S(CaratulaLado));
+        caratula.Offset = new Vector3(S(Margen), S(Margen), 0);
+        caratula.Brush = _compositor.CreateColorBrush(Color.FromArgb(38, 255, 255, 255));
+        CompositionRoundedRectangleGeometry marco = _compositor.CreateRoundedRectangleGeometry();
+        marco.Size = caratula.Size;
+        marco.CornerRadius = new Vector2(S(CaratulaRadio), S(CaratulaRadio));
+        caratula.Clip = _compositor.CreateGeometricClip(marco);
+        raiz.Children.InsertAtTop(caratula);
+
+        // El titulo va dentro de una caja que lo recorta. Si no cabe se pasea: cortarlo
+        // con puntos suspensivos esconde justo la parte que distingue dos canciones del
+        // mismo disco.
+        ContainerVisual caja = _compositor.CreateContainerVisual();
+        caja.Size = new Vector2(S(TituloAncho), S(TituloPx) * 1.7f);
+        caja.Offset = new Vector3(S(TextoX), S(TituloY), 0);
+        caja.Clip = _compositor.CreateInsetClip();
+        raiz.Children.InsertAtTop(caja);
+        Marquesina(Rotulo(Titulo, TituloPx, true, 1f, Vector2.Zero, caja), caja.Size.X);
+
+        Rotulo(Artista, ArtistaPx, false, 0.62f, new Vector2(S(TextoX), S(ArtistaY)), raiz);
+        Rotulo(App, AppPx, false, 0.38f, new Vector2(S(TextoX), S(AppY)), raiz);
+
+        return raiz;
+    }
+
+    private SpriteVisual Rotulo(string s, float px, bool grueso, float alpha, Vector2 en, ContainerVisual padre)
+    {
+        float fisico = S(px);
+        Vector2 tam = Texto.Medir(s, fisico, grueso);
+
+        SpriteVisual v = _compositor.CreateSpriteVisual();
+        v.Size = tam;
+        v.Offset = new Vector3(en.X, en.Y, 0);
+        v.Brush = PincelTexto(s, fisico, grueso, alpha, tam);
+        padre.Children.InsertAtTop(v);
+        return v;
+    }
+
+    /// <summary>
+    /// Va y vuelve, con parada en los dos extremos. Ida y vuelta, y no bucle en un solo
+    /// sentido, porque el salto de vuelta se ve: una isla que da tirones deja de
+    /// parecer parte de la maquina.
+    /// </summary>
+    private void Marquesina(SpriteVisual v, float anchoCaja)
+    {
+        float sobra = v.Size.X - anchoCaja;
+        if (sobra <= 1f) return;
+
+        CompositionEasingFunction lineal = _compositor.CreateLinearEasingFunction();
+        ScalarKeyFrameAnimation a = _compositor.CreateScalarKeyFrameAnimation();
+        a.InsertKeyFrame(0.00f, 0f, lineal);
+        a.InsertKeyFrame(0.12f, 0f, lineal);
+        a.InsertKeyFrame(0.45f, -sobra, lineal);
+        a.InsertKeyFrame(0.62f, -sobra, lineal);
+        a.InsertKeyFrame(0.95f, 0f, lineal);
+        a.InsertKeyFrame(1.00f, 0f, lineal);
+        a.Duration = TimeSpan.FromMilliseconds(3200 + sobra * 18);
+        a.IterationBehavior = AnimationIterationBehavior.Forever;
+
+        // ponytail: sigue andando aunque la isla este cerrada. A opacidad cero no se ve,
+        // y es una interpolacion escalar. Si el reposo llega a costar CPU, se para
+        // desde GoTo.
+        v.StartAnimation("Offset.X", a);
+    }
+
+    /// <summary>
+    /// Sube una cadena ya pintada a una superficie del compositor.
+    ///
+    /// Tres trampas, todas sabidas de antemano: BeginDraw devuelve un OFFSET porque la
+    /// superficie puede ser un hueco dentro de un atlas compartido; el contexto de D2D
+    /// nace con el DPI del escritorio y hay que fijarlo a 96 o todo sale mas grande que
+    /// la superficie; y hay que limpiarla, porque ese hueco puede traer los pixeles del
+    /// inquilino anterior.
+    /// </summary>
+    private CompositionSurfaceBrush PincelTexto(string s, float px, bool grueso, float alpha, Vector2 tam)
+    {
+        CompositionDrawingSurface superficie = EnsureGraphicsDevice().CreateDrawingSurface(
+            new global::Windows.Foundation.Size(tam.X, tam.Y),
+            DirectXPixelFormat.B8G8R8A8UIntNormalized,
+            DirectXAlphaMode.Premultiplied);
+
+        ICompositionDrawingSurfaceInterop interop = superficie.As<ICompositionDrawingSurfaceInterop>();
+        Guid iid = typeof(ID2D1DeviceContext).GUID;
+
+        System.Drawing.Point offset;
+        interop.BeginDraw(null, &iid, out object obj, &offset);
+        try
+        {
+            var ctx = (ID2D1DeviceContext)obj;
+            ctx.SetDpi(96, 96);
+            D2D1_COLOR_F nada = default;
+            ctx.Clear(&nada);
+            Texto.Dibujar(ctx, s, px, grueso, alpha, offset);
+        }
+        finally
+        {
+            interop.EndDraw();
+        }
+
+        return _compositor.CreateSurfaceBrush(superficie);
+    }
+
+    /// <summary>
+    /// Fuera de XAML no existe LoadedImageSurface: para pintar cualquier cosa que no
+    /// sea un color plano hay que montar D3D11 -> D2D -> Composition.
+    ///
+    /// WARP y no HARDWARE: este device solo SUBE pixeles y no renderiza un fotograma en
+    /// su vida. El dock midio la diferencia en su caso, ~13 MB de working set privado
+    /// frente a ~22 MB, y se quedo con HARDWARE por prudencia. Aqui se empieza por el
+    /// barato; si DWM diera problemas muestreando estas superficies, la vuelta atras es
+    /// cambiar una constante.
+    ///
+    /// BGRA_SUPPORT es obligatorio para poder interoperar con Direct2D.
+    /// </summary>
+    private CompositionGraphicsDevice EnsureGraphicsDevice()
+    {
+        if (_graphics is not null) return _graphics;
+
+        PInvoke.D3D11CreateDevice(
+            null,
+            D3D_DRIVER_TYPE.D3D_DRIVER_TYPE_WARP,
+            default,
+            D3D11_CREATE_DEVICE_FLAG.D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            null, 0, D3D11SdkVersion,
+            out ID3D11Device d3d, null, out _).ThrowOnFailure();
+
+        PInvoke.D2D1CreateDevice((IDXGIDevice)d3d, null, out ID2D1Device d2d).ThrowOnFailure();
+        _compositor.As<ICompositorInterop>().CreateGraphicsDevice(d2d, out _graphics);
+        return _graphics;
     }
 
     /// <summary>

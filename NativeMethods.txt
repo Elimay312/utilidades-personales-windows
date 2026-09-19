@@ -56,3 +56,33 @@ DispatcherQueueOptions
 
 // --- Consola estando compilado como WinExe ---
 AttachConsole
+
+// --- Superficie de dibujo propia: D3D11 -> D2D -> Composition ---
+// Fuera de XAML no existe LoadedImageSurface, asi que para pintar cualquier cosa que
+// no sea un color plano hay que montar esta cadena. Actua solo sobre nuestras
+// superficies; no lee la pantalla ni la ventana de nadie.
+D3D11CreateDevice
+D2D1CreateDevice
+ID3D11Device
+ID2D1Device
+ID2D1DeviceContext
+IDXGIDevice
+D3D_DRIVER_TYPE
+D3D11_CREATE_DEVICE_FLAG
+D2D1_ALPHA_MODE
+DXGI_FORMAT
+ICompositorInterop
+ICompositionDrawingSurfaceInterop
+
+// --- Texto, sobre nuestra propia superficie de dibujo ---
+DWriteCreateFactory
+IDWriteFactory
+IDWriteTextFormat
+IDWriteTextLayout
+DWRITE_FACTORY_TYPE
+DWRITE_TEXT_METRICS
+DWRITE_FONT_WEIGHT
+DWRITE_FONT_STYLE
+DWRITE_FONT_STRETCH
+DWRITE_WORD_WRAPPING
+D2D1_DRAW_TEXT_OPTIONS

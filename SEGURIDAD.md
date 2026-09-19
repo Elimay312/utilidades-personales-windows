@@ -105,21 +105,31 @@ instala, no se arranca, no se configura desde aquí.
 
 ### 3.1 Indexar las aplicaciones
 
-Los dos menús Inicio (`%ProgramData%\Microsoft\Windows\Start Menu\Programs` y el equivalente
-en `%AppData%`), leyendo los `.lnk` y resolviendo su destino con `IShellLink`. Y las apps de la
-Store enumerando `shell:AppsFolder` con `IShellItem` / `BHID_EnumItems`.
+Dos fuentes, y **hacen falta las dos** (medido en H1: `AppsFolder` da 205 entradas y los menús
+Inicio 148, de las cuales 36 no están en `AppsFolder` — el Administrador de tareas, el Editor
+del registro, el panel de control):
+
+- `shell:AppsFolder` enumerado con `IShellItem` / `BHID_EnumItems`, que es la carpeta virtual
+  con la que el menú Inicio pinta su lista "Todas las aplicaciones".
+- Los dos menús Inicio (`%ProgramData%\Microsoft\Windows\Start Menu\Programs` y el equivalente
+  en `%AppData%`), listando los `.lnk` por nombre de fichero.
 
 **Por qué se sostiene:**
 
 1. **Es exactamente lo que enumera el menú Inicio** para pintarse a sí mismo. Mismas carpetas,
    misma carpeta virtual, mismos datos.
 2. **Son ficheros tuyos, en tu sesión**, y son accesos directos: su contenido *es* una ruta.
-3. **Solo se lee el nombre y el destino.** No se abre el ejecutable, no se lee su versión, no
-   se mira dentro de nada.
+3. **Solo se lee el nombre visible y el destino.** No se abre el ejecutable, no se lee su
+   versión, no se mira dentro de nada.
 
 **Los cortes:** no se recorre el disco. No se busca fuera de esas dos carpetas y de
 `AppsFolder`. El índice vive en memoria y **no se escribe a disco** — se reconstruye al
-arrancar, que cuesta milisegundos.
+arrancar.
+
+Y un corte que se ganó al escribir el código, no antes: **ni siquiera se resuelve a dónde
+apunta un acceso directo.** `IShellLink` no está en `NativeMethods.txt` y no va a estar. Un
+`.lnk` se le pasa al shell tal cual y él lo resuelve, igual que cuando haces doble clic, así
+que el lanzador nunca llega a saber qué ejecutable hay detrás de un acceso directo tuyo.
 
 ### 3.2 La caja de texto
 

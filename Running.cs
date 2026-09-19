@@ -221,14 +221,7 @@ internal static class Running
 
         PInvoke.EnumWindows((window, _) =>
         {
-            if (window == desktop) return true;
-            if (!PInvoke.IsWindowVisible(window)) return true;
-            if (!PInvoke.GetWindow(window, GET_WINDOW_CMD.GW_OWNER).IsNull) return true;
-            if (PInvoke.GetWindowTextLength(window) == 0) return true;
-
-            int cloaked = 0;
-            PInvoke.DwmGetWindowAttribute(window, (DWMWINDOWATTRIBUTE)DwmwaCloaked, &cloaked, sizeof(int));
-            if (cloaked != 0) return true;
+            if (!IsRealWindow(window, desktop)) return true;
 
             uint pid = 0;
             PInvoke.GetWindowThreadProcessId(window, &pid);
@@ -236,6 +229,63 @@ internal static class Running
 
             found.Add((window, RealOwnerOf(window, pid)));
             return true;
+        }, default);
+
+        return found;
+    }
+
+    /// <summary>
+    /// La criba: qué cuenta como "una ventana del usuario". Se descartan las
+    /// invisibles, las que tienen dueño (diálogos y flotantes), las sin título y las que
+    /// DWM tiene encubiertas, que es como el shell deja ventanas fantasma por ahí.
+    ///
+    /// La barra de tareas no tiene título, así que se cae sola por aquí. Importa: si
+    /// contara, el autoocultar inteligente vería siempre algo debajo del dock.
+    /// </summary>
+    private static unsafe bool IsRealWindow(HWND window, HWND desktop)
+    {
+        if (window == desktop) return false;
+        if (!PInvoke.IsWindowVisible(window)) return false;
+        if (!PInvoke.GetWindow(window, GET_WINDOW_CMD.GW_OWNER).IsNull) return false;
+        if (PInvoke.GetWindowTextLength(window) == 0) return false;
+
+        int cloaked = 0;
+        PInvoke.DwmGetWindowAttribute(window, (DWMWINDOWATTRIBUTE)DwmwaCloaked, &cloaked, sizeof(int));
+        return cloaked == 0;
+    }
+
+    /// <summary>
+    /// Si alguna ventana del usuario se solapa con ese rectángulo de pantalla.
+    ///
+    /// Es lo que decide el autoocultar inteligente: sin nada debajo, el dock no tiene de
+    /// qué esconderse. Se pregunta en el momento y no se guarda en ningún inventario,
+    /// porque <b>mover una ventana no genera ningún aviso del shell</b>: una lista de
+    /// rectángulos estaría desfasada en cuanto el usuario arrastrase algo.
+    ///
+    /// Las ventanas del propio dock no cuentan, claro. Las minimizadas tampoco: siguen
+    /// teniendo rectángulo, pero no tapan nada.
+    /// </summary>
+    public static unsafe bool AnythingOver(RECT area)
+    {
+        bool found = false;
+        HWND desktop = PInvoke.GetShellWindow();
+        uint own = PInvoke.GetCurrentProcessId();
+
+        PInvoke.EnumWindows((window, _) =>
+        {
+            if (!IsRealWindow(window, desktop)) return true;
+            if (PInvoke.IsIconic(window)) return true;
+
+            uint pid = 0;
+            PInvoke.GetWindowThreadProcessId(window, &pid);
+            if (pid == own) return true;
+
+            if (!PInvoke.GetWindowRect(window, out RECT r)) return true;
+            if (r.right <= area.left || r.left >= area.right
+                || r.bottom <= area.top || r.top >= area.bottom) return true;
+
+            found = true;
+            return false;
         }, default);
 
         return found;

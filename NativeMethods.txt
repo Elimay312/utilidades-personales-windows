@@ -115,6 +115,7 @@ GetPackageFamilyName
 // Solo se usan tras un clic del usuario sobre un icono del dock. Nunca en segundo plano.
 EnumWindows
 GetShellWindow
+GetCurrentProcessId
 GetWindowThreadProcessId
 IsWindowVisible
 IsIconic

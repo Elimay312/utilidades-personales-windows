@@ -753,6 +753,7 @@ internal sealed unsafe class DockWindow : IDisposable
                     self.TraceRunning();
                     self._visuals?.SetRunning([.. self._state.Select(entry => entry.HasWindow)]);
                     self.DropDeadShots();
+                    self.UpdateSmartHide();
                     self.StopBounceIfOpened();
                 }
                 return new LRESULT(0);
@@ -937,6 +938,38 @@ internal sealed unsafe class DockWindow : IDisposable
     }
 
     /// <summary>Extremos de la barra en coordenadas de cliente, ahora mismo.</summary>
+    /// <summary>La barra visible, en coordenadas de pantalla.</summary>
+    private RECT BarRect()
+    {
+        (float left, float right) = BarBounds();
+        return new RECT
+        {
+            left = (int)(_windowLeft + left),
+            top = (int)(_windowTop + _windowHeight - BarHeight),
+            right = (int)(_windowLeft + right),
+            bottom = _windowTop + (int)_windowHeight,
+        };
+    }
+
+    /// <summary>
+    /// Reevalúa si toca esconderse o salir, ahora que las ventanas han cambiado. Lo
+    /// llama el inventario, que va por avisos del shell: abrir, cerrar o activar una
+    /// ventana es justo cuando esto puede cambiar.
+    /// </summary>
+    private void UpdateSmartHide()
+    {
+        if (!_config.AutoHide || _hovering || _dragging) return;
+        if (_visuals?.MenuOpen == true || _stack is not null) return;
+
+        bool tapado = Running.AnythingOver(BarRect());
+        if (tapado == _hidden) return;
+
+        if (tapado) Hide(force: true);
+        else Reveal();
+
+        Console.WriteLine($"[autoocultar] {_device}: {(tapado ? "escondido, hay algo debajo" : "a la vista, no hay nada debajo")}");
+    }
+
     private (float Left, float Right) BarBounds()
     {
         if (_curve.Count == 0) return (0f, _windowWidth);
@@ -970,10 +1003,20 @@ internal sealed unsafe class DockWindow : IDisposable
         PInvoke.SetTimer(_hwnd, HideTimerId, HideDelayMs, null);
     }
 
-    private void Hide()
+    /// <summary>
+    /// Esconde el dock. Con <paramref name="force"/> se salta la comprobación de si hay
+    /// algo debajo: lo usa el pleno, porque un juego a pantalla completa puede no tener
+    /// título y entonces la criba de ventanas no lo vería.
+    /// </summary>
+    private void Hide(bool force = false)
     {
         PInvoke.KillTimer(_hwnd, HideTimerId);
         if (_hidden || !_config.AutoHide) return;
+
+        // Autoocultar inteligente: si no hay ninguna ventana debajo, no hay de qué
+        // esconderse. Con el escritorio a la vista el dock se queda donde está, que es
+        // lo que se pidió; esconderse por reloj teniendo sitio de sobra no vale de nada.
+        if (!force && !Running.AnythingOver(BarRect())) return;
 
         _hidden = true;
         _visuals?.SetLabel(-1);
@@ -1056,7 +1099,7 @@ internal sealed unsafe class DockWindow : IDisposable
         if (IsFullscreenAppRunning())
         {
             // Nada de reafirmar el z-order por encima de un juego o un vídeo.
-            Hide();
+            Hide(force: true);
             return;
         }
 

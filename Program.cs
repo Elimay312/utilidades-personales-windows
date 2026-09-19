@@ -66,8 +66,123 @@ internal static class Program
         return 2;
     }
 
-    private static int Check()   => NoTodavia("--check", "H2");
     private static int Olvidar() => NoTodavia("--olvidar", "H3");
+
+    /// <summary>
+    /// Los casos del algoritmo, con candidatos inventados. <b>Inventados a proposito</b>:
+    /// si dependieran del menu Inicio de esta maquina, dejarian de comprobar nada en
+    /// cuanto se instalase o desinstalase algo.
+    /// </summary>
+    private static readonly (string Consulta, string Esperado, string[] Contra, string Porque)[] CasosDelRanking =
+    {
+        ("br", "Brave", ["Brave", "Game Bar", "Barony"],
+         "el prefijo gana a caer a mitad de palabra"),
+
+        ("conf", "Configuracion", ["Configuracion del sistema", "Configuracion"],
+         "a igualdad, gana el nombre corto"),
+
+        ("configuracion", "Configuración", ["Configuración"],
+         "los acentos no cuentan al escribir"),
+
+        ("abc", "abc", ["abc", "a_b_c", "axbxc"],
+         "las letras seguidas ganan a las separadas"),
+
+        ("axbxc", "axbxc", ["abc", "axbxc"],
+         "pero si escribes las de enmedio, gana el que las tiene"),
+
+        // Ojo con la tentacion de meter aqui "Vs Code Cosa": gana a "Visual Studio Code"
+        // (108 a 62) y esta BIEN que gane, porque textualmente es mejor coincidencia —
+        // "vs" seguidas y desde el principio. Lo que hace que en la vida real salga
+        // primero el que quieres no es el texto, es el ranking por uso de H3.
+        ("vsc", "Visual Studio Code", ["Visual Studio Code", "avascular"],
+         "empezar palabra gana a caer dentro de una"),
+
+        ("vsc", "VisualStudioCode", ["VisualStudioCode", "visualstudiocode"],
+         "y la mayuscula de un camelCase tambien empieza palabra"),
+
+        ("term", "Terminal", ["Terminal", "Character Map", "Computer Management"],
+         "el prefijo gana a dos trozos sueltos"),
+    };
+
+    private static int Check()
+    {
+        int fallos = 0;
+
+        Console.WriteLine("Coincidencia — orden de los resultados");
+        foreach ((string consulta, string esperado, string[] contra, string porque) in CasosDelRanking)
+        {
+            List<Entrada> candidatos = contra.Select(c => new Entrada(c, c)).ToList();
+            List<Resultado> orden = Coincidencia.Buscar(candidatos, consulta, contra.Length);
+            string primero = orden.Count > 0 ? orden[0].Entrada.Nombre : "(nada)";
+
+            bool bien = primero == esperado;
+            if (!bien) fallos++;
+            Console.WriteLine($"  {(bien ? "ok  " : "FALLA")} \"{consulta}\" -> {primero,-26} {porque}");
+            if (!bien)
+            {
+                // Que puntuo cada uno y que se comparo de verdad. Sin esto, un caso que
+                // falla solo dice que fallo, y el siguiente paso es adivinar.
+                string q = Coincidencia.Normalizar(consulta).ToLowerInvariant().Trim();
+                Console.WriteLine($"         esperaba \"{esperado}\", consulta normalizada \"{q}\"");
+                foreach (Entrada e in candidatos)
+                {
+                    int p = Coincidencia.Puntuar(e.Buscable, q);
+                    Console.WriteLine($"           \"{e.Buscable}\"  filtro={Coincidencia.Contiene(e.Buscable, q)}  " +
+                                      $"puntos={(p == Coincidencia.NoCoincide ? "no coincide" : p.ToString())}");
+                }
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Coincidencia — casos limite");
+        fallos += Exige("consulta vacia no devuelve nada",
+                        Coincidencia.Buscar([new Entrada("Brave", "x")], "", 10).Count == 0);
+        fallos += Exige("consulta mas larga que el candidato no coincide",
+                        Coincidencia.Puntuar("ab", "abcd") == Coincidencia.NoCoincide);
+        fallos += Exige("letras en otro orden no coinciden",
+                        Coincidencia.Puntuar("Brave", "rb") == Coincidencia.NoCoincide);
+        fallos += Exige("una letra que no esta no coincide",
+                        Coincidencia.Puntuar("Brave", "z") == Coincidencia.NoCoincide);
+        fallos += Exige("el candidato entero coincide consigo mismo",
+                        Coincidencia.Puntuar("brave", "brave") != Coincidencia.NoCoincide);
+
+        // El filtro barato solo puede descartar lo que la puntuacion tambien descartaria.
+        // Si se desincronizan, el filtro empieza a esconder resultados buenos y no hay
+        // forma de notarlo mirando la pantalla.
+        Console.WriteLine();
+        Console.WriteLine("Coincidencia — el filtro barato concuerda con la puntuacion");
+        string[] alfabeto = ["Brave", "Configuración", "Visual Studio Code", "abc", "a_b_c", "Administrador de tareas"];
+        int desacuerdos = 0, probados = 0;
+        Random dado = new(1);   // semilla fija: un fallo tiene que poder repetirse
+        for (int i = 0; i < 4000; i++)
+        {
+            string candidato = Coincidencia.Normalizar(alfabeto[dado.Next(alfabeto.Length)]);
+            int largo = dado.Next(1, 5);
+            string consulta = new(Enumerable.Range(0, largo)
+                .Select(_ => "abcdeirstuvox"[dado.Next(13)]).ToArray());
+
+            probados++;
+            bool pasaFiltro = Coincidencia.Contiene(candidato, consulta);
+            bool puntua = Coincidencia.Puntuar(candidato, consulta) != Coincidencia.NoCoincide;
+            if (pasaFiltro != puntua)
+            {
+                desacuerdos++;
+                if (desacuerdos <= 3) Console.WriteLine($"  FALLA \"{consulta}\" sobre \"{candidato}\": filtro={pasaFiltro} puntua={puntua}");
+            }
+        }
+        fallos += Exige($"{probados} consultas al azar, ningun desacuerdo", desacuerdos == 0);
+
+        Console.WriteLine();
+        if (fallos == 0) { Console.WriteLine("TODO BIEN"); return 0; }
+        Console.WriteLine($"{fallos} comprobacion(es) fallan");
+        return 1;
+    }
+
+    private static int Exige(string que, bool secumple)
+    {
+        Console.WriteLine($"  {(secumple ? "ok  " : "FALLA")} {que}");
+        return secumple ? 0 : 1;
+    }
 
     /// <summary>
     /// Cuantas aplicaciones hay, de donde salen y cuanto costo. El desglose por fuente se
@@ -103,9 +218,54 @@ internal static class Program
         return 0;
     }
 
+    /// <summary>
+    /// Los mejores resultados con el desglose de su puntuacion. Esto es lo que hace que
+    /// afinar los pesos no sea adivinar: se ve en que letras cayo la consulta y cuanto
+    /// puso cada concepto.
+    /// </summary>
     private static int Buscar(string consulta)
     {
-        _ = consulta;
-        return NoTodavia("--buscar", "H2");
+        if (consulta.Length == 0)
+        {
+            Console.Error.WriteLine("[lanzador] --buscar necesita algo que buscar.");
+            return 2;
+        }
+
+        List<Entrada> indice = Indice.Construir();
+
+        // Diez pasadas para que el reloj tenga algo que medir: una sola consulta esta por
+        // debajo de la resolucion del cronometro y saldria siempre 0 ms.
+        Stopwatch reloj = Stopwatch.StartNew();
+        List<Resultado> mejores = new();
+        for (int i = 0; i < 10; i++) mejores = Coincidencia.Buscar(indice, consulta, 10);
+        double ms = reloj.Elapsed.TotalMilliseconds / 10;
+
+        Console.WriteLine($"\"{consulta}\"  sobre {indice.Count} entradas  {ms:0.00} ms por consulta");
+        Console.WriteLine();
+
+        string q = Coincidencia.Normalizar(consulta).ToLowerInvariant().Trim();
+        foreach (Resultado r in mejores)
+        {
+            Desglose? d = Coincidencia.Explicar(r.Entrada.Buscable, q);
+            if (d is null) continue;
+
+            Console.WriteLine($"  {r.Puntos,5}  {Marcado(r.Entrada.Buscable, d.Donde)}");
+            Console.WriteLine($"         letras {d.Letras}   prefijo {d.Prefijo}   longitud {d.Longitud}");
+        }
+
+        return 0;
+    }
+
+    /// <summary>El nombre con las letras que coincidieron entre corchetes.</summary>
+    private static string Marcado(string nombre, int[] donde)
+    {
+        HashSet<int> puestos = new(donde);
+        StringBuilder sb = new(nombre.Length * 2);
+        for (int i = 0; i < nombre.Length; i++)
+        {
+            if (puestos.Contains(i)) sb.Append('[').Append(nombre[i]).Append(']');
+            else sb.Append(nombre[i]);
+        }
+        return sb.ToString();
     }
 }

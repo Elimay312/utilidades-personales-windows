@@ -14,8 +14,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <InvariantGlobalization>true</InvariantGlobalization>
     <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+
+    <!-- El dock y la isla ponen InvariantGlobalization a true. Aqui NO, y no es un
+         descuido: en modo invariante string.Normalize devuelve la cadena tal cual, sin
+         lanzar ni avisar, asi que quitar los acentos deja de funcionar en silencio y
+         "configuracion" no encuentra "Configuración". Costo un rato en H2, y lo
+         encontro la comprobacion, no leer el codigo. En Windows 10 1903+ el ICU lo pone el
+         sistema: comprobado contando los ficheros de bin\Debug antes y despues, 8 y 8. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
 
     <!-- SEGURIDAD.md regla 8: nada de ofuscacion, packers ni compresion. El binario
          debe tener PDB y secciones legibles para un analizador estatico. -->

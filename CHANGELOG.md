@@ -10,6 +10,30 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H2 — El algoritmo
+
+- **Dos pasadas.** Un filtro O(m) que descarta lo que ni siquiera contiene las letras en
+  orden, y programación dinámica O(n·m) sobre los supervivientes. La DP premia empezar
+  palabra, `camelCase`, letras seguidas y el prefijo entero; penaliza huecos y longitud.
+  **Medido: 0,2–0,5 ms por consulta sobre 241 entradas**, con el objetivo en 10.
+- **Un solo núcleo para puntuar y para explicar.** `--buscar` enseña en qué letras cayó la
+  consulta y cuánto puso cada concepto, y sale de la *misma* función que puntúa, con la
+  matriz guardada. Dos implementaciones del mismo algoritmo acaban divergiendo, y entonces
+  el desglose explica algo que no pasó.
+- **El fallo de H2 lo encontró `--check`, no leer el código.** `<InvariantGlobalization>` a
+  `true` —copiado de la isla— hace que `string.Normalize` **devuelva la cadena tal cual,
+  sin lanzar ni avisar**. Los acentos dejaban de quitarse en silencio y `configuracion` no
+  encontraba `Configuración`. Peor: la sonda que escribí para depurarlo *no* tenía el flag,
+  así que decía que todo estaba bien. Quitado, con el porqué en el csproj para que nadie lo
+  reponga; comprobado que no añade ni un fichero a la salida (8 antes, 8 después).
+- **Un caso de prueba estaba mal escrito, no el algoritmo.** Para `vsc`, `Vs Code Cosa`
+  gana a `Visual Studio Code` (108 a 62) y **está bien que gane**: textualmente es mejor
+  coincidencia. Lo que hace que en la vida real salga el que quieres no es el texto, es el
+  ranking por uso. Queda escrito junto al caso para no volver a "arreglarlo".
+- **El filtro barato se comprueba contra la puntuación**, con 4000 consultas al azar y
+  semilla fija. Si se desincronizan, el filtro empieza a esconder resultados buenos y eso
+  no se ve mirando la pantalla.
+
 ### H1 — El índice de aplicaciones
 
 - **Hacen falta las dos fuentes, y eso se midió en vez de suponerlo.** `shell:AppsFolder` da

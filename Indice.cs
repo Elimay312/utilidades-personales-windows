@@ -10,7 +10,15 @@ namespace Lanzador;
 /// ruta de un .lnk, un shell:AppsFolder\AUMID o, mas adelante, una URL. Nunca una cadena
 /// que haya escrito el usuario (SEGURIDAD.md regla 10).
 /// </summary>
-internal sealed record Entrada(string Nombre, string Destino);
+internal sealed record Entrada(string Nombre, string Destino)
+{
+    /// <summary>
+    /// El nombre sin acentos, que es contra lo que se busca. Se calcula una vez al
+    /// construir el indice y no en cada pulsacion: normalizar 241 cadenas diez veces por
+    /// segundo es trabajo que se puede hacer una sola vez.
+    /// </summary>
+    public string Buscable { get; } = Coincidencia.Normalizar(Nombre);
+}
 
 /// <summary>
 /// El inventario de aplicaciones. SEGURIDAD.md §3.1: solo nombres y destinos, solo de

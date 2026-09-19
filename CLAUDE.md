@@ -11,7 +11,9 @@ está montado, y [SEGURIDAD.md](SEGURIDAD.md) **antes de escribir código**.
 1. **`SEGURIDAD.md` manda.** Si algo necesita una API prohibida, o se rediseña o se enmienda
    el documento **por escrito y antes** de tocar código. No se piden excepciones de palabra.
 2. **`pwsh -File auditar.ps1` antes de cada commit.** Tiene que decir `TODO LIMPIO`.
-3. **Comentarios en español, código en inglés.**
+3. **Todo en español: comentarios e identificadores.** Es lo que hace el código de la
+   isla (`Config.Cargar`, `IslaConfig.Pantalla`, `Vigilar`), aunque su `CLAUDE.md` diga
+   otra cosa. Se sigue al código, que es lo que hay que leer.
 4. **Solo lo que se pide.** Sin features extra, sin abstracciones especulativas, sin capas ni
    ficheros de más. No hay interfaces con una implementación ni fábricas de un producto.
 5. **Sin dependencias nuevas sin preguntar.** Hoy hay una: `Microsoft.Windows.CsWin32`, que

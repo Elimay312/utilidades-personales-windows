@@ -1037,6 +1037,9 @@ internal sealed unsafe class DockWindow : IDisposable
         PInvoke.KillTimer(_hwnd, HideTimerId);
         if (!_hidden) return;
 
+        if (Environment.GetEnvironmentVariable("DOCK_HOVER_LOG") is not null)
+            Console.WriteLine($"[visible] {_device}");
+
         _hidden = false;
         _visuals?.SetHidden(false, HiddenOffset);
     }
@@ -1067,6 +1070,9 @@ internal sealed unsafe class DockWindow : IDisposable
         // esconderse. Con el escritorio a la vista el dock se queda donde está, que es
         // lo que se pidió; esconderse por reloj teniendo sitio de sobra no vale de nada.
         if (!force && !Running.AnythingOver(BarRect())) return;
+
+        if (Environment.GetEnvironmentVariable("DOCK_HOVER_LOG") is not null)
+            Console.WriteLine($"[escondido] {_device}");
 
         _hidden = true;
         _visuals?.SetLabel(-1);
@@ -1442,26 +1448,32 @@ internal sealed unsafe class DockWindow : IDisposable
         HWND foreground = PInvoke.GetForegroundWindow();
         if (foreground.IsNull || foreground == _hwnd) return false;
 
-        // SHQueryUserNotificationState es GLOBAL, y esa era la trampa: un juego a
-        // pantalla completa en una pantalla escondía los docks de las TRES. La ventana
-        // en primer plano es la que puso al sistema en ese estado, así que solo cuenta
-        // si está en NUESTRO monitor.
+        // Solo cuenta lo que pase en NUESTRO monitor: con tres pantallas, un juego en
+        // una no puede esconder los docks de las otras dos.
         if (PInvoke.MonitorFromWindow(foreground, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST) != _monitor)
             return false;
 
-        if (PInvoke.SHQueryUserNotificationState(out QUERY_USER_NOTIFICATION_STATE state).Succeeded
-            && state is QUERY_USER_NOTIFICATION_STATE.QUNS_RUNNING_D3D_FULL_SCREEN
-                or QUERY_USER_NOTIFICATION_STATE.QUNS_PRESENTATION_MODE
-                or QUERY_USER_NOTIFICATION_STATE.QUNS_BUSY)
-        {
-            return true;
-        }
-
-        // Una ventana MAXIMIZADA no es pantalla completa. Con la barra de tareas en
-        // autoocultar el área de trabajo es la pantalla entera, así que comparar solo
-        // rectángulos daría por fullscreen cualquier ventana maximizada y el dock no
-        // volvería a aparecer. Las de verdad no tienen barra de título ni borde
-        // redimensionable.
+        // Lo decide la VENTANA, no el estado del sistema.
+        //
+        // Antes bastaba con que SHQueryUserNotificationState dijera BUSY o
+        // D3D_FULL_SCREEN para dar por bueno el pleno. Resulto ser un disparador falso
+        // con consecuencias gordas: al minimizar una ventana el sistema devuelve BUSY
+        // durante un instante -y hasta dispara ABN_FULLSCREENAPP-, con lo que el dock
+        // se ocultaba ENTERO, y en ese hueco el borde inferior dejaba de ser suyo.
+        // Bastaba bajar el raton para sacar la barra de tareas, y la animacion del dock
+        // se reiniciaba. Medido con la traza: "el dock se aparta" y "el dock vuelve" en
+        // menos de un segundo, justo detras de cada minimizado.
+        //
+        // La ventana no miente. Se comparo la MISMA ventana de Brave maximizada y con
+        // F11:
+        //
+        //     maximizada  rect=-8,-8 2576x1096  CAPTION=si  THICKFRAME=si
+        //     con F11     rect=0,0   2560x1080  CAPTION=no  THICKFRAME=no
+        //
+        // Una maximizada cubre el monitor igual que una a pantalla completa -con la
+        // barra de tareas en autoocultar, el area de trabajo ES la pantalla entera- y
+        // lo que las separa son los estilos. IsZoomed no sirve: devuelve true en los
+        // dos casos, tambien medido.
         nint style = PInvoke.GetWindowLongPtr(foreground, WINDOW_LONG_PTR_INDEX.GWL_STYLE);
         const nint WsCaption = 0x00C00000;
         const nint WsThickFrame = 0x00040000;

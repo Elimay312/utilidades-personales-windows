@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- WinExe: la ventana es lo normal y no queremos una consola detras. Los mensajes
+         no se pierden: Program engancha la consola del padre si se lanza desde una
+         terminal, que es como funcionan los modos de consola. -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <AssemblyName>Renombrar</AssemblyName>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>Renombrar</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+
+    <!-- InvariantGlobalization NO, al reves que la isla y el dock. Aqui se comparan y
+         se ordenan NOMBRES DE FICHERO del usuario, con enies y acentos, y se pasan a
+         MAYUSCULAS: sin ICU, "Niño" y "NIÑO" dejan de ser el mismo fichero para la
+         comparacion y el orden alfabetico deja de ser el del Explorador. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+
+    <!-- SEGURIDAD.md regla 12: nada de ofuscacion, packers ni compresion. El binario
+         debe tener PDB y secciones legibles para un analizador estatico. -->
+    <DebugType>portable</DebugType>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Unica dependencia. Source generator: no aparece en la salida. Todo lo Win32
+         sale de NativeMethods.txt, que es la lista cerrada que audita SEGURIDAD.md. -->
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.333" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

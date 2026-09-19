@@ -20,8 +20,9 @@ namespace Hud;
 /// </para>
 ///
 /// <para>
-/// H1: el nivel viene de <c>--demo</c>, no del audio. Afinar un muelle mientras peleas
-/// con COM es como se pierde un dia sin saber cual de las dos cosas esta mal.
+/// El nivel sale del sistema. <c>--demo</c> lo sustituye por un guion de valores falsos
+/// y no registra las teclas: sirve para afinar muelles sin pelearse con COM al mismo
+/// tiempo, que es como se pierde un dia sin saber cual de las dos cosas esta mal.
 /// </para>
 /// </summary>
 internal sealed unsafe class HudWindow
@@ -116,6 +117,9 @@ internal sealed unsafe class HudWindow
     private bool _silenciado;
     private int _pasoDemo;
 
+    /// <summary>Donde esta puesta la ventana, para no repetir la traza en cada aparicion.</summary>
+    private int _x, _y, _w, _h;
+
     private HudWindow(HudConfig config, bool demo)
     {
         _config = config;
@@ -164,9 +168,9 @@ internal sealed unsafe class HudWindow
         _visuals = new HudVisuals(_hwnd, _dpi / 96f, AnchoCapsula, AltoCapsula, Holgura);
 
         // Ctrl+Alt+H para salir. Mientras no haya icono de bandeja es la unica forma
-        // limpia de cerrarlo, y hace falta: desde H2 el HUD se traga las teclas de
-        // volumen (SEGURIDAD.md §3.1), asi que sin forma de cerrarlo un fallo suyo te
-        // deja sin volumen hasta el Administrador de tareas.
+        // limpia de cerrarlo, y hace falta: el HUD se traga las teclas de volumen
+        // (SEGURIDAD.md §3.1), asi que sin forma de cerrarlo un fallo suyo te deja sin
+        // volumen hasta el Administrador de tareas.
         _atajoSalir = PInvoke.RegisterHotKey(_hwnd, AtajoSalir,
             HOT_KEY_MODIFIERS.MOD_CONTROL | HOT_KEY_MODIFIERS.MOD_ALT, 'H');
         if (!_atajoSalir)
@@ -198,6 +202,7 @@ internal sealed unsafe class HudWindow
             PInvoke.SetTimer(_hwnd, TimerVigilar, MsVigilar, null);
         }
 
+        (_x, _y, _w, _h) = (x, y, w, h);
         Console.WriteLine($"[hud] {pantalla} al {_dpi * 100 / 96}%, ventana {w}x{h} en {x},{y}");
         Console.WriteLine($"[hud] capsula {_config.Posicion}, paso {_config.PasoVolumen}%, {_config.MsAutoocultar} ms");
 
@@ -305,8 +310,8 @@ internal sealed unsafe class HudWindow
     // --- ensenar y esconder -----------------------------------------------------------
 
     /// <summary>
-    /// El unico camino por el que el HUD aparece. Desde H2 lo llamara la tecla; hoy lo
-    /// llama <c>--demo</c>.
+    /// El unico camino por el que el HUD aparece: lo llaman la tecla, el vigilante y
+    /// <c>--demo</c>, y ninguno mas.
     ///
     /// <para>
     /// Si el nivel no ha cambiado --has subido estando ya al 100%-- no hay nada que
@@ -412,8 +417,18 @@ internal sealed unsafe class HudWindow
     private void Recolocar()
     {
         uint dpiAntes = _dpi;
-        (int x, int y, int w, int h) = MedirEnElMonitorDelCursor(out _dpi, out _);
+        (int x, int y, int w, int h) = MedirEnElMonitorDelCursor(out _dpi, out string pantalla);
         PInvoke.SetWindowPos(_hwnd, HWND_TOPMOST, x, y, w, h, SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
+
+        // Solo cuando de verdad se mueve de sitio, no en cada aparicion. Con tres
+        // pantallas a tres escalas distintas, saber en cual se ha puesto y con que
+        // escala es la diferencia entre diagnosticar un fallo de colocacion en un
+        // minuto o a base de capturas.
+        if (x != _x || y != _y || w != _w || h != _h)
+        {
+            _x = x; _y = y; _w = w; _h = h;
+            Console.WriteLine($"[hud] {pantalla} al {_dpi * 100 / 96}%, ventana {w}x{h} en {x},{y}");
+        }
 
         if (_dpi == dpiAntes) return;
 

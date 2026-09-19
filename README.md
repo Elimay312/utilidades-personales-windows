@@ -32,10 +32,24 @@ Hud.exe --check     # logica pura, no abre ventana
 | H0 | `SEGURIDAD.md`, `auditar.ps1`, ventana, colocación por monitor y DPI | ✅ |
 | H1 | La cápsula: Composition, acrílico, barra, glifos, los cuatro morphs | ✅ |
 | H2 | Volumen de verdad: `RegisterHotKey` + `IAudioEndpointVolume` | ✅ |
-| H3 | Multi-monitor, DPI mixto, pantalla completa, autoarranque | |
+| H3 | Multi-monitor, DPI mixto, pantalla completa, autoarranque | ◐ |
 
 El plan original tenía dos hitos más, **el brillo y apartar el aviso nativo**, y los dos
 murieron midiendo antes de costar una línea de código. Está contado justo debajo.
+
+## En qué pantalla sale
+
+En la del **cursor**, no en la primaria ni en la de la ventana activa. Con un juego a
+pantalla completa da igual, porque el juego confina el ratón a su monitor; y en el
+escritorio, donde está el ratón suele ser donde estás mirando.
+
+El precio: si dejas el ratón aparcado en otra pantalla, el HUD sale ahí. Mirar la ventana
+en primer plano en vez del cursor arreglaría ese caso, pero obligaría a abrir la regla 15 de
+`SEGURIDAD.md` — que es absoluta — para leer una ventana ajena, y no compensa.
+
+**Se recoloca al aparecer, no mientras está puesto.** Si cambias el volumen, mueves el ratón a
+otra pantalla y vuelves a cambiarlo antes de que se cierre (1,6 s), se queda donde estaba en
+vez de teletransportarse a media animación.
 
 ## Los dos hitos que murieron midiendo
 

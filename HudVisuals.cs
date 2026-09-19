@@ -78,6 +78,12 @@ internal sealed unsafe class HudVisuals : IDisposable
     private int _glifoVisible = -1;
     private readonly float _escala;
 
+    /// <summary>
+    /// Los pinceles de los glifos, para poder soltarlos. Cada uno lleva detras una
+    /// superficie de D2D, que es memoria de verdad y no la recoge el GC.
+    /// </summary>
+    private readonly List<CompositionSurfaceBrush> _pinceles = [];
+
     public HudVisuals(HWND hwnd, float escala, float anchoCapsula, float altoCapsula, float holgura)
     {
         _escala = escala;
@@ -187,9 +193,12 @@ internal sealed unsafe class HudVisuals : IDisposable
         {
             Vector2 medida = Glifos.Medir(Glifos.Todos[i], S(PxGlifo));
 
+            CompositionSurfaceBrush pincel = PincelGlifo(Glifos.Todos[i], medida);
+            _pinceles.Add(pincel);
+
             SpriteVisual v = _compositor.CreateSpriteVisual();
             v.Size = medida;
-            v.Brush = PincelGlifo(Glifos.Todos[i], medida);
+            v.Brush = pincel;
             // Centrado dentro de su caja: los cinco glifos no miden lo mismo, y sin
             // esto el altavoz saltaria de sitio al cambiar de ondas.
             v.Offset = new Vector3(x + (caja - medida.X) / 2f, y + (caja - medida.Y) / 2f, 0f);
@@ -455,8 +464,27 @@ internal sealed unsafe class HudVisuals : IDisposable
         return _graphics;
     }
 
+    /// <summary>
+    /// Se llama de verdad, y mas de lo que parece: cada vez que el HUD salta a una
+    /// pantalla con otra escala se rehace entero, porque las medidas en pixeles estan
+    /// horneadas en los visuals. Con tres pantallas a tres escalas distintas eso pasa
+    /// varias veces por minuto.
+    ///
+    /// <para>
+    /// Por eso hay que soltar las superficies y no solo el target: cada glifo lleva
+    /// detras una <c>CompositionDrawingSurface</c>, que es memoria de D2D y no la
+    /// recoge el GC. Cinco por reconstruccion se acumulan rapido.
+    /// </para>
+    /// </summary>
     public void Dispose()
     {
+        foreach (CompositionSurfaceBrush pincel in _pinceles)
+        {
+            if (pincel.Surface is CompositionDrawingSurface superficie) superficie.Dispose();
+            pincel.Dispose();
+        }
+        _pinceles.Clear();
+
         // El Compositor y el device son del proceso y no se tiran: solo el target, que
         // es lo unico atado a este HWND.
         _target.Dispose();

@@ -1,5 +1,37 @@
 # Changelog
 
+## H3 — bordes (a medias)
+
+**Pantalla completa: verificado, y de rebote.** Las capturas de H2 se tomaron con VALORANT en
+primer plano a pantalla completa, y la cápsula se dibujó encima sin robarle el foco ni sacarlo
+de su modo. No hace falta ninguna lógica de "apartarse", que es lo que hacen el dock y la
+isla: un aviso de volumen tiene que verse justo cuando estás jugando.
+
+**Autoarranque: verificado.** Con `autoArranque: true` escribe en `HKCU\...\Run` la ruta del
+exe publicado (`%LOCALAPPDATA%\Hudpp\Hud.exe`, no `bin\`); con `false` borra la entrada. El
+registro queda limpio.
+
+**Fuga arreglada, encontrada leyendo.** Cada salto a una pantalla con otra escala rehace los
+visuals enteros, pero `Dispose` solo soltaba el `DesktopWindowTarget`: las cinco superficies
+de D2D de los glifos se quedaban. Con tres pantallas a tres escalas eso pasa varias veces por
+minuto. Ahora se sueltan el pincel y su superficie.
+
+**Sin fuga en el camino normal.** Cuatro minutos de `--demo`, unas 220 apariciones con sus
+morphs: la memoria privada sube de 14 a 19 MB en los primeros 70 s y ahí se queda (+1 MB en
+los 165 s siguientes), y los handles bajan de 336 a 327. Eso es el GC asentándose, no una
+fuga por ciclo — una fuga crece recta y no se para. Con los 80 s del primer intento no se
+podía distinguir una cosa de la otra.
+
+**Multi-monitor: sin medir todavía.** Las tres pantallas van a 125%, 100% y 175%, que es el
+banco de pruebas ideal, pero la sonda no puede llevar el cursor a las otras dos: VALORANT
+tenía el ratón confinado a `1,1..2559,1079` con `ClipCursor`, y `SetCursorPos` devolvía `True`
+mientras el cursor se quedaba clavado en x=2558. Dos intentos midieron el fondo de tres sitios
+vacíos antes de darse cuenta. La sonda ahora **se declara no concluyente** si detecta el
+confinamiento, en vez de inventarse un fallo.
+
+Trazas nuevas: el HUD imprime una línea cada vez que se mueve de pantalla, con la escala y el
+rectángulo. Solo cuando de verdad cambia de sitio, no en cada aparición.
+
 ## H2 — el volumen de verdad
 
 Las tres teclas son del HUD (`RegisterHotKey`, sin modificadores y **sin `MOD_NOREPEAT`**,

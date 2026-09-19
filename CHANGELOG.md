@@ -10,6 +10,38 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H3 — La ventana
+
+- **Dos fallos de Composition, y los dos daban una ventana que no fallaba: solo estaba
+  vacía.** El primero, un `InsetClip` sobre un contenedor sin tamaño: recorta contra el
+  **tamaño** del visual, y un `ContainerVisual` no tiene ninguno, así que recortaba a cero y
+  la tabla entera desaparecía. De ahí salen dos contenedores en vez de uno: el marco se queda
+  quieto y recorta, la lista se desplaza dentro. Con uno solo, además, el recorte viajaría con
+  el desplazamiento.
+- **El segundo: `BeginDraw` devuelve un hueco dentro de un atlas compartido, no una superficie
+  que empiece en (0,0).** Medido imprimiendo los huecos: `(1,2)`, `(1,56)`, `(1,88)`… todos en
+  el mismo atlas. Dibujando en cero, **todas** las filas van a parar al trozo de la primera.
+  Con el contexto trasladado: **110 píxeles de texto por fila**; sin trasladar: **0**. Acotar
+  además el `Clear` con un recorte explícito al hueco propio no cambió un solo píxel, así que
+  esas líneas se fueron.
+- **Leer la captura a ojo no sirvió, y contar píxeles sí.** Durante un rato pareció que la
+  tabla salía con el texto oscuro sobre fondo claro, justo lo contrario de lo que se pinta.
+  Muestreando el PNG: fondo `(11,11,13)`, barra de estado `(97,180,120)`, texto claro. La
+  ventana llevaba bien un buen rato. Es la regla de la casa en su forma más literal —**la
+  sonda se equivoca más que el código**— y aquí la sonda eran mis ojos.
+- **La lista solo crea las filas que se ven**, con un margen de cuatro arriba y ocho abajo, y
+  suelta las demás. Una carpeta de 300 recibos serían 300 superficies de ~100 KB para enseñar
+  quince. Al mover la rueda se pintan las que van a entrar **con el destino de la animación**,
+  no con donde está la lista: esperando a que llegue se verían huecos.
+- **El desplazamiento se anima en vez de escribirse a pelo**, así que corre en DWM y la lista
+  sigue deslizándose aunque este hilo esté recalculando la previa. Se quedó en una animación
+  de un solo fotograma sobre `Offset` en lugar de la `ExpressionAnimation` sobre un
+  `CompositionPropertySet` que decía el plan: la expresión hacía falta cuando había que
+  desplazar 300 visuales a la vez, y con reciclaje hay quince.
+- **Medido con 36 archivos**: el orden natural se ve en la ventana igual que en la consola
+  (`documento escaneado 2`, `3`, … `10`), el desplazamiento no pisa la franja, y la ventana se
+  queda en 84 MB.
+
 ### H2 — Aplicar, y deshacer
 
 - **El orden de las dos pasadas era un fallo, y lo encontró escribir el caso.** Los ficheros

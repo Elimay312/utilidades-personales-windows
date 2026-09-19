@@ -16,3 +16,73 @@ AttachConsole
 // en vez de escrita a mano porque el orden de las filas es el orden en el que {n} reparte
 // la numeracion, y lo que el usuario espera es lo que ve en la ventana de al lado.
 StrCmpLogicalW
+
+// --- La ventana propia (H3, SEGURIDAD.md §3.1) ---
+// Una ventana normal y corriente. No hay nada aqui que mire, mueva ni toque una ventana
+// ajena: todo actua sobre el HWND propio, que es lo que deja la regla 14 sin excepciones.
+RegisterClassExW
+CreateWindowExW
+DefWindowProcW
+DestroyWindow
+PostQuitMessage
+GetModuleHandleW
+ShowWindow
+SetWindowPos
+LoadCursorW
+IDC_ARROW
+GetClientRect
+GetDpiForWindow
+
+// --- Bucle de mensajes propio (H3) ---
+GetMessageW
+TranslateMessage
+DispatchMessageW
+
+// --- Composition sobre el HWND propio (H3) ---
+ICompositorDesktopInterop
+CreateDispatcherQueueController
+DispatcherQueueOptions
+
+// --- Superficie donde se dibuja la tabla (H3) ---
+// Fuera de XAML no existe LoadedImageSurface: para pintar texto hay que pasar por
+// D3D11 -> D2D -> Composition. Este device sube pixeles, no renderiza frames.
+D3D11CreateDevice
+D2D1CreateDevice
+ID2D1Device
+ID2D1DeviceContext
+ID2D1SolidColorBrush
+IDXGIDevice
+ID3D11Device
+D3D_DRIVER_TYPE
+D3D11_CREATE_DEVICE_FLAG
+D2D1_ROUNDED_RECT
+ICompositionDrawingSurfaceInterop
+ICompositorInterop
+
+// --- El texto de la tabla (H3) ---
+DWriteCreateFactory
+IDWriteFactory
+IDWriteTextFormat
+IDWriteTextLayout
+DWRITE_FACTORY_TYPE
+DWRITE_TEXT_METRICS
+DWRITE_FONT_WEIGHT
+DWRITE_FONT_STYLE
+DWRITE_FONT_STRETCH
+DWRITE_WORD_WRAPPING
+D2D1_DRAW_TEXT_OPTIONS
+
+// --- Recibir lo que se suelta (H3, SEGURIDAD.md §3.1) ---
+// La UNICA entrada del programa. Es puramente receptivo: solo ve lo que el usuario suelta
+// encima de esta ventana, con su gesto. No es el portapapeles, que sigue prohibido por la
+// regla 9. De lo soltado solo se saca la ruta; el fichero no se abre.
+OleInitialize
+OleUninitialize
+RegisterDragDrop
+RevokeDragDrop
+IDropTarget
+SHCreateShellItemArrayFromDataObject
+IShellItemArray
+IShellItem
+SIGDN
+

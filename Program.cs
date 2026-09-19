@@ -1,4 +1,5 @@
 using System.Text;
+using Windows.Win32.Foundation;
 using Windows.Win32;
 
 namespace Renombrar;
@@ -24,8 +25,8 @@ internal static class Program
             "--aplicar"  => Previsualizar(ruta, args.Length > 2 ? args[2] : string.Empty, true),
             "--deshacer" => Deshacer(),
             "--ayuda" or "-h" or "/?" => Ayuda(),
-            "" => Ventana(),
-            _ => Desconocido(modo),
+            _ when modo.StartsWith('-') => Desconocido(modo),
+            _ => Abrir(modo, ruta),
         };
     }
 
@@ -188,13 +189,22 @@ internal static class Program
     private static string Recorta(string s, int ancho) =>
         s.Length <= ancho ? s : s[..(ancho - 1)] + "…";
 
-    // Cada modo se rellena en su hito. Devuelven 2 —y lo dicen— en vez de fingir que
-    // pasaron: una comprobacion que aprueba sin mirar es peor que no tenerla.
-    private static int NoTodavia(string que, string hito)
+    /// <summary>
+    /// La ventana. Sin argumentos abre vacia esperando a que sueltes algo; con una carpeta
+    /// —y opcionalmente una plantilla— abre con la tabla ya puesta.
+    /// </summary>
+    private static int Abrir(string carpeta, string plantilla)
     {
-        Console.Error.WriteLine($"[renombrar] {que} llega en {hito}.");
-        return 2;
-    }
+        // OleInitialize LO PRIMERO, antes de tocar nada de COM. No vale CoInitialize: la
+        // documentacion de RegisterDragDrop dice que si el hilo se inicializo con
+        // CoInitialize/CoInitializeEx, RegisterDragDrop falla.
+        HRESULT ole = PInvoke.OleInitialize();
+        if (ole.Failed) Console.WriteLine($"[ole] OleInitialize fallo: 0x{(uint)ole.Value:X8}");
 
-    private static int Ventana() => NoTodavia("la ventana", "H3");
+        using Ventana ventana = new(carpeta, plantilla);
+        ventana.Bucle();
+
+        PInvoke.OleUninitialize();
+        return 0;
+    }
 }

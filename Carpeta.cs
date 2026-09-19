@@ -67,6 +67,28 @@ internal static class Carpeta
         return ficheros;
     }
 
+    /// <summary>
+    /// Solo los ficheros que se han soltado, y solo los que viven en esa carpeta. Soltar
+    /// una carpeta significa "renombra esta carpeta" y soltar cuatro ficheros significa
+    /// "renombra estos cuatro": la diferencia la expreso el usuario al arrastrar, y no hay
+    /// que adivinarla.
+    /// </summary>
+    internal static List<Fichero> Reunir(string carpeta, string[] sueltos)
+    {
+        List<Fichero> ficheros = [];
+        foreach (string ruta in sueltos)
+        {
+            if (!File.Exists(ruta)) continue;
+            if (!string.Equals(Path.GetDirectoryName(ruta), carpeta, StringComparison.OrdinalIgnoreCase)) continue;
+
+            FileInfo i = new(ruta);
+            ficheros.Add(new Fichero(ruta, i.Name, i.CreationTime, i.LastWriteTime));
+        }
+
+        ficheros.Sort(Orden);
+        return ficheros;
+    }
+
     /// <summary>Todos los nombres que hay en la carpeta, ocultos incluidos: un destino ocupado por un fichero oculto esta igual de ocupado.</summary>
     internal static HashSet<string> Ocupados(string carpeta) =>
         new(Directory.GetFiles(carpeta).Select(Path.GetFileName)!, StringComparer.OrdinalIgnoreCase);

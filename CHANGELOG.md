@@ -10,6 +10,33 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H2 — Aplicar, y deshacer
+
+- **El orden de las dos pasadas era un fallo, y lo encontró escribir el caso.** Los ficheros
+  que pasan por un temporal tienen que moverse **después** de los directos: en una cadena
+  `x→y, y→z`, la `x` espera a que `y` suelte su nombre, y la `y` no pasó por temporal porque
+  su destino no era de nadie. Con los temporales primero, la cadena fallaba entera. Metido
+  otra vez a propósito: `FALLA una cadena x->y, y->z se hace entera`.
+- **La ida y vuelta se comprueba sobre disco de verdad**, en una subcarpeta con la hora dentro
+  de `%TEMP%\renombrar-check`. Con la hora porque aquí no se borra nada: reutilizar la carpeta
+  arrastraría lo de la pasada anterior y la comprobación dejaría de empezar desde lo mismo.
+  **Cada fichero lleva su nombre escrito dentro**, porque "los nombres están bien" se cumple
+  igual aunque el contenido se haya cruzado, y ese es el fallo que más duele.
+- **Los cuatro casos del disco, todos en verde**: el intercambio `a↔b`, el cambio de solo
+  mayúsculas (`FOTO.txt` sale en mayúsculas de verdad en el disco), la cadena completa, y un
+  destino imposible —una carpeta ocupando el nombre— que para el lote **y devuelve el temporal
+  que ya había creado**. Ningún `.renombrar-tmp` sobrevive a ninguno de los cuatro.
+- **Medido sobre la carpeta de recibos de prueba**: 6 ficheros a `Recibo_{fecha}_{n:000}`,
+  `--deshacer`, y los seis nombres vuelven exactos, `CON.pdf` incluido. El diario se queda sin
+  nada que deshacer y el segundo `--deshacer` lo dice en vez de inventarse algo.
+- **Se cayó el guardia de la entrada redirigida.** Pedía ejecutarlo a mano si `stdin` venía de
+  una tubería, y no protegía de nada: escribir `si` en una tubería es tan deliberado como
+  teclearlo, y la tabla se imprime antes en los dos casos. Lo que impide cruzar esa puerta por
+  inercia es tener que escribir la palabra, no de dónde viene.
+- **Las filas en rojo no paran el lote**: se quedan fuera, se dice cuántas y se renombra el
+  resto. Parar por una colisión en una carpeta de 300 ficheros sería obligar a arreglarlo todo
+  antes de poder hacer nada.
+
 ### H1 — El motor y la vista previa
 
 - **Siete tipos de regla se quedaron en cinco, y hacen más.** El primer diseño tenía

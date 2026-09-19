@@ -20,8 +20,8 @@ internal static class Program
         return modo switch
         {
             "--check"    => Comprobaciones.Ejecutar(),
-            "--previa"   => Previsualizar(ruta, args.Length > 2 ? args[2] : string.Empty),
-            "--aplicar"  => Aplicar(ruta),
+            "--previa"   => Previsualizar(ruta, args.Length > 2 ? args[2] : string.Empty, false),
+            "--aplicar"  => Previsualizar(ruta, args.Length > 2 ? args[2] : string.Empty, true),
             "--deshacer" => Deshacer(),
             "--ayuda" or "-h" or "/?" => Ayuda(),
             "" => Ventana(),
@@ -35,8 +35,8 @@ internal static class Program
             renombrar [modo]
 
               --previa CARPETA [PLANTILLA]   la tabla antes -> despues, sin tocar nada
-              --aplicar CARPETA              renombra, despues de que confirmes
-              --deshacer                     revierte el ultimo lote
+              --aplicar CARPETA [PLANTILLA]  la misma tabla, y renombra si escribes "si"
+              --deshacer                     devuelve los nombres del ultimo lote
               --check                        comprueba el motor y la vista previa
               sin modo                       abre la ventana
 
@@ -61,11 +61,11 @@ internal static class Program
     /// depurar: es la misma llamada a <see cref="Previa.Calcular"/> con los mismos
     /// estados, que es lo que hace que valga como sonda.
     /// </summary>
-    private static int Previsualizar(string carpeta, string plantilla)
+    private static int Previsualizar(string carpeta, string plantilla, bool aplicar)
     {
         if (carpeta.Length == 0)
         {
-            Console.Error.WriteLine("[renombrar] --previa necesita una carpeta.");
+            Console.Error.WriteLine("[renombrar] hace falta una carpeta.");
             return 2;
         }
 
@@ -96,7 +96,58 @@ internal static class Program
             : [];
 
         List<Fila> filas = Previa.Calcular(ficheros, reglas, Carpeta.Ocupados(carpeta));
+        Tabla(filas);
 
+        bool hayLios = filas.Any(f => f.Estado is not (Estado.Ok or Estado.SinCambio));
+        if (!aplicar) return hayLios ? 1 : 0;
+
+        int cuantos = filas.Count(f => f.Estado == Estado.Ok);
+        if (cuantos == 0)
+        {
+            Console.WriteLine("[renombrar] no hay nada que renombrar.");
+            return hayLios ? 1 : 0;
+        }
+
+        // Las filas en rojo no paran el lote: se quedan fuera y se dice cuantas. Parar por
+        // una colision en una carpeta de 300 ficheros seria obligar a arreglarlo todo
+        // antes de poder hacer nada.
+        if (hayLios) Console.WriteLine($"[renombrar] {filas.Count - cuantos - filas.Count(f => f.Estado == Estado.SinCambio)} fila(s) se quedan fuera.");
+        if (!Confirma($"Renombrar {cuantos} fichero(s)")) return 2;
+
+        Resultado r = Aplicar.Ejecutar(carpeta, filas, Aplicar.DiarioPorDefecto);
+        Console.WriteLine($"[renombrar] {r.Hechos.Count} renombrado(s).");
+        foreach (string p in r.Problemas) Console.Error.WriteLine($"  {p}");
+        if (r.Hechos.Count > 0) Console.WriteLine("[renombrar] deshazlo con: renombrar --deshacer");
+
+        return r.Problemas.Count > 0 ? 1 : 0;
+    }
+
+    private static int Deshacer()
+    {
+        Lote? lote = Aplicar.Ultimo(Aplicar.DiarioPorDefecto);
+        if (lote is null || lote.Pares.Count == 0)
+        {
+            Console.WriteLine("[renombrar] no hay ningun lote que deshacer.");
+            return 0;
+        }
+
+        Console.WriteLine($"El lote de {lote.Fecha:g} en {lote.Carpeta}:");
+        Console.WriteLine();
+        foreach (Par p in lote.Pares) Console.WriteLine($"     {p.Nuevo} -> {p.Viejo}");
+        Console.WriteLine();
+
+        if (!Confirma($"Devolver {lote.Pares.Count} nombre(s)")) return 2;
+
+        Resultado r = Aplicar.Revertir(lote, Aplicar.DiarioPorDefecto);
+        Console.WriteLine($"[renombrar] {r.Hechos.Count} devuelto(s).");
+        foreach (string p in r.Problemas) Console.Error.WriteLine($"  {p}");
+
+        return r.Problemas.Count > 0 ? 1 : 0;
+    }
+
+    /// <summary>La tabla, que es la misma que ensena la ventana porque sale de la misma llamada a <see cref="Previa.Calcular"/>.</summary>
+    private static void Tabla(List<Fila> filas)
+    {
         int ancho = Math.Min(filas.Max(f => f.Antes.Length), 50);
         foreach (Fila f in filas)
         {
@@ -107,8 +158,24 @@ internal static class Program
         Console.WriteLine();
         foreach (IGrouping<Estado, Fila> g in filas.GroupBy(f => f.Estado).OrderBy(g => g.Key))
             Console.WriteLine($"  {g.Count(),5}  {g.Key}");
+        Console.WriteLine();
+    }
 
-        return filas.Any(f => f.Estado is not (Estado.Ok or Estado.SinCambio)) ? 1 : 0;
+    /// <summary>
+    /// Escribir "si" entero, y no una tecla. Es la ultima puerta antes de tocar el disco y
+    /// no debe poder cruzarse pulsando Enter por inercia.
+    /// </summary>
+    private static bool Confirma(string que)
+    {
+        // Sin guardia para la entrada redirigida: escribir "si" en una tuberia es tan
+        // deliberado como teclearlo, y la tabla se ha impreso antes en los dos casos. Lo
+        // que no puede pasar es cruzar esta puerta pulsando Enter por inercia, y de eso se
+        // encarga que haya que escribir la palabra.
+        Console.Write($"{que}? escribe si: ");
+        if (Console.ReadLine()?.Trim().ToLowerInvariant() is "si" or "sí") return true;
+
+        Console.WriteLine("[renombrar] no se ha tocado nada.");
+        return false;
     }
 
     private static string Marca(Estado e) => e switch
@@ -129,7 +196,5 @@ internal static class Program
         return 2;
     }
 
-    private static int Aplicar(string _) => NoTodavia("--aplicar", "H2");
-    private static int Deshacer() => NoTodavia("--deshacer", "H2");
     private static int Ventana() => NoTodavia("la ventana", "H3");
 }

@@ -148,10 +148,92 @@ internal static class Comprobaciones
                         !Previa.DemasiadoLarga(@"C:\" + new string('x', 300) + @"\a.txt", "b.txt"));
 
         Console.WriteLine();
+        fallos += IdaYVuelta();
+
+        Console.WriteLine();
         if (fallos == 0) { Console.WriteLine("TODO BIEN"); return 0; }
         Console.WriteLine($"{fallos} comprobacion(es) fallan");
         return 1;
     }
+
+    /// <summary>
+    /// Lo unico que no se puede comprobar sin disco: que aplicar y deshacer dejan los
+    /// nombres <b>exactamente</b> como estaban. Se hace en una subcarpeta con la hora
+    /// dentro de <c>%TEMP%\renombrar-check</c> (SEGURIDAD.md §5.4) — con la hora porque
+    /// aqui no se borra nada, asi que una carpeta reutilizada arrastraria lo de la pasada
+    /// anterior y la comprobacion dejaria de empezar desde lo mismo.
+    /// </summary>
+    private static int IdaYVuelta()
+    {
+        string carpeta = Path.Combine(Path.GetTempPath(), "renombrar-check",
+                                      DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+        Directory.CreateDirectory(carpeta);
+        string diario = Path.Combine(carpeta, "lote.json");
+
+        Console.WriteLine($"Disco — ida y vuelta en {carpeta}");
+
+        // Un contenido distinto por fichero: sin esto, "los nombres estan bien" se cumple
+        // igual aunque el contenido se haya cruzado, que es el fallo que mas duele.
+        foreach (string n in (string[])["a.txt", "b.txt", "foto.txt", "suelto.txt"])
+            File.WriteAllText(Path.Combine(carpeta, n), $"soy {n}");
+        Directory.CreateDirectory(Path.Combine(carpeta, "estorbo.txt"));
+
+        string[] antes = Nombres(carpeta);
+        int fallos = 0;
+
+        // Intercambio + cambio de solo mayusculas, que son los dos casos del temporal.
+        Resultado r = Aplicar.Ejecutar(carpeta, [
+            Fila(carpeta, "a.txt", "b.txt"),
+            Fila(carpeta, "b.txt", "a.txt"),
+            Fila(carpeta, "foto.txt", "FOTO.txt"),
+        ], diario);
+
+        fallos += Exige("el intercambio y el cambio de caja se hacen (3)", r.Hechos.Count == 3 && r.Problemas.Count == 0);
+        fallos += Exige("a.txt lleva ahora el contenido de b", File.ReadAllText(Path.Combine(carpeta, "a.txt")) == "soy b.txt");
+        fallos += Exige("y FOTO.txt esta en mayusculas de verdad en el disco", Nombres(carpeta).Contains("FOTO.txt"));
+        fallos += Exige("no queda ningun .renombrar-tmp", !Nombres(carpeta).Any(n => n.Contains("renombrar-tmp")));
+
+        Aplicar.Revertir(Aplicar.Ultimo(diario)!, diario);
+        fallos += Exige("deshacer deja los nombres EXACTAMENTE como estaban", Nombres(carpeta).SequenceEqual(antes));
+        fallos += Exige("y cada fichero con su contenido", File.ReadAllText(Path.Combine(carpeta, "a.txt")) == "soy a.txt");
+        fallos += Exige("y el diario se queda sin nada que deshacer", Aplicar.Ultimo(diario)!.Pares.Count == 0);
+
+        // La cadena que cambio el codigo: suelto.txt quiere el nombre de a.txt, y a.txt se
+        // va a otro sitio. Con los temporales movidos antes que los directos, el temporal
+        // llegaba a por un nombre que su duena todavia no habia soltado.
+        r = Aplicar.Ejecutar(carpeta, [
+            Fila(carpeta, "suelto.txt", "a.txt"),
+            Fila(carpeta, "a.txt", "nuevo.txt"),
+        ], diario);
+
+        fallos += Exige("una cadena x->y, y->z se hace entera", r.Hechos.Count == 2 && r.Problemas.Count == 0);
+        fallos += Exige("y cada contenido acaba donde toca",
+                        File.ReadAllText(Path.Combine(carpeta, "a.txt")) == "soy suelto.txt" &&
+                        File.ReadAllText(Path.Combine(carpeta, "nuevo.txt")) == "soy a.txt");
+
+        Aplicar.Revertir(Aplicar.Ultimo(diario)!, diario);
+        fallos += Exige("y deshacer la cadena tambien vuelve al principio", Nombres(carpeta).SequenceEqual(antes));
+
+        // Una cadena x->y->z donde la z no se puede: la carpeta "estorbo.txt" ocupa el
+        // nombre y Windows no deja moverle un fichero encima. El lote tiene que pararse
+        // entero y, sobre todo, devolver el temporal que ya habia creado.
+        r = Aplicar.Ejecutar(carpeta, [
+            Fila(carpeta, "a.txt", "b.txt"),
+            Fila(carpeta, "b.txt", "estorbo.txt"),
+        ], diario);
+
+        fallos += Exige("un destino imposible para el lote", r.Hechos.Count == 0 && r.Problemas.Count > 0);
+        fallos += Exige("y el temporal vuelve a su nombre, no se queda a medias",
+                        Nombres(carpeta).SequenceEqual(antes));
+
+        return fallos;
+    }
+
+    private static Fila Fila(string carpeta, string antes, string despues) =>
+        new(new Fichero(Path.Combine(carpeta, antes), antes, Creado, Tocado), despues, Estado.Ok);
+
+    private static string[] Nombres(string carpeta) =>
+        [.. Directory.GetFiles(carpeta).Select(Path.GetFileName).Where(n => n != "lote.json").Order(StringComparer.Ordinal)!];
 
     private static string Pasar(string nombre, Regla[] reglas, int indice)
     {

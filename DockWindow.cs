@@ -247,6 +247,12 @@ internal sealed unsafe class DockWindow : IDisposable
     /// separadores, que no tienen app detrás.
     private List<(DockApp App, IconBitmap? Icon)> _loaded = [];
 
+    /// <summary>
+    /// Apps abiertas que no están ancladas. No se guardan en ningún sitio: se calculan
+    /// del inventario y desaparecen al cerrar la app.
+    /// </summary>
+    private List<DockApp> _extras = [];
+
     /// Estado de cada app: si corre y dónde está su ventana. Se recalcula fuera del
     /// hilo de UI porque resolver las MSIX obliga a recorrer procesos y ventanas.
     private AppState[] _state = [];
@@ -598,10 +604,59 @@ internal sealed unsafe class DockWindow : IDisposable
     /// un mensaje, porque las superficies de Composition sí hay que crearlas en el
     /// hilo que tiene la DispatcherQueue.
     /// </summary>
+    /// <summary>
+    /// La lista que se dibuja: lo anclado, luego un separador, luego lo que está
+    /// abierto sin anclar, y la papelera siempre la última, como en macOS.
+    /// </summary>
+    /// <summary>
+    /// Nombre del separador que <see cref="Compose"/> mete delante de las apps
+    /// abiertas. Sirve para reconocerlo y no guardarlo: no es del usuario.
+    /// </summary>
+    private const string RunningSeparator = "|abiertas|";
+
+    private List<DockApp> Compose()
+    {
+        if (_extras.Count == 0) return _config.Apps;
+
+        List<DockApp> ancladas = [.. _config.Apps];
+        DockApp? papelera = ancladas.FirstOrDefault(a => a.Target == DockConfig.TrashTarget);
+        if (papelera is not null) ancladas.Remove(papelera);
+
+        List<DockApp> todas =
+            [.. ancladas, new DockApp { Separator = true, Name = RunningSeparator }, .. _extras];
+        if (papelera is not null) todas.Add(papelera);
+
+        return todas;
+    }
+
+    /// <summary>
+    /// De la lista DIBUJADA a la lista ANCLADA: quita las apps abiertas sin anclar y el
+    /// separador que las precede.
+    ///
+    /// <b>Todo lo que se guarde en dock.local.json tiene que pasar por aquí.</b> Las
+    /// tres rutas que guardan —reordenar, quitar y añadir— construyen la lista a partir
+    /// de lo que hay dibujado, así que sin este filtro reordenar un icono anclaría de
+    /// paso todo lo que estuviera abierto en ese momento.
+    /// </summary>
+    /// <summary>Si esa entrada solo está ahí porque la app está abierta.</summary>
+    private bool EsExtra(DockApp app)
+        => !app.Separator && _extras.Any(e => e.Target.Equals(app.Target, StringComparison.OrdinalIgnoreCase));
+
+    private List<DockApp> OnlyPinned(IEnumerable<DockApp> drawn)
+    {
+        if (_extras.Count == 0) return [.. drawn];
+
+        HashSet<string> abiertas = new(_extras.Select(app => app.Target), StringComparer.OrdinalIgnoreCase);
+
+        return [.. drawn.Where(app => app.Separator
+            ? app.Name != RunningSeparator
+            : !abiertas.Contains(app.Target))];
+    }
+
     private void StartIconLoad()
     {
         HWND hwnd = _hwnd;
-        List<DockApp> apps = _config.Apps;
+        List<DockApp> apps = Compose();
 
         Task.Run(() =>
         {
@@ -785,6 +840,14 @@ internal sealed unsafe class DockWindow : IDisposable
             case WM_APP_RUNNING:
                 if (self is not null)
                 {
+                    if (wParam.Value != 0)
+                    {
+                        // Cambio que apps hay abiertas sin anclar: hay que rehacer la
+                        // barra entera. StartIconLoad acaba volviendo aqui con 0.
+                        self.StartIconLoad();
+                        return new LRESULT(0);
+                    }
+
                     self.TraceRunning();
                     self._visuals?.SetRunning([.. self._state.Select(entry => entry.HasWindow)]);
                     self.DropDeadShots();
@@ -1377,10 +1440,14 @@ internal sealed unsafe class DockWindow : IDisposable
         if (_checkingRunning) return;
 
         // La lista de apps se lee aquí, en el hilo de UI, no dentro de la tarea.
-        List<(DockWindow Dock, List<DockApp> Apps)> targets = [];
+        List<(DockWindow Dock, List<DockApp> Dibujadas, List<DockApp> Ancladas)> targets = [];
         foreach (DockWindow dock in Instances.Values)
         {
-            if (dock._loaded.Count > 0) targets.Add((dock, [.. dock._loaded.Select(entry => entry.App)]));
+            if (dock._loaded.Count == 0) continue;
+
+            targets.Add((dock,
+                [.. dock._loaded.Select(entry => entry.App)],
+                dock._config.ShowRunning ? [.. dock._config.Apps] : []));
         }
 
         if (targets.Count == 0) return;
@@ -1392,10 +1459,25 @@ internal sealed unsafe class DockWindow : IDisposable
             {
                 Running.Snapshot snapshot = Running.Take();
 
-                foreach ((DockWindow dock, List<DockApp> apps) in targets)
+                foreach ((DockWindow dock, List<DockApp> dibujadas, List<DockApp> ancladas) in targets)
                 {
-                    dock._state = Running.Check(apps, snapshot);
-                    PInvoke.PostMessage(dock._hwnd, WM_APP_RUNNING, default, default);
+                    dock._state = Running.Check(dibujadas, snapshot);
+
+                    // Las abiertas sin anclar salen de las ANCLADAS, no de lo dibujado:
+                    // si no, las de la vuelta anterior contarian como ya presentes y la
+                    // lista no menguaria nunca.
+                    List<DockApp> extras = ancladas.Count > 0
+                        ? Running.Unpinned(ancladas, snapshot)
+                        : [];
+
+                    bool cambiaron = !extras.Select(a => a.Target)
+                        .SequenceEqual(dock._extras.Select(a => a.Target), StringComparer.OrdinalIgnoreCase);
+
+                    dock._extras = extras;
+
+                    // Rehacer la barra es caro y se ve, asi que solo cuando de verdad
+                    // cambia el juego de apps abiertas.
+                    PInvoke.PostMessage(dock._hwnd, WM_APP_RUNNING, (WPARAM)(nuint)(cambiaron ? 1 : 0), default);
                 }
             }
             finally
@@ -1631,9 +1713,13 @@ internal sealed unsafe class DockWindow : IDisposable
             }
         }
 
+        // Una app que solo está abierta no se puede "quitar": se ancla.
+        string accion = sobreIcono && EsExtra(_loaded[index].App)
+            ? $"Anclar '{_loaded[index].App.Name}' al dock"
+            : $"Quitar '{_loaded[index].App.Name}' del dock";
+
         string[] items = sobreIcono
-            ? [.. _menuJumps.Select(j => Shorten(j.Name)),
-               $"Quitar '{_loaded[index].App.Name}' del dock", "Salir del dock"]
+            ? [.. _menuJumps.Select(j => Shorten(j.Name)), accion, "Salir del dock"]
             : ["Salir del dock"];
 
         float anchor = sobreIcono
@@ -1734,13 +1820,24 @@ internal sealed unsafe class DockWindow : IDisposable
 
         if (_menuIndex >= _loaded.Count) return;
 
-        DockApp fuera = _loaded[_menuIndex].App;
+        DockApp elegida = _loaded[_menuIndex].App;
         List<DockApp> apps = [.. _loaded.Select(entry => entry.App)];
-        apps.Remove(fuera);
 
-        _visuals?.Puff(_menuIndex);
-        Console.WriteLine($"[dock] quitada '{fuera.Name}'");
+        // Sobre una app que solo estaba abierta, el menú ancla en vez de quitar. Basta
+        // con dejarla en la lista: OnlyPinned la deja pasar porque ya no es un extra.
+        if (EsExtra(elegida))
+        {
+            _extras = [.. _extras.Where(app => app.Target != elegida.Target)];
+            Console.WriteLine($"[dock] anclada '{elegida.Name}'");
+        }
+        else
+        {
+            apps.Remove(elegida);
+            _visuals?.Puff(_menuIndex);
+            Console.WriteLine($"[dock] quitada '{elegida.Name}'");
+        }
 
+        apps = OnlyPinned(apps);
         DockLocal.Save(_device, _config.BaseApps, apps);
         ReloadSiblings();
         _config = _config with { Apps = apps };
@@ -1891,6 +1988,7 @@ internal sealed unsafe class DockWindow : IDisposable
             quitado = true;
         }
 
+        apps = OnlyPinned(apps);
         DockLocal.Save(_device, _config.BaseApps, apps);
         ReloadSiblings();
 
@@ -2181,6 +2279,7 @@ internal sealed unsafe class DockWindow : IDisposable
 
         if (!changed) return;
 
+        apps = OnlyPinned(apps);
         DockLocal.Save(_device, _config.BaseApps, apps);
         ReloadSiblings();
         _config = _config with { Apps = apps };
@@ -2497,11 +2596,19 @@ internal sealed unsafe class DockWindow : IDisposable
         // respuesta directa a un clic sobre su icono, y nunca desde ningún otro sitio.
         AppState state = index < _state.Length ? _state[index] : default;
 
-        if (state.HasWindow && WindowActions.IsForeground(state.MainWindow))
+        // Si la ventana está A LA VISTA, el clic la esconde — tenga el foco o no.
+        //
+        // Antes hacía falta que además estuviera al frente, que es lo que hace la barra
+        // de tareas. Pero el dock NUNCA roba el foco, así que si estabas escribiendo en
+        // otra ventana, la app que veías en pantalla no tenía el foco: el primer clic
+        // se lo daba y el segundo minimizaba. Desde fuera eso se lee como "el primer
+        // clic no hace nada", y con la ventana en otra pantalla ni siquiera se ve el
+        // cambio de foco.
+        if (state.HasWindow && !WindowActions.IsMinimized(state.MainWindow))
         {
-            // Ya la estabas mirando: el segundo clic la esconde. El genio se monta
-            // ANTES de minimizar, porque para capturarla tiene que estar todavía ahí.
-            // Si la captura falla, se minimiza a secas: degradar es mejor que romperse.
+            // El genio se monta ANTES de minimizar, porque para capturarla tiene que
+            // estar todavía ahí. Si la captura falla, se minimiza a secas: degradar es
+            // mejor que romperse.
             bool genie = PlayGenie(index, state.MainWindow);
             WindowActions.Minimize(state.MainWindow, instant: genie);
             Console.WriteLine($"[dock] minimizada '{app.Name}'{(genie ? " con genio" : "")}");

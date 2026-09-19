@@ -74,6 +74,9 @@ internal static class Running
     {
         /// <summary>PID -> familia MSIX, resuelta como mucho una vez por barrido.</summary>
         public Dictionary<uint, string?> Families { get; } = [];
+
+        /// <summary>PID -> ruta del ejecutable, resuelta como mucho una vez por barrido.</summary>
+        public Dictionary<uint, string?> Paths { get; } = [];
     }
 
     public static Snapshot Take()
@@ -243,6 +246,76 @@ internal static class Running
         }, default);
 
         return found;
+    }
+
+    /// <summary>
+    /// Las apps que tienen ventana y <b>no están en el dock</b>: lo que la barra de
+    /// tareas enseña sin que las hayas anclado.
+    ///
+    /// Se identifican por la ruta de su ejecutable, no por el proceso: un navegador
+    /// tiene treinta procesos y una sola entrada. Y se ordenan por nombre para que los
+    /// iconos no bailen cada vez que se abre algo.
+    /// </summary>
+    public static List<DockApp> Unpinned(IReadOnlyList<DockApp> pinned, Snapshot snapshot)
+    {
+        Dictionary<uint, int> owners = MapProcessesToApps(pinned, snapshot);
+        uint own = PInvoke.GetCurrentProcessId();
+
+        // Las que YA están ancladas, por ruta: MapProcessesToApps cruza por nombre de
+        // proceso y no pilla el caso de la misma app anclada con otra ruta.
+        HashSet<string> yaEstan = new(StringComparer.OrdinalIgnoreCase);
+        foreach (DockApp app in pinned)
+        {
+            if (!app.Separator && app.Target.Length > 0) yaEstan.Add(app.Target);
+        }
+
+        Dictionary<string, string> found = new(StringComparer.OrdinalIgnoreCase);
+
+        foreach ((HWND _, uint pid) in snapshot.Windows)
+        {
+            if (pid == own || owners.ContainsKey(pid)) continue;
+            if (PathOf(pid, snapshot) is not string path || yaEstan.Contains(path)) continue;
+
+            found.TryAdd(path, snapshot.ProcessNames.TryGetValue(pid, out string? name) && name.Length > 0
+                ? name
+                : Path.GetFileNameWithoutExtension(path));
+        }
+
+        return [.. found
+            .OrderBy(entry => entry.Value, StringComparer.CurrentCultureIgnoreCase)
+            .Select(entry => new DockApp { Name = entry.Value, Target = entry.Key })];
+    }
+
+    /// <summary>
+    /// La ruta del ejecutable de un proceso. Se recuerda por barrido: un navegador
+    /// aporta varias ventanas y todas caen en el mismo proceso.
+    /// </summary>
+    private static unsafe string? PathOf(uint pid, Snapshot snapshot)
+    {
+        if (snapshot.Paths.TryGetValue(pid, out string? cached)) return cached;
+
+        string? path = null;
+        try
+        {
+            using SafeFileHandle handle = PInvoke.OpenProcess_SafeHandle(
+                (PROCESS_ACCESS_RIGHTS)ProcessQueryLimitedInformation, false, pid);
+
+            if (!handle.IsInvalid)
+            {
+                Span<char> buffer = new char[260];
+                uint size = (uint)buffer.Length;
+
+                if (PInvoke.QueryFullProcessImageName(
+                        handle, PROCESS_NAME_FORMAT.PROCESS_NAME_WIN32, buffer, ref size) && size > 0)
+                {
+                    path = new string(buffer[..(int)size]);
+                }
+            }
+        }
+        catch { /* un proceso que no se deja consultar simplemente no sale en el dock */ }
+
+        snapshot.Paths[pid] = path;
+        return path;
     }
 
     /// <summary>

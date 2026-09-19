@@ -24,6 +24,11 @@
   // acertarle a un icono.
   "magnification": 1.3,
 
+  // Tambien las apps abiertas que no has anclado, detras de un separador, como
+  // hace la barra de tareas. Se van solas al cerrarlas; para que una se quede,
+  // clic derecho sobre ella -> Anclar al dock.
+  "showRunning": true,
+
   // Si el dock se esconde solo y asoma al llevar el ratón al borde inferior.
   "autoHide": true,
 

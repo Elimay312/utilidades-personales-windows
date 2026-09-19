@@ -29,18 +29,19 @@ red y sin nada instalado en el sistema. Las reglas que lo garantizan están en
 | Gesto | Qué pasa |
 |---|---|
 | Pasar por encima | El icono crece y sale su nombre. La curva empuja a los vecinos. |
-| Clic | Tres estados, como la barra de tareas: si no está abierta la lanza; si lo está la trae al frente; si ya estaba delante la minimiza con efecto genio. |
+| Clic | Si no está abierta, la lanza. Si está a la vista, la minimiza con efecto genio. Si está minimizada, la saca. |
 | Clic en una carpeta | Se despliega en rejilla, 5 por fila. Se puede entrar en subcarpetas y volver. |
-| Clic derecho | Menú: los documentos recientes de esa app, quitarla del dock, y salir. |
+| Clic derecho | Menú: los documentos recientes de esa app, quitarla del dock —o anclarla, si solo estaba abierta—, y salir. |
 | Clic central | Una instancia nueva, aunque ya haya ventana. |
 | Rueda | La lista de ventanas de esa app, con miniatura de la elegida y una ✕ para cerrarla. |
 | Arrastrar un icono | Reordena. Sacándolo del dock, lo quita. |
 | Soltar un fichero encima | Sobre un icono, lo abre con esa app. En el hueco de la derecha, lo añade al dock. |
 | `Ctrl+Alt+…` | Rota entre perfiles de dock, si los hay configurados. |
 
-Y por su cuenta: se esconde **solo cuando una ventana lo tapa de verdad**, se aparta del
-todo si hay algo a pantalla completa, y reserva su hueco en el escritorio declarándose
-AppBar.
+Y por su cuenta: **enseña las apps abiertas aunque no las hayas anclado**, detrás de un
+separador y como hace la barra de tareas; se esconde **solo cuando una ventana lo tapa de
+verdad**; se aparta del todo si hay algo a pantalla completa; y reserva su hueco en el
+escritorio declarándose AppBar.
 
 ---
 
@@ -105,6 +106,7 @@ falta reiniciar el dock.
   "autoHide": true,      // si se esconde solo
   "autoStart": true,     // HKCU\...\Run, visible en el Administrador de tareas
   "trash": true,         // la papelera al final
+  "showRunning": true,   // tambien las apps abiertas que no has anclado
 
   "apps": [
     { "name": "Explorador", "target": "C:/Windows/explorer.exe" },
@@ -137,6 +139,20 @@ Con `"arguments"` se le pasan parámetros:
 
 El icono de una dirección es **el de la app que la va a abrir**, que es lo que enseña el
 propio Windows.
+
+### Apps abiertas sin anclar
+
+Con `"showRunning": true` (por defecto) el dock añade, detrás de un separador, las apps
+que tienen ventana y no están en tu lista. Van ordenadas por nombre para que no bailen, y
+la papelera se queda siempre la última.
+
+Se identifican por la ruta de su ejecutable, no por el proceso: un navegador tiene treinta
+procesos y una sola entrada. **No se guardan en ningún sitio** — se calculan del inventario
+de ventanas y desaparecen al cerrar la app. Para que una se quede, clic derecho →
+*Anclar al dock*.
+
+El dock cambia de ancho al abrir y cerrar cosas, como la barra de tareas. A quien le
+moleste, `"showRunning": false`.
 
 ### Apps distintas por pantalla
 
@@ -257,7 +273,7 @@ Están comentadas en el código donde tocan, pero conviene tenerlas a mano:
 | `Labels.cs` | Texto con DirectWrite. Un formato por escala de pantalla. |
 | `Icons.cs` | Extrae iconos del shell. Caché en memoria compartida entre docks. |
 | `Config.cs` | `dock.json`, `dock.local.json`, perfiles y pantallas. |
-| `Running.cs` | El inventario de ventanas. |
+| `Running.cs` | El inventario de ventanas, y de ahí salen las abiertas sin anclar. |
 | `WindowActions.cs` | Las cuatro cosas que se le hacen a una ventana ajena. |
 | `WindowCapture.cs` | `PrintWindow`. Lo usan el genio y las miniaturas. |
 | `AppBar.cs` | El registro como barra de herramientas de escritorio. |

@@ -118,6 +118,11 @@ AttachConsole
 OpenProcess
 GetPackageFamilyName
 
+// La ruta del ejecutable de un proceso que tiene ventana: es lo que da icono y nombre
+// a las apps abiertas que no estan ancladas. Solo lectura, y con
+// PROCESS_QUERY_LIMITED_INFORMATION, que no necesita elevacion.
+QueryFullProcessImageNameW
+
 // --- Localizar y gobernar la ventana de la app clicada (enmienda 1 de SEGURIDAD.md) ---
 // Solo se usan tras un clic del usuario sobre un icono del dock. Nunca en segundo plano.
 EnumWindows

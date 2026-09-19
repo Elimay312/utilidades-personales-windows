@@ -277,6 +277,15 @@ internal sealed record DockConfig
     /// </summary>
     public bool Trash { get; init; } = true;
 
+    /// <summary>
+    /// Si las apps abiertas que <b>no</b> están ancladas salen también, detrás de un
+    /// separador, como hacen la barra de tareas y el dock de macOS.
+    ///
+    /// Se van y vienen solas al abrir y cerrar cosas, así que el dock cambia de ancho.
+    /// A quien le moleste, lo pone a false y solo ve lo que ancló.
+    /// </summary>
+    public bool ShowRunning { get; init; } = true;
+
     public List<DockApp> Apps { get; init; } = [];
 
     /// <summary>

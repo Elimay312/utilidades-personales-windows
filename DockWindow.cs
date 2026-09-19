@@ -673,11 +673,11 @@ internal sealed unsafe class DockWindow : IDisposable
                 try
                 {
                     IconBitmap? cached;
-                    lock (IconCache) IconCache.TryGetValue(app.Target, out cached);
+                    lock (IconCache) IconCache.TryGetValue(app.IconSource, out cached);
 
-                    IconBitmap icon = cached ?? Icons.Extract(app.Target);
+                    IconBitmap icon = cached ?? Icons.Extract(app.IconSource);
                     if (cached is null)
-                        lock (IconCache) IconCache[app.Target] = icon;
+                        lock (IconCache) IconCache[app.IconSource] = icon;
 
                     loaded.Add((app, icon));
                 }
@@ -2265,7 +2265,13 @@ internal sealed unsafe class DockWindow : IDisposable
             // Por el mismo filtro que las de dock.json. Si el target no existe, mejor
             // no llegar a guardarlo: quedaría en dock.local.json para siempre y la
             // entrada desaparecería en cada arranque sin decir por qué.
-            List<DockApp> ok = DockConfig.Validate([new DockApp { Name = item.Name, Target = target }]);
+            List<DockApp> ok = DockConfig.Validate([new DockApp
+            {
+                Name = item.Name,
+                Target = target,
+                Arguments = item.Arguments,
+                IconTarget = item.IconSource ?? "",
+            }]);
             if (ok.Count == 0)
             {
                 Console.WriteLine($"[dock] no se pudo añadir '{item.Name}': {target}");

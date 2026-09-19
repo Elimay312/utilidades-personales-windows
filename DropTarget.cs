@@ -146,8 +146,10 @@ internal sealed unsafe class DockDropTarget(DockWindow dock) : IDropTarget
             return new DroppedItem(path, name, path);
 
         // Un acceso directo se guarda por su destino, no por el .lnk: el fichero puede
-        // moverse o borrarse y lo que el usuario quería era la app.
-        if (TargetOfShortcut(path) is string target) return new DroppedItem(target, name, path);
+        // moverse o borrarse y lo que el usuario quería era la app. Pero se le sacan
+        // además el icono y los argumentos, que son suyos y no del destino.
+        if (ShortcutOf(path) is { } atajo)
+            return new DroppedItem(atajo.Target, name, path, atajo.Icon, atajo.Arguments);
 
         // Sin destino de fichero: es el acceso directo de una app empaquetada, y
         // entonces su AUMID sí es lo correcto.
@@ -203,6 +205,60 @@ internal sealed unsafe class DockDropTarget(DockWindow dock) : IDropTarget
     /// subdirectorios y volúmenes y, si no lo encuentra, <b>abre un diálogo modal</b>.
     /// En un dock eso es inaceptable.
     /// </summary>
+    private static (string Target, string? Icon, string Arguments)? ShortcutOf(string path)
+    {
+        try
+        {
+            var link = (IShellLinkW)new ShellLink();
+            fixed (char* file = path)
+            {
+                ((IPersistFile)link).Load(new PCWSTR(file), STGM.STGM_READ);
+            }
+
+            string target;
+            Span<char> buffer = stackalloc char[260];
+            fixed (char* text = buffer)
+            {
+                link.GetPath(new PWSTR(text), buffer.Length, null, 0);
+                target = new PWSTR(text).ToString();
+            }
+
+            if (string.IsNullOrEmpty(target)) return null;
+
+            // El icono del acceso directo, si declara uno propio. Solo sirve si es un
+            // fichero entero: "shell32.dll,3" apunta a un índice dentro de un recurso y
+            // el extractor del dock no sabe de índices — en ese caso se cae al destino,
+            // que es lo que hacía siempre.
+            string? icon = null;
+            Span<char> iconPath = stackalloc char[260];
+            fixed (char* text = iconPath)
+            {
+                link.GetIconLocation(new PWSTR(text), iconPath.Length, out int index);
+
+                string raw = new PWSTR(text).ToString();
+                if (index == 0 && raw.Length > 0)
+                {
+                    string expanded = Environment.ExpandEnvironmentVariables(raw).Replace("/", "\\");
+                    if (File.Exists(expanded)) icon = expanded;
+                }
+            }
+
+            string arguments;
+            Span<char> args = stackalloc char[512];
+            fixed (char* text = args)
+            {
+                link.GetArguments(new PWSTR(text), args.Length);
+                arguments = new PWSTR(text).ToString();
+            }
+
+            return (target, icon, arguments);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static string? TargetOfShortcut(string path)
     {
         try
@@ -253,4 +309,14 @@ internal sealed unsafe class DockDropTarget(DockWindow dock) : IDropTarget
 /// Su ruta en disco, o null si es un objeto virtual. Es lo que se le pasa a una app al
 /// abrirlo: para eso hace falta un fichero de verdad.
 /// </param>
-internal readonly record struct DroppedItem(string Target, string Name, string? FilePath);
+/// <summary>
+/// Algo que el usuario ha soltado en el dock.
+///
+/// <paramref name="IconSource"/> y <paramref name="Arguments"/> existen por los accesos
+/// directos: el de VALORANT apunta a <c>RiotClientServices.exe</c> con
+/// <c>--launch-product=valorant</c> y su propio .ico. Resolviéndolo solo al destino se
+/// perdían las dos cosas, así que el dock enseñaba la cara del cliente de Riot y al
+/// clicarlo habría abierto el cliente, no el juego.
+/// </summary>
+internal readonly record struct DroppedItem(
+    string Target, string Name, string? FilePath, string? IconSource = null, string Arguments = "");

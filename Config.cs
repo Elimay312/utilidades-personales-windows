@@ -37,6 +37,21 @@ internal sealed class DockApp
     /// </summary>
     public string Arguments { get; init; } = "";
 
+    /// <summary>
+    /// De dónde sacar el icono, si no es del propio <see cref="Target"/>. Vacío casi
+    /// siempre.
+    ///
+    /// Existe por los accesos directos que apuntan a un lanzador compartido: el de
+    /// VALORANT va a <c>RiotClientServices.exe</c> con
+    /// <c>--launch-product=valorant</c>, así que sacar el icono del destino enseñaba la
+    /// cara del cliente de Riot. El .lnk sí declara el suyo.
+    /// </summary>
+    public string IconTarget { get; init; } = "";
+
+    /// <summary>De dónde se saca el icono de verdad.</summary>
+    [JsonIgnore]
+    public string IconSource => IconTarget.Length > 0 ? IconTarget : Target;
+
     [JsonIgnore]
     public bool IsShellItem => Target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase);
 
@@ -485,7 +500,15 @@ internal sealed record DockConfig
                 continue;
             }
 
-            valid.Add(new DockApp { Name = app.Name, Target = target, Arguments = app.Arguments });
+            // El icono se normaliza igual que el target, y por el mismo motivo:
+            // SHCreateItemFromParsingName no acepta barras normales.
+            valid.Add(new DockApp
+            {
+                Name = app.Name,
+                Target = target,
+                Arguments = app.Arguments,
+                IconTarget = app.IconTarget.Replace("/", "\\"),
+            });
         }
 
         return valid;

@@ -145,7 +145,7 @@ internal static class Program
         {
             try
             {
-                IconBitmap icon = Icons.Extract(app.Target);
+                IconBitmap icon = Icons.Extract(app.IconSource);
                 int opaque = 0, transparent = 0;
                 for (int i = 3; i < icon.Bgra.Length; i += 4)
                 {

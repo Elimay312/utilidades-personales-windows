@@ -24,6 +24,13 @@ MONITORINFOEXW
 GetDpiForWindow
 GetDpiForMonitor
 
+// --- AppBar: el dock se declara barra de herramientas de escritorio ---
+// Actua sobre nuestro propio HWND y no necesita elevacion. ABM_SETSTATE queda
+// prohibido por la enmienda 3: escribe un ajuste global del usuario sin rollback.
+SHAppBarMessage
+APPBARDATA
+ABE_BOTTOM
+
 // --- Raton, solo en la ventana propia (no es un hook) ---
 TrackMouseEvent
 SetCapture

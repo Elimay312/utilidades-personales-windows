@@ -67,6 +67,8 @@ internal sealed unsafe class DockWindow : IDisposable
     // constantes desde la metadata del SDK.
     private const uint WM_DESTROY = 0x0002;
     private const uint WM_DISPLAYCHANGE = 0x007E;
+    private const uint WM_ACTIVATE = 0x0006;
+    private const uint WM_WINDOWPOSCHANGED = 0x0047;
     private const uint WM_MOUSEACTIVATE = 0x0021;
     private const uint WM_NCCALCSIZE = 0x0083;
     private const uint WM_NCACTIVATE = 0x0086;
@@ -135,6 +137,9 @@ internal sealed unsafe class DockWindow : IDisposable
     /// </summary>
     private const uint WM_APP_DISPLAYS = 0x8006;
 
+    /// <summary>Avisos ABN_* del shell a nuestra appbar. WM_APP + 7.</summary>
+    private const uint WM_APP_APPBAR = 0x8007;
+
     // IDC_ARROW = MAKEINTRESOURCE(32512)
     private const int IdcArrow = 32512;
 
@@ -154,6 +159,15 @@ internal sealed unsafe class DockWindow : IDisposable
 
     /// <summary>Clave de esta pantalla en dock.json y dock.local.json.</summary>
     private readonly string _device;
+
+    /// <summary>El registro como barra de herramientas de escritorio.</summary>
+    private AppBar? _appBar;
+
+    /// <summary>El hueco que el sistema nos concedio como appbar, o null si no hay.</summary>
+    private RECT? _reserved;
+
+    /// <summary>Guardia contra que ABM_SETPOS dispare el ABN_POSCHANGED que lo llamo.</summary>
+    private bool _inAppBarPos;
 
     /// <summary>
     /// Caché de iconos por target, compartida entre todos los docks. Sirve para dos
@@ -406,6 +420,9 @@ internal sealed unsafe class DockWindow : IDisposable
         // ningún mensaje y nos quedamos hundidos para siempre.
         PInvoke.SetTimer(_hwnd, TopmostTimerId, WatchdogMs, null);
 
+        _appBar = new AppBar(_hwnd, WM_APP_APPBAR);
+        ReserveAppBarSpace();
+
         StartIconLoad();
     }
 
@@ -465,7 +482,11 @@ internal sealed unsafe class DockWindow : IDisposable
         int h = (int)MathF.Ceiling(
             Scale(_config.IconSize) * _config.Magnification + padding * 2f + Scale(LogicalLabelRoom));
 
-        RECT work = info.rcWork;
+        // Si tenemos hueco reservado como appbar, el suelo es el que el sistema nos
+        // concedió, NO el área de trabajo: el área de trabajo ya descuenta nuestra
+        // propia reserva, así que recalcular desde ella nos subiría un poco en cada
+        // aviso, y al siguiente otro poco. Una escalera infinita.
+        RECT work = _reserved ?? info.rcWork;
         int x = work.left;
 
         // Al autoocultarse, la ventana se pega al borde: la franja que asoma tiene que
@@ -720,6 +741,18 @@ internal sealed unsafe class DockWindow : IDisposable
                 self?.OnDpiChanged(wParam, lParam);
                 return new LRESULT(0);
 
+            case WM_ACTIVATE:
+                self?._appBar?.Activated();
+                return new LRESULT(0);
+
+            case WM_WINDOWPOSCHANGED:
+                self?._appBar?.Moved();
+                break;
+
+            case WM_APP_APPBAR:
+                self?.OnAppBarNotify(wParam.Value);
+                return new LRESULT(0);
+
             case WM_DISPLAYCHANGE:
                 // Llega a las tres ventanas; el rebote deja una sola reconstrucción.
                 if (!_displaysPending)
@@ -783,10 +816,10 @@ internal sealed unsafe class DockWindow : IDisposable
 
         _config = fresh;
 
-        // El tamaño depende del número de iconos, así que hay que recolocar.
-        (int x, int y, int w, int h) = ComputeBounds();
-        PInvoke.SetWindowPos(_hwnd, default, x, y, w, h,
-            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER);
+        // El tamaño depende del número de iconos, así que hay que recolocar. Y la
+        // reserva puede cambiar con la config: autoHide entra y sale de ella.
+        ReserveAppBarSpace();
+        Reposition();
 
         Console.WriteLine($"[config] recargada: {_config.Apps.Count} apps");
         StartIconLoad();
@@ -860,6 +893,69 @@ internal sealed unsafe class DockWindow : IDisposable
         // es una ventana aparte y se cierra por su cuenta al salirse el ratón.
         _visuals?.CloseMenu();
         _visuals?.SetHidden(true, HiddenOffset);
+    }
+
+    /// <summary>
+    /// Pide al sistema el hueco del borde inferior, si toca pedirlo.
+    ///
+    /// <b>Con el autoocultar puesto no se reserva nada</b>, a propósito: el dock está
+    /// escondido casi todo el rato, y quitarle una franja a todas las ventanas por algo
+    /// que no se ve sería robar pantalla. El registro como appbar sigue valiendo igual,
+    /// que es de donde vienen los avisos ABN_*.
+    /// </summary>
+    private void ReserveAppBarSpace()
+    {
+        if (_appBar is null || !_appBar.Registered || _inAppBarPos) return;
+
+        if (_config.AutoHide)
+        {
+            _reserved = null;
+            return;
+        }
+
+        MONITORINFO info = new() { cbSize = (uint)sizeof(MONITORINFO) };
+        if (!PInvoke.GetMonitorInfo(_monitor, &info)) return;
+
+        RECT wanted = info.rcMonitor;
+        wanted.top = wanted.bottom - (int)MathF.Ceiling(BarHeight + Scale(LogicalBottomMargin));
+
+        // El guardia no es paranoia: ABM_SETPOS puede provocar el ABN_POSCHANGED que
+        // nos trajo hasta aquí, y eso se muerde la cola.
+        _inAppBarPos = true;
+        try { _reserved = _appBar.Reserve(wanted); }
+        finally { _inAppBarPos = false; }
+
+        Console.WriteLine($"[appbar] {_device} reserva {_reserved.Value.bottom - _reserved.Value.top} px "
+            + $"del borde inferior (se pidieron {wanted.bottom - wanted.top})");
+    }
+
+    /// <summary>Lo que el shell nos cuenta de nuestra appbar.</summary>
+    private void OnAppBarNotify(nuint notification)
+    {
+        switch (notification)
+        {
+            case AppBar.ABN_POSCHANGED:
+                Console.WriteLine($"[appbar] {_device} ABN_POSCHANGED");
+                // Cambió la barra de tareas, o apareció otra appbar en este borde.
+                ReserveAppBarSpace();
+                Reposition();
+                break;
+
+            case AppBar.ABN_FULLSCREENAPP:
+                Console.WriteLine($"[appbar] {_device} ABN_FULLSCREENAPP");
+                // No se mira el TRUE/FALSE que trae: el aviso es global y el dock solo
+                // debe esconderse si el pleno está en SU pantalla. El latido ya sabe
+                // decidir eso; esto solo adelanta la decisión hasta 250 ms.
+                OnWatchdogTick();
+                break;
+        }
+    }
+
+    private void Reposition()
+    {
+        (int x, int y, int w, int h) = ComputeBounds();
+        PInvoke.SetWindowPos(_hwnd, default, x, y, w, h,
+            SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER);
     }
 
     /// <summary>
@@ -1792,6 +1888,9 @@ internal sealed unsafe class DockWindow : IDisposable
         // ciertas apps (Paint) dispara un WM_DPICHANGED transitorio a 96 DPI, así que
         // el dock se encogía un 20% y se desplazaba con cada una. Tras unas cuantas
         // quedaba diminuto y parecía que había desaparecido.
+        //
+        // La reserva de appbar se rehace antes: su alto va en píxeles físicos.
+        ReserveAppBarSpace();
         (int x, int y, int w, int h) = ComputeBounds();
 
         PInvoke.SetWindowPos(_hwnd, default, x, y, w, h,
@@ -1837,6 +1936,9 @@ internal sealed unsafe class DockWindow : IDisposable
 
         if (!_hwnd.IsNull && _dropTarget is not null) PInvoke.RevokeDragDrop(_hwnd);
         _dropTarget = null;
+
+        _appBar?.Dispose();
+        _appBar = null;
 
         _visuals?.Dispose();
         PInvoke.DestroyWindow(_hwnd);

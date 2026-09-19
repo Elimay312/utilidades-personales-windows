@@ -23,6 +23,7 @@ namespace Isla;
 internal static unsafe class Audio
 {
     private static IAudioMeterInformation? _medidor;
+    private static IAudioEndpointVolume? _volumen;
     private static long _siguienteIntento;
 
     /// <summary>
@@ -54,18 +55,45 @@ internal static unsafe class Audio
         }
     }
 
-    private static IAudioMeterInformation Abrir()
+    /// <summary>
+    /// El volumen maestro de la salida, de 0 a 1. Solo se LEE: la isla no toca el
+    /// volumen de nadie, solo lo ensena cuando cambia.
+    /// </summary>
+    public static float Volumen()
+    {
+        try
+        {
+            _volumen ??= AbrirVolumen();
+            _volumen.GetMasterVolumeLevelScalar(out float v);
+            return v;
+        }
+        catch
+        {
+            _volumen = null;
+            return -1f;
+        }
+    }
+
+    private static IMMDevice Salida()
     {
         IMMDeviceEnumerator enumerador = (IMMDeviceEnumerator)new MMDeviceEnumerator();
         // eRender es la SALIDA. La otra direccion no aparece en este proyecto y la
         // auditoria lo comprueba.
-        enumerador.GetDefaultAudioEndpoint(
-            EDataFlow.eRender,
-            ERole.eMultimedia,
-            out IMMDevice dispositivo);
+        enumerador.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out IMMDevice d);
+        return d;
+    }
 
+    private static IAudioEndpointVolume AbrirVolumen()
+    {
+        Guid iid = typeof(IAudioEndpointVolume).GUID;
+        Salida().Activate(&iid, CLSCTX.CLSCTX_ALL, null, out object v);
+        return (IAudioEndpointVolume)v;
+    }
+
+    private static IAudioMeterInformation Abrir()
+    {
         Guid iid = typeof(IAudioMeterInformation).GUID;
-        dispositivo.Activate(&iid, CLSCTX.CLSCTX_ALL, null, out object medidor);
+        Salida().Activate(&iid, CLSCTX.CLSCTX_ALL, null, out object medidor);
         return (IAudioMeterInformation)medidor;
     }
 }

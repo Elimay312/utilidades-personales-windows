@@ -19,6 +19,12 @@ using WinRT;
 
 namespace Isla;
 
+/// <summary>
+/// El titular de la isla: lo unico que cabe en la pastilla asomada. Si lleva caratula
+/// es que habla de musica; si no, el texto se pega al borde izquierdo.
+/// </summary>
+internal readonly record struct Aviso(string Texto, bool ConCaratula);
+
 /// <summary>Que hay bajo el raton dentro del panel abierto.</summary>
 internal enum Zona
 {
@@ -64,6 +70,21 @@ internal sealed unsafe class IslaVisuals : IDisposable
     // tramo del recorrido: si entrara al mismo ritmo que la caja, se veria turbio.
     private const float CristalDesde = 40f;
     private const float CristalRango = 80f;
+
+    // La fila compacta aparece pronto (la pastilla asomada mide 56 de alto) y se va
+    // cuando entra el panel entero. El cruce de las dos es lo que hace que parezca que
+    // el titular CRECE hasta convertirse en ficha, y no que una cosa tapa a la otra.
+    private const float CompactoDesde = 26f;
+    private const float CompactoRango = 26f;
+    private const float PlenoDesde = 92f;
+    private const float PlenoRango = 48f;
+
+    private const float CompMiniLado = 40f;
+    private const float CompMiniRadio = 6f;
+    private const float CompMargen = 8f;
+    private const float CompTextoY = 18f;
+    private const float CompTextoPx = 13f;
+    private const float CompAncho = 250f;
 
     // --- colocacion del contenido, en unidades logicas sobre el panel abierto -------
     private const float Margen = 16f;
@@ -136,12 +157,17 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private SpriteVisual _botPlay;
     private SpriteVisual _botSiguiente;
     private SpriteVisual[] _onda = [];
+    private ContainerVisual _compacto;
+    private ContainerVisual _cajaCompacta;
+    private SpriteVisual _miniatura;
+    private SpriteVisual _rotCompacto;
+    private string _textoCompacto = string.Empty;
     private readonly float[] _nivel = new float[4];
     private readonly SpriteVisual _aura;
     private readonly CompositionRadialGradientBrush _degradado;
     private Estado _estado = Estado.Brasa;
     private float _latido = 1f;
-    private float _techo = 0.05f;
+    private float _medio = 0.05f;
     private readonly CompositionColorBrush _grisCaratula;
     private readonly ShapeVisual _borde;
     private readonly CompositionRoundedRectangleGeometry _forma;
@@ -222,6 +248,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
         // generico quedaria mejor, pero eso es un recurso que hay que empaquetar.
         _grisCaratula = _compositor.CreateColorBrush(Color.FromArgb(38, 255, 255, 255));
         _contenido = Contenido();
+        _compacto = FilaCompacta();
 
         // Borde interior de 1 px. Sin el, un panel oscuro parece un agujero en la
         // pantalla; con el, parece iluminado. Es lo mas barato que cambia la lectura.
@@ -259,17 +286,21 @@ internal sealed unsafe class IslaVisuals : IDisposable
         Expresion(_macizo, "Opacity", $"1 - ({entrada})");
         Expresion(_borde, "Opacity", entrada);
 
+        // El titular entra pronto y se va cuando entra la ficha entera.
+        string pleno = Rampa(PlenoDesde, PlenoRango);
+        Expresion(_compacto, "Opacity", $"{Rampa(CompactoDesde, CompactoRango)} * (1 - ({pleno}))");
+
         // El contenido entra con la misma rampa y ademas crece un poco. Escalar desde
         // el centro del panel -- que tambien se esta moviendo -- es lo que hace que
         // parezca que sale de dentro y no que aparece pegado encima.
-        Expresion(_contenido, "Opacity", entrada);
+        Expresion(_contenido, "Opacity", pleno);
         Expresion(_contenido, "CenterPoint", "Vector3(P.Size.X * 0.5, P.Size.Y * 0.5, 0)");
         Expresion(_contenido, "Scale",
             $"Vector3(Lerp(0.92, 1, {entrada}), Lerp(0.92, 1, {entrada}), 1)");
     }
 
     /// <summary>
-    /// El latido del audio. Un solo float por lectura, ver Audio y SEGURIDAD.md §3.3.
+    /// El latido del audio. Un solo float por lectura, ver Audio y SEGURIDAD.md Â§3.3.
     ///
     /// <para>
     /// En brasa mueve el ANCHO de la tira; abierta o asomada, las cuatro barras. Cada
@@ -286,13 +317,19 @@ internal sealed unsafe class IslaVisuals : IDisposable
             return;
         }
 
-        // Ganancia automatica. El pico que devuelve Windows depende del volumen del
-        // sistema: con musica a media potencia ronda 0.05, medido, asi que multiplicar
-        // por una constante fija dejaria la onda plana en unos equipos y saturada en
-        // otros. Normalizar contra un techo que decae despacio hace que se vea igual de
-        // viva a cualquier volumen, y el suelo evita amplificar el ruido del silencio.
-        _techo = Math.Max(pico, _techo * 0.992f);
-        float nivel = _techo > 0.004f ? Math.Clamp(pico / _techo, 0f, 1f) : 0f;
+        // Ganancia automatica: media lenta como centro, y se estira la desviacion
+        // RELATIVA a su alrededor.
+        //
+        // Los dos intentos anteriores fallaron por lo mismo. Dividir por un techo que
+        // decae da 1 casi siempre, porque el techo lo acaba de fijar el propio pico; y
+        // estirar la banda techo-suelo tampoco, porque los dos persiguen al pico y la
+        // banda se cierra. Los numeros lo decian desde el principio: veinte lecturas
+        // seguidas de musica continua dieron 0.043 a 0.066, una banda estrecha con una
+        // media clara en medio. Lo que se ve es cuanto se separa de esa media.
+        _medio += (pico - _medio) * 0.02f;
+        float nivel = _medio > 0.002f
+            ? Math.Clamp(0.5f + (pico - _medio) / _medio * 3.4f, 0f, 1f)
+            : 0f;
 
         if (_estado == Estado.Brasa)
         {
@@ -504,6 +541,54 @@ internal sealed unsafe class IslaVisuals : IDisposable
     }
 
     /// <summary>Lo que va a llevar un texto. Nace vacio y lo llena Mostrar.</summary>
+    /// <summary>
+    /// El titular: una miniatura y una linea. Es lo UNICO que se ve en la pastilla
+    /// asomada, que antes salia vacia -- su alto es 56 y la rampa del contenido no
+    /// arranca hasta 92, asi que el aviso que existe para decir que ha cambiado no
+    /// decia nada.
+    /// </summary>
+    [MemberNotNull(nameof(_cajaCompacta), nameof(_miniatura), nameof(_rotCompacto))]
+    private ContainerVisual FilaCompacta()
+    {
+        ContainerVisual raiz = _compositor.CreateContainerVisual();
+        raiz.RelativeSizeAdjustment = Vector2.One;
+        _panel.Children.InsertAtTop(raiz);
+
+        _miniatura = _compositor.CreateSpriteVisual();
+        _miniatura.Size = new Vector2(S(CompMiniLado), S(CompMiniLado));
+        _miniatura.Offset = new Vector3(S(CompMargen), S(CompMargen), 0);
+        CompositionRoundedRectangleGeometry marco = _compositor.CreateRoundedRectangleGeometry();
+        marco.Size = _miniatura.Size;
+        marco.CornerRadius = new Vector2(S(CompMiniRadio), S(CompMiniRadio));
+        _miniatura.Clip = _compositor.CreateGeometricClip(marco);
+        raiz.Children.InsertAtTop(_miniatura);
+
+        _cajaCompacta = _compositor.CreateContainerVisual();
+        _cajaCompacta.Size = new Vector2(S(CompAncho), S(CompTextoPx) * 1.7f);
+        _cajaCompacta.Clip = _compositor.CreateInsetClip();
+        raiz.Children.InsertAtTop(_cajaCompacta);
+
+        _rotCompacto = Hueco(Vector2.Zero, _cajaCompacta);
+        return raiz;
+    }
+
+    /// <summary>
+    /// Pone el titular. Si no lleva caratula el texto se pega al borde: una miniatura
+    /// gris vacia al lado de "Bateria 78 %" no aporta nada y estorba.
+    /// </summary>
+    public void Compacto(Aviso a, bool hayCaratula)
+    {
+        bool mini = a.ConCaratula && hayCaratula;
+        _miniatura.Brush = mini ? _caratula.Brush : null;
+
+        float x = mini ? CompMargen * 2f + CompMiniLado : CompMargen * 2f;
+        _cajaCompacta.Offset = new Vector3(S(x), S(CompTextoY), 0);
+
+        if (a.Texto == _textoCompacto) return;
+        _textoCompacto = a.Texto;
+        Rotular(_rotCompacto, a.Texto, CompTextoPx, true, 0.95f);
+    }
+
     private SpriteVisual Hueco(Vector2 en, ContainerVisual padre)
     {
         SpriteVisual v = _compositor.CreateSpriteVisual();

@@ -2,6 +2,7 @@ using System.Numerics;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Gdi;
+using Windows.Win32.System.Power;
 using Windows.Win32.UI.HiDpi;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Windows.Win32.UI.WindowsAndMessaging;
@@ -48,9 +49,12 @@ internal sealed unsafe class IslaWindow : IDisposable
     private const nuint TimerId = 1;
     private const uint TimerMs = 120;
 
-    // El asomo por cancion nueva: sale, se lee, y se va solo.
-    private const nuint TimerAsoma = 2;
-    private const uint AsomaMs = 4000;
+    // Cuanto se queda asomada un aviso. La caducidad la vigila el tic de 8 Hz que ya
+    // existe, asi que no hace falta un temporizador para esto.
+    private const int AsomoSegundos = 4;
+
+    private const int AtajoPomodoro = 2;
+    private static readonly TimeSpan Pomodoro = TimeSpan.FromMinutes(25);
 
     // El reloj de los tiempos, y SOLO mientras el panel esta abierto: el texto de
     // los segundos no se puede animar en el compositor como si se anima la barra.
@@ -77,6 +81,8 @@ internal sealed unsafe class IslaWindow : IDisposable
     private const uint WM_LBUTTONDOWN = 0x0201;
     private const uint WM_LBUTTONUP = 0x0202;
     private const uint WM_HOTKEY = 0x0312;
+    private const uint WM_POWERBROADCAST = 0x0218;
+    private const nuint PBT_APMPOWERSTATUSCHANGE = 0xA;
 
     // WM_APP + 1. Lo manda Medios desde el pool de hilos para avisar de que hay
     // algo nuevo que pintar; el dato viaja aparte, en Medios.Ultima.
@@ -106,6 +112,15 @@ internal sealed unsafe class IslaWindow : IDisposable
     private bool _visible;
     private string? _sonando;
     private string _firma = string.Empty;
+    private Aviso? _transitorio;
+    private DateTime _finTransitorio;
+    private DateTime _finAsomo;
+    private DateTime _finPomodoro;
+    private bool _hayPomodoro;
+    private int _segundoPomodoro = -1;
+    private float _volumenAnterior = -1f;
+    private int _tic;
+    private bool _atajoPomodoro;
     private bool _arrastrando;
     private DateTime _leido;
     private TimeSpan _duracion;
@@ -182,6 +197,10 @@ internal sealed unsafe class IslaWindow : IDisposable
             Console.Error.WriteLine("[isla] Ctrl+Alt+I ya esta cogido por otro programa.");
         }
 
+        _atajoPomodoro = PInvoke.RegisterHotKey(_hwnd, AtajoPomodoro,
+            HOT_KEY_MODIFIERS.MOD_CONTROL | HOT_KEY_MODIFIERS.MOD_ALT, 'T');
+        if (!_atajoPomodoro) Console.Error.WriteLine("[isla] Ctrl+Alt+T ya esta cogido.");
+
         PInvoke.SetTimer(_hwnd, TimerId, TimerMs, null);
 
         // Todavia no se ensena: la isla no existe mientras no haya nada que decir.
@@ -248,8 +267,7 @@ internal sealed unsafe class IslaWindow : IDisposable
                 break;
 
             case WM_TIMER:
-                if (wParam.Value == TimerAsoma) isla?.OnFinAsoma();
-                else if (wParam.Value == TimerReloj) isla?.OnReloj();
+                if (wParam.Value == TimerReloj) isla?.OnReloj();
                 else if (wParam.Value == TimerOnda) isla?.OnOnda();
                 else isla?.OnTick();
                 return new LRESULT(0);
@@ -271,8 +289,14 @@ internal sealed unsafe class IslaWindow : IDisposable
                 return new LRESULT(0);
 
             case WM_HOTKEY:
-                isla?.OnHotkey();
+                if (wParam.Value == AtajoPomodoro) isla?.OnPomodoro();
+                else isla?.OnHotkey();
                 return new LRESULT(0);
+
+            // Llega al enchufar y desenchufar. No se sondea nada.
+            case WM_POWERBROADCAST:
+                if (wParam.Value == PBT_APMPOWERSTATUSCHANGE) isla?.OnEnergia();
+                return new LRESULT(1);
 
             case WM_DESTROY:
                 PInvoke.PostQuitMessage(0);
@@ -310,6 +334,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         // El latido de la brasa se cuelga de este mismo tic en vez de traerse un
         // temporizador propio: son 8 lecturas por segundo, y para una tira de 5 px de
         // alto eso sobra. Asi el reposo no gasta ni una vuelta de reloj de mas.
+        Vigilar();
         if (_visible && _actual == Estado.Brasa) Latir();
 
         // La zona crece al estar abierta: eso es la histeresis, y sale gratis.
@@ -386,6 +411,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         {
             _firma = firma;
             _visuals.Mostrar(c);
+            RefrescarTitular();
         }
         _visuals.Progreso(
             c.Duracion > TimeSpan.Zero ? c.Posicion / c.Duracion : 0d,
@@ -397,18 +423,142 @@ internal sealed unsafe class IslaWindow : IDisposable
 
         // Cancion nueva: asoma y se vuelve a ir sola. Si el raton ya esta encima no
         // se toca nada, que bastante esta viendo.
+        Asomar();
+    }
+
+    // --- los avisos ----------------------------------------------------------------
+
+    /// <summary>
+    /// El titular: lo unico que se ve en la pastilla asomada. Manda el aviso
+    /// transitorio; si no hay, el pomodoro en marcha; si no, lo que suene.
+    /// </summary>
+    private Aviso Titular()
+    {
+        if (_transitorio is Aviso t) return t;
+
+        if (_hayPomodoro)
+        {
+            TimeSpan queda = _finPomodoro - DateTime.UtcNow;
+            if (queda < TimeSpan.Zero) queda = TimeSpan.Zero;
+            return new Aviso($"Pomodoro   {queda:mm\\:ss}", false);
+        }
+
+        Cancion? c = Medios.Ultima;
+        if (c is null) return new Aviso(string.Empty, false);
+        return new Aviso(
+            string.IsNullOrWhiteSpace(c.Artista) ? c.Titulo : $"{c.Titulo}   ·   {c.Artista}",
+            true);
+    }
+
+    private void RefrescarTitular() => _visuals.Compacto(Titular(), Medios.Ultima?.Arte is not null);
+
+    private void Asomar()
+    {
+        _finAsomo = DateTime.UtcNow.AddSeconds(AsomoSegundos);
+        RefrescarTitular();
         if (_hover) return;
         _base = Estado.Asomada;
         Aplicar();
-        PInvoke.SetTimer(_hwnd, TimerAsoma, AsomaMs, null);
     }
 
-    private void OnFinAsoma()
+    /// <summary>Un aviso que se lee y se va: bateria, volumen, fin de pomodoro.</summary>
+    private void Avisar(string texto)
     {
-        PInvoke.KillTimer(_hwnd, TimerAsoma);
-        if (_base != Estado.Asomada) return;
-        _base = Estado.Brasa;
-        Aplicar();
+        _transitorio = new Aviso(texto, false);
+        _finTransitorio = DateTime.UtcNow.AddSeconds(AsomoSegundos);
+        Ensenar(true);
+        Asomar();
+    }
+
+    /// <summary>
+    /// Llega de WM_POWERBROADCAST, al enchufar y al desenchufar. No hay temporizador
+    /// mirando la bateria: lo avisa el sistema.
+    /// </summary>
+    private void OnEnergia()
+    {
+        if (!PInvoke.GetSystemPowerStatus(out SYSTEM_POWER_STATUS energia)) return;
+
+        // 128 = esta maquina no tiene bateria. En un sobremesa esto no dice nada.
+        if ((energia.BatteryFlag & 128) != 0) return;
+
+        string carga = energia.BatteryLifePercent <= 100 ? $"{energia.BatteryLifePercent} %" : "";
+        Avisar(energia.ACLineStatus == 1 ? $"Bateria   {carga}   ·   cargando" : $"Bateria   {carga}");
+    }
+
+    private void OnPomodoro()
+    {
+        if (_hayPomodoro)
+        {
+            _hayPomodoro = false;
+            Avisar("Pomodoro cancelado");
+            return;
+        }
+
+        _hayPomodoro = true;
+        _finPomodoro = DateTime.UtcNow + Pomodoro;
+        _segundoPomodoro = -1;
+        Ensenar(true);
+        Asomar();
+    }
+
+    /// <summary>
+    /// Caducidades y lecturas que se cuelgan del tic de 8 Hz que ya esta despierto.
+    /// Un pomodoro en marcha mantiene la isla asomada: es una cuenta atras, y una
+    /// cuenta atras que no se ve no sirve de nada.
+    /// </summary>
+    private void Vigilar()
+    {
+        DateTime ahora = DateTime.UtcNow;
+
+        if (_transitorio is not null && ahora > _finTransitorio)
+        {
+            _transitorio = null;
+            RefrescarTitular();
+            if (Medios.Ultima is null && !_hayPomodoro) Ensenar(false);
+        }
+
+        if (_hayPomodoro)
+        {
+            TimeSpan queda = _finPomodoro - ahora;
+            if (queda <= TimeSpan.Zero)
+            {
+                _hayPomodoro = false;
+                Avisar("Pomodoro terminado");
+            }
+            else
+            {
+                int segundo = (int)queda.TotalSeconds;
+                if (segundo != _segundoPomodoro)
+                {
+                    _segundoPomodoro = segundo;
+                    RefrescarTitular();
+                }
+            }
+        }
+
+        // El volumen, a 2 Hz y no a 8.
+        //
+        // GetMasterVolumeLevelScalar no es leer un campo: cruza al servicio de audio,
+        // asi que cada llamada es una ida y vuelta entre procesos. Medido, a 8 Hz subia
+        // la CPU en reposo de 0.42% a 2.29% -- mas que todo lo demas junto.
+        //
+        // ponytail: sondeo a 2 Hz, o sea hasta medio segundo de retraso frente al aviso
+        // de Windows. El techo es IAudioEndpointVolumeCallback, que avisa por evento y
+        // no cuesta nada; son unas cuarenta lineas de COM y no compensan todavia.
+        // La primera lectura no avisa, que si no la isla saltaria nada mas arrancar.
+        float v = (++_tic & 3) == 0 ? Audio.Volumen() : -1f;
+        if (v >= 0f)
+        {
+            if (_volumenAnterior >= 0f && Math.Abs(v - _volumenAnterior) > 0.005f)
+                Avisar($"Volumen   {(int)Math.Round(v * 100)} %");
+            _volumenAnterior = v;
+        }
+
+        if (_base == Estado.Asomada && !_hayPomodoro && ahora > _finAsomo)
+        {
+            _base = Estado.Brasa;
+            Aplicar();
+        }
     }
 
     private void Ensenar(bool si)
@@ -537,17 +687,19 @@ internal sealed unsafe class IslaWindow : IDisposable
     public static (float W, float H, float R, float Lift) Medidas(Estado e) => e switch
     {
         Estado.Brasa => (140f, 5f, 2.5f, 0f),
-        Estado.Asomada => (300f, 38f, 19f, 6f),
+        // 56 de alto y no 38: con 38 la rampa del contenido ni arrancaba y el
+        // aviso salia vacio. Ahora cabe el titular entero.
+        Estado.Asomada => (320f, 56f, 26f, 8f),
         _ => (380f, 180f, 28f, 10f),
     };
 
     public void Dispose()
     {
         PInvoke.KillTimer(_hwnd, TimerId);
-        PInvoke.KillTimer(_hwnd, TimerAsoma);
         PInvoke.KillTimer(_hwnd, TimerReloj);
         PInvoke.KillTimer(_hwnd, TimerOnda);
         if (_atajo) PInvoke.UnregisterHotKey(_hwnd, HotkeyId);
+        if (_atajoPomodoro) PInvoke.UnregisterHotKey(_hwnd, AtajoPomodoro);
         _visuals.Dispose();
         if (!_hwnd.IsNull) PInvoke.DestroyWindow(_hwnd);
         _instancia = null;

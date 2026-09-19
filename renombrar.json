@@ -1,0 +1,34 @@
+{
+  "Presets": [
+    {
+      "Nombre": "Recibos de la oficina",
+      "Plantilla": "Recibo_{fecha}_{n:000}",
+      "Buscar": "",
+      "Por": ""
+    },
+    {
+      "Nombre": "Fecha delante",
+      "Plantilla": "{fecha}_{nombre}",
+      "Buscar": "",
+      "Por": ""
+    },
+    {
+      "Nombre": "Quitar IMG_ de las fotos",
+      "Plantilla": "",
+      "Buscar": "IMG_",
+      "Por": ""
+    },
+    {
+      "Nombre": "Numerar dejando el nombre",
+      "Plantilla": "{n:00}_{nombre}",
+      "Buscar": "",
+      "Por": ""
+    }
+  ],
+  "Ultimo": {
+    "Nombre": "",
+    "Plantilla": "",
+    "Buscar": "",
+    "Por": ""
+  }
+}

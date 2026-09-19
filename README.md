@@ -8,8 +8,8 @@ renombrador de recibos: son reglas encadenables sobre el nombre, así que sirven
 fotos, exportaciones o descargas. Los recibos se resuelven guardando una cadena de reglas
 como preset.
 
-> **Estado: en construcción.** Va por hitos; lo que hay hecho está en el
-> [CHANGELOG](CHANGELOG.md). Hoy hay andamio y reglas, todavía no hay ventana.
+> **Estado: funcionando.** Va por hitos y están los seis; lo que se midió en cada uno está
+> en el [CHANGELOG](CHANGELOG.md). Falta usarlo unos días en la oficina de verdad.
 
 ---
 
@@ -18,7 +18,8 @@ como preset.
 | | |
 |---|---|
 | **Sueltas** | Archivos o una carpeta encima de la ventana. Solo eso: no busca nada por su cuenta |
-| **Encadenas reglas** | Buscar/reemplazar (texto o regex), insertar, quitar, numerar, fecha del archivo, MAYÚS/minús, extensión |
+| **Escribes el nombre nuevo** | Con fichas: `{nombre}`, `{n}`, `{n:000}`, `{fecha}`, `{fecha:yyyy-MM}`. O buscas y reemplazas un trozo |
+| **Eliges un preset** | Las combinaciones que siempre haces igual, guardadas en `renombrar.json` |
 | **Ves la tabla** | Antes → después, fila a fila, con las colisiones y los nombres imposibles marcados en rojo |
 | **Aplicas** | Y si te arrepientes, **Deshacer** devuelve el último lote a como estaba |
 
@@ -60,10 +61,16 @@ renombrar --check                   # el motor y la vista previa se comprueban s
 Win32 crudo y `Windows.UI.Composition` del sistema, sin XAML, igual que el resto de
 utilidades de esta carpeta. La franja de arriba son controles nativos del sistema (`EDIT`,
 `COMBOBOX`, `BUTTON`) sobre color sólido, y la tabla de abajo es Composition sobre acrílico:
-el desplazamiento de la lista es una `ExpressionAnimation`, así que corre en el proceso de
-DWM y no se entrecorta aunque la previa esté recalculándose.
+el desplazamiento de la lista va animado, así que corre en el proceso de DWM y no se
+entrecorta aunque la previa esté recalculándose. Y solo existen las filas que se ven.
 
 - `Regla.cs` — una regla y cómo se aplica. Lógica pura.
 - `Previa.cs` — archivos + reglas → filas antes/después con su estado. Lógica pura.
 - `Aplicar.cs` — el único sitio que mueve archivos, y el diario para deshacerlo.
 - `Ventana.cs`, `Visuales.cs`, `Texto.cs` — el HWND, el compositor y el texto.
+- `Controles.cs` — las cajas y los botones, que son controles del sistema.
+- `Config.cs` — los presets de `renombrar.json`.
+
+Y una frontera que decide el resto: **Composition se compone por encima del contenido del
+HWND**, así que la banda de los controles es la única parte que Composition no pinta. La
+raíz del árbol de visuals va recortada justo esa altura y esa banda la pinta el `WndProc`.

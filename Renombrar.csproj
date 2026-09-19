@@ -30,6 +30,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Update="renombrar.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Unica dependencia. Source generator: no aparece en la salida. Todo lo Win32
          sale de NativeMethods.txt, que es la lista cerrada que audita SEGURIDAD.md. -->
     <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.333" PrivateAssets="all" />

@@ -29,6 +29,7 @@ internal sealed unsafe class Ventana : IDisposable
     private const uint WM_DPICHANGED = 0x02E0;
 
     private const ushort EN_CHANGE = 0x0300;
+    private const ushort CBN_SELCHANGE = 1;
 
     /// <summary>El temporizador que espera a que dejes de teclear.</summary>
     private const nuint Retardo = 1;
@@ -49,6 +50,7 @@ internal sealed unsafe class Ventana : IDisposable
     private Soltar? _soltar;
     private HBRUSH _fondoFranja;
 
+    private Ajustes _ajustes = new([], new Preset(""));
     private string _carpeta = "";
     private List<Fichero> _ficheros = [];
     private List<Fila> _filas = [];
@@ -79,15 +81,22 @@ internal sealed unsafe class Ventana : IDisposable
 
         _fondoFranja = PInvoke.CreateSolidBrush(new COLORREF(0x00211C1C));
 
+        _ajustes = Config.Cargar();
+
         float escala = PInvoke.GetDpiForWindow(_hwnd) / 96f;
         _visuales = new Visuales(_hwnd, escala);
-        _controles = new Controles(_hwnd, escala);
+        _controles = new Controles(_hwnd, escala, _ajustes.Presets);
+
+        // Lo ultimo que escribiste vuelve puesto. Quien renombra recibos el lunes los
+        // renombra igual el martes, y volver a teclear la plantilla entera es el tipo de
+        // peaje que hace que una utilidad se deje de usar.
+        _controles.Escribe(_ajustes.Ultimo);
 
         _soltar = new Soltar(this);
         HRESULT hr = PInvoke.RegisterDragDrop(_hwnd, _soltar);
         if (hr.Failed) Console.WriteLine($"[soltar] RegisterDragDrop -> 0x{(uint)hr.Value:X8}");
 
-        if (plantilla.Length > 0) _controles.Escribe(plantilla);
+        if (plantilla.Length > 0) _controles.Escribe(new Preset("", plantilla));
         if (carpeta.Length > 0) Carga(carpeta);
 
         PInvoke.ShowWindow(_hwnd, SHOW_WINDOW_CMD.SW_SHOW);
@@ -157,6 +166,16 @@ internal sealed unsafe class Ventana : IDisposable
 
         _controles.Activa(Controles.Aplicar, cambian > 0);
         _controles.Activa(Controles.Deshacer, Aplicar.Ultimo(Aplicar.DiarioPorDefecto)?.Pares.Count > 0);
+    }
+
+    /// <summary>Elegir un preset del desplegable llena las tres cajas y recalcula.</summary>
+    private void Aplica()
+    {
+        int cual = _controles?.Elegido() ?? -1;
+        if (_controles is null || cual < 0 || cual >= _ajustes.Presets.Count) return;
+
+        _controles.Escribe(_ajustes.Presets[cual]);
+        Recalcula();
     }
 
     /// <summary>El boton Aplicar. La tabla lleva delante desde antes de que lo pulses, que es todo el argumento de este programa.</summary>
@@ -233,6 +252,7 @@ internal sealed unsafe class Ventana : IDisposable
                 ushort aviso = (ushort)(wParam.Value >> 16);
 
                 if (aviso == EN_CHANGE) PInvoke.SetTimer(hwnd, Retardo, 140, null);
+                else if (aviso == CBN_SELCHANGE && id == Controles.Presets) _unica?.Aplica();
                 else if (id == Controles.Aplicar) _unica?.Renombra();
                 else if (id == Controles.Deshacer) _unica?.Revierte();
 
@@ -266,6 +286,7 @@ internal sealed unsafe class Ventana : IDisposable
             }
 
             case WM_DESTROY:
+                if (_unica?._controles is not null) Config.Guarda(_unica._ajustes, _unica._controles.Puesto());
                 PInvoke.PostQuitMessage(0);
                 return new LRESULT(0);
         }

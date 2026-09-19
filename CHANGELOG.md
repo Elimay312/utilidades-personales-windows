@@ -10,6 +10,22 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H5 — Los presets, y lo último que usaste
+
+- **`renombrar.json` se edita a mano, y es una decisión.** Un editor de presets dentro de la
+  ventana —nombrar, guardar, borrar, reordenar— es una pantalla entera para algo que en esta
+  oficina se escribe una vez al año. El programa **lee** los presets y solo **escribe** el
+  campo `Ultimo`: el fichero lo mantiene una persona y el programa no se lo reordena.
+- **Lo último que escribiste vuelve puesto al abrir.** Quien renombra recibos el lunes los
+  renombra igual el martes, y volver a teclear la plantilla entera es el tipo de peaje que
+  hace que una utilidad se deje de usar.
+- **Un JSON a medias no impide abrir el programa**: se dice por consola y se sigue con la
+  lista vacía, que es lo que el usuario puede arreglar mirando el fichero.
+- **Medido**: el desplegable carga las 4 entradas del JSON, elegir *Recibos de la oficina*
+  llena la caja con `Recibo_{fecha}_{n:000}` y la tabla pasa a `36 cambian` sola; al cerrar,
+  `"Ultimo"` queda escrito con esa plantilla. Publicado en
+  `%LOCALAPPDATA%\Renombrar\app`: arranca, 87 MB.
+
 ### H4 — Escribir en la ventana
 
 - **Composition se compone POR ENCIMA del contenido del HWND.** Los controles existían en el

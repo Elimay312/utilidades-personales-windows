@@ -46,6 +46,9 @@ internal sealed unsafe class HostWindow : IDisposable
     /// </summary>
     internal const uint WM_APP_CLOSE = 0x8002;
 
+    /// <summary>Salir del programa. Lo manda el menu del clic derecho sobre el panel.</summary>
+    internal const uint WM_APP_EXIT = 0x8003;
+
     // El delegado se guarda en un campo estatico a proposito: si se pasara directamente
     // a WNDCLASSEXW, el GC podria recogerlo mientras Windows todavia tiene el puntero, y
     // el fallo aparece mucho despues y en otro sitio.
@@ -116,6 +119,11 @@ internal sealed unsafe class HostWindow : IDisposable
 
             case WM_APP_CLOSE:
                 _instance?.Close();
+                return new LRESULT(0);
+
+            case WM_APP_EXIT:
+                Console.WriteLine("[quicklook] salir, pedido desde el menu");
+                PInvoke.DestroyWindow(hwnd);
                 return new LRESULT(0);
 
             // Mientras hay panel: si el usuario se ha ido a otra app, el panel sobra.

@@ -49,7 +49,7 @@ crecer merece existir.
 | 7 | Persistencia oculta | El autoarranque va en `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, sale en la pestaña Inicio del Administrador de tareas, y se pregunta antes de escribirlo. Nada de `schtasks`, servicios ni carpeta Startup. |
 | 8 | Ofuscación, packers, compresión del ejecutable, cifrado de cadenas, single-file comprimido | Bandera roja #1 de las heurísticas. **Y aquí es innegociable**: un binario con un hook de teclado y alta entropía no tiene defensa posible. Se compila con PDB y secciones normales. |
 | 9 | Descargar o generar código en runtime: `Assembly.Load(byte[])`, `Reflection.Emit`, plugins | Ejecutar código no firmado en runtime es comportamiento de loader. |
-| 10 | Escribir en disco cualquier cosa que venga del teclado, del contenido de un archivo previsualizado, o del nombre de un archivo | La única escritura del programa es `quicklook.local.json` (geometría y preferencias) y la clave de autoarranque. Nada más. |
+| 10 | Escribir en disco cualquier cosa que venga del teclado, del contenido de un archivo previsualizado, o del nombre de un archivo | **El programa no escribe ningún archivo, punto.** Lo único que guarda entre sesiones es la clave de autoarranque del registro. Ver §5. |
 | 11 | El **portapapeles** | Ni leerlo ni escribirlo. No hace falta para nada de lo que hace esto. |
 | 12 | Enviar teclas o mover el ratón: `SendInput`, `keybd_event`, `mouse_event`, o mensajes de teclado a ventanas ajenas | Leer una tecla para decidir si abrir un panel es una cosa; **sintetizar** entrada es automatizar al usuario sin su gesto, y es la otra mitad del perfil de un troyano. El programa no escribe en ningún sitio. |
 | 13 | Matar procesos, gobernar ventanas ajenas, cambiar ajustes globales del sistema | Quick Look dibuja una ventana propia encima. No manda sobre nada de nadie. |
@@ -270,8 +270,13 @@ ahí. Es el **único** sitio del registro donde este programa escribe.
   pregunta es qué función lo hizo crecer y si merece existir.
 - **Sin single-file comprimido ni `PublishTrimmed`.** `QuickLook.csproj` los pone a `false`
   explícitamente, no por omisión.
-- **La config vive en texto plano legible.** `quicklook.json` es del usuario y no se toca;
-  lo que el programa cambia va a `quicklook.local.json`.
+- **La config vive en texto plano legible, y es de solo lectura.** `quicklook.json` lo
+  escribe el usuario y el programa solo lo lee. El diseño preveía un `quicklook.local.json`
+  para lo que el programa cambiara; al mirar qué era eso resultó ser una sola cosa —si
+  arranca solo— cuyo sitio canónico ya es la clave `Run` del registro, así que sobra.
+  **Que el programa no escriba ningún archivo deja la regla de auditoría correspondiente
+  como un grep a secas, sin excepciones**, y eso vale más que la comodidad de guardar
+  preferencias solo.
 - **La lista de P/Invokes es cerrada y auditable.** `NativeMethods.txt` es el fichero de
   entrada de CsWin32: si una función no está ahí, no se genera, y el código **no compila**.
   No puede desviarse de lo que el binario realmente usa.

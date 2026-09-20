@@ -60,14 +60,17 @@ internal sealed class MediaFile : IDisposable
         MediaPlayer? player = null;
         try
         {
+            Config config = Config.Current;
+
             player = new MediaPlayer
             {
                 IsLoopingEnabled = true,
 
-                // El video entra mudo: esto es un vistazo, y que se te ponga a sonar un
-                // trailer por pulsar espacio asusta. El audio SI suena, porque en un audio
-                // el sonido es todo el contenido y verlo mudo no informa de nada.
-                IsMuted = video,
+                // El video entra mudo por defecto: esto es un vistazo, y que se te ponga a
+                // sonar un trailer por pulsar espacio asusta. El audio SI suena, porque en
+                // un audio el sonido es todo el contenido y verlo mudo no informa de nada.
+                // Las dos cosas se cambian en quicklook.json.
+                IsMuted = video ? config.VideoMuted : !config.AudioPlays,
                 AutoPlay = false,
             };
 

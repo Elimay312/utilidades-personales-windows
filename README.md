@@ -29,6 +29,10 @@ con DirectWrite, en una tarjeta con forma de página y con la rueda para desplaz
 **M7 — vídeo y audio.** Con `MediaPlayer` y su superficie de Composition: el vídeo es un
 visual más dentro del panel, en bucle y mudo; el audio suena y enseña su carátula.
 
+**M8 — config y salida.** `quicklook.json` para el tamaño del panel, el sonido y el
+autoarranque, y clic derecho sobre el panel para salir. El programa **no escribe ningún
+archivo**: lo único que guarda entre sesiones es la clave de autoarranque del registro.
+
 **M7.2 — probado con vídeo de verdad**, con un AVI generado a mano. Destapó que en pantallas
 con DPI alto la vista previa se encogía dentro de un marco a escala: el tope de escalado era
 de 1× en píxeles físicos y ahora es la escala de la pantalla.
@@ -37,11 +41,7 @@ de 1× en píxeles físicos y ahora es la escala de la pantalla.
 espacio abre, `Esc` cierra, `F2` renombra con espacios, y con otra app delante el espacio
 pasa de largo.
 
-Lo que viene:
-
-| | |
-|---|---|
-| M8 | Config, selección múltiple, autoarranque |
+Falta la selección múltiple: hoy con varios archivos marcados se previsualiza el primero.
 
 ---
 
@@ -122,6 +122,8 @@ barra de direcciones. Sin eso, el programa hace el Explorador inusable.
 | `Panel.cs` | El panel. Ventana fija, tarjeta que morfa dentro. |
 | `Motion.cs` | Las tres animaciones: abrir, cerrar y morfar. |
 | `Foreground.cs` | Quién está delante. Lo preguntan el hook, el panel y la selección. |
+| `Config.cs` | `quicklook.json`, de solo lectura. |
+| `AutoStart.cs` | El único sitio del registro donde se escribe. |
 | `SelfCheck.cs` | Lo que `--check` comprueba: la lógica pura. |
 | `NativeMethods.txt` | La lista cerrada de P/Invokes. Si algo no está aquí, no compila. |
 | `auditar.ps1` | Comprueba `SEGURIDAD.md` contra el código. Tiene que decir `TODO LIMPIO`. |

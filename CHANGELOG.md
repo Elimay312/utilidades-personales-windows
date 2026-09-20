@@ -621,3 +621,82 @@ trabajando o jugando delante. Dos cosas al respecto:
 
 **Ficheros:** `Panel.cs`, `SelfCheck.cs`, `Content/Preview.cs`,
 `scratchpad/hacer_video.py`, `scratchpad/sonda-video.ps1`.
+
+---
+
+## M8 — Config, autoarranque y una forma de salir
+
+### El programa no escribe ni un archivo, y eso salió de la auditoría
+
+El plan decía que lo que el programa cambiara iría a `quicklook.local.json`. Al ir a
+escribirlo, `auditar.ps1` lo bloqueó: la regla que prohíbe escribir archivos del usuario es
+un grep sobre `File.Create|File.WriteAll|FileMode.Create`… y un grep no distingue nuestro
+config de las fotos del usuario.
+
+La salida fácil era añadirle una excepción a la regla. La buena era preguntarse **qué iba
+realmente en ese archivo**: una sola cosa, si el programa arranca solo. Y el sitio canónico
+de eso ya es la clave `Run` del registro, que además sale en la pestaña Inicio del
+Administrador de tareas.
+
+Así que `quicklook.local.json` desaparece del diseño, **el programa no escribe ningún
+archivo**, y la regla puede seguir siendo un grep a secas. Eso vale más que la comodidad de
+guardar preferencias solo. `SEGURIDAD.md` §5 y la regla 10 quedan reescritas para decir lo
+que de verdad hace.
+
+### La config
+
+`%LOCALAPPDATA%\QuickLook\quicklook.json`, de solo lectura, con comentarios y comas
+sobrantes permitidas. Se relee sola cuando cambia de fecha — sin vigilante y sin reiniciar,
+porque lo único que la consulta es abrir un panel, y eso pasa cuando el usuario lo pide.
+
+| | |
+|---|---|
+| `autoStart` | Arrancar al iniciar sesión |
+| `panelWidth` / `panelHeight` | Tamaño máximo del panel, en fracción del área de trabajo |
+| `videoMuted` | El vídeo entra mudo (por defecto sí) |
+| `audioPlays` | El audio suena (por defecto sí) |
+
+Los valores se recortan a `[0,2 – 0,95]`: un `panelWidth: 5` escrito a mano daría un panel
+más grande que la pantalla, imposible de cerrar con el ratón.
+
+**`--check` pasa las fracciones explícitas** en vez de leerlas de la config. Si las leyera,
+tener un `quicklook.json` puesto cambiaría los números y la comprobación dejaría de ser
+determinista — una prueba que depende del entorno del que la ejecuta no es una prueba.
+
+### El menú de salir, dibujado a mano
+
+Con autoarranque puesto no habría **ninguna** forma de salir que no fuera el Administrador de
+tareas. Así que el clic derecho sobre el panel despliega un menú de una sola fila.
+
+**No se usa `TrackPopupMenu`** porque exige que la ventana dueña esté en primer plano, y este
+panel no lo toma nunca: traerlo al frente para enseñar un menú haría que el Explorador
+perdiera el resaltado de la selección justo cuando el usuario está mirando el panel. El dock
+se topó con lo mismo y dibuja el suyo igual.
+
+Y hay una razón de más para no usarlo: `SetForegroundWindow` está en la lista de la regla 13
+y `auditar.ps1` lo busca. Da igual que aquí fuera sobre nuestro propio HWND — un grep no lo
+distingue, y **antes que relajar el grep, se dibuja el menú**. Es la misma decisión que con
+`new Uri(...)` en el M7.
+
+Aquí además sale gratis: el panel ya recibe ratón sin foco, así que el menú tampoco lo
+necesita.
+
+### Medido
+
+`sonda-config.ps1`, cinco casos y **ninguno roba el foco** — solo arranca el programa y mira
+el log y el registro:
+
+- Sin `quicklook.json`: avisa, usa los valores por defecto y **no** escribe autoarranque.
+- Con config: `[config] leido …` y `[autoarranque] escrito HKCU\…\Run\QuickLook`.
+- `autoStart: false`: `[autoarranque] borrado`.
+- Valores absurdos: los lee sin caerse (el recorte lo comprueba `--check`).
+- JSON roto: dice el error, **arranca igual**, y **no** activa el autoarranque a medias.
+
+**Lo que no se pudo medir:** el menú de salir. `sonda-menu.ps1` está escrito y manda los
+clics con `PostMessage` y coordenadas explícitas —sin tocarle el ratón a nadie— pero necesita
+el Explorador en primer plano una vez para abrir el panel, y Chrome no lo soltó en diez
+intentos. Se paró en vez de insistir: seguir era molestar al usuario para medir algo que él
+comprueba con un clic derecho.
+
+**Ficheros:** `Config.cs`, `AutoStart.cs`, `Panel.cs`, `Visuals.cs`, `HostWindow.cs`,
+`Program.cs`, `SelfCheck.cs`, `SEGURIDAD.md`, `quicklook.json`.

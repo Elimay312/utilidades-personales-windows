@@ -46,6 +46,7 @@ internal sealed unsafe class Panel : IDisposable
     private const uint WM_LBUTTONDOWN = 0x0201;
     private const uint WM_RBUTTONDOWN = 0x0204;
     private const uint WM_MOUSEWHEEL = 0x020A;
+    private const uint WM_MOUSEMOVE = 0x0200;
     private const int MA_NOACTIVATE = 3;
 
     /// <summary>IDC_ARROW. CsWin32 no proyecta los cursores del sistema como constante.</summary>
@@ -54,7 +55,11 @@ internal sealed unsafe class Panel : IDisposable
     /// <summary>Donde avisar de que hay que cerrar. Lo pone HostWindow al arrancar.</summary>
     internal static HWND Host;
 
-    /// <summary>Tamano maximo de la tarjeta, en fraccion del area de trabajo.</summary>
+    /// <summary>
+    /// Tamano maximo de la tarjeta, en fraccion del area de trabajo. Son los valores por
+    /// defecto: el usuario los cambia en <c>quicklook.json</c>, y <c>--check</c> los pasa
+    /// explicitos para no depender de si hay config puesta.
+    /// </summary>
     private const float MaxWidth = 0.62f;
     private const float MaxHeight = 0.72f;
 
@@ -77,6 +82,11 @@ internal sealed unsafe class Panel : IDisposable
 
     /// <summary>Lado del boton de cerrar, en unidades logicas.</summary>
     private const float CloseSize = 26f;
+
+    /// <summary>El menu de salir: una sola fila.</summary>
+    private const float MenuWidth = 190f;
+    private const float MenuHeight = 38f;
+    private const string MenuText = "Salir de QuickLook";
 
     private static readonly WNDPROC WndProcThunk = WndProc;
     private static readonly Dictionary<nint, Panel> Instances = [];
@@ -117,6 +127,15 @@ internal sealed unsafe class Panel : IDisposable
 
     /// <summary>Que pagina, desde cero.</summary>
     private int _page;
+
+    /// <summary>El menu de salir, si esta desplegado. Null el resto del tiempo.</summary>
+    private ContainerVisual? _menu;
+
+    /// <summary>Donde esta, para saber si un clic cae dentro.</summary>
+    private RECT _menuRect;
+
+    /// <summary>El fondo de la fila, que se aclara al pasar por encima.</summary>
+    private SpriteVisual? _menuRow;
 
     /// <summary>Lo que esta sonando, si hay algo. Se suelta SIEMPRE al cambiar o al morir.</summary>
     private MediaFile? _media;
@@ -276,8 +295,9 @@ internal sealed unsafe class Panel : IDisposable
         int availableW = work.right - work.left;
         int availableH = work.bottom - work.top;
 
-        int w = Math.Max(1, (int)(availableW * MaxWidth));
-        int h = Math.Max(1, (int)(availableH * MaxHeight));
+        Config config = Config.Current;
+        int w = Math.Max(1, (int)(availableW * config.PanelWidth));
+        int h = Math.Max(1, (int)(availableH * config.PanelHeight));
 
         // El DPI sale de la ventana ajena a proposito: es la pantalla donde esta mirando el
         // usuario, y con monitores a escalas distintas no coincide con la nuestra hasta que
@@ -298,10 +318,12 @@ internal sealed unsafe class Panel : IDisposable
     /// por debajo de la ficha fija, asi que el resultado se recorta al area disponible
     /// SIEMPRE, tambien para la ficha. Lo comprueba <c>--check</c>.
     /// </summary>
-    internal static (int W, int H) Size(Preview preview, float scale, int availableW, int availableH)
+    internal static (int W, int H) Size(
+        Preview preview, float scale, int availableW, int availableH,
+        float fracW = MaxWidth, float fracH = MaxHeight)
     {
-        int maxW = Math.Max(1, (int)(availableW * MaxWidth));
-        int maxH = Math.Max(1, (int)(availableH * MaxHeight));
+        int maxW = Math.Max(1, (int)(availableW * fracW));
+        int maxH = Math.Max(1, (int)(availableH * fracH));
 
         float pad = Pad * scale;
         float caption = CaptionHeight * scale;
@@ -349,7 +371,8 @@ internal sealed unsafe class Panel : IDisposable
     /// </summary>
     private Vector2 CardSize(Preview preview)
     {
-        (int w, int h) = Size(preview, _scale, _availableW, _availableH);
+        Config config = Config.Current;
+        (int w, int h) = Size(preview, _scale, _availableW, _availableH, config.PanelWidth, config.PanelHeight);
         Log.Line($"[tarjeta] {w}x{h}  ({(preview.Text is not null ? "texto" : preview.IsThumbnail ? "miniatura" : "ficha")})");
         return new Vector2(w, h);
     }
@@ -638,8 +661,91 @@ internal sealed unsafe class Panel : IDisposable
         return button;
     }
 
+    /// <summary>
+    /// El menu de salir, dibujado a mano.
+    ///
+    /// <para>
+    /// <b>Por que no <c>TrackPopupMenu</c>:</b> exige que la ventana duena este en primer
+    /// plano, y este panel no lo toma nunca — traerlo al frente para ensenar un menu haria
+    /// que el Explorador perdiera el resaltado de la seleccion justo cuando el usuario mira
+    /// el panel. El dock se topo con lo mismo y dibuja el suyo igual. Y aqui sale ademas
+    /// gratis: el panel ya recibe raton sin foco, asi que el menu tampoco lo necesita.
+    /// </para>
+    ///
+    /// <para>
+    /// Hace falta porque con autoarranque puesto no habria ninguna otra forma de salir que
+    /// el Administrador de tareas.
+    /// </para>
+    /// </summary>
+    private void ToggleMenu(int x, int y)
+    {
+        if (_menu is not null)
+        {
+            HideMenu();
+            return;
+        }
+
+        float w = MenuWidth * _scale;
+        float h = MenuHeight * _scale;
+
+        // Pegado al cursor, pero sin salirse de la ventana.
+        float left = Math.Clamp(x, 0f, MathF.Max(0f, _window.X - w));
+        float top = Math.Clamp(y, 0f, MathF.Max(0f, _window.Y - h));
+        _menuRect = new RECT { left = (int)left, top = (int)top, right = (int)(left + w), bottom = (int)(top + h) };
+
+        _menu = _compositor.CreateContainerVisual();
+        _menu.Size = new Vector2(w, h);
+        _menu.Offset = new Vector3(left, top, 0f);
+
+        CompositionRoundedRectangleGeometry round = _compositor.CreateRoundedRectangleGeometry();
+        round.Size = _menu.Size;
+        round.CornerRadius = new Vector2(8f * _scale);
+        _menu.Clip = _compositor.CreateGeometricClip(round);
+
+        _menuRow = _compositor.CreateSpriteVisual();
+        _menuRow.RelativeSizeAdjustment = Vector2.One;
+        _menuRow.Brush = _compositor.CreateColorBrush(Color.FromArgb(235, 28, 28, 32));
+        _menu.Children.InsertAtBottom(_menuRow);
+
+        SpriteVisual label = _compositor.CreateSpriteVisual();
+        label.Size = new Vector2(w - 24f * _scale, h);
+        label.Offset = new Vector3(14f * _scale, 0f, 0f);
+        label.Brush = Visuals.CreateLineBrush(MenuText, label.Size, _scale);
+        _menu.Children.InsertAtTop(label);
+
+        // Encima de la tarjeta, no dentro: la tarjeta recorta a sus esquinas y el menu
+        // puede caer fuera de ella.
+        _root.Children.InsertAtTop(_menu);
+    }
+
+    private void HideMenu()
+    {
+        if (_menu is null) return;
+
+        _root.Children.Remove(_menu);
+        _menu = null;
+        _menuRow = null;
+        _menuRect = default;
+    }
+
+    private bool InMenu(int x, int y) =>
+        _menu is not null && x >= _menuRect.left && x < _menuRect.right && y >= _menuRect.top && y < _menuRect.bottom;
+
+    /// <summary>Aclara la fila al pasar por encima, para que se vea que es clicable.</summary>
+    private void MenuHover(int x, int y)
+    {
+        if (_menuRow is null) return;
+
+        _menuRow.Brush = _compositor.CreateColorBrush(
+            InMenu(x, y) ? Color.FromArgb(245, 52, 52, 60) : Color.FromArgb(235, 28, 28, 32));
+    }
+
     private static LRESULT WndProc(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam)
     {
+        int mx = (short)(lParam.Value & 0xFFFF);
+        int my = (short)((lParam.Value >> 16) & 0xFFFF);
+        Instances.TryGetValue((nint)hwnd.Value, out Panel? panel);
+
         switch (msg)
         {
             // Se puede clicar sin que el Explorador pierda el foco.
@@ -651,14 +757,35 @@ internal sealed unsafe class Panel : IDisposable
             // de cerrarse aqui: es ella la duena del panel y la que lleva el temporizador,
             // y destruir la ventana desde dentro de su propio WndProc es la clase de cosa
             // que revienta tres mensajes despues.
-            case WM_LBUTTONDOWN:
+            case WM_MOUSEMOVE:
+                panel?.MenuHover(mx, my);
+                return new LRESULT(0);
+
+            // El clic derecho despliega el menu de salir en vez de cerrar: es la unica
+            // forma de salir del programa cuando arranca solo al iniciar sesion.
             case WM_RBUTTONDOWN:
+                panel?.ToggleMenu(mx, my);
+                return new LRESULT(0);
+
+            case WM_LBUTTONDOWN:
+                if (panel is not null && panel.InMenu(mx, my))
+                {
+                    PInvoke.PostMessage(Host, HostWindow.WM_APP_EXIT, default, default);
+                    return new LRESULT(0);
+                }
+
+                // Con el menu desplegado, el primer clic fuera solo lo recoge.
+                if (panel?._menu is not null)
+                {
+                    panel.HideMenu();
+                    return new LRESULT(0);
+                }
+
                 PInvoke.PostMessage(Host, HostWindow.WM_APP_QUICKLOOK, default, default);
                 return new LRESULT(0);
 
             case WM_MOUSEWHEEL:
-                if (Instances.TryGetValue((nint)hwnd.Value, out Panel? self))
-                    self.Scroll((short)(wParam.Value >> 16));
+                panel?.Scroll((short)(wParam.Value >> 16));
                 return new LRESULT(0);
         }
 

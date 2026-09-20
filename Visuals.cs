@@ -238,6 +238,20 @@ internal static unsafe class Visuals
         return (brush, height);
     }
 
+    /// <summary>Una sola linea de texto, centrada verticalmente. La usa el menu.</summary>
+    public static CompositionSurfaceBrush CreateLineBrush(string text, Vector2 size, float scale)
+    {
+        int w = (int)MathF.Ceiling(size.X);
+        int h = (int)MathF.Ceiling(size.Y);
+
+        return Surface(w, h, (context, offset) =>
+        {
+            Vector2 measured = Text.Measure(text, 13.5f, scale, bold: false, size.X);
+            System.Drawing.Point at = new(offset.X, offset.Y + (int)((size.Y - measured.Y) * 0.5f));
+            Text.Draw(context, text, 13.5f, scale, bold: false, size.X, at, 0.95f);
+        });
+    }
+
     /// <summary>
     /// Acrilico, con caida a color solido si el sistema no lo soporta. El panel sigue
     /// siendo usable en ese caso: solo se ve mas plano.

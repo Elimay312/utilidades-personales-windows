@@ -49,7 +49,10 @@ internal static class Program
         }
 
         Console.WriteLine("QuickLook - espacio sobre un archivo del Explorador para verlo");
+        Console.WriteLine("           clic derecho sobre el panel para salir");
         Console.WriteLine();
+
+        AutoStart.Sync(Config.Current.AutoStart);
 
         using HostWindow host = new();
 

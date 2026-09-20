@@ -23,11 +23,17 @@ function Codigo {
         if (-not (Test-Path $ruta)) { continue }
         $n = 0
         $bloque = $false
+        $cierre = '\*/'
         foreach ($l in Get-Content $ruta) {
             $n++
             $t = $l.Trim()
-            if ($bloque) { if ($t -match '\*/') { $bloque = $false }; continue }
-            if ($t -match '^/\*') { if ($t -notmatch '\*/') { $bloque = $true }; continue }
+            if ($bloque) { if ($t -match $cierre) { $bloque = $false }; continue }
+            if ($t -match '^/\*') { if ($t -notmatch '\*/') { $bloque = $true; $cierre = '\*/' }; continue }
+            # Los comentarios XML del .csproj tambien son comentarios. Sin esto, explicar
+            # EN EL CSPROJ por que NO esta una dependencia hace saltar la regla que
+            # comprueba que no esta: la auditoria se acusa a si misma. Encontrado en el
+            # hud el dia que se quito System.Management, y estaba en los cinco.
+            if ($t -match '^<!--') { if ($t -notmatch '-->') { $bloque = $true; $cierre = '-->' }; continue }
             if ($t.StartsWith('//') -or $t.StartsWith('*')) { continue }
             $lineas += [pscustomobject]@{ Fichero = $ruta; Linea = $n; Texto = $l }
         }

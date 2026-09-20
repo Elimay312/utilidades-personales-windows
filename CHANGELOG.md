@@ -10,6 +10,47 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H9 — El diseño translúcido, y la caja de texto pasa a ser nuestra
+
+- **La píldora de búsqueda es transparente de verdad**: radio de píldora, borde de
+  cristal, lupa, y el acrílico del sistema visible a través. Eso obligó a **dejar el
+  control `EDIT`**, porque un `EDIT` pinta su fondo opaco con GDI y no puede ser
+  translúcido — era la renuncia que se aceptó en la primera pregunta del proyecto, y el
+  diseño la vino a cobrar.
+- **Dos ideas se descartaron con números, que es para lo que se hizo la maqueta antes que
+  el código:**
+  1. **Radio grande recortando la ventana con `SetWindowRgn`.** No funciona: la región
+     **no recorta el backdrop de DWM**. Con región y `DWMWCP_DONOTROUND` las esquinas
+     salen cuadradas. El radio del panel es el que da Windows.
+  2. **Acrílico claro con un velo oscuro nuestro encima**, para arrastrar el color del
+     fondo siendo oscuro. Medido: con velo 0,34 el panel quedaba a 163–185 de luminancia
+     y el texto blanco daba **1,5:1 de contraste, ilegible**; subiéndolo a 0,60 para que
+     se leyera, el panel salía `(84,84,84)`, gris neutro y **sin nada del color que se
+     buscaba**. Para que se lea hay que tapar justo lo que se quería enseñar.
+- **El material se eligió midiendo los tres**: acrílico oscuro (algo de color, legible) ←
+  el elegido; mica alt oscuro `(32,32,32)`, más apagado; acrílico claro, mucho color y
+  texto ilegible.
+- **`Caja.cs`: todo lo que hacía Windows dentro del `EDIT`.** Sin nada de Win32 dentro a
+  propósito, para poder comprobarlo desde `--check` sin abrir una ventana. Teclas muertas,
+  cursor que parpadea, `Inicio`/`Fin`, `Mayús`+flechas, `Ctrl`+flechas por palabras,
+  `Ctrl+Retroceso`, `Ctrl+A`, `Ctrl+V`, clic y arrastrar. **17 comprobaciones nuevas**, y
+  una pilló un fallo invisible en pantalla: pegar `dos\r\nlineas` dejaba **dos** espacios.
+- **`Ctrl+V` llegó con su enmienda escrita antes** (`SEGURIDAD.md §3.12`). La regla 14 se
+  partió en dos: **leer** el portapapeles solo desde `Ctrl+V` y solo `CF_UNICODETEXT`;
+  **escribir** sigue prohibido, y por eso el resultado de la calculadora sigue sin poder
+  copiarse.
+- **El teclado manda sobre el ratón**, y era un fallo, no una preferencia: Windows manda
+  `WM_MOUSEMOVE` cuando una ventana aparece o cambia de tamaño **debajo del puntero**,
+  aunque nadie lo haya tocado. Con el ratón parado sobre la lista, al asomarse la fila
+  elegida dejaba de ser la primera, y al crecer la ventana con cada letra iba saltando
+  sola: escribías tres letras, pulsabas Enter y abrías otra cosa. Ahora el ratón solo
+  manda si se movió de verdad, comparando en coordenadas de **pantalla** —las de ventana
+  cambian solas al redimensionar— y con 5 px de holgura. Medido: puntero clavado en la 4ª
+  fila escribiendo `conf` → elegida la 0 todo el rato; ratón movido a la 6ª → la 6;
+  flecha abajo → la 7.
+- Y un fallo de antes que salió haciendo la maqueta: `Refrescar` solo redimensionaba la
+  ventana si ya era visible, y `Colocar` la dimensiona **antes** de que haya resultados.
+
 ### H8 — Memoria, arranque, y las cosas que faltaban
 
 Cuatro arreglos que salieron de mirar el programa terminado. El primero se diagnosticó

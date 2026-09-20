@@ -148,10 +148,10 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
         // Un velo claro muy tenue: sobre el acrilico oscuro se lee como cristal, no como
         // un rectangulo pintado. Y el radio es la mitad del alto, que es lo que la hace
         // pildora y no caja.
-        Redondeado(ctx, izq, arr, der, aba, S(AltoPildora) / 2f, 1f, 1f, 1f, 0.10f);
+        Redondeado(ctx, izq, arr, der, aba, S(AltoPildora) / 2f, 1f, 1f, 1f, 0.13f);
 
         // El borde, medio punto mas claro: es lo que le da el canto de cristal.
-        Borde(ctx, izq, arr, der, aba, S(AltoPildora) / 2f, 1f, 1f, 1f, 0.18f, S(1f));
+        Borde(ctx, izq, arr, der, aba, S(AltoPildora) / 2f, 1f, 1f, 1f, 0.22f, S(1f));
 
         float dentro = izq + S(18f);
 

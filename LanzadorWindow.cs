@@ -877,10 +877,22 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         // y DWM lo mezcla: el EDIT salia gris #7F7F7F en vez del color que se le daba, y
         // el cuerpo un #545454 plano. El backdrop de Windows 11 no lo necesita â€” basta
         // con que la ventana no pinte un fondo opaco, y por eso hbrBackground es null.
-        uint acrilico = 3;   // DWMSBT_TRANSIENTWINDOW: el de los menus, no el de las ventanas
+        // DWMSBT_TRANSIENTWINDOW, y esta elegido midiendo los tres, no por defecto:
+        //   3 acrilico + oscuro  -> algo de color del fondo, legible        <- este
+        //   4 mica alt + oscuro  -> (32,32,32), mas oscuro y sin nada de color
+        //   3 acrilico + claro   -> coge mucho color pero el texto no se lee
+        // La translucidez del panel es la que da Windows; no hay perilla documentada
+        // para subirla. Lo que si controlamos es la pildora, y ahi va el cristal.
+        uint acrilico = 3;
         PInvoke.DwmSetWindowAttribute(_hwnd, DWMWINDOWATTRIBUTE.DWMWA_SYSTEMBACKDROP_TYPE,
             &acrilico, sizeof(uint));
 
+        // Oscuro. Se probo lo contrario —acrilico CLARO con un velo oscuro nuestro
+        // encima, para que arrastrase el color del fondo— y se midio que no compensa:
+        // con velo 0,34 el panel quedaba a 163-185 de luminancia y el texto blanco daba
+        // 1,5:1 de contraste, ilegible; subiendolo a 0,60 para que se leyera, el panel
+        // salia (84,84,84), gris neutro y sin nada del color que se buscaba. O sea que
+        // para ser legible hay que tapar justo lo que se queria ensenar.
         uint oscuro = 1;
         PInvoke.DwmSetWindowAttribute(_hwnd, DWMWINDOWATTRIBUTE.DWMWA_USE_IMMERSIVE_DARK_MODE,
             &oscuro, sizeof(uint));

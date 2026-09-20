@@ -46,9 +46,9 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
     private const float MargenTexto = 16f;
 
     /// <summary>
-    /// El icono todavia no existe (llega en H7), pero su hueco si. Reservarlo desde ahora
-    /// es lo que hace que el texto no se mueva cuando lleguen, y de paso la columna de
-    /// nombres queda alineada con lo que se escribe arriba.
+    /// El hueco del icono. Se reserva aunque el icono no haya llegado todavia: asi el
+    /// texto no se mueve cuando aparece, y la columna de nombres queda alineada con lo
+    /// que se escribe arriba.
     /// </summary>
     private const float LadoIcono = 32f;
     private const float HuecoIcono = 14f;
@@ -56,11 +56,10 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
     /// <summary>Donde empieza el texto de cada fila. La caja de busqueda usa el mismo.</summary>
     public const float Sangria = MargenTexto + LadoIcono + HuecoIcono;
 
-    /// <summary>Alto de la franja y del control de texto, que la ventana necesita saber.</summary>
+    /// <summary>Alto de la franja, que la ventana necesita para colocar el raton.</summary>
     public const int AltoDeLaFranja = (int)AltoFranja;
-    public const int AltoDelTexto = 34;
 
-    // --- la pildora de busqueda (maqueta) -------------------------------------------
+    // --- la pildora de busqueda -------------------------------------------
     private const float MargenPildora = 10f;   // aire entre la pildora y el borde del panel
     private const float AltoPildora = 44f;
     private const float LupaAncho = 30f;       // hueco de la lupa dentro de la pildora
@@ -93,12 +92,8 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
         _raiz.RelativeSizeAdjustment = Vector2.One;
         _target.Root = _raiz;
 
-        // Aqui NO va ningun visual sobre la franja, y es una correccion medida: el
-        // contenido de Composition se dibuja POR ENCIMA de las ventanas hijas, asi que un
-        // SpriteVisual cubriendo la franja tapa el EDIT y desaparece lo que escribes. El
-        // fondo de la franja lo pone un STATIC hermano, en LanzadorWindow.
-        // MAQUETA: el visual empieza arriba del todo, porque ahora tambien dibuja la
-        // franja de busqueda. Ya no hay ventana hija que respetar.
+        // Un solo visual para todo, desde arriba del todo: la pildora de busqueda y las
+        // filas. Ya no hay ninguna ventana hija a la que respetarle el sitio.
         _lista = _compositor.CreateSpriteVisual();
         _raiz.Children.InsertAtTop(_lista);
     }
@@ -117,15 +112,23 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
         _lista.Brush = null;
     }
 
+    /// <summary>Lo que se escribe, con su cursor y su seleccion. Lo pone la ventana.</summary>
+    public Caja? Caja { get; set; }
+
+    /// <summary>Si al cursor le toca estar encendido en este parpadeo.</summary>
+    public bool CaretEncendido { get; set; } = true;
+
     /// <summary>
-    /// Redibuja la lista entera. Con cero resultados la deja a tamano cero, que es como
-    /// desaparece sin tener que quitarla del arbol.
+    /// Cuanto se ha corrido el texto hacia la izquierda porque no cabia. Se guarda entre
+    /// repintados a proposito: recalcularlo desde cero haria que el texto diese un salto
+    /// cada vez que el cursor se acerca a un borde.
     /// </summary>
-    /// <summary>Lo que se ensena en la pildora. En la maqueta lo pone la ventana.</summary>
-    public string Consulta { get; set; } = string.Empty;
+    private float _corrido;
 
     public void Pintar(IReadOnlyList<Resultado> resultados, int elegido)
     {
+        // Aqui ya no se sale con cero resultados: la pildora tiene que dibujarse igual,
+        // porque es donde esta el cursor mientras no has escrito nada.
 
         // El visual mide siempre el maximo y la ventana mide lo que hay: lo que sobra de
         // la superficie cae por debajo del borde de la ventana y no se ve. Asi la
@@ -155,12 +158,105 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
 
         float dentro = izq + S(18f);
 
-        // La lupa, glifo E721 de Segoe Fluent Icons.
-        Texto.Dibujar(ctx, "", S(14f), grueso: false, 0.65f,
+        // La lupa: glifo E721 de Segoe Fluent Icons, con su escape y no con el
+        // caracter, que en el codigo fuente es invisible.
+        Texto.Dibujar(ctx, "\uE721", S(14f), grueso: false, 0.65f,
                       new System.Drawing.Point((int)dentro, (int)(arr + S(13f))), iconos: true);
 
-        Texto.Dibujar(ctx, consulta, S(17f), grueso: false, consulta.Length > 0 ? 0.95f : 0.40f,
-                      new System.Drawing.Point((int)(dentro + S(LupaAncho)), (int)(arr + S(10f))));
+        float x0 = dentro + S(LupaAncho);
+        float x1 = der - S(18f);
+        float yTexto = arr + S(10f);
+
+        if (consulta.Length == 0)
+        {
+            Texto.Dibujar(ctx, "Buscar", TamTexto(), grueso: false, 0.35f,
+                          new System.Drawing.Point((int)x0, (int)yTexto));
+            _corrido = 0f;
+            DibujarCaret(ctx, x0, arr);
+            return;
+        }
+
+        // El texto se recorta a la pildora: si no cabe, lo que sobra no debe salirse por
+        // el borde ni pisar la lupa.
+        D2D_RECT_F recorte = new() { left = x0, top = arr, right = x1, bottom = aba };
+        ctx.PushAxisAlignedClip(recorte, D2D1_ANTIALIAS_MODE.D2D1_ANTIALIAS_MODE_ALIASED);
+
+        try
+        {
+            float hastaCursor = Ancho(consulta, Caja?.Cursor ?? consulta.Length);
+            float cabe = x1 - x0;
+
+            // Se mueve lo justo para que el cursor vuelva a verse, y por eso _corrido se
+            // guarda entre repintados: recentrarlo siempre haria que el texto se moviese
+            // con cada tecla.
+            if (hastaCursor - _corrido > cabe) _corrido = hastaCursor - cabe;
+            if (hastaCursor - _corrido < 0f) _corrido = hastaCursor;
+
+            float sobra = Ancho(consulta, consulta.Length) - cabe;
+            _corrido = Math.Clamp(_corrido, 0f, Math.Max(0f, sobra));
+
+            if (Caja is { HaySeleccion: true } caja)
+            {
+                float a = x0 + Ancho(consulta, caja.Desde) - _corrido;
+                float b = x0 + Ancho(consulta, caja.Hasta) - _corrido;
+                Redondeado(ctx, a, arr + S(8f), b, aba - S(8f), S(3f), 0.40f, 0.60f, 1f, 0.45f);
+            }
+
+            Texto.Dibujar(ctx, consulta, TamTexto(), grueso: false, 0.95f,
+                          new System.Drawing.Point((int)(x0 - _corrido), (int)yTexto));
+
+            DibujarCaret(ctx, x0 + hastaCursor - _corrido, arr);
+        }
+        finally
+        {
+            ctx.PopAxisAlignedClip();
+        }
+    }
+
+    private float TamTexto() => S(17f);
+
+    /// <summary>Lo que ocupan las primeras <paramref name="cuantas"/> letras.</summary>
+    private float Ancho(string texto, int cuantas)
+    {
+        cuantas = Math.Clamp(cuantas, 0, texto.Length);
+
+        // Medir descuenta el pixel de margen que anade por el antialiasing; si no, el
+        // cursor se iria separando del texto una letra tras otra.
+        return cuantas == 0 ? 0f : Texto.Medir(texto[..cuantas], TamTexto(), grueso: false).X - 2f;
+    }
+
+    /// <summary>
+    /// A que letra corresponde una X de la ventana. Se mide letra a letra y gana el borde
+    /// mas cercano: asi, al pinchar entre dos letras, el cursor cae en la que esperas y no
+    /// siempre en la de la izquierda.
+    /// </summary>
+    public int IndiceEn(float x)
+    {
+        string t = Caja?.Texto ?? string.Empty;
+        if (t.Length == 0) return 0;
+
+        float x0 = S(MargenPildora) + S(18f) + S(LupaAncho) - _corrido;
+
+        int mejor = 0;
+        float distancia = Math.Abs(x - x0);
+        for (int i = 1; i <= t.Length; i++)
+        {
+            float d = Math.Abs(x - (x0 + Ancho(t, i)));
+            if (d >= distancia) continue;
+            distancia = d;
+            mejor = i;
+        }
+
+        return mejor;
+    }
+
+    private void DibujarCaret(ID2D1DeviceContext ctx, float x, float arribaPildora)
+    {
+        if (!CaretEncendido) return;
+
+        // Dos puntos de ancho: uno solo casi desaparece sobre el acrilico.
+        Redondeado(ctx, x, arribaPildora + S(10f), x + S(2f),
+                   arribaPildora + S(AltoPildora) - S(10f), S(1f), 1f, 1f, 1f, 0.9f);
     }
 
     private void Borde(ID2D1DeviceContext ctx, float izq, float arr, float der, float aba,
@@ -210,7 +306,7 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
             D2D1_COLOR_F nada = default;
             ctx.Clear(&nada);
 
-            Pildora(ctx, desplazamiento.X, desplazamiento.Y, Consulta);
+            Pildora(ctx, desplazamiento.X, desplazamiento.Y, Caja?.Texto ?? string.Empty);
 
             for (int i = 0; i < resultados.Count; i++)
             {

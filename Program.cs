@@ -366,6 +366,91 @@ internal static class Program
         fallos += Exige("el marco de alfa 38 no cuenta como dibujo",
                         Iconos.Lado(Lienzo(8, (x, y) => x == 0 || y == 0 || x == 7 || y == 7 ? (byte)38 : (byte)0)) == 0);
 
+        // --- La caja de texto (H9) -----------------------------------------------------
+        // Lo que antes hacia el control EDIT del sistema y ahora hacemos nosotros. Son
+        // casos que no se ven mirando la pantalla: se nota al usarla y ya es tarde.
+        Console.WriteLine();
+        Console.WriteLine("Caja — escribir y borrar");
+        Caja c = new();
+        foreach (char l in "hola") c.Escribir(l);
+        fallos += Exige("escribir deja el cursor al final", c.Texto == "hola" && c.Cursor == 4);
+
+        c.Mover(-1, seleccionando: false, palabra: false);
+        c.Escribir('X');
+        fallos += Exige("escribir en medio inserta donde esta el cursor", c.Texto == "holXa");
+
+        c.Borrar(haciaAtras: true, palabra: false);
+        fallos += Exige("retroceso quita la de la izquierda", c.Texto == "hola" && c.Cursor == 3);
+
+        c.Borrar(haciaAtras: false, palabra: false);
+        fallos += Exige("suprimir quita la de la derecha", c.Texto == "hol" && c.Cursor == 3);
+
+        Caja v = new();
+        v.Borrar(haciaAtras: true, palabra: false);
+        v.Borrar(haciaAtras: false, palabra: false);
+        fallos += Exige("borrar en una caja vacia no revienta", v.Texto.Length == 0 && v.Cursor == 0);
+
+        Console.WriteLine();
+        Console.WriteLine("Caja — seleccion");
+        Caja s = new();
+        foreach (char l in "uno dos tres") s.Escribir(l);
+
+        s.Todo();
+        fallos += Exige("Ctrl+A coge todo", s.Desde == 0 && s.Hasta == 12);
+
+        s.Escribir('z');
+        fallos += Exige("escribir con seleccion la sustituye", s.Texto == "z" && !s.HaySeleccion);
+
+        Caja s2 = new();
+        foreach (char l in "abcdef") s2.Escribir(l);
+        s2.Mover(-1, seleccionando: true, palabra: false);
+        s2.Mover(-1, seleccionando: true, palabra: false);
+        fallos += Exige("Mayus+izquierda selecciona hacia atras", s2.Desde == 4 && s2.Hasta == 6);
+
+        s2.Borrar(haciaAtras: true, palabra: false);
+        fallos += Exige("retroceso con seleccion borra la seleccion, no una letra", s2.Texto == "abcd");
+
+        // El caso que mas se olvida: con seleccion puesta, una flecha SIN Mayus no mueve
+        // una letra desde donde estaba el cursor, deshace la seleccion y salta al extremo.
+        Caja s3 = new();
+        foreach (char l in "abcdef") s3.Escribir(l);
+        s3.Todo();
+        s3.Mover(-1, seleccionando: false, palabra: false);
+        fallos += Exige("flecha sin Mayus deshace la seleccion y va al extremo",
+                        s3.Cursor == 0 && !s3.HaySeleccion);
+
+        Console.WriteLine();
+        Console.WriteLine("Caja — por palabras y pegar");
+        Caja pal = new();
+        foreach (char l in "uno dos tres") pal.Escribir(l);
+        pal.Mover(-1, seleccionando: false, palabra: true);
+        fallos += Exige("Ctrl+izquierda salta al principio de la palabra", pal.Cursor == 8);
+
+        pal.Mover(-1, seleccionando: false, palabra: true);
+        fallos += Exige("y otra vez, a la anterior", pal.Cursor == 4);
+
+        pal.AlBorde(+1, seleccionando: false);
+        pal.Borrar(haciaAtras: true, palabra: true);
+        fallos += Exige("Ctrl+retroceso borra la palabra entera", pal.Texto == "uno dos ");
+
+        Caja g = new();
+        foreach (char l in "abc") g.Escribir(l);
+        g.Mover(-1, seleccionando: true, palabra: false);
+        g.Pegar("  ruta con espacios  ");
+        fallos += Exige("pegar sustituye la seleccion y se recorta",
+                        g.Texto == "abruta con espacios");
+
+        Caja n = new();
+        n.Pegar("dos\r\nlineas");
+        fallos += Exige("pegar varias lineas las junta en una",
+                        n.Texto == "dos lineas" && !n.Texto.Contains('\n'));
+
+        Caja z = new();
+        foreach (char l in "algo") z.Escribir(l);
+        z.Vaciar();
+        fallos += Exige("vaciar deja la caja como nueva",
+                        z.Texto.Length == 0 && z.Cursor == 0 && !z.HaySeleccion);
+
         Console.WriteLine();
         if (fallos == 0) { Console.WriteLine("TODO BIEN"); return 0; }
         Console.WriteLine($"{fallos} comprobacion(es) fallan");

@@ -23,16 +23,8 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     /// <summary>A que altura de la pantalla se asoma, en tanto por uno del alto util.</summary>
     private const float AlturaEnPantalla = 0.22f;
 
-    /// <summary>
-    /// El color de la franja de arriba, en BGR como lo quiere GDI. Solido y no
-    /// transparente: un control EDIT no sabe pintarse sobre el acrilico, y esa es la
-    /// renuncia que se acepto al elegirlo en vez de dibujar la edicion de texto a mano.
-    /// </summary>
-    private const uint ColorFranja = 0x002B2B2B;
-
     private const string ClassName = "LanzadorVentana";
     private const int HotkeyId = 1;
-    private const int EditId = 100;
 
     // --- Everything -----------------------------------------------------------------
     private const nuint TemporizadorEverything = 1;
@@ -68,12 +60,8 @@ internal sealed unsafe class LanzadorWindow : IDisposable
 
     // Mensajes. CsWin32 no genera las constantes WM_*, asi que van a mano.
     private const uint WM_DESTROY = 0x0002;
-    private const uint WM_SETFONT = 0x0030;
-    private const uint WM_GETTEXT = 0x000D;
-    private const uint WM_GETTEXTLENGTH = 0x000E;
-    private const uint WM_SETTEXT = 0x000C;
-    private const uint WM_COMMAND = 0x0111;
     private const uint WM_KEYDOWN = 0x0100;
+    private const uint WM_CHAR = 0x0102;
     private const uint WM_KEYUP = 0x0101;
     private const uint WM_MOUSEMOVE = 0x0200;
     private const uint WM_LBUTTONUP = 0x0202;
@@ -86,17 +74,30 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     /// <summary>WM_APP + 2. Lo manda el hilo que construye el indice cuando termina.</summary>
     private const uint WM_APP_INDICE = 0x8002;
     private const uint WM_HOTKEY = 0x0312;
-    private const uint EM_SETSEL = 0x00B1;
-    private const uint EM_SETMARGINS = 0x00D3;
-    private const uint WM_CTLCOLOREDIT = 0x0133;
-    private const uint WM_CTLCOLORSTATIC = 0x0138;
-    private const int EN_CHANGE = 0x0300;
+    private const uint WM_LBUTTONDOWN = 0x0201;
 
     private const uint VK_ESCAPE = 0x1B;
     private const uint VK_RETURN = 0x0D;
     private const uint VK_UP = 0x26;
     private const uint VK_DOWN = 0x28;
     private const uint VK_CONTROL = 0x11;
+    private const uint VK_SHIFT = 0x10;
+    private const uint VK_LEFT = 0x25;
+    private const uint VK_RIGHT = 0x27;
+    private const uint VK_HOME = 0x24;
+    private const uint VK_END = 0x23;
+    private const uint VK_BACK = 0x08;
+    private const uint VK_DELETE = 0x2E;
+    private const uint VK_A = 0x41;
+    private const uint VK_V = 0x56;
+
+    /// <summary>El unico formato de portapapeles que se pide (SEGURIDAD.md 3.12).</summary>
+    private const uint CF_UNICODETEXT = 13;
+
+    private const nuint TemporizadorCaret = 3;
+
+    /// <summary>Lo que tarda el cursor en parpadear. 530 ms es el valor de Windows.</summary>
+    private const uint ParpadeoMs = 530;
 
     /// <summary>Cada cuanto se vuelve a construir el indice al asomarse.</summary>
     private static readonly TimeSpan IndiceCaduca = TimeSpan.FromMinutes(5);
@@ -110,11 +111,22 @@ internal sealed unsafe class LanzadorWindow : IDisposable
 
     private readonly LanzadorConfig _config;
     private readonly HWND _hwnd;
-    private readonly HWND _franja;
-    private readonly HWND _edit;
-    private DeleteObjectSafeHandle _fuente;
+    /// <summary>
+    /// Lo que escribes. Sin nada de Win32 dentro a proposito, para poder comprobarlo
+    /// desde --check sin abrir una ventana.
+    /// </summary>
+    private readonly Caja _caja = new();
+    private bool _mayus;
+    private bool _caretEncendido = true;
+    private bool _arrastrandoTexto;
+
+    /// <summary>
+    /// Donde estaba el puntero la ultima vez que se le hizo caso, en coordenadas de
+    /// PANTALLA. Ver <see cref="RatonSeMovio"/>: es lo que impide que el raton quieto se
+    /// quede con la seleccion.
+    /// </summary>
+    private System.Drawing.Point _ultimoRaton;
     private readonly LanzadorVisuals _visuals;
-    private readonly HBRUSH _fondoCaja;
     private List<Entrada> _indice;
     private readonly Uso _uso;
     // No son readonly y no es un descuido: cambian al asomarse en otra pantalla. Ver
@@ -205,17 +217,6 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         if (_hwnd.IsNull) throw new InvalidOperationException("CreateWindowEx fallo");
 
         Acristalar();
-        _fuente = CrearFuente();
-
-        // El EDIT pinta su propio fondo con los colores del sistema, que en claro es
-        // blanco: sobre el acrilico oscuro quedaria una banda cegadora. WM_CTLCOLOREDIT
-        // es la forma documentada de darle otros, y el pincel tiene que sobrevivir a la
-        // llamada -- por eso es un campo y no una variable local.
-        _fondoCaja = PInvoke.CreateSolidBrush(new COLORREF(ColorFranja));
-        // MAQUETA: sin EDIT ni STATIC. Toda la franja la dibuja Composition, que es lo
-        // unico que puede ser translucido. En la maqueta el texto es falso.
-        _franja = default;
-        _edit = default;
         _visuals = new LanzadorVisuals(_hwnd, _dpi / 96f, _ancho, config.MaxResultados);
 
         if (!Config.LeerAtajo(config.Atajo, out HOT_KEY_MODIFIERS mods, out uint tecla))
@@ -277,7 +278,12 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         Reindexar();
 
         Colocar();
-        _consulta = Environment.GetEnvironmentVariable("LANZADOR_MAQUETA") ?? "conf";
+        _caja.Vaciar();
+        _caretEncendido = true;
+
+        // Se apunta donde esta el puntero ANTES de ensenar nada: asi el WM_MOUSEMOVE que
+        // Windows manda por aparecer la ventana debajo de el no cuenta como movimiento.
+        PInvoke.GetCursorPos(out _ultimoRaton);
         Refrescar();
 
         PInvoke.ShowWindow(_hwnd, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
@@ -285,8 +291,10 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         // SEGURIDAD.md Â§3.4: la unica llamada del programa, y sobre el handle propio.
         // Windows autoriza a ponerse delante al proceso que acaba de recibir WM_HOTKEY;
         // sin esto la ventana sale sin foco y no recibe lo que escribes.
+        // Sin SetFocus a ninguna hija, porque ya no hay: al estar en primer plano las
+        // teclas llegan directas a nuestro WndProc.
         PInvoke.SetForegroundWindow(_hwnd);
-        if (!_edit.IsNull) PInvoke.SetFocus(_edit);
+        PInvoke.SetTimer(_hwnd, TemporizadorCaret, ParpadeoMs, null);
 
         _visible = true;
 
@@ -313,12 +321,17 @@ internal sealed unsafe class LanzadorWindow : IDisposable
 
         // La consulta se vacia al esconder: no hay ninguna lista de consultas anteriores
         // en ningun sitio (SEGURIDAD.md Â§5).
+        _caja.Vaciar();
         _consulta = string.Empty;
         _resultados = [];
         _ficheros = [];
         _elegido = 0;
+        _control = false;
+        _mayus = false;
+        _arrastrandoTexto = false;
         PInvoke.KillTimer(_hwnd, TemporizadorEverything);
         PInvoke.KillTimer(_hwnd, TemporizadorIconos);
+        PInvoke.KillTimer(_hwnd, TemporizadorCaret);
     }
 
     /// <summary>
@@ -382,29 +395,6 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         _dpi = dpi;
         _ancho = Escalar(AnchoLogico);
 
-        // Lo que sigue es del control EDIT, que en la maqueta no existe. El reescalado
-        // de los visuales va DESPUES y no debe saltarse: sin el, la lista se dibuja a
-        // escala 1 dentro de una ventana a 1,25 y sobran 147 px de panel vacio abajo.
-        if (!_edit.IsNull)
-        {
-            DeleteObjectSafeHandle vieja = _fuente;
-            _fuente = CrearFuente();
-            PInvoke.SendMessage(_edit, WM_SETFONT, (nuint)_fuente.DangerousGetHandle(), 1);
-            vieja.Dispose();
-        }
-
-        if (!_edit.IsNull)
-        {
-            PInvoke.SetWindowPos(_franja, default, 0, 0, _ancho, Escalar(AltoFranja),
-                SET_WINDOW_POS_FLAGS.SWP_NOZORDER | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
-
-            PInvoke.SetWindowPos(_edit, default,
-                0, Escalar((AltoFranja - LanzadorVisuals.AltoDelTexto) / 2),
-                _ancho, Escalar(LanzadorVisuals.AltoDelTexto),
-                SET_WINDOW_POS_FLAGS.SWP_NOZORDER | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
-            Sangrar(_edit);
-        }
-
         _visuals.Reescalar(dpi / 96f, _ancho);
     }
 
@@ -417,31 +407,6 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     }
 
     // --- la consulta ------------------------------------------------------------------
-
-    private void Escribir(string texto)
-    {
-        if (_edit.IsNull) { _consulta = texto; return; }
-
-        fixed (char* t = texto) PInvoke.SendMessage(_edit, WM_SETTEXT, 0, (nint)t);
-        PInvoke.SendMessage(_edit, EM_SETSEL, (nuint)texto.Length, texto.Length);
-        _consulta = texto;
-    }
-
-    /// <summary>
-    /// SEGURIDAD.md Â§3.2: el texto se pide con WM_GETTEXT. No se usa GetWindowText â€”
-    /// que auditar.ps1 prohibe por la regla 15â€” ni ninguna API de portapapeles: Ctrl+V
-    /// lo resuelve el propio control por dentro.
-    /// </summary>
-    private string LeerCaja()
-    {
-        if (_edit.IsNull) return _consulta;
-        int largo = (int)PInvoke.SendMessage(_edit, WM_GETTEXTLENGTH, 0, 0).Value;
-        if (largo <= 0) return string.Empty;
-
-        char[] buffer = new char[largo + 1];
-        fixed (char* b = buffer) PInvoke.SendMessage(_edit, WM_GETTEXT, (nuint)(largo + 1), (nint)b);
-        return new string(buffer, 0, largo);
-    }
 
     private void Refrescar()
     {
@@ -479,7 +444,8 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         }
 
         _elegido = 0;
-        _visuals.Consulta = _consulta;
+        _visuals.Caja = _caja;
+        _visuals.CaretEncendido = _caretEncendido;
 
         // Los iconos se piden con rebote; la lista se pinta ya, con los que hubiera.
         PInvoke.KillTimer(_hwnd, TemporizadorIconos);
@@ -490,7 +456,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         if (Traza)
         {
             Console.WriteLine($"[traza] consulta \"{_consulta}\" -> {_resultados.Count} resultados" +
-                              (_resultados.Count > 0 ? $", 1o {_resultados[0].Entrada.Nombre}" : ""));
+                              (_resultados.Count > 0 ? $", elegida la {_elegido}: {_resultados[_elegido].Entrada.Nombre}" : ""));
         }
 
         // Sin mirar si es visible: al asomarse, Colocar() dimensiona ANTES de que haya
@@ -611,6 +577,150 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     /// <summary>La Y del raton dentro de la ventana, sacada del lParam.</summary>
     private static int Alto(LPARAM lParam) => (short)((lParam.Value >> 16) & 0xFFFF);
 
+    /// <summary>La X del raton dentro de la ventana.</summary>
+    private static int Ancho(LPARAM lParam) => (short)(lParam.Value & 0xFFFF);
+
+    /// <summary>Cuanto se tiene que mover el puntero para que cuente, en pixeles.</summary>
+    private const int TemblorDelRaton = 5;
+
+    /// <summary>
+    /// Si el puntero se ha movido de verdad desde la ultima vez que se le hizo caso.
+    /// <para>
+    /// Hace falta porque <b>el teclado manda</b>. Windows manda WM_MOUSEMOVE cuando una
+    /// ventana aparece o cambia de tamano debajo del puntero, aunque nadie lo haya
+    /// tocado: al asomarse con el raton encima de la lista, la fila elegida dejaba de ser
+    /// la primera, y al crecer la ventana con cada letra iba saltando sola. Escribiendo
+    /// tres letras y pulsando Enter, abrias lo que no era.
+    /// </para>
+    /// <para>
+    /// Se compara en coordenadas de <b>pantalla</b> y no de ventana: al redimensionarse,
+    /// las de ventana cambian aunque el puntero siga clavado en el mismo sitio.
+    /// </para>
+    /// </summary>
+    private bool RatonSeMovio()
+    {
+        PInvoke.GetCursorPos(out System.Drawing.Point ahora);
+
+        int dx = Math.Abs(ahora.X - _ultimoRaton.X);
+        int dy = Math.Abs(ahora.Y - _ultimoRaton.Y);
+        if (dx + dy < TemblorDelRaton) return false;
+
+        _ultimoRaton = ahora;
+        return true;
+    }
+
+    /// <summary>
+    /// Una letra escrita. Se apunta el texto de antes para saber si hay que volver a
+    /// buscar: mover el cursor o seleccionar no cambia los resultados y no debe disparar
+    /// una consulta a Everything.
+    /// </summary>
+    private void Teclear(char c)
+    {
+        _caja.Escribir(c);
+        TrasEscribir(cambio: true);
+    }
+
+    /// <summary>Control y Mayusculas, seguidos por sus propios mensajes (regla 3).</summary>
+    private void Modificador(uint tecla, bool pulsada)
+    {
+        if (tecla == VK_CONTROL) _control = pulsada;
+        else if (tecla == VK_SHIFT) _mayus = pulsada;
+    }
+
+    private void Tecla(uint tecla)
+    {
+        string antes = _caja.Texto;
+
+        switch (tecla)
+        {
+            case VK_ESCAPE: Esconder(); return;
+            case VK_RETURN: if (_control) AbrirCarpeta(); else Lanzar(); return;
+            case VK_UP: Mover(-1); return;
+            case VK_DOWN: Mover(+1); return;
+
+            case VK_LEFT: _caja.Mover(-1, _mayus, _control); break;
+            case VK_RIGHT: _caja.Mover(+1, _mayus, _control); break;
+            case VK_HOME: _caja.AlBorde(-1, _mayus); break;
+            case VK_END: _caja.AlBorde(+1, _mayus); break;
+            case VK_BACK: _caja.Borrar(haciaAtras: true, _control); break;
+            case VK_DELETE: _caja.Borrar(haciaAtras: false, _control); break;
+
+            case VK_A when _control: _caja.Todo(); break;
+            case VK_V when _control: Pegar(); break;
+
+            default: return;
+        }
+
+        TrasEscribir(_caja.Texto != antes);
+    }
+
+    /// <summary>
+    /// Lo que hay que hacer despues de tocar la caja. El cursor vuelve a encenderse y el
+    /// parpadeo se reinicia: un cursor que se apaga justo mientras escribes parece que se
+    /// ha colgado algo.
+    /// </summary>
+    private void TrasEscribir(bool cambio)
+    {
+        _caretEncendido = true;
+        PInvoke.SetTimer(_hwnd, TemporizadorCaret, ParpadeoMs, null);
+
+        if (!cambio) { Repintar(); return; }
+
+        _consulta = _caja.Texto;
+        _ficheros = [];              // los de la consulta anterior ya no valen
+        Refrescar();
+        PedirFicheros();
+    }
+
+    /// <summary>Repinta sin volver a buscar: el cursor y la seleccion no cambian nada.</summary>
+    private void Repintar() => _visuals.Pintar(_resultados, _elegido);
+
+    /// <summary>
+    /// SEGURIDAD.md §3.12, y es la unica lectura del portapapeles de todo el programa.
+    /// Solo se llega aqui desde Ctrl+V, solo se pide CF_UNICODETEXT, y lo que entra va a
+    /// la consulta, que no se guarda.
+    /// </summary>
+    private void Pegar()
+    {
+        if (!PInvoke.OpenClipboard(_hwnd)) return;
+
+        try
+        {
+            HANDLE dato = PInvoke.GetClipboardData(CF_UNICODETEXT);
+            if (dato.IsNull) return;
+
+            void* p = PInvoke.GlobalLock((HGLOBAL)(nint)dato.Value);
+            if (p is null) return;
+
+            try { _caja.Pegar(new string((char*)p)); }
+            finally { PInvoke.GlobalUnlock((HGLOBAL)(nint)dato.Value); }
+        }
+        finally
+        {
+            PInvoke.CloseClipboard();
+        }
+    }
+
+    /// <summary>
+    /// Un clic. Dentro de la pildora pone el cursor y empieza a arrastrar; por debajo, es
+    /// cosa de las filas y lo atiende el soltar el boton.
+    /// </summary>
+    private void Pinchar(int x, int y)
+    {
+        if (y > Escalar(AltoFranja)) return;
+
+        _caja.Poner(_visuals.IndiceEn(x), arrastrando: false);
+        _arrastrandoTexto = true;
+        PInvoke.SetCapture(_hwnd);
+        TrasEscribir(cambio: false);
+    }
+
+    private void Arrastrar(int x)
+    {
+        _caja.Poner(_visuals.IndiceEn(x), arrastrando: true);
+        Repintar();
+    }
+
     /// <summary>
     /// Selecciona la fila que hay a esa altura. Devuelve false si el raton no esta sobre
     /// ninguna, que es lo que evita que un clic en la franja de arriba lance algo.
@@ -626,6 +736,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         if (fila != _elegido)
         {
             _elegido = fila;
+            if (Traza) Console.WriteLine($"[traza] el raton elige la {fila}");
             _visuals.Pintar(_resultados, _elegido);
         }
 
@@ -636,6 +747,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     {
         if (_resultados.Count == 0) return;
         _elegido = Math.Clamp(_elegido + cuanto, 0, _resultados.Count - 1);
+        if (Traza) Console.WriteLine($"[traza] las flechas eligen la {_elegido}");
         _visuals.Pintar(_resultados, _elegido);
     }
 
@@ -721,44 +833,21 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     // --- el bucle y el WndProc --------------------------------------------------------
 
     /// <summary>
-    /// Las teclas de navegacion se cazan <b>aqui</b> y no subclasando el EDIT. El bucle
-    /// es nuestro, asi que mirar el mensaje antes de despacharlo sale gratis y ahorra
-    /// SetWindowSubclass entero: menos codigo y una entrada menos en NativeMethods.txt.
+    /// El bucle, sin interceptar nada: ya no hay ventana hija a la que le lleguen las
+    /// teclas antes que a nosotros, asi que todo pasa por el WndProc.
+    /// <para>
+    /// <b>TranslateMessage hace falta</b> y no es ceremonia: es lo que convierte las
+    /// pulsaciones en WM_CHAR, y con ello lo que hace que las teclas muertas compongan
+    /// la tilde de "configuracion" sin que nosotros sepamos nada del teclado.
+    /// </para>
     /// </summary>
     public static void Bucle()
     {
         MSG msg;
         while (PInvoke.GetMessage(out msg, default, 0, 0))
         {
-            // Control se sigue por sus propios mensajes, que llegan a la caja como
-            // cualquier otra tecla. Ni un P/Invoke nuevo y ni rozar la regla 3.
-            if (_instancia is not null && msg.hwnd == _instancia._edit
-                && (uint)msg.wParam.Value == VK_CONTROL)
-            {
-                _instancia._control = msg.message == WM_KEYDOWN;
-            }
-
-            if (_instancia is not null && _instancia._visible && msg.message == WM_KEYDOWN
-                && msg.hwnd == _instancia._edit && _instancia.Navegar((uint)msg.wParam.Value))
-            {
-                continue;
-            }
-
             PInvoke.TranslateMessage(&msg);
             PInvoke.DispatchMessage(&msg);
-        }
-    }
-
-    /// <summary>true si la tecla era nuestra y el EDIT no debe verla.</summary>
-    private bool Navegar(uint tecla)
-    {
-        switch (tecla)
-        {
-            case VK_ESCAPE: Esconder(); return true;
-            case VK_RETURN: if (_control) AbrirCarpeta(); else Lanzar(); return true;
-            case VK_UP: Mover(-1); return true;
-            case VK_DOWN: Mover(+1); return true;
-            default: return false;
         }
     }
 
@@ -789,15 +878,6 @@ internal sealed unsafe class LanzadorWindow : IDisposable
                 else v.Asomar();
                 return new LRESULT(0);
 
-            case WM_COMMAND when v is not null:
-                if (Traza) Console.WriteLine($"[traza] WM_COMMAND aviso {(wParam.Value >> 16)}");
-                if ((wParam.Value >> 16) != EN_CHANGE) break;
-                v._consulta = v.LeerCaja();
-                v._ficheros = [];     // los de la consulta anterior ya no valen
-                v.Refrescar();
-                v.PedirFicheros();
-                return new LRESULT(0);
-
             // Al perder el foco se esconde, que es lo que espera cualquiera de un
             // lanzador: haces clic fuera y desaparece.
             case WM_ACTIVATE when v is not null && (wParam.Value & 0xFFFF) == 0:
@@ -805,6 +885,25 @@ internal sealed unsafe class LanzadorWindow : IDisposable
                 return new LRESULT(0);
 
             // Llego un icono. Solo se repinta: la lista y la seleccion no cambian.
+            // Una letra. TranslateMessage ya compuso las teclas muertas, asi que aqui
+            // llega la a con tilde hecha y no hay que saber nada del teclado.
+            case WM_CHAR when v is not null && v._visible:
+                if (wParam.Value >= 32) v.Teclear((char)wParam.Value);
+                return new LRESULT(0);
+
+            case WM_KEYDOWN when v is not null:
+                v.Modificador((uint)wParam.Value, true);
+                if (v._visible) v.Tecla((uint)wParam.Value);
+                return new LRESULT(0);
+
+            case WM_KEYUP when v is not null:
+                v.Modificador((uint)wParam.Value, false);
+                return new LRESULT(0);
+
+            case WM_LBUTTONDOWN when v is not null && v._visible:
+                v.Pinchar(Ancho(lParam), Alto(lParam));
+                return new LRESULT(0);
+
             case WM_APP_INDICE when v is not null:
                 if (v._indiceReciente is List<Entrada> nuevo)
                 {
@@ -820,11 +919,13 @@ internal sealed unsafe class LanzadorWindow : IDisposable
             // El raton: pasar por encima selecciona, soltar el boton lanza. Las filas
             // estan a alturas fijas, asi que la fila es una division.
             case WM_MOUSEMOVE when v is not null && v._visible:
-                v.Sobre(Alto(lParam));
+                if (v._arrastrandoTexto) v.Arrastrar(Ancho(lParam));
+                else if (v.RatonSeMovio()) v.Sobre(Alto(lParam));
                 return new LRESULT(0);
 
             case WM_LBUTTONUP when v is not null && v._visible:
-                if (v.Sobre(Alto(lParam))) v.Lanzar();
+                if (v._arrastrandoTexto) { v._arrastrandoTexto = false; PInvoke.ReleaseCapture(); }
+                else if (v.Sobre(Alto(lParam))) v.Lanzar();
                 return new LRESULT(0);
 
             case WM_APP_ICONO when v is not null:
@@ -841,6 +942,11 @@ internal sealed unsafe class LanzadorWindow : IDisposable
                 v.PedirIconos();
                 return new LRESULT(0);
 
+            case WM_TIMER when v is not null && (nuint)wParam.Value == TemporizadorCaret:
+                v._caretEncendido = !v._caretEncendido;
+                if (v._visible) v.Repintar();
+                return new LRESULT(0);
+
             // La respuesta de Everything. Es el unico WM_COPYDATA que esperamos, y solo
             // se mira si lleva nuestra marca y el numero de serie de la consulta de ahora.
             case PInvoke.WM_COPYDATA when v is not null:
@@ -850,11 +956,6 @@ internal sealed unsafe class LanzadorWindow : IDisposable
             // contesta con el pincel de la franja, que es el mismo color solido.
             // Los dos hermanos de la franja piden su color por mensajes distintos, y los
             // dos tienen que dar el mismo o se ve la costura.
-            case WM_CTLCOLOREDIT or WM_CTLCOLORSTATIC when v is not null:
-                PInvoke.SetTextColor(new HDC((nint)wParam.Value), new COLORREF(0x00F0F0F0));
-                PInvoke.SetBkColor(new HDC((nint)wParam.Value), new COLORREF(ColorFranja));
-                return new LRESULT((nint)v._fondoCaja.Value);
-
             case WM_DESTROY:
                 PInvoke.PostQuitMessage(0);
                 return new LRESULT(0);
@@ -906,78 +1007,6 @@ internal sealed unsafe class LanzadorWindow : IDisposable
             &redondas, sizeof(uint));
     }
 
-    /// <summary>La fuente del sistema, al tamano de la caja. No se inventa ninguna.</summary>
-    private DeleteObjectSafeHandle CrearFuente()
-    {
-        NONCLIENTMETRICSW metricas = new() { cbSize = (uint)sizeof(NONCLIENTMETRICSW) };
-        PInvoke.SystemParametersInfo(SYSTEM_PARAMETERS_INFO_ACTION.SPI_GETNONCLIENTMETRICS,
-            metricas.cbSize, &metricas, 0);
-
-        LOGFONTW lf = metricas.lfMessageFont;
-        lf.lfHeight = -Escalar(22);
-        return PInvoke.CreateFontIndirect(lf);
-    }
-
-    /// <summary>
-    /// La caja ocupa todo el ancho y el texto se mete hacia dentro con EM_SETMARGINS,
-    /// para que quede alineado con la columna de nombres de los resultados.
-    /// <para>
-    /// De alto <b>solo lo que mide el texto</b>, y centrada a mano: un EDIT de una linea
-    /// no centra su contenido en vertical si el control es mucho mas alto, se pega
-    /// arriba. Medido en la captura de H4. El color de la franja de borde a borde lo pone
-    /// un visual de Composition detras, no este control.
-    /// </para>
-    /// </summary>
-    private HWND CrearCaja()
-    {
-        HWND edit;
-        fixed (char* clase = "EDIT")
-        fixed (char* vacio = "")
-        {
-            edit = PInvoke.CreateWindowEx(
-                0, new PCWSTR(clase), new PCWSTR(vacio),
-                WINDOW_STYLE.WS_CHILD | WINDOW_STYLE.WS_VISIBLE
-                    | (WINDOW_STYLE)0x0080,    // ES_AUTOHSCROLL
-                0, Escalar((AltoFranja - LanzadorVisuals.AltoDelTexto) / 2),
-                _ancho, Escalar(LanzadorVisuals.AltoDelTexto),
-                _hwnd, (HMENU)(nint)EditId, Modulo, null);
-        }
-
-        if (edit.IsNull) throw new InvalidOperationException("no se pudo crear la caja de texto");
-        PInvoke.SendMessage(edit, WM_SETFONT, (nuint)_fuente.DangerousGetHandle(), 1);
-        Sangrar(edit);
-        return edit;
-    }
-
-    /// <summary>
-    /// El fondo solido de la franja, como ventana hermana y no como visual de
-    /// Composition: lo que dibuja Composition tapa a las ventanas hijas, asi que un
-    /// SpriteVisual ahi encima hacia desaparecer lo que escribes. Medido en H4.
-    /// </summary>
-    private HWND CrearFranja()
-    {
-        HWND fondo;
-        fixed (char* clase = "STATIC")
-        fixed (char* vacio = "")
-        {
-            fondo = PInvoke.CreateWindowEx(
-                0, new PCWSTR(clase), new PCWSTR(vacio),
-                WINDOW_STYLE.WS_CHILD | WINDOW_STYLE.WS_VISIBLE,
-                0, 0, _ancho, Escalar(AltoFranja),
-                _hwnd, default, Modulo, null);
-        }
-
-        if (fondo.IsNull) throw new InvalidOperationException("no se pudo crear la franja");
-        return fondo;
-    }
-
-    private void Sangrar(HWND edit)
-    {
-        int izq = Escalar((int)LanzadorVisuals.Sangria);
-        int der = Escalar(16);
-        PInvoke.SendMessage(edit, EM_SETMARGINS, 3, (izq & 0xFFFF) | (der << 16));
-    }
-
     private static void RegistrarClase()
     {
         if (_classAtom != 0) return;
@@ -1012,8 +1041,6 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     {
         PInvoke.UnregisterHotKey(_hwnd, HotkeyId);
         _visuals.Dispose();
-        _fuente.Dispose();
-        if (!_fondoCaja.IsNull) PInvoke.DeleteObject(_fondoCaja);
         if (!_hwnd.IsNull) PInvoke.DestroyWindow(_hwnd);
     }
 }

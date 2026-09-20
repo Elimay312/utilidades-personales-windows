@@ -188,3 +188,19 @@ D2D1_BITMAP_INTERPOLATION_MODE
 // --- Avisar a la ventana desde el hilo que carga iconos (H7) ---
 // Sobre NUESTRA propia ventana y con un mensaje propio. No se manda nada a nadie.
 PostMessageW
+
+// --- Pegar en la caja (SEGURIDAD.md §3.12) ---
+// La unica lectura del portapapeles del programa, y solo se llega desde Ctrl+V. Se pide
+// CF_UNICODETEXT y nada mas: ni imagenes, ni listas de ficheros, ni HTML.
+// SetClipboardData NO esta aqui y no va a estar: el lanzador no escribe en el
+// portapapeles, y por eso el resultado de la calculadora no se puede copiar.
+OpenClipboard
+GetClipboardData
+CloseClipboard
+GlobalLock
+GlobalUnlock
+
+// --- Arrastrar para seleccionar texto, dentro de la ventana propia ---
+// Sin capturar, al salirse el cursor de la ventana se pierde el arrastre a mitad.
+SetCapture
+ReleaseCapture

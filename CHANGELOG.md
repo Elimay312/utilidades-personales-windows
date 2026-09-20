@@ -310,3 +310,60 @@ Se le metió el fallo a propósito —una llamada colada en `Panel.cs`— y la a
 
 **Ficheros:** `Motion.cs`, `Panel.cs`, `HostWindow.cs`, `Selection.cs`, `SEGURIDAD.md`,
 `auditar.ps1`, `NativeMethods.txt`.
+
+---
+
+## M5 — Texto y código
+
+Un `.txt`, un `.md` o un `.cs` ya no caen a la ficha: se leen y se dibujan con DirectWrite,
+en una tarjeta con forma de página (720x560 lógicos, más alta que ancha, porque lo que se lee
+son líneas y no una imagen). Sin resaltado de sintaxis: esto es un vistazo, no un editor.
+
+### Los casos feos, que son los de leer el archivo
+
+**Detectar que no es texto.** Un byte cero en los primeros 8 KB. Es la señal clásica y aquí
+es la correcta: UTF-8 y las codificaciones de un byte no lo producen nunca, y cualquier
+formato binario lo suelta enseguida. **Pero UTF-16 va lleno de ceros**, así que la
+comprobación va *después* de descartar el BOM — si no, un `.txt` guardado desde el Bloc de
+notas en UTF-16 se daría por binario y caería a la ficha. Ese es el caso que se escapa, y es
+el que tiene su propia línea en `--check`. Se le metió el fallo a propósito (quitar el
+descarte del BOM) y la prueba lo cazó: *"un .txt en UTF-16 SI es texto"*.
+
+**El corte a 256 KB cae donde cae**, casi nunca en un final de línea. Se tira la última
+línea a medias y se pone un `…`: menos feo que enseñarla partida por la mitad.
+
+**`FileShare.ReadWrite`** a propósito, para poder mirar un log que alguien está escribiendo
+ahora mismo. Y `FileAccess.Read`, que es lo que dice el §3.3 y lo que vigila `auditar.ps1`.
+
+**Consolas y no Cascadia Mono** para el código. Cascadia es más bonita pero viene con Windows
+Terminal, no con Windows: si falta, DirectWrite sustituye por una proporcional **sin avisar**
+y el código se ve desalineado. Consolas está desde Vista en todas las instalaciones. Prosa
+(`.md`, `.txt`) va con la proporcional; lo que se lee en columnas (`.json`, `.cs`, `.csv`…)
+va monoespaciado.
+
+### Desplazar
+
+La superficie se dibuja entera y lo que se mueve es su `Offset`, así que el desplazamiento
+también corre en el hilo de DWM y no repinta nada. Con una cúbica de 140 ms por muesca, no de
+golpe: un salto seco hace perder el sitio donde ibas leyendo.
+
+```
+ponytail: el vistazo se corta a 8000 px de alto. Una superficie más alta se acerca al
+límite de textura de la GPU (16384 en el hardware corriente) y reventaría sin avisar.
+Si hace falta ver más, toca paginar.
+```
+
+**Una advertencia que no está en nuestra mano:** las ruedas llegan a la ventana bajo el cursor
+sin necesidad de foco solo porque Windows trae activado *"desplazar ventanas inactivas al
+pasar el puntero"*. Está así por defecto desde Windows 10, pero si alguien lo apaga el panel
+no recibirá `WM_MOUSEWHEEL`, y no hay forma de arreglarlo sin robar el foco — que es justo lo
+que no se puede hacer.
+
+### Medido
+
+`.cs` → `720x560 (texto)`. `.md` → `720x560 (texto)`. `.zip` → `460x300 (ficha)`, o sea que
+el camino nuevo no se comió a los demás. Diez muescas de rueda abajo y tres arriba y el panel
+sigue siendo la misma ventana. `auditar.ps1` `TODO LIMPIO`, y `--check` con cinco bloques.
+
+**Ficheros:** `Content/TextFile.cs`, `Content/Preview.cs`, `Text.cs`, `Visuals.cs`,
+`Panel.cs`, `Motion.cs`, `SelfCheck.cs`.

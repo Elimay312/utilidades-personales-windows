@@ -212,6 +212,33 @@ internal static unsafe class Visuals
     }
 
     /// <summary>
+    /// El contenido de un archivo de texto, dibujado entero en una superficie alta que
+    /// luego se desplaza con la rueda.
+    ///
+    /// <para>
+    /// Se devuelve tambien el alto real, porque es lo que decide cuanto se puede desplazar.
+    /// </para>
+    /// </summary>
+    public static (CompositionSurfaceBrush Brush, float Height) CreateTextBrush(
+        string text, float width, float scale, bool mono)
+    {
+        float fontSize = mono ? 12.5f : 14f;
+
+        Vector2 measured = Text.Measure(text, fontSize, scale, bold: false, width, mono);
+
+        // ponytail: el vistazo se corta a 8000 px de alto. Una superficie mas alta se
+        // acerca al limite de textura de la GPU (16384 en el hardware corriente) y
+        // reventaria sin avisar. Si alguna vez hace falta ver mas, toca paginar: dibujar
+        // solo la ventana visible y redibujar al desplazar.
+        float height = MathF.Min(MathF.Max(measured.Y, 1f), 8000f);
+
+        CompositionSurfaceBrush brush = Surface((int)MathF.Ceiling(width), (int)MathF.Ceiling(height),
+            (context, offset) => Text.Draw(context, text, fontSize, scale, bold: false, width, offset, 0.92f, mono));
+
+        return (brush, height);
+    }
+
+    /// <summary>
     /// Acrilico, con caida a color solido si el sistema no lo soporta. El panel sigue
     /// siendo usable en ese caso: solo se ve mas plano.
     /// </summary>

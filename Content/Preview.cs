@@ -7,7 +7,10 @@ namespace QuickLook;
 /// su tipo. Decide el aspecto entero del panel: una miniatura manda sobre la caja y llena
 /// el panel; un icono se queda pequenio y centrado en una ficha.
 /// </param>
-internal sealed record Preview(Pixels? Image, bool IsThumbnail, string Title, string Detail)
+/// <param name="Text">
+/// El contenido, si es un archivo de texto y se pudo leer. Null en todo lo demas.
+/// </param>
+internal sealed record Preview(Pixels? Image, bool IsThumbnail, string Title, string Detail, string? Text = null)
 {
     /// <summary>A que tamanio se pide la miniatura. Ver la nota de ponytail en Kind.</summary>
     private const int ThumbnailSize = 1600;
@@ -42,6 +45,20 @@ internal sealed record Preview(Pixels? Image, bool IsThumbnail, string Title, st
         ".cs", ".js", ".ts", ".py", ".html", ".css", ".sql", ".sh", ".ps1", ".c", ".h", ".cpp", ".rs", ".go",
     };
 
+    /// <summary>Lo que se lee en columnas y quiere fuente monoespaciada.</summary>
+    private static readonly HashSet<string> Code = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".json", ".xml", ".csv", ".log", ".ini", ".yml", ".yaml", ".toml",
+        ".cs", ".js", ".ts", ".py", ".html", ".css", ".sql", ".sh", ".ps1", ".c", ".h", ".cpp", ".rs", ".go",
+    };
+
+    /// <summary>
+    /// Si esto se dibuja monoespaciado. Un .md o un .txt son prosa y se leen mejor con la
+    /// proporcional; un .json alineado con espacios se vuelve ilegible con ella.
+    /// Logica pura: lo comprueba <c>--check</c>.
+    /// </summary>
+    public static bool IsCode(string path) => Code.Contains(System.IO.Path.GetExtension(path));
+
     /// <summary>
     /// Que trato le toca a esa extension. Es logica pura y determinista: es lo que
     /// comprueba <c>--check</c>.
@@ -63,7 +80,14 @@ internal sealed record Preview(Pixels? Image, bool IsThumbnail, string Title, st
         string title = System.IO.Path.GetFileName(path);
         if (string.IsNullOrEmpty(title)) title = path;
 
-        bool thumbnail = Kind(path) == PreviewKind.Thumbnail;
+        PreviewKind kind = Kind(path);
+
+        // El texto no pasa por el shell: se lee y se dibuja. Si resulta no ser texto
+        // —bytes con extension .txt— cae a la ficha como cualquier otra cosa.
+        if (kind == PreviewKind.Text && TextFile.Read(path) is string content)
+            return new Preview(null, false, title, DetailOf(path), content);
+
+        bool thumbnail = kind == PreviewKind.Thumbnail;
 
         // ponytail: la miniatura del shell topa cerca de 1600px. Si una foto de 24MP se
         // ve blanda a pantalla completa, el salto es decodificar con WIC

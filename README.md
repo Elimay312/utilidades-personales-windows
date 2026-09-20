@@ -21,11 +21,13 @@ a una ficha con su icono, nombre, tamaño y fecha. Nace en el cursor, se cierra 
 espacio, con un clic, con la ✕, o solo en cuanto te vas a otra app — y si marcas otro
 archivo sin cerrarlo, la tarjeta **morfa** al nuevo en vez de parpadear.
 
+**M5 — texto y código.** Los `.txt`, `.md`, `.json`, `.cs` y compañía se leen y se dibujan
+con DirectWrite, en una tarjeta con forma de página y con la rueda para desplazar.
+
 Lo que viene, en orden:
 
 | | |
 |---|---|
-| M5 | Texto y código |
 | M6 | PDF paginado |
 | M7 | Vídeo y audio |
 | M8 | Pulido |
@@ -102,6 +104,7 @@ barra de direcciones. Sin eso, el programa hace el Explorador inusable.
 | `Visuals.cs` | El compositor, el device de dibujo y los pinceles. |
 | `Text.cs` | El texto del panel, con DirectWrite. |
 | `Content/Preview.cs` | Qué trato le toca a cada extensión. |
+| `Content/TextFile.cs` | Leer un archivo de texto sin tragarse un binario. |
 | `Panel.cs` | El panel. Ventana fija, tarjeta que morfa dentro. |
 | `Motion.cs` | Las tres animaciones: abrir, cerrar y morfar. |
 | `Foreground.cs` | Quién está delante. Lo preguntan el hook, el panel y la selección. |

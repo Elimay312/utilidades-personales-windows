@@ -45,6 +45,7 @@ internal sealed unsafe class Panel : IDisposable
     private const uint WM_MOUSEACTIVATE = 0x0021;
     private const uint WM_LBUTTONDOWN = 0x0201;
     private const uint WM_RBUTTONDOWN = 0x0204;
+    private const uint WM_MOUSEWHEEL = 0x020A;
     private const int MA_NOACTIVATE = 3;
 
     /// <summary>IDC_ARROW. CsWin32 no proyecta los cursores del sistema como constante.</summary>
@@ -66,6 +67,13 @@ internal sealed unsafe class Panel : IDisposable
     /// <summary>La ficha no depende del contenido, asi que tiene tamano fijo.</summary>
     private const float CardWidth = 460f;
     private const float CardHeight = 300f;
+
+    /// <summary>
+    /// El texto tampoco depende del contenido, pero quiere forma de pagina: mas alto que
+    /// ancho, porque lo que se lee son lineas y no una imagen.
+    /// </summary>
+    private const float PageWidth = 720f;
+    private const float PageHeight = 560f;
 
     /// <summary>Lado del boton de cerrar, en unidades logicas.</summary>
     private const float CloseSize = 26f;
@@ -97,6 +105,15 @@ internal sealed unsafe class Panel : IDisposable
 
     /// <summary>Lo de dentro. Al cambiar de archivo se cruza con el nuevo y se tira.</summary>
     private ContainerVisual? _content;
+
+    /// <summary>El bloque de texto que se desplaza con la rueda, si el contenido es texto.</summary>
+    private Visual? _scrollable;
+
+    /// <summary>Cuanto se puede bajar, en pixeles. Cero si el texto cabe entero.</summary>
+    private float _scrollMax;
+
+    /// <summary>Por donde va, en pixeles y en positivo.</summary>
+    private float _scroll;
 
     private HWND _hwnd;
     private bool _disposed;
@@ -278,6 +295,12 @@ internal sealed unsafe class Panel : IDisposable
         float pad = Pad * scale;
         float caption = CaptionHeight * scale;
 
+        if (preview.Text is not null)
+        {
+            return (Math.Clamp((int)(PageWidth * scale), 1, maxW),
+                    Math.Clamp((int)(PageHeight * scale), 1, maxH));
+        }
+
         if (preview.IsThumbnail && preview.Image is Pixels image)
         {
             float boxW = MathF.Max(1f, maxW - pad * 2f);
@@ -308,7 +331,7 @@ internal sealed unsafe class Panel : IDisposable
     private Vector2 CardSize(Preview preview)
     {
         (int w, int h) = Size(preview, _scale, _availableW, _availableH);
-        if (Trace) Console.WriteLine($"[tarjeta] {w}x{h}  ({(preview.IsThumbnail ? "miniatura" : "ficha")})");
+        if (Trace) Console.WriteLine($"[tarjeta] {w}x{h}  ({(preview.Text is not null ? "texto" : preview.IsThumbnail ? "miniatura" : "ficha")})");
         return new Vector2(w, h);
     }
 
@@ -368,7 +391,11 @@ internal sealed unsafe class Panel : IDisposable
         float pad = Pad * _scale;
         float caption = CaptionHeight * _scale;
 
-        if (preview.Image is Pixels image)
+        if (preview.Text is not null)
+        {
+            BuildText(content, preview.Text, size, pad, caption, Preview.IsCode(preview.Title));
+        }
+        else if (preview.Image is Pixels image)
         {
             SpriteVisual picture = _compositor.CreateSpriteVisual();
             picture.Brush = Visuals.CreateBitmapBrush(image);
@@ -407,6 +434,69 @@ internal sealed unsafe class Panel : IDisposable
 
         content.Children.InsertAtTop(BuildClose());
         return content;
+    }
+
+    /// <summary>
+    /// El texto, dentro de una ventanilla recortada que se desplaza con la rueda.
+    ///
+    /// <para>
+    /// La superficie se dibuja entera y lo que se mueve es su <c>Offset</c>, asi que el
+    /// desplazamiento tambien corre en el hilo de DWM y no repinta nada. El recorte va en
+    /// un contenedor aparte: sin el, el texto se saldria por encima del pie.
+    /// </para>
+    /// </summary>
+    private void BuildText(ContainerVisual content, string text, Vector2 size, float pad, float caption, bool code)
+    {
+        Vector2 viewport = new(size.X - pad * 2f, size.Y - pad * 2f - caption);
+
+        ContainerVisual window = _compositor.CreateContainerVisual();
+        window.Size = viewport;
+        window.Offset = new Vector3(pad, pad, 0f);
+
+        CompositionRoundedRectangleGeometry clip = _compositor.CreateRoundedRectangleGeometry();
+        clip.Size = viewport;
+        clip.CornerRadius = new Vector2(8f * _scale);
+        window.Clip = _compositor.CreateGeometricClip(clip);
+
+        // Un respiro a los lados: el texto pegado al borde del recorte se lee mal.
+        float inset = 14f * _scale;
+        float textWidth = MathF.Max(1f, viewport.X - inset * 2f);
+
+        (CompositionSurfaceBrush brush, float height) = Visuals.CreateTextBrush(text, textWidth, _scale, code);
+
+        SpriteVisual body = _compositor.CreateSpriteVisual();
+        body.Size = new Vector2(textWidth, height);
+        body.Offset = new Vector3(inset, inset, 0f);
+        body.Brush = brush;
+        window.Children.InsertAtTop(body);
+
+        content.Children.InsertAtTop(window);
+
+        _scrollable = body;
+        _scroll = 0f;
+        _scrollMax = MathF.Max(0f, height - (viewport.Y - inset * 2f));
+    }
+
+    /// <summary>
+    /// La rueda desplaza el texto.
+    ///
+    /// <para>
+    /// Ojo con una cosa que no esta en nuestra mano: las ruedas llegan a la ventana bajo el
+    /// cursor sin necesidad de foco solo porque Windows trae activado "desplazar ventanas
+    /// inactivas al pasar el puntero". Esta asi por defecto desde Windows 10, pero si
+    /// alguien lo apaga, el panel no recibira WM_MOUSEWHEEL y no hay forma de arreglarlo
+    /// desde aqui sin robar el foco, que es justo lo que no se puede hacer.
+    /// </para>
+    /// </summary>
+    private void Scroll(short delta)
+    {
+        if (_scrollable is null || _scrollMax <= 0f) return;
+
+        // Tres lineas por muesca, que es lo que hace todo lo demas en Windows.
+        float step = 54f * _scale;
+        _scroll = Math.Clamp(_scroll - delta / 120f * step, 0f, _scrollMax);
+
+        Motion.ScrollTo(_compositor, _scrollable, new Vector3(_scrollable.Offset.X, 14f * _scale - _scroll, 0f));
     }
 
     /// <summary>
@@ -470,6 +560,11 @@ internal sealed unsafe class Panel : IDisposable
             case WM_LBUTTONDOWN:
             case WM_RBUTTONDOWN:
                 PInvoke.PostMessage(Host, HostWindow.WM_APP_QUICKLOOK, default, default);
+                return new LRESULT(0);
+
+            case WM_MOUSEWHEEL:
+                if (Instances.TryGetValue((nint)hwnd.Value, out Panel? self))
+                    self.Scroll((short)(wParam.Value >> 16));
                 return new LRESULT(0);
         }
 

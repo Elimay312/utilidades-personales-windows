@@ -154,6 +154,19 @@ internal static class Motion
     }
 
     /// <summary>
+    /// Lleva el texto a su nueva posicion. Con una cubica corta y no de golpe: un salto
+    /// seco por cada muesca de la rueda hace perder el sitio donde ibas leyendo.
+    /// </summary>
+    public static void ScrollTo(Compositor compositor, Visual visual, Vector3 offset)
+    {
+        Vector3KeyFrameAnimation slide = compositor.CreateVector3KeyFrameAnimation();
+        slide.Duration = TimeSpan.FromMilliseconds(140);
+        slide.InsertKeyFrame(1f, offset, compositor.CreateCubicBezierEasingFunction(
+            new Vector2(0.2f, 0.9f), new Vector2(0.2f, 1f)));
+        visual.StartAnimation("Offset", slide);
+    }
+
+    /// <summary>
     /// El viejo sale creciendo un poco y el nuevo entra encogido: los dos se mueven en el
     /// mismo sentido, asi que se lee como que uno pasa por delante del otro y no como dos
     /// imagenes fundidas.

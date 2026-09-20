@@ -26,12 +26,12 @@ internal static unsafe class Text
 {
     private static IDWriteFactory? _factory;
 
-    private static readonly Dictionary<(float Size, float Scale, bool Bold), IDWriteTextFormat> Formats = [];
+    private static readonly Dictionary<(float Size, float Scale, bool Bold, bool Mono), IDWriteTextFormat> Formats = [];
 
     /// <summary>Cuanto ocupa ese texto, para poder reservarle el hueco antes de dibujarlo.</summary>
-    public static Vector2 Measure(string text, float size, float scale, bool bold, float maxWidth)
+    public static Vector2 Measure(string text, float size, float scale, bool bold, float maxWidth, bool mono = false)
     {
-        IDWriteTextLayout layout = LayoutOf(text, size, scale, bold, maxWidth);
+        IDWriteTextLayout layout = LayoutOf(text, size, scale, bold, maxWidth, mono);
         DWRITE_TEXT_METRICS metrics;
         layout.GetMetrics(&metrics);
 
@@ -41,21 +41,21 @@ internal static unsafe class Text
     /// <summary>Dibuja el texto en el contexto que se le de, con el color y la opacidad dados.</summary>
     public static void Draw(
         ID2D1DeviceContext context, string text, float size, float scale, bool bold,
-        float maxWidth, System.Drawing.Point at, float alpha)
+        float maxWidth, System.Drawing.Point at, float alpha, bool mono = false)
     {
         D2D1_COLOR_F ink = new() { r = 1f, g = 1f, b = 1f, a = alpha };
         context.CreateSolidColorBrush(&ink, null, out ID2D1SolidColorBrush brush);
 
         context.DrawTextLayout(
             new D2D_POINT_2F { x = at.X, y = at.Y },
-            LayoutOf(text, size, scale, bold, maxWidth),
+            LayoutOf(text, size, scale, bold, maxWidth, mono),
             brush,
             D2D1_DRAW_TEXT_OPTIONS.D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
-    private static IDWriteTextLayout LayoutOf(string text, float size, float scale, bool bold, float maxWidth)
+    private static IDWriteTextLayout LayoutOf(string text, float size, float scale, bool bold, float maxWidth, bool mono)
     {
-        IDWriteTextFormat format = FormatFor(size, scale, bold);
+        IDWriteTextFormat format = FormatFor(size, scale, bold, mono);
 
         fixed (char* value = text)
         {
@@ -65,9 +65,9 @@ internal static unsafe class Text
         }
     }
 
-    private static IDWriteTextFormat FormatFor(float size, float scale, bool bold)
+    private static IDWriteTextFormat FormatFor(float size, float scale, bool bold, bool mono = false)
     {
-        if (Formats.TryGetValue((size, scale, bold), out IDWriteTextFormat? cached)) return cached;
+        if (Formats.TryGetValue((size, scale, bold, mono), out IDWriteTextFormat? cached)) return cached;
 
         if (_factory is null)
         {
@@ -80,7 +80,12 @@ internal static unsafe class Text
 
         // Segoe UI Variable es la de Windows 11; si no esta, DirectWrite cae a la del
         // sistema por su cuenta y no hay que hacer nada.
-        fixed (char* family = "Segoe UI Variable Text")
+        //
+        // Para codigo, Consolas y no Cascadia Mono: Cascadia es mas bonita pero viene con
+        // Windows Terminal, no con Windows. Si falta, DirectWrite sustituye por una
+        // proporcional sin avisar y el codigo se ve desalineado. Consolas esta desde Vista
+        // en todas las instalaciones.
+        fixed (char* family = mono ? "Consolas" : "Segoe UI Variable Text")
         fixed (char* locale = "")
         {
             _factory.CreateTextFormat(
@@ -93,7 +98,7 @@ internal static unsafe class Text
                 new PCWSTR(locale),
                 out IDWriteTextFormat format);
 
-            Formats[(size, scale, bold)] = format;
+            Formats[(size, scale, bold, mono)] = format;
             return format;
         }
     }

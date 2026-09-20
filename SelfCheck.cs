@@ -18,6 +18,7 @@ internal static class SelfCheck
         Encaje();
         Clasificador();
         Tamanos();
+        Texto();
 
         Console.WriteLine();
         Console.WriteLine("[check] todo bien");
@@ -118,6 +119,37 @@ internal static class SelfCheck
         Assert(!Preview.Size(999).Contains(','), $"los bytes no llevan decimales: {Preview.Size(999)}");
 
         Console.WriteLine("[check] tamano legible: OK");
+    }
+
+    /// <summary>
+    /// Lo que decide si un archivo se dibuja como texto o cae a la ficha. Si esto se
+    /// equivoca, un .png se intenta leer como texto o un .txt en UTF-16 se da por binario.
+    /// </summary>
+    private static void Texto()
+    {
+        Assert(!TextFile.IsBinary("hola mundo"u8.ToArray(), 10), "texto plano no es binario");
+
+        // Un byte cero es la senal. Cualquier formato binario lo suelta enseguida.
+        byte[] png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D];
+        Assert(TextFile.IsBinary(png, png.Length), "un PNG es binario");
+
+        // UTF-16 lleva ceros por todas partes: si se mirase el cero sin descartar antes su
+        // BOM, un .txt del Bloc de notas caeria a la ficha. Es el caso que se escapa.
+        byte[] utf16 = [0xFF, 0xFE, 0x68, 0x00, 0x6F, 0x00, 0x6C, 0x00, 0x61, 0x00];
+        Assert(!TextFile.IsBinary(utf16, utf16.Length), "un .txt en UTF-16 SI es texto");
+        Assert(TextFile.Bom(utf16, utf16.Length) == System.Text.Encoding.Unicode, "BOM de UTF-16 LE");
+
+        byte[] utf8 = [0xEF, 0xBB, 0xBF, 0x68, 0x6F, 0x6C, 0x61];
+        Assert(TextFile.Bom(utf8, utf8.Length) == System.Text.Encoding.UTF8, "BOM de UTF-8");
+        Assert(TextFile.Bom("hola"u8.ToArray(), 4) is null, "sin BOM, null");
+
+        // Monoespaciado solo para lo que se lee en columnas.
+        Assert(Preview.IsCode("datos.json"), "un .json va monoespaciado");
+        Assert(Preview.IsCode("Program.cs"), "un .cs va monoespaciado");
+        Assert(!Preview.IsCode("notas.md"), "un .md es prosa, proporcional");
+        Assert(!Preview.IsCode("leeme.txt"), "un .txt es prosa, proporcional");
+
+        Console.WriteLine("[check] texto: OK");
     }
 
     private static Preview Thumb(int width, int height) =>

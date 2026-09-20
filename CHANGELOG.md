@@ -1,6 +1,6 @@
 # Changelog
 
-## H3 — bordes (a medias)
+## H3 — bordes
 
 **Pantalla completa: verificado, y de rebote.** Las capturas de H2 se tomaron con VALORANT en
 primer plano a pantalla completa, y la cápsula se dibujó encima sin robarle el foco ni sacarlo
@@ -22,12 +22,13 @@ los 165 s siguientes), y los handles bajan de 336 a 327. Eso es el GC asentándo
 fuga por ciclo — una fuga crece recta y no se para. Con los 80 s del primer intento no se
 podía distinguir una cosa de la otra.
 
-**Multi-monitor: sin medir todavía.** Las tres pantallas van a 125%, 100% y 175%, que es el
-banco de pruebas ideal, pero la sonda no puede llevar el cursor a las otras dos: VALORANT
-tenía el ratón confinado a `1,1..2559,1079` con `ClipCursor`, y `SetCursorPos` devolvía `True`
-mientras el cursor se quedaba clavado en x=2558. Dos intentos midieron el fondo de tres sitios
-vacíos antes de darse cuenta. La sonda ahora **se declara no concluyente** si detecta el
-confinamiento, en vez de inventarse un fallo.
+**Multi-monitor: verificado a mano.** Funciona en las tres pantallas, que van a 125%, 100% y
+175%. Lo comprobó el usuario, no una sonda, y por un motivo que merece quedar escrito: la
+sonda automatica no pudo, porque VALORANT tenía el ratón confinado a `1,1..2559,1079` con
+`ClipCursor`. `SetCursorPos` devolvía `True` mientras el cursor se quedaba clavado en x=2558,
+así que midió el fondo de tres sitios vacíos y dijo "NO CUADRA" tres veces. Dos intentos
+perdidos. La sonda ahora comprueba `GetClipCursor` y **se declara no concluyente** en vez de
+inventarse un fallo; queda en el scratchpad por si hace falta otra vez.
 
 Trazas nuevas: el HUD imprime una línea cada vez que se mueve de pantalla, con la escala y el
 rectángulo. Solo cuando de verdad cambia de sitio, no en cada aparición.

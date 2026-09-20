@@ -17,9 +17,9 @@ no llega a verlas. Eso ocupa la §1 de `SEGURIDAD.md` y vale la pena leerlo.
 
 ## Estado
 
-**H2 — funciona.** Las teclas de volumen son suyas, el aviso de Windows no sale, y el HUD
-aparece también cuando el volumen lo cambia otra cosa — el mezclador, Spotify, unos
-auriculares. Falta pulirlo con varias pantallas (H3).
+**Terminado.** Las teclas de volumen son suyas, el aviso de Windows no sale, el HUD aparece
+también cuando el volumen lo cambia otra cosa — el mezclador, Spotify, unos auriculares — y
+funciona en las tres pantallas, que van a 125%, 100% y 175%.
 
 ```
 Hud.exe             # lo normal
@@ -32,7 +32,7 @@ Hud.exe --check     # logica pura, no abre ventana
 | H0 | `SEGURIDAD.md`, `auditar.ps1`, ventana, colocación por monitor y DPI | ✅ |
 | H1 | La cápsula: Composition, acrílico, barra, glifos, los cuatro morphs | ✅ |
 | H2 | Volumen de verdad: `RegisterHotKey` + `IAudioEndpointVolume` | ✅ |
-| H3 | Multi-monitor, DPI mixto, pantalla completa, autoarranque | ◐ |
+| H3 | Multi-monitor, DPI mixto, pantalla completa, autoarranque | ✅ |
 
 El plan original tenía dos hitos más, **el brillo y apartar el aviso nativo**, y los dos
 murieron midiendo antes de costar una línea de código. Está contado justo debajo.

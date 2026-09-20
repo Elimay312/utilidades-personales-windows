@@ -92,7 +92,7 @@ instala, no se arranca, no se configura desde aquí.
 | 9 | Descargar o generar código en runtime: `Assembly.Load(byte[])`, `Reflection.Emit`, plugins | Ejecutar código no firmado en runtime es comportamiento de loader. Y un lanzador con plugins es un lanzador que ejecuta el código de otro. |
 | 10 | **Ejecutar una cadena arbitraria como comando.** Nada de `cmd /c`, `powershell -c`, ni un modo "ejecuta lo que escriba" | Se lanza **una entrada del índice**, que es un objeto con su ruta ya resuelta y que estás viendo en la lista. La diferencia entre eso y un intérprete de comandos es la diferencia entre un lanzador y una shell remota. Ver §4. |
 | 11 | **Guardar lo que escribes.** Ni las consultas, ni las teclas, ni lo que se descartó | Lo que se guarda es **lo que lanzaste**: qué, cuántas veces y cuándo fue la última. Una consulta que no acabó en Enter no deja rastro. Ver §3.6. |
-| 12 | **Leer el contenido de los ficheros.** Ni buscar dentro, ni leer metadatos de documentos, ni previsualizar | El índice es de **nombres y rutas**. Lo mismo que ya te enseña el Explorador. El contenido de tus documentos no es asunto de un lanzador. |
+| 12 | **Leer el contenido de los ficheros.** Ni buscar dentro, ni leer metadatos de documentos, **ni previsualizar** | El índice es de **nombres y rutas**. Lo mismo que ya te enseña el Explorador. El contenido de tus documentos no es asunto de un lanzador. La forma en que esto se colaría es una miniatura, que es el contenido dibujado: por eso los iconos se piden con `SIIGBF_ICONONLY` y `auditar.ps1` lo comprueba — ver §3.11. |
 | 13 | Tocar el navegador: historial, marcadores, perfiles, cookies, credenciales, gestores de contraseñas | Muchos lanzadores indexan los marcadores. Este no. Es la carpeta más sensible del perfil y el beneficio no compensa ni de lejos. |
 | 14 | Portapapeles: `OpenClipboard`, `GetClipboardData`, `SetClipboardData` | Ctrl+V funciona en la caja de texto porque **lo hace el control `EDIT` del sistema por dentro**, sin que nosotros llamemos a nada. Nuestro código nunca lee el portapapeles. Ver §3.2. |
 | 15 | Tocar ventanas ajenas: enumerarlas, moverlas, cerrarlas, leer sus píxeles | `EnumWindows`, `PrintWindow`, `ShowWindowAsync`, `AttachThreadInput`. **`SetForegroundWindow` solo sobre nuestro propio HWND**, que es la única excepción y está en §3.4 con su comprobación propia en `auditar.ps1`. |
@@ -119,8 +119,9 @@ del registro, el panel de control):
 1. **Es exactamente lo que enumera el menú Inicio** para pintarse a sí mismo. Mismas carpetas,
    misma carpeta virtual, mismos datos.
 2. **Son ficheros tuyos, en tu sesión**, y son accesos directos: su contenido *es* una ruta.
-3. **Solo se lee el nombre visible y el destino.** No se abre el ejecutable, no se lee su
-   versión, no se mira dentro de nada.
+3. **Solo se lee el nombre visible y el destino.** No se lee la versión del ejecutable ni
+   se mira dentro de nada. Lo único que se le pide al fichero además del nombre es su
+   icono, y eso tiene su propia sección con sus propios cortes — ver §3.11.
 
 **Los cortes:** no se recorre el disco. No se busca fuera de esas dos carpetas y de
 `AppsFolder`. El índice vive en memoria y **no se escribe a disco** — se reconstruye al
@@ -251,6 +252,33 @@ por parte del shell. Y siempre detrás de un Enter tuyo sobre una fila que está
 cual, solo una entrada del índice con su destino ya resuelto (regla 10). Y el proceso hijo se
 lanza y se suelta: no se le espera, no se le vigila, no se le mata (regla 16).
 
+### 3.11 Los iconos
+
+`SHCreateItemFromParsingName` → `IShellItemImageFactory::GetImage` con
+**`SIIGBF_ICONONLY`**, en un hilo de segundo plano.
+
+**Por qué se sostiene:** se le pide al shell **el mismo icono que ya te está enseñando el
+Explorador** para ese fichero. No se abre el fichero a mano, no se parsea su formato: lo
+resuelve la API que existe para esto y que usa el propio Windows para pintar sus carpetas.
+
+**El corte que de verdad importa, y es la razón de que esta sección exista:**
+
+> **`SIIGBF_ICONONLY` no es una opción de calidad, es la regla 12.** Sin esa bandera,
+> `GetImage` devuelve la **miniatura**, y la miniatura de un documento **es su contenido
+> dibujado**: la primera página de un PDF, la foto, la primera diapositiva. Eso es
+> exactamente lo que la regla 12 prohíbe, y se colaría por una bandera que se olvida.
+> `auditar.ps1` comprueba que `ICONONLY` aparece siempre que aparece `GetImage`.
+
+Los demás cortes:
+
+- **Los iconos viven en memoria y no se escriben a disco.** Se pierden al cerrar, como el
+  índice (§5). Una caché de iconos en disco sería un inventario de lo que tienes.
+- **Se cargan en segundo plano**, nunca en el hilo de la ventana: la propia documentación de
+  Microsoft avisa de que esto *"can be time consuming"*.
+- `AssocQueryString` se usa solo para saber **qué programa abre un esquema**, y así ponerle
+  a un prefijo web la cara de tu navegador. Es lectura de las asociaciones por la API que
+  existe para preguntarlo; no se toca ninguna y no se lee el registro a mano.
+
 ### 3.10 Bloquear la sesión
 
 `LockWorkStation()`.
@@ -317,6 +345,8 @@ Cosas que el código hace de una forma concreta **porque este documento existe**
 - **`SetForegroundWindow` aparece exactamente una vez en el código**, en `LanzadorWindow.cs`, y
   con el handle propio. Si aparece una segunda, la auditoría falla.
 - **Las plantillas de URL se validan antes de abrirse**, y solo pasan `http` y `https`.
+- **Ningún icono se pide sin `SIIGBF_ICONONLY`.** Es una bandera fácil de olvidar y lo que
+  entra por olvidarla es el contenido de tus documentos.
 - **`NativeMethods.txt` es la lista cerrada de P/Invokes.** Si no está ahí, no se genera y no
   compila. Cada grupo lleva encima un comentario que dice para qué es, y cada entrada tiene que
   poder señalarse a una sección de §3.

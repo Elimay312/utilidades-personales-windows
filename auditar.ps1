@@ -176,6 +176,21 @@ if ($urls) {
 }
 Write-Output ("  {0,-34} {1}" -f '10 esquema de las plantillas', $esq)
 
+# §3.11, y es la comprobacion mas importante de las positivas: sin SIIGBF_ICONONLY,
+# GetImage devuelve la MINIATURA, y la miniatura de un documento es su contenido
+# dibujado. O sea, la regla 12 colandose por una bandera que se olvida.
+$img = $codigo | Where-Object { $_.Texto -match 'GetImage' -and $_.Fichero -like '*.cs' }
+if (-not $img) {
+    $iconos = 'todavia no se piden iconos'
+} else {
+    $solo = $codigo | Where-Object { $_.Texto -match 'SIIGBF_ICONONLY' }
+    $mini = $codigo | Where-Object { $_.Texto -match 'SIIGBF_THUMBNAILONLY|ASSOCF_.*THUMB' }
+    if ($mini) { $iconos = 'PIDE MINIATURAS, que es el contenido del fichero'; $fallos++ }
+    elseif ($solo) { $iconos = 'si, siempre con SIIGBF_ICONONLY' }
+    else { $iconos = 'GetImage SIN ICONONLY: devolveria la miniatura'; $fallos++ }
+}
+Write-Output ("  {0,-34} {1}" -f '12 iconos, nunca miniaturas', $iconos)
+
 # §3.10: bloquear la sesion esta permitido, apagarla no. ExitWindowsEx sigue en la regla
 # 16 de arriba; aqui se comprueba la cara positiva, que LockWorkStation no se multiplique.
 $lock = $codigo | Where-Object { $_.Texto -match 'LockWorkStation' -and $_.Fichero -like '*.cs' }

@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using Windows.Graphics.DirectX;
 using Windows.UI.Composition;
 using Windows.UI.Composition.Desktop;
@@ -19,11 +20,15 @@ namespace Lanzador;
 /// <summary>
 /// La lista de resultados, sobre <c>Windows.UI.Composition</c>.
 /// <para>
-/// <b>Una sola superficie para toda la lista</b>, no una por fila ni dos por fila. Se
-/// redibuja entera en cada pulsacion, que es un unico BeginDraw y una unica subida de
-/// pixeles; ocho filas con dos superficies cada una serian dieciseis objetos nuevos por
-/// tecla. El precio es que mover la seleccion tambien repinta la lista entera, y a este
-/// tamano eso no se nota — medido en H4.
+/// <b>Una sola superficie para toda la lista</b>, no una por fila ni dos por fila: ocho
+/// filas con dos superficies cada una serian dieciseis objetos nuevos por tecla.
+/// </para>
+/// <para>
+/// Y <b>la misma superficie siempre</b>, reutilizada. Pedir una nueva en cada repintado
+/// parecia inofensivo porque la anterior se soltaba, pero el compositor no las devuelve a
+/// la vez: medido en H8, cincuenta repintados dejaban ~105 MB de conjunto de trabajo que
+/// el monton administrado no explicaba. Se crea una del tamano maximo y se redibuja
+/// encima; lo que sobra queda fuera de la ventana y no se ve.
 /// </para>
 /// </summary>
 internal sealed unsafe class LanzadorVisuals : IDisposable
@@ -64,11 +69,14 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
     private float _escala;
     private float _ancho;
     private CompositionGraphicsDevice? _graficos;
+    private CompositionDrawingSurface? _superficie;
+    private readonly int _filasMaximas;
 
-    public LanzadorVisuals(HWND hwnd, float escala, float anchoFisico)
+    public LanzadorVisuals(HWND hwnd, float escala, float anchoFisico, int filasMaximas)
     {
         _escala = escala;
         _ancho = anchoFisico;
+        _filasMaximas = filasMaximas;
 
         AsegurarCola();
         _compositor = new Compositor();
@@ -98,6 +106,11 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
         _escala = escala;
         _ancho = anchoFisico;
         _lista.Offset = new Vector3(0, S(AltoFranja), 0);
+
+        // Cambio la escala, asi que la superficie ya no mide lo que tiene que medir.
+        _superficie?.Dispose();
+        _superficie = null;
+        _lista.Brush = null;
     }
 
     /// <summary>
@@ -106,30 +119,36 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
     /// </summary>
     public void Pintar(IReadOnlyList<Resultado> resultados, int elegido)
     {
-        CompositionBrush? viejo = _lista.Brush;
-
         if (resultados.Count == 0)
         {
-            _lista.Brush = null;
+            // La superficie se queda; lo que se esconde es el visual. Tirarla aqui seria
+            // volver a pedirla en la siguiente tecla.
             _lista.Size = Vector2.Zero;
-            Soltar(viejo);
             return;
         }
 
-        float alto = S(MargenLista) * 2 + resultados.Count * S(AltoFila);
-        _lista.Size = new Vector2(_ancho, alto);
-        _lista.Brush = PincelLista(resultados, elegido, alto);
-        Soltar(viejo);
+        // El visual mide siempre el maximo y la ventana mide lo que hay: lo que sobra de
+        // la superficie cae por debajo del borde de la ventana y no se ve. Asi la
+        // superficie no cambia de tamano nunca.
+        _lista.Size = new Vector2(_ancho, AltoMaximo());
+        Dibujar(resultados, elegido);
     }
 
-    private CompositionSurfaceBrush PincelLista(IReadOnlyList<Resultado> resultados, int elegido, float alto)
-    {
-        CompositionDrawingSurface superficie = AsegurarDispositivo().CreateDrawingSurface(
-            new global::Windows.Foundation.Size(_ancho, alto),
-            DirectXPixelFormat.B8G8R8A8UIntNormalized,
-            DirectXAlphaMode.Premultiplied);
+    private float AltoMaximo() => S(MargenLista) * 2 + _filasMaximas * S(AltoFila);
 
-        ICompositionDrawingSurfaceInterop interop = superficie.As<ICompositionDrawingSurfaceInterop>();
+    private void Dibujar(IReadOnlyList<Resultado> resultados, int elegido)
+    {
+        if (_superficie is null)
+        {
+            _superficie = AsegurarDispositivo().CreateDrawingSurface(
+                new global::Windows.Foundation.Size(_ancho, AltoMaximo()),
+                DirectXPixelFormat.B8G8R8A8UIntNormalized,
+                DirectXAlphaMode.Premultiplied);
+
+            _lista.Brush = _compositor.CreateSurfaceBrush(_superficie);
+        }
+
+        ICompositionDrawingSurfaceInterop interop = _superficie.As<ICompositionDrawingSurfaceInterop>();
         Guid iid = typeof(ID2D1DeviceContext).GUID;
 
         System.Drawing.Point desplazamiento;
@@ -157,8 +176,6 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
         {
             interop.EndDraw();
         }
-
-        return _compositor.CreateSurfaceBrush(superficie);
     }
 
     private void Fila(ID2D1DeviceContext ctx, Resultado r, float x, float y, bool elegida)
@@ -193,8 +210,13 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
     }
 
     /// <summary>
-    /// Sube los pixeles del icono a un mapa de D2D y lo dibuja en su hueco. Se extrae a
-    /// 256 y se baja aqui: asi al 100%, 125% o 150% sale nitido sin volver a extraerlo.
+    /// Sube los pixeles del icono a un mapa de D2D y lo dibuja en su hueco.
+    /// <para>
+    /// <b>El mapa se suelta aqui mismo.</b> Es un objeto COM: dejarselo al recolector
+    /// significa que ocho mapas por repintado se acumulan sin que el monton administrado
+    /// crezca lo bastante para provocar una recoleccion. Medido en H8: 27 MB de iconos
+    /// guardados frente a 157 MB de conjunto de trabajo, y la diferencia estaba aqui.
+    /// </para>
     /// </summary>
     private static void Pintar(ID2D1DeviceContext ctx, Icono icono, float izq, float arr, float lado)
     {
@@ -215,9 +237,16 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
                 new D2D_SIZE_U { width = (uint)icono.Ancho, height = (uint)icono.Alto },
                 pixeles, (uint)(icono.Ancho * 4), propiedades, out ID2D1Bitmap1 mapa);
 
-            D2D_RECT_F donde = new() { left = izq, top = arr, right = izq + lado, bottom = arr + lado };
-            ctx.DrawBitmap(mapa, &donde, 1f,
-                D2D1_BITMAP_INTERPOLATION_MODE.D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, null);
+            try
+            {
+                D2D_RECT_F donde = new() { left = izq, top = arr, right = izq + lado, bottom = arr + lado };
+                ctx.DrawBitmap(mapa, &donde, 1f,
+                    D2D1_BITMAP_INTERPOLATION_MODE.D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, null);
+            }
+            finally
+            {
+                if (Marshal.IsComObject(mapa)) Marshal.FinalReleaseComObject(mapa);
+            }
         }
     }
 
@@ -247,13 +276,6 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
     }
 
     private float S(float logico) => logico * _escala;
-
-    private static void Soltar(CompositionBrush? viejo)
-    {
-        if (viejo is not CompositionSurfaceBrush pincel) return;
-        if (pincel.Surface is CompositionDrawingSurface superficie) superficie.Dispose();
-        pincel.Dispose();
-    }
 
     /// <summary>
     /// Fuera de XAML no existe LoadedImageSurface: para pintar cualquier cosa que no sea
@@ -298,7 +320,7 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
 
     public void Dispose()
     {
-        Soltar(_lista.Brush);
+        _superficie?.Dispose();
         _target.Root = null;
         _raiz.Dispose();
         _target.Dispose();

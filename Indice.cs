@@ -40,6 +40,22 @@ internal sealed record Entrada(string Nombre, string Destino,
 internal static class Indice
 {
     /// <summary>
+    /// Construye el indice en un hilo aparte y lo entrega cuando esta.
+    /// <para>
+    /// Hilo <b>STA</b> y no uno del pool: enumerar <c>shell:AppsFolder</c> es COM, y la
+    /// leccion del dock es que desde un hilo MTA el shell a veces contesta de menos
+    /// <b>sin fallar ni avisar</b>. Se comprueba contando: si el numero baja respecto a
+    /// <c>--indice</c>, es esto. Medido en H8: 260 en los dos casos.
+    /// </para>
+    /// </summary>
+    public static void EnSegundoPlano(Action<List<Entrada>> entregar)
+    {
+        Thread hilo = new(() => entregar(Construir())) { IsBackground = true, Name = "indice" };
+        hilo.SetApartmentState(ApartmentState.STA);
+        hilo.Start();
+    }
+
+    /// <summary>
     /// Las dos fuentes juntas, sin nombres repetidos. <b>Hacen falta las dos</b>, medido en
     /// H1: AppsFolder trae 205 entradas y los menus Inicio 148, pero 36 de esas 148 no
     /// estan en AppsFolder — el Administrador de tareas, el Editor del registro, el panel

@@ -44,18 +44,25 @@ internal static class Program
         LanzadorConfig config = Config.Cargar();
         Config.AplicarAutoArranque(config.AutoArranque);
         Uso uso = Uso.Cargar();
-        List<Entrada> indice = Indice.Construir();
-        long msIndice = reloj.ElapsedMilliseconds;
 
-        LanzadorWindow? ventana = LanzadorWindow.Crear(config, indice, uso);
+        // La ventana y el atajo PRIMERO, el indice despues y en otro hilo. Antes se
+        // indexaba antes de crear nada, y el atajo no existia durante el primer segundo
+        // largo: con autoarranque eso cae justo en el inicio de sesion, que es cuando mas
+        // lento va todo. Pulsabas Alt+Espacio y no pasaba nada, sin forma de saber por que.
+        LanzadorWindow? ventana = LanzadorWindow.Crear(config, uso);
         if (ventana is null)
         {
             Console.Error.WriteLine("[lanzador] no se pudo crear la ventana.");
             return 2;
         }
 
-        Console.WriteLine($"[lanzador] {indice.Count} aplicaciones en {msIndice} ms, " +
-                          $"listo en {reloj.ElapsedMilliseconds} ms.");
+        Console.WriteLine($"[lanzador] atajo listo en {reloj.ElapsedMilliseconds} ms; indexando...");
+        Indice.EnSegundoPlano(indice =>
+        {
+            ventana.RecibirIndice(indice);
+            Console.WriteLine($"[lanzador] {indice.Count} entradas en el indice, " +
+                              $"a los {reloj.ElapsedMilliseconds} ms.");
+        });
 
         LanzadorWindow.Bucle();
         ventana.Dispose();

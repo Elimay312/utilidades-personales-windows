@@ -36,6 +36,18 @@ internal sealed unsafe class LanzadorWindow : IDisposable
 
     // --- Everything -----------------------------------------------------------------
     private const nuint TemporizadorEverything = 1;
+    private const nuint TemporizadorIconos = 2;
+
+    /// <summary>
+    /// Cuanto se espera antes de pedir los iconos de lo que se ve.
+    /// <para>
+    /// Sin rebote, escribir "micro" pedia los iconos de "m", "mi", "mic", "micr" y
+    /// "micro": cuarenta extracciones para usar ocho. Y cada extraccion carga en nuestro
+    /// proceso el manejador de iconos de esa aplicacion, que ya no se descarga — medido
+    /// en H8, +107 MB con iconos frente a +30 MB sin ellos.
+    /// </para>
+    /// </summary>
+    private const uint ReboteIconosMs = 110;
 
     /// <summary>
     /// Cuanto se espera desde la ultima tecla antes de preguntar. Sin rebote, escribir
@@ -62,11 +74,17 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     private const uint WM_SETTEXT = 0x000C;
     private const uint WM_COMMAND = 0x0111;
     private const uint WM_KEYDOWN = 0x0100;
+    private const uint WM_KEYUP = 0x0101;
+    private const uint WM_MOUSEMOVE = 0x0200;
+    private const uint WM_LBUTTONUP = 0x0202;
     private const uint WM_ACTIVATE = 0x0006;
     private const uint WM_TIMER = 0x0113;
 
     /// <summary>WM_APP + 1. Lo manda el hilo que carga iconos para que se repinte.</summary>
     private const uint WM_APP_ICONO = 0x8001;
+
+    /// <summary>WM_APP + 2. Lo manda el hilo que construye el indice cuando termina.</summary>
+    private const uint WM_APP_INDICE = 0x8002;
     private const uint WM_HOTKEY = 0x0312;
     private const uint EM_SETSEL = 0x00B1;
     private const uint EM_SETMARGINS = 0x00D3;
@@ -78,6 +96,10 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     private const uint VK_RETURN = 0x0D;
     private const uint VK_UP = 0x26;
     private const uint VK_DOWN = 0x28;
+    private const uint VK_CONTROL = 0x11;
+
+    /// <summary>Cada cuanto se vuelve a construir el indice al asomarse.</summary>
+    private static readonly TimeSpan IndiceCaduca = TimeSpan.FromMinutes(5);
 
     // El delegate va en un campo estatico de solo lectura: si se pasa un lambda suelto a
     // RegisterClassEx, el GC se lo lleva y la ventana muere al primer mensaje. Lo
@@ -93,7 +115,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     private DeleteObjectSafeHandle _fuente;
     private readonly LanzadorVisuals _visuals;
     private readonly HBRUSH _fondoCaja;
-    private readonly List<Entrada> _indice;
+    private List<Entrada> _indice;
     private readonly Uso _uso;
     // No son readonly y no es un descuido: cambian al asomarse en otra pantalla. Ver
     // AplicarDpi, que es donde esta el porque.
@@ -101,7 +123,25 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     private int _ancho;
 
     private List<Entrada> _ficheros = [];
+    private volatile List<Entrada>? _indiceReciente;
+    private DateTimeOffset _indiceCuando = DateTimeOffset.MinValue;
+    private bool _indexando;
+
+    /// <summary>
+    /// Si Control esta pulsado, sabido <b>por los mensajes de nuestra propia ventana</b>.
+    /// No se consulta el estado del teclado: GetAsyncKeyState y compania estan prohibidos
+    /// por la regla 3, y no hacen falta — el WM_KEYDOWN de Control ya nos llega cuando la
+    /// caja tiene el foco, que es el unico momento en que esto importa.
+    /// </summary>
+    private bool _control;
     private bool _sinEverything;
+
+    /// <summary>
+    /// 0 = no hay repintado pendiente. Ocho iconos que llegan casi a la vez son ocho
+    /// repintados, y cada repintado pide una superficie nueva de casi 2 MB. Con esto son
+    /// uno.
+    /// </summary>
+    private int _repintadoPedido;
     private ushort _serie;
     private long _preguntado;
     private List<Resultado> _resultados = [];
@@ -121,9 +161,9 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     /// </summary>
     private static readonly bool Traza = Environment.GetEnvironmentVariable("LANZADOR_LOG") == "1";
 
-    public static LanzadorWindow? Crear(LanzadorConfig config, List<Entrada> indice, Uso uso)
+    public static LanzadorWindow? Crear(LanzadorConfig config, Uso uso)
     {
-        try { return new LanzadorWindow(config, indice, uso); }
+        try { return new LanzadorWindow(config, uso); }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[lanzador] {ex.GetType().Name}: {ex.Message}");
@@ -131,10 +171,10 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         }
     }
 
-    private LanzadorWindow(LanzadorConfig config, List<Entrada> indice, Uso uso)
+    private LanzadorWindow(LanzadorConfig config, Uso uso)
     {
         _config = config;
-        _indice = indice;
+        _indice = [];     // llega en cuanto el hilo del indice acabe
         _uso = uso;
 
         // El DPI de la pantalla principal para crear; al asomarse se recoloca en la del
@@ -176,7 +216,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         // va primero y la caja encima.
         _franja = CrearFranja();
         _edit = CrearCaja();
-        _visuals = new LanzadorVisuals(_hwnd, _dpi / 96f, _ancho);
+        _visuals = new LanzadorVisuals(_hwnd, _dpi / 96f, _ancho, config.MaxResultados);
 
         if (!Config.LeerAtajo(config.Atajo, out HOT_KEY_MODIFIERS mods, out uint tecla))
         {
@@ -198,10 +238,30 @@ internal sealed unsafe class LanzadorWindow : IDisposable
             Console.WriteLine($"[lanzador] {config.Atajo} registrado.");
         }
 
+        // El hilo que extrae iconos avisa desde fuera; solo pide un repintado, y solo si
+        // no habia ya uno pedido.
+        Iconos.Arrancar(() =>
+        {
+            if (Interlocked.Exchange(ref _repintadoPedido, 1) == 0)
+            {
+                PInvoke.PostMessage(_hwnd, WM_APP_ICONO, 0, 0);
+            }
+        });
+
         // Lo ultimo: hasta aqui, un mensaje que llegase durante la construccion
         // encontraria la mitad de los campos sin asignar. Con _instancia a null el
         // WndProc cae a DefWindowProc, que es lo correcto mientras no estemos montados.
         _instancia = this;
+    }
+
+    /// <summary>
+    /// Se llama <b>desde el hilo del indice</b>. Deja el indice a un lado y avisa; el
+    /// cambio lo hace la ventana en su hilo, que es quien lo lee al buscar.
+    /// </summary>
+    public void RecibirIndice(List<Entrada> indice)
+    {
+        _indiceReciente = indice;
+        PInvoke.PostMessage(_hwnd, WM_APP_INDICE, 0, 0);
     }
 
     // --- mostrar y esconder ---------------------------------------------------------
@@ -214,6 +274,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     private void Asomar()
     {
         _pulsado = Stopwatch.GetTimestamp();
+        Reindexar();
 
         Colocar();
         Escribir(string.Empty);
@@ -248,6 +309,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     {
         PInvoke.ShowWindow(_hwnd, SHOW_WINDOW_CMD.SW_HIDE);
         _visible = false;
+        _control = false;   // si se solto fuera, no nos enteramos; se olvida al esconder
 
         // La consulta se vacia al esconder: no hay ninguna lista de consultas anteriores
         // en ningun sitio (SEGURIDAD.md Â§5).
@@ -256,6 +318,24 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         _ficheros = [];
         _elegido = 0;
         PInvoke.KillTimer(_hwnd, TemporizadorEverything);
+        PInvoke.KillTimer(_hwnd, TemporizadorIconos);
+    }
+
+    /// <summary>
+    /// Vuelve a construir el indice si ya tiene sus anos, en segundo plano. Sin esto,
+    /// instalabas algo y no aparecia hasta reiniciar el lanzador.
+    /// <para>
+    /// Al asomarse y no con un temporizador: un temporizador despertaria el proceso cada
+    /// pocos minutos para nada. Aqui solo se paga cuando ibas a buscar algo de todas
+    /// formas, y la lista de antes sigue sirviendo mientras llega la nueva.
+    /// </para>
+    /// </summary>
+    private void Reindexar()
+    {
+        if (_indexando || DateTimeOffset.UtcNow - _indiceCuando < IndiceCaduca) return;
+
+        _indexando = true;
+        Indice.EnSegundoPlano(RecibirIndice);
     }
 
     /// <summary>En la pantalla donde esta el cursor, centrado y a un tercio de arriba.</summary>
@@ -387,7 +467,11 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         }
 
         _elegido = 0;
-        PedirIconos();
+
+        // Los iconos se piden con rebote; la lista se pinta ya, con los que hubiera.
+        PInvoke.KillTimer(_hwnd, TemporizadorIconos);
+        if (_resultados.Count > 0) PInvoke.SetTimer(_hwnd, TemporizadorIconos, ReboteIconosMs, null);
+
         _visuals.Pintar(_resultados, _elegido);
 
         if (Traza)
@@ -411,10 +495,12 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     /// </summary>
     private void PedirIconos()
     {
+        PInvoke.KillTimer(_hwnd, TemporizadorIconos);
+
         foreach (Resultado r in _resultados)
         {
             if (r.Entrada.SoloSeMira) continue;
-            Iconos.Pedir(r.Entrada.Destino, () => PInvoke.PostMessage(_hwnd, WM_APP_ICONO, 0, 0));
+            Iconos.Pedir(r.Entrada.Destino);
         }
     }
 
@@ -508,6 +594,30 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         return true;
     }
 
+    /// <summary>La Y del raton dentro de la ventana, sacada del lParam.</summary>
+    private static int Alto(LPARAM lParam) => (short)((lParam.Value >> 16) & 0xFFFF);
+
+    /// <summary>
+    /// Selecciona la fila que hay a esa altura. Devuelve false si el raton no esta sobre
+    /// ninguna, que es lo que evita que un clic en la franja de arriba lance algo.
+    /// </summary>
+    private bool Sobre(int y)
+    {
+        int dentro = y - Escalar(AltoFranja) - Escalar(MargenLista);
+        if (dentro < 0) return false;
+
+        int fila = dentro / Escalar(AltoFila);
+        if (fila < 0 || fila >= _resultados.Count) return false;
+
+        if (fila != _elegido)
+        {
+            _elegido = fila;
+            _visuals.Pintar(_resultados, _elegido);
+        }
+
+        return true;
+    }
+
     private void Mover(int cuanto)
     {
         if (_resultados.Count == 0) return;
@@ -540,6 +650,20 @@ internal sealed unsafe class LanzadorWindow : IDisposable
             return;
         }
 
+        if (!Abrir(que.Destino)) return;
+
+        // Solo despues de abrirlo de verdad. Lo que se guarda es lo que lanzaste, no lo
+        // que escribiste (regla 11).
+        _uso.Registrar(consulta, que.Destino, DateTimeOffset.UtcNow);
+        _uso.Guardar();
+    }
+
+    /// <summary>
+    /// Se lo pasa al shell con el verbo por defecto, que es lo que hace un doble clic.
+    /// Nunca <c>runas</c> (regla 17): si algo necesita administrador, lo pedira el.
+    /// </summary>
+    private static bool Abrir(string destino)
+    {
         SHELLEXECUTEINFOW info = new()
         {
             cbSize = (uint)sizeof(SHELLEXECUTEINFOW),
@@ -547,22 +671,37 @@ internal sealed unsafe class LanzadorWindow : IDisposable
             nShow = (int)SHOW_WINDOW_CMD.SW_SHOWNORMAL,
         };
 
-        // Sin verbo: el que ponga el shell por defecto, que es lo que hace un doble clic.
-        // Nunca "runas" (regla 17): si algo necesita administrador, lo pedira el.
-        fixed (char* destino = que.Destino)
+        fixed (char* que = destino)
         {
-            info.lpFile = new PCWSTR(destino);
-            if (!PInvoke.ShellExecuteEx(ref info))
-            {
-                Console.Error.WriteLine($"[lanzador] no se pudo abrir {que.Destino}");
-                return;
-            }
+            info.lpFile = new PCWSTR(que);
+            if (PInvoke.ShellExecuteEx(ref info)) return true;
         }
 
-        // Solo despues de abrirlo de verdad. Lo que se guarda es lo que lanzaste, no lo
-        // que escribiste (regla 11).
-        _uso.Registrar(consulta, que.Destino, DateTimeOffset.UtcNow);
-        _uso.Guardar();
+        Console.Error.WriteLine($"[lanzador] no se pudo abrir {destino}");
+        return false;
+    }
+
+    /// <summary>
+    /// Ctrl+Enter: abre la carpeta que contiene el resultado, en vez del resultado.
+    /// <para>
+    /// Se le pasa al shell la <b>ruta de la carpeta</b>, que es una entrada del indice
+    /// tanto como el fichero (SEGURIDAD.md §3.8). Nada de montar un
+    /// <c>explorer /select</c>, que seria componer un comando y es la regla 10.
+    /// </para>
+    /// </summary>
+    private void AbrirCarpeta()
+    {
+        if (_elegido >= _resultados.Count) return;
+
+        Entrada que = _resultados[_elegido].Entrada;
+        if (que.SoloSeMira || !que.EsFichero) return;   // solo tiene sentido para ficheros
+
+        string? carpeta = Path.GetDirectoryName(que.Destino);
+        if (string.IsNullOrEmpty(carpeta) || !Directory.Exists(carpeta)) return;
+
+        if (Traza) Console.WriteLine($"[traza] abriendo la carpeta {carpeta}");
+        Esconder();
+        _ = Abrir(carpeta);
     }
 
     // --- el bucle y el WndProc --------------------------------------------------------
@@ -577,6 +716,14 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         MSG msg;
         while (PInvoke.GetMessage(out msg, default, 0, 0))
         {
+            // Control se sigue por sus propios mensajes, que llegan a la caja como
+            // cualquier otra tecla. Ni un P/Invoke nuevo y ni rozar la regla 3.
+            if (_instancia is not null && msg.hwnd == _instancia._edit
+                && (uint)msg.wParam.Value == VK_CONTROL)
+            {
+                _instancia._control = msg.message == WM_KEYDOWN;
+            }
+
             if (_instancia is not null && _instancia._visible && msg.message == WM_KEYDOWN
                 && msg.hwnd == _instancia._edit && _instancia.Navegar((uint)msg.wParam.Value))
             {
@@ -594,11 +741,27 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         switch (tecla)
         {
             case VK_ESCAPE: Esconder(); return true;
-            case VK_RETURN: Lanzar(); return true;
+            case VK_RETURN: if (_control) AbrirCarpeta(); else Lanzar(); return true;
             case VK_UP: Mover(-1); return true;
             case VK_DOWN: Mover(+1); return true;
             default: return false;
         }
+    }
+
+    /// <summary>
+    /// De donde sale la memoria. Se mide el monton administrado Y el conjunto de trabajo:
+    /// si crecen juntos es de los iconos guardados, y si solo crece el segundo es de las
+    /// superficies y mapas de D2D, que no son objetos de .NET. Adivinarlo sin este
+    /// desglose seria tocar el sitio que no es.
+    /// </summary>
+    private static void Memoria()
+    {
+        (int cuantos, long bytes) = Iconos.Cuenta();
+        using Process yo = Process.GetCurrentProcess();
+        Console.WriteLine($"[traza] iconos {cuantos} ({bytes / 1048576.0:0.0} MB)   " +
+                          $"monton {GC.GetTotalMemory(false) / 1048576.0:0.0} MB   " +
+                          $"trabajo {yo.WorkingSet64 / 1048576.0:0.0} MB   " +
+                          $"hilos {yo.Threads.Count}");
     }
 
     private static LRESULT WndProc(HWND hwnd, uint msg, WPARAM wParam, LPARAM lParam)
@@ -628,12 +791,40 @@ internal sealed unsafe class LanzadorWindow : IDisposable
                 return new LRESULT(0);
 
             // Llego un icono. Solo se repinta: la lista y la seleccion no cambian.
+            case WM_APP_INDICE when v is not null:
+                if (v._indiceReciente is List<Entrada> nuevo)
+                {
+                    v._indice = nuevo;
+                    v._indiceReciente = null;
+                    v._indiceCuando = DateTimeOffset.UtcNow;
+                    v._indexando = false;
+                    if (Traza) Console.WriteLine($"[traza] indice nuevo: {nuevo.Count} entradas");
+                    if (v._visible) v.Refrescar();   // por si ya estabas escribiendo
+                }
+                return new LRESULT(0);
+
+            // El raton: pasar por encima selecciona, soltar el boton lanza. Las filas
+            // estan a alturas fijas, asi que la fila es una division.
+            case WM_MOUSEMOVE when v is not null && v._visible:
+                v.Sobre(Alto(lParam));
+                return new LRESULT(0);
+
+            case WM_LBUTTONUP when v is not null && v._visible:
+                if (v.Sobre(Alto(lParam))) v.Lanzar();
+                return new LRESULT(0);
+
             case WM_APP_ICONO when v is not null:
+                Interlocked.Exchange(ref v._repintadoPedido, 0);
                 if (v._visible) v._visuals.Pintar(v._resultados, v._elegido);
+                if (Traza) Memoria();
                 return new LRESULT(0);
 
             case WM_TIMER when v is not null && (nuint)wParam.Value == TemporizadorEverything:
                 v.Preguntar();
+                return new LRESULT(0);
+
+            case WM_TIMER when v is not null && (nuint)wParam.Value == TemporizadorIconos:
+                v.PedirIconos();
                 return new LRESULT(0);
 
             // La respuesta de Everything. Es el unico WM_COPYDATA que esperamos, y solo

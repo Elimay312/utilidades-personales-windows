@@ -1,6 +1,7 @@
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.DataExchange;
+using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Lanzador;
 
@@ -94,10 +95,21 @@ internal static unsafe class Everything
             };
 
             // SendMessage y no PostMessage: el buffer vive en nuestra pila y tiene que
-            // seguir ahi mientras Everything lo copia. Devuelve TRUE si acepto la
-            // pregunta; los resultados tardan en llegar.
-            return PInvoke.SendMessage(buzon, PInvoke.WM_COPYDATA,
-                (WPARAM)(nuint)(nint)nuestro.Value, (LPARAM)(nint)(&sobre)) != 0;
+            // seguir ahi mientras Everything lo copia.
+            //
+            // Pero con LIMITE DE TIEMPO. Medido, la llamada vuelve en 0,3-0,8 ms porque
+            // Everything solo acepta la pregunta y busca por su cuenta. Aun asi es una
+            // llamada sincrona a OTRO proceso: si Everything se cuelga, nuestra ventana
+            // se cuelga con el y no hay salida. Un segundo es mil veces lo que tarda, y
+            // ABORTIFHUNG corta antes si el sistema ya lo da por colgado.
+            nuint resultado = 0;
+            LRESULT ok = PInvoke.SendMessageTimeout(
+                buzon, PInvoke.WM_COPYDATA,
+                (WPARAM)(nuint)(nint)nuestro.Value, (LPARAM)(nint)(&sobre),
+                SEND_MESSAGE_TIMEOUT_FLAGS.SMTO_ABORTIFHUNG | SEND_MESSAGE_TIMEOUT_FLAGS.SMTO_NORMAL,
+                1000, &resultado);
+
+            return ok != 0 && resultado != 0;
         }
     }
 

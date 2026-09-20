@@ -10,6 +10,54 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H8 — Memoria, arranque, y las cosas que faltaban
+
+Cuatro arreglos que salieron de mirar el programa terminado. El primero se diagnosticó
+antes de tocar nada, y menos mal, porque **la primera hipótesis era falsa**.
+
+**La memoria: 385 → 180 MB, y no era lo que parecía.**
+
+Con 15 consultas el proceso pasaba de 59 a 385 MB. Instrumenté el proceso para que dijera
+el reparto —montón administrado, conjunto de trabajo, iconos guardados, hilos— en vez de
+adivinar, y salieron tres causas distintas:
+
+- **Los iconos se extraían a 256×256 y se dibujan a 32.** 256 KB por icono, 122 iconos,
+  **27 MB** de los que se tiraba el 97%. A 64 px son 16 KB: **26,9 → 1,9 MB**.
+- **Un hilo STA por icono.** El comentario `ponytail:` que vino copiado del dock decía
+  *"si algún día los iconos se extraen en caliente, un único hilo STA con cola"*. Desde H7
+  se extraen en caliente. **52 → 13 hilos.**
+- **Se pedían los iconos de cada pulsación.** Escribir `micro` extraía los de `m`, `mi`,
+  `mic`, `micr` y `micro`: cuarenta para usar ocho. Ahora con rebote de 110 ms.
+- **Y una hipótesis que resultó falsa**: culpé a las superficies de Composition, una por
+  repintado. Las reutilicé y la memoria bajó de 192 a 190 MB — nada. El experimento que lo
+  decidió fue medir **sin pedir iconos**: +30 MB frente a +107 MB. El coste es el shell
+  cargando el manejador de iconos de cada aplicación que ves, y esos no se descargan.
+  **No es una fuga**: medido en tres rondas seguidas se estanca en ~180 MB. Queda marcado
+  con su `ponytail:` y el camino de subida escrito (extraer fuera del proceso).
+
+**El atajo estaba muerto el primer segundo: 1200 → 179 ms.** `Main` construía el índice
+*antes* de crear la ventana. Con autoarranque eso cae en el inicio de sesión, que es cuando
+más lento va todo: pulsabas `Alt+Espacio` y no pasaba nada. Ahora la ventana y el atajo van
+primero y el índice se construye en un hilo STA aparte — **260 entradas, las mismas**, que
+es lo que había que comprobar. Y si ya estabas escribiendo cuando llega, la lista se
+re-evalúa sola.
+
+**`SendMessage` a Everything con límite de tiempo.** Vuelve en 0,3–0,8 ms, pero es una
+llamada síncrona a otro proceso: si Everything se colgaba, nuestra ventana se colgaba con
+él y no había salida. Un segundo y `SMTO_ABORTIFHUNG`.
+
+**Ratón, refresco del índice y `Ctrl+Enter`:**
+
+- Pasar el ratón por encima selecciona y el clic lanza. Comprobado que la cuarta fila se
+  resalta con el cursor encima, escalado de DPI incluido.
+- El índice se reconstruye al asomarse si tiene más de 5 minutos, en segundo plano. Antes
+  instalabas algo y no aparecía hasta reiniciar. Al asomarse y no con un temporizador: un
+  temporizador despertaría el proceso cada pocos minutos para nada.
+- `Ctrl+Enter` abre la carpeta que contiene el fichero. **Sin un solo P/Invoke nuevo**:
+  Control se sigue por sus propios mensajes, que ya llegan a la caja de texto, así que no
+  hace falta `GetAsyncKeyState` ni rozar la regla 3. Y se le pasa al shell la ruta de la
+  carpeta, no un `explorer /select`, que sería componer un comando (regla 10).
+
 ### H7 — Iconos, y tres promesas que el código no cumplía
 
 - **Iconos de verdad**, copiados del extractor del dock con sus tres trampas ya pagadas: el

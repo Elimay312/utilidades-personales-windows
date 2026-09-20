@@ -1,4 +1,5 @@
-using System.Runtime.ExceptionServices;
+using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Gdi;
@@ -25,6 +26,19 @@ internal static class Iconos
     // icono", y hace falta distinguirlo o se volveria a pedir en cada repintado.
     private static readonly Dictionary<string, Icono?> Cache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Lock Candado = new();
+    private static readonly BlockingCollection<string> Cola = new();
+    private static Action? _avisar;
+
+    /// <summary>Cuantos iconos hay guardados y cuantos bytes ocupan. Solo para la traza.</summary>
+    public static (int Cuantos, long Bytes) Cuenta()
+    {
+        lock (Candado)
+        {
+            long bytes = 0;
+            foreach (Icono? i in Cache.Values) bytes += i?.Bgra.Length ?? 0;
+            return (Cache.Count, bytes);
+        }
+    }
 
     /// <summary>El icono si ya esta; null si no ha llegado o si ese destino no tiene.</summary>
     public static Icono? Hay(string destino)
@@ -33,86 +47,79 @@ internal static class Iconos
     }
 
     /// <summary>
-    /// Lo pide si no estaba pedido. <paramref name="cuandoLlegue"/> se llama <b>desde el
-    /// hilo de segundo plano</b>: lo unico que debe hacer es avisar a la ventana.
+    /// Arranca el hilo que extrae iconos. <paramref name="avisar"/> se llama <b>desde ese
+    /// hilo</b>: lo unico que debe hacer es avisar a la ventana.
+    /// <para>
+    /// <b>Un solo hilo, y STA.</b> El dock creaba uno por extraccion y dejo escrito el
+    /// aviso: <i>"si algun dia los iconos se extraen en caliente, un unico hilo STA con
+    /// cola"</i>. Desde H7 se extraen en caliente, y se noto: 52 hilos tras diez
+    /// consultas. Esto es ese aviso cobrado.
+    /// </para>
+    /// <para>
+    /// Y tiene que ser STA: los manejadores de icono del shell se registran con
+    /// <c>ThreadingModel=Apartment</c>, y desde un hilo MTA —cualquiera del pool—
+    /// <c>GetImage</c> no llega a usarlos y devuelve el icono generico <b>sin fallar ni
+    /// avisar</b>. Medido en el dock sobre un .url de Steam.
+    /// </para>
     /// </summary>
-    public static void Pedir(string destino, Action cuandoLlegue)
+    public static void Arrancar(Action avisar)
+    {
+        _avisar = avisar;
+
+        Thread obrero = new(Obrero) { IsBackground = true, Name = "iconos" };
+        obrero.SetApartmentState(ApartmentState.STA);
+        obrero.Start();
+    }
+
+    /// <summary>Lo pone en la cola si no estaba pedido ya.</summary>
+    public static void Pedir(string destino)
     {
         lock (Candado)
         {
             if (!Cache.TryAdd(destino, null)) return;   // ya esta o ya se pidio
         }
 
-        Task.Run(() =>
+        Cola.Add(destino);
+    }
+
+    /// <remarks>
+    /// ponytail: extraer iconos en nuestro proceso cuesta ~100 MB de conjunto de trabajo
+    /// que no vuelven. No es una fuga —medido en H8, se estanca en ~180 MB tras tres
+    /// rondas de las mismas consultas— sino que el shell carga el manejador de iconos de
+    /// cada aplicacion que ves y ya no lo descarga. Bajarlo de ahi significa extraer
+    /// fuera del proceso, que es mucho aparato para 100 MB acotados; si algun dia
+    /// molesta, ese es el camino.
+    /// </remarks>
+    private static void Obrero()
+    {
+        foreach (string destino in Cola.GetConsumingEnumerable())
         {
             Icono? icono = null;
-            try { icono = Extraer(destino); }
+            try { icono = ExtraerAqui(destino); }
             catch (Exception) { /* un destino sin icono se queda con el hueco */ }
 
             lock (Candado) Cache[destino] = icono;
-            if (icono is not null) cuandoLlegue();
-        });
+            if (icono is not null) _avisar?.Invoke();
+        }
     }
 
     /// <summary>
-    /// Se extrae siempre a 256 y se deja que el compositor baje-escale. Así
-    /// 100/150/200% salen nítidos sin volver a extraer nada al cambiar de monitor.
+    /// Se extrae a 64 y no a 256, que es lo que hacia el dock.
+    /// <para>
+    /// Aqui el icono se dibuja a 32 puntos logicos: 40 px al 125%, 48 al 150%. Pedirlo a
+    /// 256 daba un icono de <b>256 KB</b> del que se tiraba el 97% al dibujarlo, y como
+    /// se guardan todos, <b>122 iconos ocupaban 27 MB</b> — medido en H8. A 64 son 16 KB.
+    /// El dock si necesita 256 porque los magnifica; aqui no hay lupa.
+    /// </para>
     /// </summary>
-    public const int LadoExtraccion = 256;
+    public const int LadoExtraccion = 64;
 
     /// <summary>
     /// A qué tamaño se vuelve a pedir cuando el fichero no da para 256. Es el tamaño de
     /// icono grande de Windows y el último que el shell sirve como icono: por encima
     /// pasa a servir miniatura, que es de donde sale el problema.
     /// </summary>
-    private const int LadoDeRespaldo = 48;
-
-    /// <summary>
-    /// Extrae el icono de un ejecutable o de un elemento del shell.
-    /// La doc de Microsoft avisa de que esto "can be time consuming" y que no debe
-    /// hacerse en el hilo de UI: la llamada va en background.
-    ///
-    /// <para>
-    /// <b>Y ese background tiene que ser STA.</b> Los manejadores de icono del shell se
-    /// registran con <c>ThreadingModel=Apartment</c>; desde un hilo MTA —cualquiera del
-    /// pool— <c>GetImage</c> no llega a usarlos y devuelve el icono genérico sin fallar
-    /// ni avisar. Medido sobre el .url de un juego de Steam, misma llamada, mismo
-    /// fichero: en STA salen 5553 píxeles con alfa (el icono del juego) y en MTA 35789
-    /// opacos en un rectángulo vertical, que es la hoja en blanco. Los .exe, .lnk,
-    /// carpetas y la papelera dan byte por byte lo mismo en los dos, y por eso el fallo
-    /// tardó en verse.
-    /// </para>
-    ///
-    /// <para>
-    /// El apaño va aquí y no en los llamantes porque hay varios sitios
-    /// que acaban en esta función: cargar el lanzador, abrir una carpeta y navegar dentro
-    /// de ella.
-    /// </para>
-    /// </summary>
-    public static Icono Extraer(string destino)
-    {
-        if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA) return ExtraerAqui(destino);
-
-        // ponytail: un hilo por extracción. Crear un hilo son décimas de milisegundo
-        // contra las decenas que tarda el shell en devolver el icono, así que no
-        // compensa todavía; si algún día los iconos se extraen en caliente, un único
-        // hilo STA con cola.
-        Icono? icono = null;
-        ExceptionDispatchInfo? error = null;
-
-        Thread sta = new(() =>
-        {
-            try { icono = ExtraerAqui(destino); }
-            catch (Exception ex) { error = ExceptionDispatchInfo.Capture(ex); }
-        });
-
-        sta.SetApartmentState(ApartmentState.STA);
-        sta.Start();
-        sta.Join();
-
-        error?.Throw();
-        return icono!;
-    }
+    private const int LadoDeRespaldo = 32;
 
     private static unsafe Icono ExtraerAqui(string destino)
     {
@@ -132,6 +139,20 @@ internal static class Iconos
         }
 
         var factory = (IShellItemImageFactory)item;
+        try
+        {
+            return Escalado(factory);
+        }
+        finally
+        {
+            // El objeto del shell se suelta aqui, no cuando pase el recolector: cada uno
+            // mantiene vivo lo que el manejador de iconos de esa app haya cargado.
+            if (Marshal.IsComObject(factory)) Marshal.FinalReleaseComObject(factory);
+        }
+    }
+
+    private static unsafe Icono Escalado(IShellItemImageFactory factory)
+    {
         Icono icono = Imagen(factory, LadoExtraccion);
 
         // El shell NO agranda un icono pequeño. Si lo más grande que trae el fichero es

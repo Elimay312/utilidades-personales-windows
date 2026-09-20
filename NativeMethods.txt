@@ -140,6 +140,11 @@ FindWindowW
 COPYDATASTRUCT
 WM_COPYDATA
 
+// Con limite de tiempo: es una llamada sincrona a otro proceso, y sin el, si Everything
+// se cuelga nuestra ventana se cuelga con el.
+SendMessageTimeout
+SEND_MESSAGE_TIMEOUT_FLAGS
+
 // --- Rebote de la consulta (H5) ---
 // Sin el, cada pulsacion seria una pregunta a Everything. Es un temporizador sobre
 // nuestra propia ventana.

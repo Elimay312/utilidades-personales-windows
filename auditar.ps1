@@ -99,9 +99,10 @@ if ($fuera) {
     Write-Output ("  {0,-38} si, {1} referencia(s)" -f '3.1 el hook solo vive en Hook.cs', $hookHits.Count)
 }
 
-# Dentro de Hook.cs, la unica tecla observable es el espacio. Los tres modificadores
-# estan permitidos por el §3.1 para poder dejar pasar Ctrl+Espacio y companeros.
-$permitidas = 'VK_SPACE|VK_CONTROL|VK_MENU|VK_SHIFT|VK_LSHIFT|VK_RSHIFT|VK_LCONTROL|VK_RCONTROL|VK_LMENU|VK_RMENU'
+# Dentro de Hook.cs solo se observan DOS teclas: el espacio siempre, y Esc unicamente
+# mientras hay un panel abierto (enmienda 2). Los modificadores estan permitidos por el
+# §3.1 para poder DEJAR PASAR Ctrl+Espacio y companeros.
+$permitidas = 'VK_SPACE|VK_ESCAPE|VK_CONTROL|VK_MENU|VK_SHIFT|VK_LSHIFT|VK_RSHIFT|VK_LCONTROL|VK_RCONTROL|VK_LMENU|VK_RMENU'
 $hookCodigo = Codigo @('Hook.cs')
 $otras = $hookCodigo |
     ForEach-Object { $l = $_; ([regex]::Matches($l.Texto, 'VK_[A-Z0-9_]+')) | ForEach-Object { [pscustomobject]@{ Linea = $l.Linea; Tecla = $_.Value } } } |
@@ -111,7 +112,19 @@ if ($otras) {
     Write-Output ("  {0,-38} INCUMPLE" -f '3.1 una sola tecla observada')
     $otras | ForEach-Object { Write-Output ("      Hook.cs:{0}  {1}" -f $_.Linea, $_.Tecla) }
 } else {
-    Write-Output ("  {0,-38} solo VK_SPACE" -f '3.1 una sola tecla observada')
+    Write-Output ("  {0,-38} solo VK_SPACE y VK_ESCAPE" -f '3.1 las teclas observadas')
+}
+
+# Y Esc tiene que estar acotada por el interruptor del panel: sin el, el programa estaria
+# mirando una tecla mas todo el rato. Ver SEGURIDAD.md §3.1, enmienda 2.
+$escHits = $hookCodigo | Where-Object { $_.Texto -match 'VK_ESCAPE' }
+$guarda  = $hookCodigo | Where-Object { $_.Texto -match 'PanelOpen' }
+if ($escHits -and -not $guarda) {
+    $fallos++
+    Write-Output ("  {0,-38} INCUMPLE" -f '3.1 Esc acotada al panel abierto')
+    $escHits | ForEach-Object { Write-Output ("      Hook.cs:{0}  {1}" -f $_.Linea, $_.Texto.Trim()) }
+} elseif ($escHits) {
+    Write-Output ("  {0,-38} si, via PanelOpen" -f '3.1 Esc acotada al panel abierto')
 }
 
 # La seleccion del Explorador se pregunta desde UN solo sitio: HostWindow, que es quien

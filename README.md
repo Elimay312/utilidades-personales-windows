@@ -29,6 +29,10 @@ con DirectWrite, en una tarjeta con forma de página y con la rueda para desplaz
 **M7 — vídeo y audio.** Con `MediaPlayer` y su superficie de Composition: el vídeo es un
 visual más dentro del panel, en bucle y mudo; el audio suena y enseña su carátula.
 
+**M7.1 — `Esc` cierra el panel**, y el filtro del hook por fin tiene prueba automática: el
+espacio abre, `Esc` cierra, `F2` renombra con espacios, y con otra app delante el espacio
+pasa de largo.
+
 Lo que viene:
 
 | | |

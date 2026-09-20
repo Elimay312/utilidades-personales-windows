@@ -494,3 +494,73 @@ real.**
 
 **Ficheros:** `Content/MediaFile.cs`, `Content/Preview.cs`, `Panel.cs`, `HostWindow.cs`,
 `Log.cs`, `Selection.cs`, `SelfCheck.cs`.
+
+---
+
+## M7.1 — Esc cierra, y por fin una prueba de verdad del hook
+
+### La enmienda 2
+
+`Esc` es la tecla que se echa de menos viniendo de Mac, y necesitaba **una segunda tecla en
+el hook** — que el §3.1 cerraba explícitamente. Así que enmienda por escrito antes del
+código, con el corte que la hace defendible:
+
+**El callback solo mira `Esc` si hay un panel abierto.** Con el panel cerrado —que es el
+99,9% del tiempo que el programa está vivo— la tecla sale por `CallNextHookEx` en la misma
+comparación que cualquier otra, y el programa no se entera de que existe. El interruptor lo
+pone y lo quita `HostWindow`, que es quien abre y cierra el panel.
+
+Y no rompe nada del Explorador: `Esc` ahí cancela un renombrado, cierra la búsqueda y quita
+la selección. Los dos primeros siguen funcionando porque el cortafuegos de `GetGUIThreadInfo`
+ya deja pasar cualquier tecla cuando hay un cursor de texto parpadeando; el tercero solo se
+ve afectado mientras tienes un panel delante, que es justo cuando lo que quieres cerrar es el
+panel.
+
+**`Esc` manda su propio mensaje** y no el interruptor del espacio: entre la comprobación y el
+mensaje el panel puede haberse cerrado solo, y un interruptor *abriría* uno nuevo. Pulsar
+`Esc` y que aparezca un panel sería de las cosas más raras posibles.
+
+`auditar.ps1` gana dos comprobaciones: la lista de teclas permitidas pasa a ser exactamente
+`VK_SPACE` + `VK_ESCAPE` + modificadores, y **si aparece `VK_ESCAPE` sin que exista el
+interruptor `PanelOpen`, la auditoría falla**. Se le metió el fallo a propósito —quitar la
+guarda— y lo cazó.
+
+### Lo que llevaba pendiente desde M1
+
+**El filtro del hook nunca se había probado automáticamente**, y era el mayor riesgo
+silencioso del proyecto. La excusa era que la regla 12 prohíbe sintetizar entrada.
+
+La excusa era mala, y tardé en verlo: **la regla 12 gobierna el programa, no una sonda del
+scratchpad.** Esa regla existe porque sintetizar entrada *desde el binario que se publica* es
+la otra mitad del perfil de un troyano, y por eso `auditar.ps1` la vigila sobre el código del
+proyecto. Una sonda no se publica y no se audita. Y `WH_KEYBOARD_LL` **sí ve las teclas
+inyectadas**, así que lo que se mide es exactamente el mismo camino que recorre una pulsación
+de verdad.
+
+`sonda-teclado.ps1`, cuatro pruebas, todas en verde:
+
+| | Qué mide | Resultado |
+|---|---|---|
+| 1 | Espacio sobre un archivo del Explorador abre el panel | El gesto entero, con una tecla real |
+| 2 | `Esc` lo cierra | La enmienda 2 |
+| 3 | `F2` + escribir `nombre con tres espacios` | **Renombra bien**: el cortafuegos del caret aguanta |
+| 4 | Con el Bloc de notas delante, el espacio no abre nada | La tecla pasa de largo |
+
+La 4 cambió de forma por el camino, y a mejor. Al principio escribía en un `TextBox` de la
+propia sonda y leía su texto; fallaba porque un formulario creado desde PowerShell no siempre
+toma el primer plano, y las teclas se las quedaba el Explorador — **el log con marcas de
+tiempo lo delató**, porque se veían paneles abriéndose y cerrándose justo entonces. Ahora se
+mide que **no se abre panel**, y la inferencia es sólida sin depender de leerle el texto a
+nadie: el hook solo puede comerse una tecla por el camino que devuelve 1, y ese camino es
+exactamente el que manda el mensaje que abre el panel.
+
+Y una tercera vez la sonda midió mal antes de medir bien: una pasada afirmaba sobre la cadena
+exacta y salió `hola mudo con espacios` —sin la `n`—, porque `SendKeys` pierde letras. Los
+tres espacios estaban. Se cambió la afirmación a **contar espacios**, que es lo único que el
+hook puede romper.
+
+Ahora la sonda también **espera activamente** a que el Explorador esté delante en vez de
+dormir un rato fijo: una pasada se encontró Chrome ahí y otra `LanzadorVentana`, y abortó
+diciéndolo en vez de medir otra app.
+
+**Ficheros:** `SEGURIDAD.md`, `auditar.ps1`, `Hook.cs` (79 líneas), `HostWindow.cs`.

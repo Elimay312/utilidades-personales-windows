@@ -40,6 +40,12 @@ internal sealed unsafe class HostWindow : IDisposable
     /// <summary>El hook pide abrir o cerrar el panel. Lo manda <c>Hook.cs</c>.</summary>
     internal const uint WM_APP_QUICKLOOK = 0x8001;
 
+    /// <summary>
+    /// Cerrar y solo cerrar. Lo manda <c>Esc</c>, que a diferencia del espacio no es un
+    /// interruptor: si el panel ya se cerro solo, esto no hace nada.
+    /// </summary>
+    internal const uint WM_APP_CLOSE = 0x8002;
+
     // El delegado se guarda en un campo estatico a proposito: si se pasara directamente
     // a WNDCLASSEXW, el GC podria recogerlo mientras Windows todavia tiene el puntero, y
     // el fallo aparece mucho despues y en otro sitio.
@@ -108,6 +114,10 @@ internal sealed unsafe class HostWindow : IDisposable
                 _instance?.Toggle();
                 return new LRESULT(0);
 
+            case WM_APP_CLOSE:
+                _instance?.Close();
+                return new LRESULT(0);
+
             // Mientras hay panel: si el usuario se ha ido a otra app, el panel sobra.
             // Sin esto la unica salida era volver al Explorador y pulsar espacio otra
             // vez, que es lo que hacia que la ventana pareciese imposible de cerrar.
@@ -151,7 +161,13 @@ internal sealed unsafe class HostWindow : IDisposable
         Console.WriteLine($"[seleccion] {path}");
         _panel = Panel.Open(front, path, Preview.For(path));
 
-        if (_panel is not null) PInvoke.SetTimer(_hwnd, WatchTimer, WatchMs, null);
+        if (_panel is not null)
+        {
+            PInvoke.SetTimer(_hwnd, WatchTimer, WatchMs, null);
+
+            // A partir de aqui el hook mira tambien Esc. Ni un instante antes.
+            Hook.PanelOpen = true;
+        }
     }
 
     /// <summary>Cierra el panel y para el temporizador. Es el unico camino de cierre.</summary>
@@ -160,6 +176,7 @@ internal sealed unsafe class HostWindow : IDisposable
         if (_panel is null) return;
 
         PInvoke.KillTimer(_hwnd, WatchTimer);
+        Hook.PanelOpen = false;
 
         // Se suelta la referencia YA, antes de que acabe la animacion: a partir de aqui el
         // panel es cosa suya y de su batch. Si se esperase al final, un espacio pulsado
@@ -252,6 +269,7 @@ internal sealed unsafe class HostWindow : IDisposable
         // animacion aqui no llegaria a verse, porque el bucle de mensajes que la despacha
         // es justo el que se acaba de parar.
         PInvoke.KillTimer(_hwnd, WatchTimer);
+        Hook.PanelOpen = false;
         _panel?.Dispose();
         _panel = null;
 

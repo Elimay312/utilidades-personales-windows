@@ -52,8 +52,14 @@ arregles algo, **mete el fallo a propósito otra vez** y comprueba que la prueba
 Si no lo detecta, la prueba no vale.
 
 Aquí eso se aplica sobre todo a una cosa: **el filtro del hook**. Una sonda que no detecta
-que el espacio se está comiendo dentro de un campo de texto no vale para nada, porque ese
-es el fallo que hace el programa inservible y es silencioso.
+que el espacio se está comiendo dentro de un campo de texto no vale para nada, porque ese es
+el fallo que hace el programa inservible y es silencioso. Está automatizado en
+`scratchpad/sonda-teclado.ps1`.
+
+**Y una sonda SÍ puede sintetizar teclas.** La regla 12 gobierna el programa —el binario que
+se publica— no el método de prueba, y `WH_KEYBOARD_LL` ve las teclas inyectadas, así que una
+sonda con `SendKeys` recorre exactamente el mismo camino que una pulsación real. Eso tardó
+seis hitos en verse, y hasta entonces el filtro solo se había probado a mano.
 
 Las sondas van en el scratchpad, no en el repo. Lo que sí vive en el repo es `--check`,
 para lo que es lógica pura.

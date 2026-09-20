@@ -43,6 +43,19 @@ internal sealed unsafe class Hook : IDisposable
 
     private static HWND _host;
 
+    /// <summary>
+    /// Si hay un panel abierto ahora mismo. Lo pone y lo quita <c>HostWindow</c>, que es
+    /// quien lo abre y lo cierra.
+    ///
+    /// <para>
+    /// Es lo que acota la segunda tecla: <c>Esc</c> solo se mira mientras esto es true, o
+    /// sea el rato que tienes un panel delante. El resto del tiempo —que es casi todo— la
+    /// tecla sale por <c>CallNextHookEx</c> sin que nadie la compare, igual que cualquier
+    /// otra. Ver SEGURIDAD.md §3.1, enmienda 2.
+    /// </para>
+    /// </summary>
+    internal static volatile bool PanelOpen;
+
     private HHOOK _handle;
 
     public Hook(HWND host)
@@ -66,7 +79,10 @@ internal sealed unsafe class Hook : IDisposable
         if (message != WM_KEYDOWN && message != WM_SYSKEYDOWN) return Next(code, wParam, lParam);
 
         KBDLLHOOKSTRUCT* key = (KBDLLHOOKSTRUCT*)lParam.Value;
-        if (key->vkCode != (uint)VIRTUAL_KEY.VK_SPACE) return Next(code, wParam, lParam);
+
+        bool space = key->vkCode == (uint)VIRTUAL_KEY.VK_SPACE;
+        bool escape = PanelOpen && key->vkCode == (uint)VIRTUAL_KEY.VK_ESCAPE;
+        if (!space && !escape) return Next(code, wParam, lParam);
 
         // Ctrl+Espacio, Alt+Espacio y Shift+Espacio son atajos de otros: no son nuestros.
         if (Down(VIRTUAL_KEY.VK_CONTROL) || Down(VIRTUAL_KEY.VK_MENU) || Down(VIRTUAL_KEY.VK_SHIFT))
@@ -77,9 +93,13 @@ internal sealed unsafe class Hook : IDisposable
         HWND front = PInvoke.GetForegroundWindow();
         if (!Foreground.IsExplorer(front) || Typing(front)) return Next(code, wParam, lParam);
 
-        PInvoke.PostMessage(_host, HostWindow.WM_APP_QUICKLOOK, default, default);
+        // Esc manda su propio mensaje y no el interruptor: entre esta comprobacion y el
+        // mensaje el panel puede haberse cerrado solo, y un interruptor ABRIRIA uno nuevo.
+        // Pulsar Esc y que aparezca un panel seria de las cosas mas raras posibles.
+        PInvoke.PostMessage(
+            _host, escape ? HostWindow.WM_APP_CLOSE : HostWindow.WM_APP_QUICKLOOK, default, default);
 
-        // 1 se come el espacio: el Explorador no lo llega a ver.
+        // 1 se come la tecla: el Explorador no la llega a ver.
         return new LRESULT(1);
     }
 

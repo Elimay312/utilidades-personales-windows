@@ -104,9 +104,10 @@ archivos o el Escritorio.
 
 - **Uno.** `Hook.cs` es el **único** fichero que nombra `WH_KEYBOARD_LL`, y lo comprueba
   `auditar.ps1`. Si aparece en otro sitio, la auditoría falla.
-- **Una tecla.** El callback compara contra `VK_SPACE` y nada más. `auditar.ps1` comprueba
-  que dentro de `Hook.cs` no hay ninguna otra constante `VK_*` salvo las tres de
-  modificador.
+- **Dos teclas, y la segunda solo a veces.** El callback compara contra `VK_SPACE`, y
+  contra `VK_ESCAPE` **únicamente mientras hay un panel abierto**. `auditar.ps1` comprueba
+  que dentro de `Hook.cs` no hay ninguna otra constante `VK_*` salvo esas dos y las de
+  modificador, y que el interruptor que acota la segunda existe.
 - **Solo hacia delante.** `nCode < 0`, o cualquier mensaje que no sea `WM_KEYDOWN` /
   `WM_SYSKEYDOWN`, sale por `CallNextHookEx` en la primera línea del callback.
 - **Solo con el Explorador delante.** `GetForegroundWindow` + `GetClassNameW`:
@@ -134,6 +135,29 @@ en un sitio donde el usuario está escribiendo.
 **Sigue cerrado:** cualquier otra tecla, cualquier otro tipo de hook, el hook activo
 cuando el Explorador no está delante, guardar lo que sea, y `SendInput` en cualquiera de
 sus formas.
+
+> **Enmienda 2, M7.1 — `Esc` cierra el panel.** Se abre una segunda tecla, `VK_ESCAPE`, y
+> hay que decir por qué no es el principio de una pendiente.
+>
+> **Qué la acota, y está en el código:** el callback solo la mira **si hay un panel
+> abierto**. Con el panel cerrado —que es el 99,9% del tiempo que el programa está vivo— la
+> tecla `Esc` sale por `CallNextHookEx` en la misma comparación que cualquier otra, y el
+> programa no se entera de que existe. El interruptor lo pone y lo quita `HostWindow`, que
+> es quien abre y cierra el panel, y no hay ningún otro camino que lo toque.
+>
+> **Por qué merece la pena:** cerrar con `Esc` es lo que hace Quick Look en macOS y es el
+> gesto que el usuario ya tiene en los dedos. Sin él la única salida cómoda era pulsar
+> espacio otra vez, y eso obliga a volver al Explorador si te habías ido.
+>
+> **Y por qué no rompe nada del Explorador:** `Esc` ahí cancela un renombrado, cierra la
+> caja de búsqueda y quita la selección. Los dos primeros siguen funcionando porque el
+> cortafuegos de `GetGUIThreadInfo` ya deja pasar cualquier tecla cuando hay un cursor de
+> texto parpadeando, y el tercero solo se ve afectado mientras tienes un panel delante —
+> momento en el que lo que quieres cerrar es el panel.
+>
+> **Sigue cerrado:** mirar `Esc` con el panel cerrado, y una tercera tecla. Si alguna vez
+> hacen falta las flechas para cambiar de archivo desde el panel, será otra enmienda y
+> tendrá que justificar por qué no vale el temporizador que ya existe.
 
 ### 3.2 Leer qué archivo está seleccionado en el Explorador
 

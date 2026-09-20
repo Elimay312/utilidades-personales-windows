@@ -80,7 +80,10 @@ $reglas = @(
     @{ n = '12 leer contenido de ficheros';  p = 'ReadAllBytes|ReadAllLines|File\.OpenRead|FileStream\(|StreamReader|MemoryMappedFile' }
 
     @{ n = '13 navegador y credenciales';    p = 'places\.sqlite|Login Data|CredRead|CredEnumerate|CryptUnprotectData|\\\\User Data\\\\' }
-    @{ n = '14 portapapeles';                p = 'OpenClipboard|GetClipboardData|SetClipboardData|OleGetClipboard|Clipboard\.' }
+    # La regla 14 se partio en dos al escribir §3.12: LEER el portapapeles esta
+    # permitido solo al pegar, y se comprueba abajo; ESCRIBIR sigue prohibido y es lo
+    # que se busca aqui.
+    @{ n = '14 escribir en portapapeles';    p = 'SetClipboardData|OleSetClipboard' }
 
     # SetForegroundWindow NO esta aqui: esta permitido sobre el HWND propio y se
     # comprueba aparte, mas abajo. Es la unica excepcion de la regla 15.
@@ -181,6 +184,22 @@ if ($urls) {
     $esq = 'todavia no se abren URLs'
 }
 Write-Output ("  {0,-34} {1}" -f '10 esquema de las plantillas', $esq)
+
+# §3.12: leer el portapapeles solo para pegar. Tres cosas: una sola llamada, en el
+# fichero de la ventana, y solo el formato de texto.
+$cb = $codigo | Where-Object { $_.Texto -match 'GetClipboardData' -and $_.Fichero -like '*.cs' }
+if (-not $cb) {
+    $pegar = 'todavia no se lee'
+} elseif ((Veces $cb 'GetClipboardData') -gt 1) {
+    $pegar = "APARECE $(Veces $cb 'GetClipboardData') VECES, solo se permite 1"; $fallos++
+} elseif ($cb[0].Fichero -ne 'LanzadorWindow.cs') {
+    $pegar = "FUERA DE LanzadorWindow.cs ($($cb[0].Fichero))"; $fallos++
+} elseif (-not ($codigo | Where-Object { $_.Texto -match 'CF_UNICODETEXT' })) {
+    $pegar = 'NO SE VE CF_UNICODETEXT: se pide otro formato'; $fallos++
+} else {
+    $pegar = 'si, 1 vez y solo CF_UNICODETEXT'
+}
+Write-Output ("  {0,-34} {1}" -f '14 leer portapapeles (pegar)', $pegar)
 
 # §3.11, y es la comprobacion mas importante de las positivas: sin SIIGBF_ICONONLY,
 # GetImage devuelve la MINIATURA, y la miniatura de un documento es su contenido

@@ -44,7 +44,9 @@ Es el sitio donde este proyecto podría convertirse en algo que no quiero, así 
 dibuja a mano.
 
 **Lo que hace el lanzador:** su propia ventana, cuando **tiene el foco**, recibe `WM_CHAR` y
-`WM_KEYDOWN`, igual que los recibe el cuadro de búsqueda de cualquier programa. Y
+`WM_KEYDOWN`, igual que los recibe el cuadro de búsqueda de cualquier programa. Desde que la
+caja la dibujamos nosotros (§3.2), esos mensajes los atiende nuestro código en vez del control
+del sistema — misma puerta, distinto portero. Y
 `RegisterHotKey` le pide a Windows que le mande `WM_HOTKEY` cuando se pulse **una**
 combinación concreta.
 
@@ -94,7 +96,7 @@ instala, no se arranca, no se configura desde aquí.
 | 11 | **Guardar lo que escribes.** Ni las consultas, ni las teclas, ni lo que se descartó | Lo que se guarda es **lo que lanzaste**: qué, cuántas veces y cuándo fue la última. Una consulta que no acabó en Enter no deja rastro. Ver §3.6. |
 | 12 | **Leer el contenido de los ficheros.** Ni buscar dentro, ni leer metadatos de documentos, **ni previsualizar** | El índice es de **nombres y rutas**. Lo mismo que ya te enseña el Explorador. El contenido de tus documentos no es asunto de un lanzador. La forma en que esto se colaría es una miniatura, que es el contenido dibujado: por eso los iconos se piden con `SIIGBF_ICONONLY` y `auditar.ps1` lo comprueba — ver §3.11. |
 | 13 | Tocar el navegador: historial, marcadores, perfiles, cookies, credenciales, gestores de contraseñas | Muchos lanzadores indexan los marcadores. Este no. Es la carpeta más sensible del perfil y el beneficio no compensa ni de lejos. |
-| 14 | Portapapeles: `OpenClipboard`, `GetClipboardData`, `SetClipboardData` | Ctrl+V funciona en la caja de texto porque **lo hace el control `EDIT` del sistema por dentro**, sin que nosotros llamemos a nada. Nuestro código nunca lee el portapapeles. Ver §3.2. |
+| 14 | **Escribir** en el portapapeles: `SetClipboardData`, `OleSetClipboard` | El lanzador no tiene ningún motivo para dejar nada ahí. **Leerlo está permitido solo al pulsar Ctrl+V**, con los cortes de §3.12 — es una enmienda, y está escrita. |
 | 15 | Tocar ventanas ajenas: enumerarlas, moverlas, cerrarlas, leer sus píxeles | `EnumWindows`, `PrintWindow`, `ShowWindowAsync`, `AttachThreadInput`. **`SetForegroundWindow` solo sobre nuestro propio HWND**, que es la única excepción y está en §3.4 con su comprobación propia en `auditar.ps1`. |
 | 16 | Matar procesos: `TerminateProcess`, `TerminateThread`, `EndTask`, `ExitWindowsEx` | Pierde datos sin preguntar. El lanzador abre cosas; no cierra las de nadie. |
 | 17 | **Elevar lo que se lanza.** Nada del verbo `runas` ni de pedir UAC al abrir algo | Si algo necesita administrador, lo pedirá él. Un lanzador que eleva por su cuenta es un lanzador que convierte un Enter tuyo en un consentimiento que no diste. |
@@ -132,21 +134,52 @@ apunta un acceso directo.** `IShellLink` no está en `NativeMethods.txt` y no va
 `.lnk` se le pasa al shell tal cual y él lo resuelve, igual que cuando haces doble clic, así
 que el lanzador nunca llega a saber qué ejecutable hay detrás de un acceso directo tuyo.
 
-### 3.2 La caja de texto
+### 3.2 La caja de texto, que la dibujamos nosotros
 
-Un control `EDIT` hijo (`CreateWindowExW` con la clase `"EDIT"`), subclasado con
-`SetWindowSubclass` solo para interceptar las flechas, `Esc` y `Enter` antes de que el control
-se los coma.
+El texto lo lleva un búfer nuestro, alimentado por los `WM_CHAR` y `WM_KEYDOWN` que llegan a
+nuestra ventana cuando **la ventana tiene el foco**. El cursor, la selección y el dibujado son
+código de este repo.
 
-**Por qué se sostiene:** es el mismo control que usa cualquier cuadro de diálogo de Windows.
-El caret, la selección, las teclas muertas y **Ctrl+V los implementa el propio control dentro
-del sistema**. Nuestro código recibe el texto con `WM_GETTEXT` cuando cambia; no toca el
-portapapeles (regla 14) y no ve ninguna tecla que no le hayas escrito dentro.
+> **Esto era un control `EDIT` del sistema y dejó de serlo por el diseño**, no por gusto: un
+> `EDIT` pinta su fondo opaco con GDI y no puede ser translúcido. La consecuencia de seguridad
+> está en §3.12 y **no es gratis**: lo que antes hacía el sistema por nosotros ahora lo hace
+> nuestro código, y eso incluye pegar.
 
-**El corte:** la subclase actúa sobre **nuestro control hijo**, identificado por el HWND que
-nos devolvió `CreateWindowExW`. `SetWindowSubclass` sobre una ventana de otro proceso no
-funcionaría aunque quisiéramos —haría falta inyectar una DLL, que es la regla 4—, pero conviene
-decir que tampoco se intenta.
+**Por qué se sostiene:** un `WM_CHAR` solo llega si la ventana está delante y estás escribiendo
+en ella. Es la misma puerta que usaba el `EDIT`; lo único que cambia es quién está detrás. No
+hay hook (regla 2) ni consulta del estado del teclado (regla 3): si no tienes la ventana
+delante, aquí no llega nada.
+
+**Los cortes:**
+
+- **El búfer se vacía al esconder la ventana.** No hay historial de consultas en ningún sitio
+  (regla 11), y eso ahora depende de nuestro código en vez de del control.
+- **Las teclas modificadoras se siguen por sus propios mensajes**, que ya nos llegan. No se
+  consulta `GetAsyncKeyState` ni `GetKeyboardState` para saber si Control está pulsado.
+- **Nada de lo que se escribe sale del proceso ni se escribe a disco.**
+
+### 3.12 Pegar en la caja
+
+`OpenClipboard` → `GetClipboardData(CF_UNICODETEXT)` → `CloseClipboard`, **solo** al pulsar
+Ctrl+V con nuestra ventana delante.
+
+**Esta sección es una enmienda a la regla 14 y conviene decir exactamente qué cambia.** Ctrl+V
+ya funcionaba antes: lo hacía el control `EDIT` dentro del sistema, en nuestro nombre. La
+capacidad no es nueva; lo nuevo es **quién la ejerce**. Al dibujar la caja nosotros, pegar pasa
+a ser una llamada de nuestro código, y leer el portapapeles es la dirección sensible de esa
+regla, así que se escribe en vez de darse por supuesta.
+
+**Los cortes, que son lo que la hacen estrecha:**
+
+- **Solo al pulsar Ctrl+V.** No hay ninguna otra ruta que llegue ahí: ni al asomarse, ni en un
+  temporizador, ni al arrancar. El portapapeles no se mira nunca por iniciativa propia.
+- **Solo `CF_UNICODETEXT`.** No se pide ni se mira ningún otro formato: ni imágenes, ni listas
+  de ficheros, ni HTML.
+- **Lo que entra va a la consulta**, que no se guarda (regla 11) y se borra al esconder.
+- **`SetClipboardData` sigue prohibido.** El lanzador no escribe en el portapapeles, y por eso
+  el resultado de la calculadora sigue sin poder copiarse (§4).
+- `auditar.ps1` comprueba las tres cosas: que `GetClipboardData` aparece **una vez**, que está
+  en el fichero de la ventana, y que `SetClipboardData` **no aparece nunca**.
 
 ### 3.3 El atajo global
 
@@ -312,7 +345,7 @@ del Administrador de tareas, se puede quitar desde ahí, y **se pregunta antes d
 |---|---|
 | Apagar y reiniciar desde el lanzador | Regla 16, y no por tecnicismo: se pierde trabajo. Enter sobre una coincidencia difusa no es sitio para eso. Bloquear sí está, en §3.10, porque no puede salir mal |
 | El `%` en la calculadora | No está claro si quien lo escribe quiere un porcentaje o un módulo, y una calculadora que adivina mal es peor que una que no tiene la tecla |
-| Copiar el resultado de la cuenta | Regla 14. El resultado se lee en pantalla; copiarlo necesitaría `SetClipboardData` y eso es una enmienda, no un descuido. Ver la nota al final de §4 |
+| Copiar el resultado de la cuenta | Regla 14, que **sigue prohibiendo escribir** en el portapapeles aunque §3.12 permita leerlo para pegar. El resultado se lee en pantalla |
 | Modo comando: escribir algo y que se ejecute tal cual | Regla 10. Es la diferencia entre un lanzador y una shell. Si alguna vez entra, entra con su enmienda y con la confirmación delante |
 | Indexar marcadores del navegador | Regla 13. Es la carpeta más sensible del perfil, y ya hay prefijos web para lo mismo |
 | Buscar dentro de los ficheros | Regla 12. Everything tampoco lo hace por defecto, y por la misma razón |
@@ -322,13 +355,10 @@ del Administrador de tareas, se puede quitar desde ahí, y **se pregunta antes d
 | Arrancar Everything si no está corriendo | No es asunto nuestro lanzar el programa de otro sin que lo pidas. Se dice que falta y ya |
 | Un índice de ficheros propio, en disco | Para eso está Everything, que ya lo hace mejor. Y un índice propio en disco *sí* sería un inventario de tus ficheros guardado por nosotros |
 
-> **Sobre copiar el resultado de la calculadora.** Es lo que hacen todos los lanzadores y
-> aquí no está, porque la regla 14 prohíbe el portapapeles entero. La regla se escribió
-> pensando en **leerlo**, que es lo sensible; **escribirlo** detrás de un Enter tuyo es otra
-> cosa. Si se quiere, la enmienda sería: permitir `SetClipboardData` y solo eso, con
-> `GetClipboardData` y `OpenClipboard` para leer siguiendo prohibidos, y `auditar.ps1`
-> comprobando que solo se escribe. **No se ha hecho porque no se ha pedido**, no porque no
-> se pueda.
+> **Sobre copiar el resultado de la calculadora.** Sigue sin estar. La regla 14 se partió en
+> dos al escribir §3.12: **leer** el portapapeles está permitido, pero solo al pegar y con
+> cortes; **escribir** sigue prohibido, y copiar necesita escribir. La enmienda que haría
+> falta es de una línea y nadie la ha pedido.
 
 ---
 
@@ -340,8 +370,10 @@ Cosas que el código hace de una forma concreta **porque este documento existe**
   se guarda es `uso.json`, que es lo que abriste, no lo que tienes.
 - **No hay ninguna ruta de código que lance algo sin una fila seleccionada.** Ni un
   temporizador, ni un "abre el primero automáticamente", ni un modo sin confirmación.
-- **La consulta vive en el control `EDIT` y en una variable**, y las dos se vacían al ocultar la
-  ventana. No hay una lista de consultas anteriores en ningún sitio.
+- **La consulta vive en un búfer nuestro** que se vacía al ocultar la ventana. No hay una lista
+  de consultas anteriores en ningún sitio.
+- **El portapapeles solo se lee desde el atajo de pegar.** Una sola llamada en todo el
+  programa, y la auditoría cuenta que sea una.
 - **`SetForegroundWindow` aparece exactamente una vez en el código**, en `LanzadorWindow.cs`, y
   con el handle propio. Si aparece una segunda, la auditoría falla.
 - **Las plantillas de URL se validan antes de abrirse**, y solo pasan `http` y `https`.

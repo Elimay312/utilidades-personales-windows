@@ -43,9 +43,6 @@ internal static unsafe class Selection
     /// <summary>SID_STopLevelBrowser: el navegador de nivel superior de una ventana del shell.</summary>
     private static readonly Guid SID_STopLevelBrowser = new("4C96BE40-915C-11CF-99D3-00AA004AE837");
 
-    /// <summary>QL_LOG=1 para ver por que una ventana del shell se descarta.</summary>
-    private static readonly bool Trace = Environment.GetEnvironmentVariable("QL_LOG") == "1";
-
     /// <summary>
     /// La ruta del elemento seleccionado en <paramref name="front"/>, o null si no hay
     /// nada seleccionado, si no es una ventana del shell, o si el Explorador no contesta.
@@ -77,7 +74,11 @@ internal static unsafe class Selection
             if (items is null) return null;
 
             items.GetCount(out uint count);
-            if (count == 0) return null;
+            if (count == 0)
+            {
+                Log.Line("[seleccion] la vista no tiene nada marcado");
+                return null;
+            }
 
             // Uno cada vez. Con varios seleccionados se mira el primero; la lista entera
             // es cosa del M8, no de aqui.
@@ -141,6 +142,7 @@ internal static unsafe class Selection
             if (view is not null) return view;
         }
 
+        Log.Line($"[seleccion] ninguna de las {total} ventana(s) de shell es la de delante (0x{(nint)front.Value:X})");
         return null;
     }
 
@@ -179,7 +181,7 @@ internal static unsafe class Selection
         {
             // Una ventana de Internet Explorer heredado, o una que se esta cerrando: no
             // es la que buscamos y no es un error.
-            if (Trace) Console.WriteLine($"[seleccion]   descartada: {ex.Message}");
+            Log.Line($"[seleccion]   descartada: {ex.Message}");
             return null;
         }
     }

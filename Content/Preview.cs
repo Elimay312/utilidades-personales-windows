@@ -15,9 +15,14 @@ namespace QuickLook;
 /// que la rueda pasa pagina en vez de desplazar.
 /// </param>
 /// <param name="PdfPage">Que pagina se esta viendo, desde cero.</param>
+/// <param name="Media">La ruta a reproducir, si es video o audio. Null en todo lo demas.</param>
+/// <param name="IsVideo">
+/// true si ademas de sonar hay algo que ver. Un audio no tiene superficie de video: se queda
+/// con su caratula, que es la miniatura que el shell ya sabe sacar de las etiquetas.
+/// </param>
 internal sealed record Preview(
     Pixels? Image, bool IsThumbnail, string Title, string Detail, string? Text = null,
-    int PdfPages = 0, int PdfPage = 0)
+    int PdfPages = 0, int PdfPage = 0, string? Media = null, bool IsVideo = false)
 {
     /// <summary>A que tamanio se pide la miniatura. Ver la nota de ponytail en Kind.</summary>
     private const int ThumbnailSize = 1600;
@@ -45,12 +50,22 @@ internal sealed record Preview(
     {
         // Imagenes
         ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".heic", ".avif", ".ico",
-        // Video
-        ".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".wmv",
         // Documentos que Windows sabe rasterizar. El .pdf NO esta aqui: tiene su propio
         // camino, porque la miniatura del shell de un PDF es la portada a baja resolucion
         // y no deja pasar pagina.
         ".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt",
+    };
+
+    /// <summary>Lo que se ve y suena.</summary>
+    private static readonly HashSet<string> Video = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".wmv",
+    };
+
+    /// <summary>Lo que solo suena. La caratula la saca el shell de las etiquetas.</summary>
+    private static readonly HashSet<string> Audio = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp3", ".flac", ".wav", ".m4a", ".ogg", ".aac", ".wma", ".opus",
     };
 
     /// <summary>Lo que se puede leer como texto. Lo usa M5; aqui ya decide que NO es miniatura.</summary>
@@ -82,6 +97,8 @@ internal sealed record Preview(
     {
         string extension = System.IO.Path.GetExtension(path);
         if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase)) return PreviewKind.Pdf;
+        if (Video.Contains(extension)) return PreviewKind.Video;
+        if (Audio.Contains(extension)) return PreviewKind.Audio;
         if (Thumbnailable.Contains(extension)) return PreviewKind.Thumbnail;
         if (Textual.Contains(extension)) return PreviewKind.Text;
         return PreviewKind.Card;
@@ -104,6 +121,21 @@ internal sealed record Preview(
             return new Preview(null, false, title, DetailOf(path), content);
 
         if (kind == PreviewKind.Pdf) return Pdf(path, title, 0);
+
+        if (kind is PreviewKind.Video or PreviewKind.Audio)
+        {
+            bool video = kind == PreviewKind.Video;
+
+            // La miniatura del shell hace doble trabajo aqui: da la forma de la tarjeta
+            // —que si no habria que esperar a que el reproductor cargue para saberla— y es
+            // lo que se ve mientras el video arranca, en vez de un rectangulo negro. Para
+            // un audio es la caratula.
+            Pixels? poster = Shell.Image(path, ThumbnailSize, iconOnly: false);
+            poster ??= Shell.Image(path, IconSize, iconOnly: true);
+
+            return new Preview(poster, poster is not null && video, title, DetailOf(path),
+                null, 0, 0, path, video);
+        }
 
         bool thumbnail = kind == PreviewKind.Thumbnail;
 
@@ -137,8 +169,7 @@ internal sealed record Preview(
             return new Preview(Shell.Image(path, IconSize, iconOnly: true), false, title, DetailOf(path));
 
         page = Math.Clamp(page, 0, count - 1);
-        if (Environment.GetEnvironmentVariable("QL_LOG") == "1")
-            Console.WriteLine($"[pdf] pagina {page + 1}/{count}");
+        Log.Line($"[pdf] pagina {page + 1}/{count}");
 
         string detail = DetailOf(path);
         if (count > 1) detail += $"  ·  {page + 1} / {count}";
@@ -204,4 +235,10 @@ internal enum PreviewKind
 
     /// <summary>PDF, rasterizado por Windows y con la rueda para pasar pagina.</summary>
     Pdf,
+
+    /// <summary>Video: suena y se ve, en bucle y mudo.</summary>
+    Video,
+
+    /// <summary>Audio: suena, y se ve su caratula.</summary>
+    Audio,
 }

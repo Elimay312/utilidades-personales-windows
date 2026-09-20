@@ -421,3 +421,76 @@ primera.
   1`. Se para en los dos extremos y **es la misma ventana** de principio a fin.
 
 **Ficheros:** `Content/PdfFile.cs`, `Content/Preview.cs`, `Panel.cs`, `SelfCheck.cs`.
+
+---
+
+## M7 — Vídeo y audio
+
+**Y sigue sin haber una sola dependencia nueva.** La pieza que lo hace posible es
+`MediaPlayer.GetSurface(compositor)`: devuelve una `ICompositionSurface` que entra en el
+árbol de visuals como cualquier otro pincel. Por eso no hace falta VLCJ, ni LibVLC, ni un
+reproductor en una ventana aparte encima del panel — el vídeo es un visual más, con sus
+esquinas redondeadas y su recorte, y lo compone DWM con todo lo demás.
+
+El riesgo que el plan marcaba era justo si eso funciona en una app de escritorio **sin
+identidad de paquete**. Se comprobó aparte, con una sonda de un solo uso, antes de construir
+nada encima: `MediaFile.Open OK, superficie de video: SI`, la reproducción avanzaba
+(`progreso tras 1,2 s: 0.077`) y se soltó sin excepción.
+
+**El vídeo entra mudo y en bucle**; el audio **sí suena**, porque en un audio el sonido es
+todo el contenido y verlo mudo no informa de nada. La miniatura del shell hace doble trabajo:
+da la forma de la tarjeta —que si no habría que esperar a que el reproductor cargue para
+saberla— y es lo que se ve mientras el vídeo arranca, en vez de un rectángulo negro. Para un
+audio es la carátula. El vídeo se dibuja **encima** del póster, no en su lugar.
+
+**Lo único que hay que hacer bien es soltarlo.** Un `MediaPlayer` huérfano sigue sonando
+aunque su ventana ya no exista, y el usuario no tendría forma de callarlo salvo matar el
+proceso. Por eso se pausa *antes* de soltar, y se suelta desde todos los caminos por los que
+el panel puede morir: al cambiar de archivo, al cerrarse, y en el camino de excepción.
+
+### `auditar.ps1` hizo su trabajo
+
+`MediaSource.CreateFromUri(new Uri(path))` era lo corto y lo síncrono. La auditoría lo cazó:
+**la regla 6 busca `Uri(`**, y aunque aquí sea una ruta local, ese grep es lo que sostiene la
+promesa de que este programa no habla con nadie — que es la mitad del argumento por el que se
+puede tener un hook de teclado dentro.
+
+Antes que meterle una excepción al grep, se cambió la llamada a `StorageFile` +
+`MediaSource.CreateFromStorageFile`. **Un documento con excepciones deja de ser una puerta.**
+
+### Las trazas pasan a llevar marca de tiempo
+
+`Log.cs`, y no es un adorno. En este proyecto el método de prueba se ha equivocado más veces
+que el código, y **tres** de esas veces la duda era la misma: si una línea del log había
+pasado antes o después de lo que la sonda acababa de hacer. Sin milisegundos no se puede
+contestar, y se acaba teorizando sobre el orden de los hechos en vez de leerlo.
+
+Se añadió también una traza `[tick]` que dice qué ve el temporizador, **pero solo cuando
+cambia** respecto al tick anterior: trazar cada tick escupe cinco líneas por segundo y deja
+el log inservible; trazar los cambios deja ver la historia entera en nueve líneas.
+
+Y esas nueve líneas fueron las que destaparon el último enredo: la sonda cambiaba la
+selección de *una* ventana del Explorador, pero el programa pregunta por **la que está en
+primer plano**, y el bucle de reintentos había dejado varias abiertas sobre la misma carpeta.
+El síntoma era que el temporizador encontraba la vista cada 200 ms y devolvía siempre la ruta
+vieja. El código estaba bien otra vez.
+
+### Medido
+
+```
+[      0 ms] [tarjeta] 460x300  (ficha)
+[    405 ms] [panel] abierto 0x291256
+[    638 ms] [tick] delante 0x170180, seleccion: ...\sonido.wav
+[   1845 ms] [tick] delante 0x170180, seleccion: ...\otro sonido.wav
+[   1932 ms] [tarjeta] 460x300  (ficha)
+[   1932 ms] [media] soltado          <- el anterior, al cambiar de archivo
+[   4847 ms] [panel] cerrando 0x291256
+[   5036 ms] [media] soltado          <- el actual, al cerrarse
+```
+
+No hay ningún vídeo en esta máquina, así que el camino de vídeo está verificado por la sonda
+de un solo uso y el de audio de extremo a extremo. **Queda pendiente probarlo con un vídeo
+real.**
+
+**Ficheros:** `Content/MediaFile.cs`, `Content/Preview.cs`, `Panel.cs`, `HostWindow.cs`,
+`Log.cs`, `Selection.cs`, `SelfCheck.cs`.

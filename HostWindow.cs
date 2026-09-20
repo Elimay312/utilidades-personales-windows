@@ -55,6 +55,13 @@ internal sealed unsafe class HostWindow : IDisposable
     private Panel? _panel;
     private bool _disposed;
 
+    /// <summary>
+    /// Lo ultimo que vio el temporizador, para poder trazar solo los CAMBIOS. Trazar cada
+    /// tick escupe cinco lineas por segundo y deja el log inservible; trazar solo cuando
+    /// algo cambia deja ver la historia entera en diez lineas.
+    /// </summary>
+    private string _lastSeen = "";
+
     public HostWindow()
     {
         EnsureClassRegistered();
@@ -186,16 +193,20 @@ internal sealed unsafe class HostWindow : IDisposable
     {
         if (_panel is null) return;
 
+        _panel.Tick();
+
         HWND front = PInvoke.GetForegroundWindow();
         if (front == _panel.Handle) return;
 
         if (!Foreground.IsExplorer(front))
         {
+            See($"delante hay 0x{(nint)front.Value:X}, que no es el Explorador: se cierra");
             Close();
             return;
         }
 
         string? path = Selection.Path(front);
+        See($"delante 0x{(nint)front.Value:X}, seleccion: {path ?? "(nada)"}");
 
         // Sin seleccion no se cierra: has podido deseleccionar sin querer al clicar el
         // fondo de la carpeta, y hacer desaparecer el panel por eso seria molesto.
@@ -203,6 +214,15 @@ internal sealed unsafe class HostWindow : IDisposable
 
         Console.WriteLine($"[seleccion] {path}");
         _panel.Morph(path, Preview.For(path));
+    }
+
+    /// <summary>Traza lo que ve el temporizador, pero solo cuando cambia respecto al tick anterior.</summary>
+    private void See(string what)
+    {
+        if (!Log.On || what == _lastSeen) return;
+
+        _lastSeen = what;
+        Log.Line($"[tick] {what}");
     }
 
     private static void EnsureClassRegistered()

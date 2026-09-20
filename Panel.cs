@@ -83,9 +83,6 @@ internal sealed unsafe class Panel : IDisposable
 
     private static ushort _classAtom;
 
-    /// <summary>QL_LOG=1 para ver el tamano de la tarjeta en cada cambio.</summary>
-    private static readonly bool Trace = Environment.GetEnvironmentVariable("QL_LOG") == "1";
-
     private readonly Compositor _compositor;
     private readonly DesktopWindowTarget _target;
     private readonly ContainerVisual _root;
@@ -120,6 +117,13 @@ internal sealed unsafe class Panel : IDisposable
 
     /// <summary>Que pagina, desde cero.</summary>
     private int _page;
+
+    /// <summary>Lo que esta sonando, si hay algo. Se suelta SIEMPRE al cambiar o al morir.</summary>
+    private MediaFile? _media;
+
+    /// <summary>La barra de progreso de lo que suena. La mueve el temporizador de la host.</summary>
+    private SpriteVisual? _bar;
+    private float _barWidth;
 
     private HWND _hwnd;
     private bool _disposed;
@@ -191,7 +195,7 @@ internal sealed unsafe class Panel : IDisposable
             panel._root.CenterPoint = Birth(x, y, w, h);
 
             PInvoke.ShowWindow(panel._hwnd, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
-            if (Trace) Console.WriteLine($"[panel] abierto 0x{(nint)panel._hwnd.Value:X}");
+            Log.Line($"[panel] abierto 0x{(nint)panel._hwnd.Value:X}");
             Motion.Open(panel._compositor, panel._root);
             return panel;
         }
@@ -203,7 +207,7 @@ internal sealed unsafe class Panel : IDisposable
             panel?.Dispose();
 
             Console.WriteLine($"[panel] no se pudo abrir: {ex.Message}");
-            if (Trace) Console.WriteLine(ex);
+            if (Log.On) Console.WriteLine(ex);
             return null;
         }
     }
@@ -338,7 +342,7 @@ internal sealed unsafe class Panel : IDisposable
     private Vector2 CardSize(Preview preview)
     {
         (int w, int h) = Size(preview, _scale, _availableW, _availableH);
-        if (Trace) Console.WriteLine($"[tarjeta] {w}x{h}  ({(preview.Text is not null ? "texto" : preview.IsThumbnail ? "miniatura" : "ficha")})");
+        Log.Line($"[tarjeta] {w}x{h}  ({(preview.Text is not null ? "texto" : preview.IsThumbnail ? "miniatura" : "ficha")})");
         return new Vector2(w, h);
     }
 
@@ -392,6 +396,12 @@ internal sealed unsafe class Panel : IDisposable
         _pages = preview.PdfPages;
         _page = preview.PdfPage;
 
+        // Lo anterior se suelta ANTES de abrir lo siguiente: dos reproductores a la vez
+        // sonando encima uno de otro es exactamente lo que no puede pasar.
+        _media?.Dispose();
+        _media = null;
+        _bar = null;
+
         ContainerVisual content = _compositor.CreateContainerVisual();
         content.Size = size;
 
@@ -435,6 +445,8 @@ internal sealed unsafe class Panel : IDisposable
             content.Children.InsertAtTop(picture);
         }
 
+        if (preview.Media is string media) BuildMedia(content, preview, media, size, pad, caption);
+
         Vector2 captionSize = new(size.X - pad * 2f, caption);
         SpriteVisual pie = _compositor.CreateSpriteVisual();
         pie.Size = captionSize;
@@ -444,6 +456,60 @@ internal sealed unsafe class Panel : IDisposable
 
         content.Children.InsertAtTop(BuildClose());
         return content;
+    }
+
+    /// <summary>
+    /// Lo que suena: la superficie del video encima de la miniatura, y la barra de progreso.
+    ///
+    /// <para>
+    /// El video se dibuja <b>encima</b> del poster y no en su lugar: mientras el
+    /// reproductor arranca hay unos fotogramas en los que su superficie todavia esta negra,
+    /// y con la miniatura debajo eso no se ve. Es el mismo truco de "lo barato primero, lo
+    /// bueno encima" que usa el resto del panel.
+    /// </para>
+    /// </summary>
+    private void BuildMedia(ContainerVisual content, Preview preview, string path, Vector2 size, float pad, float caption)
+    {
+        Vector2 box = new(size.X - pad * 2f, size.Y - pad * 2f - caption);
+
+        _media = MediaFile.Open(_compositor, path, preview.IsVideo, box);
+        if (_media is null) return;
+
+        if (_media.Brush is CompositionSurfaceBrush video)
+        {
+            SpriteVisual screen = _compositor.CreateSpriteVisual();
+            screen.Size = box;
+            screen.Offset = new Vector3(pad, pad, 0f);
+            screen.Brush = video;
+
+            CompositionRoundedRectangleGeometry inner = _compositor.CreateRoundedRectangleGeometry();
+            inner.Size = box;
+            inner.CornerRadius = new Vector2(8f * _scale);
+            screen.Clip = _compositor.CreateGeometricClip(inner);
+
+            content.Children.InsertAtTop(screen);
+        }
+
+        // Una linea fina pegada al borde de abajo de la imagen. Sin fondo: lo que hay
+        // detras ya es la tarjeta, y una barra con su canal se ve como un control y esto
+        // no lo es.
+        _barWidth = box.X;
+        _bar = _compositor.CreateSpriteVisual();
+        _bar.Size = new Vector2(0f, 2.5f * _scale);
+        _bar.Offset = new Vector3(pad, pad + box.Y - 2.5f * _scale, 0f);
+        _bar.Brush = _compositor.CreateColorBrush(Color.FromArgb(200, 255, 255, 255));
+        content.Children.InsertAtTop(_bar);
+    }
+
+    /// <summary>
+    /// Mueve la barra de progreso. Lo llama el mismo temporizador de 200 ms que ya vigila
+    /// la seleccion: no hace falta uno propio, y asi lo que suena se para de mirar en el
+    /// mismo instante en que el panel se cierra.
+    /// </summary>
+    public void Tick()
+    {
+        if (_media is null || _bar is null) return;
+        _bar.Size = new Vector2(_barWidth * _media.Progress, _bar.Size.Y);
     }
 
     /// <summary>
@@ -505,7 +571,7 @@ internal sealed unsafe class Panel : IDisposable
         if (_pages > 1)
         {
             int next = Math.Clamp(_page + (delta < 0 ? 1 : -1), 0, _pages - 1);
-            if (Trace) Console.WriteLine($"[rueda] delta={delta} pagina {_page + 1} -> {next + 1}");
+            Log.Line($"[rueda] delta={delta} pagina {_page + 1} -> {next + 1}");
             if (next != _page) Morph(Path, Preview.Pdf(Path, System.IO.Path.GetFileName(Path), next));
             return;
         }
@@ -619,7 +685,7 @@ internal sealed unsafe class Panel : IDisposable
     {
         if (_disposed || _closing) return;
         _closing = true;
-        if (Trace) Console.WriteLine($"[panel] cerrando 0x{(nint)_hwnd.Value:X}");
+        Log.Line($"[panel] cerrando 0x{(nint)_hwnd.Value:X}");
 
         // Deja de recoger clics en cuanto empieza a irse: 180 ms son de sobra para que un
         // clic rapido cayera en una ventana que ya esta muerta.
@@ -632,6 +698,11 @@ internal sealed unsafe class Panel : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+
+        // Lo primero de todo: un MediaPlayer huerfano sigue sonando aunque su ventana ya no
+        // exista, y el usuario no tendria forma de callarlo salvo matar el proceso.
+        _media?.Dispose();
+        _media = null;
 
         _target.Root = null;
         _root.Dispose();

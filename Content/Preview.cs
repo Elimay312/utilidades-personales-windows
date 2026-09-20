@@ -10,10 +10,23 @@ namespace QuickLook;
 /// <param name="Text">
 /// El contenido, si es un archivo de texto y se pudo leer. Null en todo lo demas.
 /// </param>
-internal sealed record Preview(Pixels? Image, bool IsThumbnail, string Title, string Detail, string? Text = null)
+/// <param name="PdfPages">
+/// Cuantas paginas tiene, si es un PDF. Cero en todo lo demas. Es lo que le dice al panel
+/// que la rueda pasa pagina en vez de desplazar.
+/// </param>
+/// <param name="PdfPage">Que pagina se esta viendo, desde cero.</param>
+internal sealed record Preview(
+    Pixels? Image, bool IsThumbnail, string Title, string Detail, string? Text = null,
+    int PdfPages = 0, int PdfPage = 0)
 {
     /// <summary>A que tamanio se pide la miniatura. Ver la nota de ponytail en Kind.</summary>
     private const int ThumbnailSize = 1600;
+
+    /// <summary>
+    /// A que ancho se rasteriza una pagina de PDF. Mas que la miniatura porque lo que se
+    /// mira en un PDF es texto pequenio, y ahi la resolucion se nota enseguida.
+    /// </summary>
+    private const int PdfWidth = 1800;
 
     /// <summary>
     /// El icono se pide a 96 y no a 256 a proposito: por encima del tamanio de icono
@@ -34,8 +47,10 @@ internal sealed record Preview(Pixels? Image, bool IsThumbnail, string Title, st
         ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".heic", ".avif", ".ico",
         // Video
         ".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".wmv",
-        // Documentos que Windows sabe rasterizar
-        ".pdf", ".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt",
+        // Documentos que Windows sabe rasterizar. El .pdf NO esta aqui: tiene su propio
+        // camino, porque la miniatura del shell de un PDF es la portada a baja resolucion
+        // y no deja pasar pagina.
+        ".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt",
     };
 
     /// <summary>Lo que se puede leer como texto. Lo usa M5; aqui ya decide que NO es miniatura.</summary>
@@ -66,6 +81,7 @@ internal sealed record Preview(Pixels? Image, bool IsThumbnail, string Title, st
     public static PreviewKind Kind(string path)
     {
         string extension = System.IO.Path.GetExtension(path);
+        if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase)) return PreviewKind.Pdf;
         if (Thumbnailable.Contains(extension)) return PreviewKind.Thumbnail;
         if (Textual.Contains(extension)) return PreviewKind.Text;
         return PreviewKind.Card;
@@ -87,6 +103,8 @@ internal sealed record Preview(Pixels? Image, bool IsThumbnail, string Title, st
         if (kind == PreviewKind.Text && TextFile.Read(path) is string content)
             return new Preview(null, false, title, DetailOf(path), content);
 
+        if (kind == PreviewKind.Pdf) return Pdf(path, title, 0);
+
         bool thumbnail = kind == PreviewKind.Thumbnail;
 
         // ponytail: la miniatura del shell topa cerca de 1600px. Si una foto de 24MP se
@@ -103,6 +121,29 @@ internal sealed record Preview(Pixels? Image, bool IsThumbnail, string Title, st
         }
 
         return new Preview(image, thumbnail, title, DetailOf(path));
+    }
+
+    /// <summary>
+    /// Una pagina concreta de un PDF. Lo usa tanto la apertura como pasar pagina con la
+    /// rueda, asi que el contador del pie sale siempre del mismo sitio.
+    /// </summary>
+    public static Preview Pdf(string path, string title, int page)
+    {
+        (Pixels? image, int count) = PdfFile.Page(path, page, PdfWidth);
+
+        // Un PDF cifrado o roto no es un error: cae a la ficha como cualquier otra cosa
+        // que el sistema no sepa dibujar.
+        if (image is null || count == 0)
+            return new Preview(Shell.Image(path, IconSize, iconOnly: true), false, title, DetailOf(path));
+
+        page = Math.Clamp(page, 0, count - 1);
+        if (Environment.GetEnvironmentVariable("QL_LOG") == "1")
+            Console.WriteLine($"[pdf] pagina {page + 1}/{count}");
+
+        string detail = DetailOf(path);
+        if (count > 1) detail += $"  ·  {page + 1} / {count}";
+
+        return new Preview(image, true, title, detail, null, count, page);
     }
 
     /// <summary>La linea de debajo del nombre: tipo, tamanio y fecha.</summary>
@@ -158,6 +199,9 @@ internal enum PreviewKind
     /// <summary>Miniatura real del contenido, hecha por el shell.</summary>
     Thumbnail,
 
-    /// <summary>Texto y codigo. Todavia se dibuja como ficha; es el M5.</summary>
+    /// <summary>Texto y codigo, leidos y dibujados con DirectWrite.</summary>
     Text,
+
+    /// <summary>PDF, rasterizado por Windows y con la rueda para pasar pagina.</summary>
+    Pdf,
 }

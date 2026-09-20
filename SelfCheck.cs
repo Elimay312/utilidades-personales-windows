@@ -98,7 +98,9 @@ internal static class SelfCheck
         Assert(Preview.Kind("foto.png") == PreviewKind.Thumbnail, "un .png tiene miniatura");
         Assert(Preview.Kind("FOTO.JPG") == PreviewKind.Thumbnail, "la extension no distingue mayusculas");
         Assert(Preview.Kind("video.mp4") == PreviewKind.Thumbnail, "un .mp4 tiene miniatura");
-        Assert(Preview.Kind("manual.pdf") == PreviewKind.Thumbnail, "un .pdf tiene miniatura");
+        Assert(Preview.Kind("manual.pdf") == PreviewKind.Pdf, "un .pdf va por su propio camino");
+        Assert(Preview.Kind("MANUAL.PDF") == PreviewKind.Pdf, "la extension no distingue mayusculas");
+        Assert(Preview.Kind("hoja.xlsx") == PreviewKind.Thumbnail, "Office sigue yendo por miniatura");
         Assert(Preview.Kind("notas.md") == PreviewKind.Text, "un .md es texto");
         Assert(Preview.Kind("Program.cs") == PreviewKind.Text, "un .cs es texto");
         Assert(Preview.Kind("cosas.zip") == PreviewKind.Card, "un .zip cae a la ficha");

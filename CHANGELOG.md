@@ -367,3 +367,57 @@ sigue siendo la misma ventana. `auditar.ps1` `TODO LIMPIO`, y `--check` con cinc
 
 **Ficheros:** `Content/TextFile.cs`, `Content/Preview.cs`, `Text.cs`, `Visuals.cs`,
 `Panel.cs`, `Motion.cs`, `SelfCheck.cs`.
+
+---
+
+## M6 — PDF paginado
+
+**Sin dependencia nueva.** `Windows.Data.Pdf` viene en el SDK y es el mismo renderizador que
+usa el visor de Edge. Nada de PDFium ni PDFBox: un binario propio dentro del paquete es justo
+lo que la regla 8 no quiere.
+
+El `.pdf` **sale de la lista de miniaturas del shell** y pasa a tener su propio camino. La
+miniatura del shell de un PDF es la portada a baja resolución y no deja pasar página; aquí se
+rasteriza a 1800 px de ancho, que es más que una imagen normal porque lo que se mira en un
+PDF es texto pequeño y ahí la resolución se nota enseguida.
+
+La rueda pasa página en vez de desplazar, se para en la primera y en la última, y el contador
+`2 / 3` va en el pie, en la misma línea del tipo y la fecha.
+
+```
+ponytail: el documento se abre y se cierra en cada página. Pasar página cuesta unas
+decenas de milisegundos de más, pero no hay que llevar la cuenta de quién es dueño de
+un objeto WinRT abierto entre gestos, ni cerrarlo en los cinco caminos por los que el
+panel puede morir. Si pasar página se nota lento, ese es el salto.
+```
+
+Todo el trabajo asíncrono va a un hilo del pool y se espera ahí: bloquear el hilo de UI sobre
+un `await` de WinRT es como se montan los interbloqueos más tontos, y ese hilo además es el
+que despacha la `DispatcherQueue` del compositor.
+
+### La sonda mintió, otra vez, y el código estaba bien
+
+La primera pasada dio una secuencia de páginas sin pies ni cabeza —`1, 2, 3, 2, 1, 2, 3, 2`
+para cuatro muescas hacia abajo— y el veredicto decía que el panel se había recreado. Parecía
+un fallo feo de estado.
+
+No lo era: **el bucle de reintentos de la sonda manda `WM_APP_QUICKLOOK` en cada intento, y
+ese mensaje es un interruptor**. Abría el panel, el siguiente intento lo cerraba, el siguiente
+lo volvía a abrir. Siete aperturas contaminando el log antes de que empezara la prueba.
+
+Se arregló añadiendo trazas de ciclo de vida (`[panel] abierto`, `[panel] cerrando`) y de
+rueda (`[rueda] delta=-120 pagina 1 -> 2`), que es lo que hacía falta para distinguir "el
+código se equivoca" de "la sonda se equivoca". Con ellas la segunda pasada salió limpia a la
+primera.
+
+### Medido
+
+- PDF de 3 páginas generado a mano (1122 bytes, escrito en PDF crudo por `hacer_pdf.py`) para
+  que la sonda dé el mismo fichero byte por byte en cualquier máquina, sin depender de que
+  haya Word o un "imprimir a PDF" instalado.
+- Tarjeta `573x777`: proporción de la página dentro **0,774**, contra 0,773 de una carta
+  vertical.
+- Rueda abajo cuatro veces: `1 → 2 → 3 → 3 → 3`. Rueda arriba cuatro veces: `3 → 2 → 1 → 1 →
+  1`. Se para en los dos extremos y **es la misma ventana** de principio a fin.
+
+**Ficheros:** `Content/PdfFile.cs`, `Content/Preview.cs`, `Panel.cs`, `SelfCheck.cs`.

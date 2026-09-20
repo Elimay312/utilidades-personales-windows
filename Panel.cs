@@ -115,6 +115,12 @@ internal sealed unsafe class Panel : IDisposable
     /// <summary>Por donde va, en pixeles y en positivo.</summary>
     private float _scroll;
 
+    /// <summary>Cuantas paginas tiene el PDF que se esta viendo. Cero si no es un PDF.</summary>
+    private int _pages;
+
+    /// <summary>Que pagina, desde cero.</summary>
+    private int _page;
+
     private HWND _hwnd;
     private bool _disposed;
     private bool _closing;
@@ -185,6 +191,7 @@ internal sealed unsafe class Panel : IDisposable
             panel._root.CenterPoint = Birth(x, y, w, h);
 
             PInvoke.ShowWindow(panel._hwnd, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
+            if (Trace) Console.WriteLine($"[panel] abierto 0x{(nint)panel._hwnd.Value:X}");
             Motion.Open(panel._compositor, panel._root);
             return panel;
         }
@@ -382,6 +389,9 @@ internal sealed unsafe class Panel : IDisposable
     /// <summary>La imagen, el pie y la cruz de cerrar, en un contenedor que se cruza entero.</summary>
     private ContainerVisual BuildContent(Preview preview, Vector2 size)
     {
+        _pages = preview.PdfPages;
+        _page = preview.PdfPage;
+
         ContainerVisual content = _compositor.CreateContainerVisual();
         content.Size = size;
 
@@ -490,6 +500,16 @@ internal sealed unsafe class Panel : IDisposable
     /// </summary>
     private void Scroll(short delta)
     {
+        // En un PDF la rueda pasa pagina. Es lo que espera cualquiera que haya usado un
+        // visor de PDF, y desplazar una sola pagina rasterizada no lleva a ningun sitio.
+        if (_pages > 1)
+        {
+            int next = Math.Clamp(_page + (delta < 0 ? 1 : -1), 0, _pages - 1);
+            if (Trace) Console.WriteLine($"[rueda] delta={delta} pagina {_page + 1} -> {next + 1}");
+            if (next != _page) Morph(Path, Preview.Pdf(Path, System.IO.Path.GetFileName(Path), next));
+            return;
+        }
+
         if (_scrollable is null || _scrollMax <= 0f) return;
 
         // Tres lineas por muesca, que es lo que hace todo lo demas en Windows.
@@ -599,6 +619,7 @@ internal sealed unsafe class Panel : IDisposable
     {
         if (_disposed || _closing) return;
         _closing = true;
+        if (Trace) Console.WriteLine($"[panel] cerrando 0x{(nint)_hwnd.Value:X}");
 
         // Deja de recoger clics en cuanto empieza a irse: 180 ms son de sobra para que un
         // clic rapido cayera en una ventana que ya esta muerta.

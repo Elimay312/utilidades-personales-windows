@@ -64,6 +64,9 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     private const uint WM_KEYDOWN = 0x0100;
     private const uint WM_ACTIVATE = 0x0006;
     private const uint WM_TIMER = 0x0113;
+
+    /// <summary>WM_APP + 1. Lo manda el hilo que carga iconos para que se repinte.</summary>
+    private const uint WM_APP_ICONO = 0x8001;
     private const uint WM_HOTKEY = 0x0312;
     private const uint EM_SETSEL = 0x00B1;
     private const uint EM_SETMARGINS = 0x00D3;
@@ -98,6 +101,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     private int _ancho;
 
     private List<Entrada> _ficheros = [];
+    private bool _sinEverything;
     private ushort _serie;
     private long _preguntado;
     private List<Resultado> _resultados = [];
@@ -358,15 +362,32 @@ internal sealed unsafe class LanzadorWindow : IDisposable
             Entrada? especial = Proveedores.Especial(_consulta, _config.Web);
             if (especial is not null) _resultados.Add(new Resultado(especial, 0, 0, 0));
 
-            int hueco = _config.MaxResultados - _resultados.Count;
+            // SEGURIDAD.md §3.7 promete que si Everything no esta, "se dice en la lista".
+            // Hasta H7 no lo decia en ningun sitio que el usuario pudiera ver: el aviso
+            // salia por consola, que con la ventana delante no mira nadie. Y la primera
+            // version tampoco valia: se anadia al final, pero las 8 aplicaciones ya
+            // llenaban el cupo y la fila quedaba recortada fuera de la ventana. Por eso
+            // se le RESERVA el sitio antes de buscar.
+            bool avisar = _sinEverything && _consulta.Trim().Length >= 3;
+
+            int hueco = _config.MaxResultados - _resultados.Count - (avisar ? 1 : 0);
             if (hueco > 0)
             {
                 _resultados.AddRange(
                     Coincidencia.Buscar(Candidatos(), _consulta, hueco, _uso, DateTimeOffset.UtcNow));
             }
+
+            if (avisar)
+            {
+                _resultados.Add(new Resultado(
+                    new Entrada("Everything no esta abierto", "sin el solo se buscan aplicaciones",
+                                SoloSeMira: true),
+                    0, 0, 0));
+            }
         }
 
         _elegido = 0;
+        PedirIconos();
         _visuals.Pintar(_resultados, _elegido);
 
         if (Traza)
@@ -380,6 +401,20 @@ internal sealed unsafe class LanzadorWindow : IDisposable
             PInvoke.SetWindowPos(_hwnd, default, 0, 0, _ancho, AltoActual(),
                 SET_WINDOW_POS_FLAGS.SWP_NOMOVE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER
                 | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
+        }
+    }
+
+    /// <summary>
+    /// Pide los iconos que falten de las filas que se ven. Se cargan en segundo plano
+    /// (SEGURIDAD.md §3.11) y cuando llega uno se repinta, no antes: pedirlos en el hilo
+    /// de la ventana congelaria la lista mientras el shell los resuelve.
+    /// </summary>
+    private void PedirIconos()
+    {
+        foreach (Resultado r in _resultados)
+        {
+            if (r.Entrada.SoloSeMira) continue;
+            Iconos.Pedir(r.Entrada.Destino, () => PInvoke.PostMessage(_hwnd, WM_APP_ICONO, 0, 0));
         }
     }
 
@@ -419,10 +454,12 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         // abrirse despues que nosotros, y cachear el handle dejaria los ficheros muertos
         // hasta reiniciar el lanzador.
         HWND buzon = Everything.Buzon();
-        if (buzon.IsNull)
+        _sinEverything = buzon.IsNull;
+        if (_sinEverything)
         {
             if (Traza) Console.WriteLine("[traza] Everything no esta corriendo");
             _ficheros = [];
+            Refrescar();       // para que salga la fila que lo dice
             return;
         }
 
@@ -588,6 +625,11 @@ internal sealed unsafe class LanzadorWindow : IDisposable
             // lanzador: haces clic fuera y desaparece.
             case WM_ACTIVATE when v is not null && (wParam.Value & 0xFFFF) == 0:
                 v.Esconder();
+                return new LRESULT(0);
+
+            // Llego un icono. Solo se repinta: la lista y la seleccion no cambian.
+            case WM_APP_ICONO when v is not null:
+                if (v._visible) v._visuals.Pintar(v._resultados, v._elegido);
                 return new LRESULT(0);
 
             case WM_TIMER when v is not null && (nuint)wParam.Value == TemporizadorEverything:

@@ -171,13 +171,15 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
                        S(10f), 1f, 1f, 1f, 0.14f);
         }
 
-        // El hueco del icono, marcado con un cuadrado apenas visible. No es decoracion:
-        // sin el, la sangria del texto parece un margen mal puesto hasta que en H7
-        // aparezcan los iconos de verdad.
+        // El icono si ya llego; si no, el hueco marcado con un cuadrado apenas visible.
+        // El hueco no es decoracion: sin el, la fila daria un salto al aparecer el icono.
         float arribaIcono = y + (S(AltoFila) - S(LadoIcono)) / 2f;
-        Redondeado(ctx, x + S(MargenTexto), arribaIcono,
-                   x + S(MargenTexto) + S(LadoIcono), arribaIcono + S(LadoIcono),
-                   S(7f), 1f, 1f, 1f, 0.07f);
+        float izqIcono = x + S(MargenTexto);
+
+        Icono? icono = r.Entrada.SoloSeMira ? null : Iconos.Hay(r.Entrada.Destino);
+        if (icono is not null) Pintar(ctx, icono, izqIcono, arribaIcono, S(LadoIcono));
+        else Redondeado(ctx, izqIcono, arribaIcono, izqIcono + S(LadoIcono), arribaIcono + S(LadoIcono),
+                        S(7f), 1f, 1f, 1f, 0.07f);
 
         float izquierda = x + S(Sangria);
 
@@ -188,6 +190,35 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
 
         Texto.Dibujar(ctx, Acortar(r.Entrada.Destino), S(11f), grueso: false, 0.5f,
                       new System.Drawing.Point((int)izquierda, (int)(y + S(27f))));
+    }
+
+    /// <summary>
+    /// Sube los pixeles del icono a un mapa de D2D y lo dibuja en su hueco. Se extrae a
+    /// 256 y se baja aqui: asi al 100%, 125% o 150% sale nitido sin volver a extraerlo.
+    /// </summary>
+    private static void Pintar(ID2D1DeviceContext ctx, Icono icono, float izq, float arr, float lado)
+    {
+        D2D1_BITMAP_PROPERTIES1 propiedades = new()
+        {
+            pixelFormat = new D2D1_PIXEL_FORMAT
+            {
+                format = DXGI_FORMAT.DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode = D2D1_ALPHA_MODE.D2D1_ALPHA_MODE_PREMULTIPLIED,
+            },
+            dpiX = 96,
+            dpiY = 96,
+        };
+
+        fixed (byte* pixeles = icono.Bgra)
+        {
+            ctx.CreateBitmap(
+                new D2D_SIZE_U { width = (uint)icono.Ancho, height = (uint)icono.Alto },
+                pixeles, (uint)(icono.Ancho * 4), propiedades, out ID2D1Bitmap1 mapa);
+
+            D2D_RECT_F donde = new() { left = izq, top = arr, right = izq + lado, bottom = arr + lado };
+            ctx.DrawBitmap(mapa, &donde, 1f,
+                D2D1_BITMAP_INTERPOLATION_MODE.D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, null);
+        }
     }
 
     private void Redondeado(ID2D1DeviceContext ctx, float izq, float arr, float der, float aba,

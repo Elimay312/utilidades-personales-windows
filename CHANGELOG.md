@@ -10,6 +10,32 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H7 — Iconos, y tres promesas que el código no cumplía
+
+- **Iconos de verdad**, copiados del extractor del dock con sus tres trampas ya pagadas: el
+  hilo **STA** (desde un hilo del pool, `GetImage` devuelve el icono genérico sin fallar ni
+  avisar), `SIIGBF_ICONONLY`, y volver a pedir a 48 px cuando el fichero no da para 256 —
+  si no, los iconos viejos salen como sellos diminutos dentro del lienzo.
+- **Se cargan en segundo plano y la lista se repinta cuando llegan.** El hueco ya estaba
+  reservado desde H4b, así que no hay salto al aparecer.
+- **`SIIGBF_ICONONLY` es la regla 12, no una opción de calidad.** Sin esa bandera `GetImage`
+  devuelve la **miniatura**, que es el contenido del documento dibujado. Va con su enmienda
+  (`SEGURIDAD.md §3.11`) y `auditar.ps1` lo comprueba en las dos direcciones.
+- **Tres cosas que los documentos prometían y el código no hacía**, encontradas repasando
+  `SEGURIDAD.md` contra el código línea a línea:
+  1. **El autoarranque no existía.** `autoArranque` estaba en el JSON desde H4 y no lo
+     aplicaba nadie. Comprobado escribiendo y borrando de verdad en `HKCU\...\Run`.
+  2. **"Si Everything no está, se dice en la lista"** (§3.7) no se decía en ningún sitio que
+     el usuario pudiera ver: el aviso salía por consola. Y la primera versión tampoco valía
+     — se añadía al final, pero las 8 aplicaciones ya llenaban el cupo y la fila quedaba
+     recortada fuera de la ventana. Ahora se le **reserva** el sitio antes de buscar.
+  3. **`lanzador.json` decía "se recarga sola al guardarlo"** y era mentira. Corregido el
+     comentario en vez de implementarlo: el atajo habría que volver a registrarlo y no se ha
+     echado de menos todavía.
+- **Comprobación final completa**: `dotnet publish` limpio, **ninguna conexión TCP ni UDP**
+  con el lanzador corriendo, 59 MB de memoria, y **Defender no encuentra nada** en lo
+  publicado — que era el objetivo declarado de `SEGURIDAD.md`.
+
 ### H6 — Prefijos web, sitios del sistema y calculadora
 
 - **18 sitios del sistema en el índice**, y ni un P/Invoke nuevo: son `ms-settings:` y

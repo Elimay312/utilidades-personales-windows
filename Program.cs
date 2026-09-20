@@ -42,6 +42,7 @@ internal static class Program
         Stopwatch reloj = Stopwatch.StartNew();
 
         LanzadorConfig config = Config.Cargar();
+        Config.AplicarAutoArranque(config.AutoArranque);
         Uso uso = Uso.Cargar();
         List<Entrada> indice = Indice.Construir();
         long msIndice = reloj.ElapsedMilliseconds;
@@ -321,6 +322,43 @@ internal static class Program
         fallos += Exige("la cuenta gana al prefijo web",
                         Proveedores.Especial("2+2", plantillas)?.SoloSeMira == true);
 
+        // --- Los iconos (H7) ----------------------------------------------------------
+        // Heredadas de dock/Icons.cs junto con el codigo: las dos cosas que comprueban son
+        // fallos que no se ven mirando, solo se notan como "los iconos se ven raros".
+        Console.WriteLine();
+        Console.WriteLine("Iconos — premultiplicado");
+
+        // Canales por encima del alfa: NO estaba premultiplicado. Sin premultiplicar,
+        // Composition deja halos negros en los bordes.
+        byte[] crudo = [200, 100, 50, 128];
+        Iconos.Premultiplicar(crudo);
+        fallos += Exige("se premultiplica lo que no lo estaba",
+                        crudo[0] == 200 * 128 / 255 && crudo[1] == 100 * 128 / 255
+                        && crudo[2] == 50 * 128 / 255 && crudo[3] == 128);
+
+        // Y no dos veces, que oscureceria el icono.
+        byte[] yaEsta = [50, 40, 30, 128];
+        byte[] copia = (byte[])yaEsta.Clone();
+        Iconos.Premultiplicar(yaEsta);
+        fallos += Exige("y no se premultiplica dos veces", yaEsta.AsSpan().SequenceEqual(copia));
+
+        byte[] opaco = [10, 20, 30, 255];
+        Iconos.Premultiplicar(opaco);
+        fallos += Exige("un pixel opaco no se toca", opaco[0] == 10 && opaco[1] == 20 && opaco[2] == 30);
+
+        Console.WriteLine();
+        Console.WriteLine("Iconos — caja del dibujo");
+        fallos += Exige("un bloque de 3x5 mide 5",
+                        Iconos.Lado(Lienzo(8, (x, y) => x is >= 2 and <= 4 && y is >= 1 and <= 5 ? (byte)255 : (byte)0)) == 5);
+        fallos += Exige("un lienzo lleno ocupa el lienzo", Iconos.Lado(Lienzo(8, (_, _) => 255)) == 8);
+        fallos += Exige("un lienzo vacio no ocupa nada", Iconos.Lado(Lienzo(8, (_, _) => 0)) == 0);
+
+        // El marco que el shell pinta alrededor de una miniatura viene con alfa 38. Si
+        // contara, la caja saldria siempre del lienzo entero y nunca se pediria el icono
+        // mas pequeno: los iconos viejos se verian como sellos diminutos.
+        fallos += Exige("el marco de alfa 38 no cuenta como dibujo",
+                        Iconos.Lado(Lienzo(8, (x, y) => x == 0 || y == 0 || x == 7 || y == 7 ? (byte)38 : (byte)0)) == 0);
+
         Console.WriteLine();
         if (fallos == 0) { Console.WriteLine("TODO BIEN"); return 0; }
         Console.WriteLine($"{fallos} comprobacion(es) fallan");
@@ -410,6 +448,18 @@ internal static class Program
         s.AsSpan().CopyTo(new Span<char>(destino, s.Length));
         destino[s.Length] = '\0';
         return (s.Length + 1) * 2;
+    }
+
+    /// <summary>Un lienzo cuadrado con el alfa que diga <paramref name="alfa"/>.</summary>
+    private static Icono Lienzo(int lado, Func<int, int, byte> alfa)
+    {
+        byte[] bgra = new byte[lado * lado * 4];
+        for (int y = 0; y < lado; y++)
+        {
+            for (int x = 0; x < lado; x++) bgra[((y * lado) + x) * 4 + 3] = alfa(x, y);
+        }
+
+        return new Icono(lado, lado, bgra);
     }
 
     private static int Exige(string que, bool secumple)

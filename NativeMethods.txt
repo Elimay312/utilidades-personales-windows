@@ -151,3 +151,35 @@ KillTimer
 // contrasena. ExitWindowsEx NO esta aqui y no va a estar: apagar y reiniciar siguen
 // prohibidos por la regla 16.
 LockWorkStation
+
+// --- Iconos (H7, SEGURIDAD.md §3.11) ---
+// Se le pide al shell EL MISMO icono que ya te ensena el Explorador. SIIGBF_ICONONLY no
+// es una opcion de calidad: sin ella GetImage devuelve la MINIATURA, y la miniatura de un
+// documento es su contenido dibujado, que es la regla 12. auditar.ps1 lo comprueba.
+IShellItemImageFactory
+SIIGBF
+GetObject
+BITMAP
+BITMAPINFO
+BITMAPINFOHEADER
+BI_COMPRESSION
+GetDIBits
+DIB_USAGE
+GetDC
+ReleaseDC
+
+// --- Que programa abre un esquema, para ponerle su cara a un prefijo web (H7) ---
+// Lectura de las asociaciones por la API que existe para preguntarlo. No se toca ninguna
+// y no se lee el registro a mano.
+AssocQueryString
+ASSOCF
+ASSOCSTR
+
+// --- Pintar el icono en nuestra superficie (H7) ---
+ID2D1Bitmap1
+D2D1_BITMAP_PROPERTIES1
+D2D1_BITMAP_INTERPOLATION_MODE
+
+// --- Avisar a la ventana desde el hilo que carga iconos (H7) ---
+// Sobre NUESTRA propia ventana y con un mensaje propio. No se manda nada a nadie.
+PostMessageW

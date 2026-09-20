@@ -1,5 +1,7 @@
 // Configuracion del lanzador. Vive en %LOCALAPPDATA%\Lanzador\lanzador.json.
-// Admite comentarios y comas finales. Se recarga sola al guardarlo.
+// Admite comentarios y comas finales. Se lee AL ARRANCAR: si lo cambias, reinicia
+// el lanzador. (Recargarlo en caliente no esta hecho porque el atajo habria que
+// volver a registrarlo, y no se ha echado de menos todavia.)
 //
 // Lo que NO esta aqui es lo que has lanzado: eso va en uso.json, al lado, y se borra
 // entero con "lanzador --olvidar".

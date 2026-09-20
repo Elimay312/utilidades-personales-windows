@@ -1,3 +1,4 @@
+using Microsoft.Win32;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
@@ -75,6 +76,43 @@ internal static class Config
 
         string plantilla = Path.Combine(AppContext.BaseDirectory, "lanzador.json");
         if (File.Exists(plantilla)) File.Copy(plantilla, Ruta);
+    }
+
+    private const string ClaveRun = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string NombreRun = "Lanzador";
+
+    /// <summary>
+    /// SEGURIDAD.md §3.9: <c>HKCU\...\Run</c> y nada mas. Sale en la pestana Inicio del
+    /// Administrador de tareas y se puede quitar desde ahi. Nada de tareas programadas,
+    /// servicios ni carpeta Startup.
+    /// <para>
+    /// Estaba en el JSON desde H4 y no lo aplicaba nadie: el documento prometia una cosa
+    /// que el codigo no hacia. Encontrado repasando §3.9 contra el codigo en H7.
+    /// </para>
+    /// </summary>
+    public static void AplicarAutoArranque(bool encender)
+    {
+        try
+        {
+            using RegistryKey? run = Registry.CurrentUser.OpenSubKey(ClaveRun, writable: true);
+            if (run is null) return;
+
+            string? actual = run.GetValue(NombreRun) as string;
+            string quiero = $"\"{Environment.ProcessPath}\"";
+
+            if (encender)
+            {
+                if (actual != quiero) run.SetValue(NombreRun, quiero);
+            }
+            else if (actual is not null)
+            {
+                run.DeleteValue(NombreRun, throwOnMissingValue: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[lanzador] autoarranque: {ex.Message}");
+        }
     }
 
     /// <summary>

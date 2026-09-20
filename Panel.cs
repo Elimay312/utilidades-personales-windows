@@ -319,9 +319,17 @@ internal sealed unsafe class Panel : IDisposable
 
             float fit = MathF.Min(boxW / image.Width, boxH / image.Height);
 
-            // Nunca se agranda por encima del tamano nativo: estirar una miniatura solo
-            // ensena los pixeles mas grandes.
-            fit = MathF.Min(fit, 1f);
+            // Cuanto se deja agrandar. MEDIDO en un monitor al 175%: topar a 1f agranda
+            // solo el MARCO —margen y pie van en unidades logicas, o sea 1,75x— mientras
+            // la imagen se queda a su tamano nativo en pixeles fisicos. Un video de
+            // 256x192 daba una tarjeta de 312x329, casi cuadrada, con la imagen perdida
+            // dentro. El tope correcto es la escala de la pantalla: asi la vista previa se
+            // ve del MISMO tamano aparente al 100% y al 175%, que es lo que el usuario
+            // espera, y no se pierde mas nitidez de la que ya ve cualquiera al 100%.
+            //
+            // Un video no se topa: no es un mapa de bits de tamano fijo, se compone a la
+            // resolucion que se le pida, asi que agrandarlo no cuesta nitidez ninguna.
+            if (!preview.IsVideo) fit = MathF.Min(fit, MathF.Max(1f, scale));
 
             int tw = (int)MathF.Ceiling(image.Width * fit + pad * 2f);
             int th = (int)MathF.Ceiling(image.Height * fit + pad * 2f + caption);

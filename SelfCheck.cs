@@ -76,6 +76,21 @@ internal static class SelfCheck
         var tiny = Panel.Size(Thumb(64, 64), 1f, W, H);
         Assert(tiny.W == 64 + 32, $"una miniatura de 64 se estiro a {tiny.W}");
 
+        // Y en un monitor al 175% SI se agranda, hasta 1,75x, para verse del mismo tamano
+        // aparente. Topar a 1f dejaba la imagen a tamano nativo con el marco a 1,75x: una
+        // tarjeta casi cuadrada con la imagen perdida dentro. Medido en el monitor 3.
+        var hidpi = Panel.Size(Thumb(256, 192), 1.75f, W, H);
+        float imagenW = hidpi.W - 32f * 1.75f;
+        Assert(imagenW > 256f * 1.7f, $"al 175% la imagen se quedo en {imagenW} px, sin agrandar");
+        Assert(Math.Abs(imagenW / (hidpi.H - (32f + 46f) * 1.75f) - 4f / 3f) < 0.05f,
+            $"al 175% la proporcion se deformo: {hidpi.W}x{hidpi.H}");
+
+        // Un video no se topa nunca: se compone a la resolucion que se le pida.
+        var video = new Preview(new Pixels(256, 192, new byte[256 * 192 * 4]), true, "v", "", null, 0, 0, "v.mp4", true);
+        var lleno = Panel.Size(video, 1f, W, H);
+        Assert(lleno.H >= (int)(H * 0.72f) - 1 || lleno.W >= (int)(W * 0.62f) - 1,
+            $"un video de 256x192 no lleno la caja: {lleno.W}x{lleno.H}");
+
         // El caso feo: un monitor mas pequeno que la ficha fija. Tiene que recortarse,
         // no desbordarse.
         var small = Panel.Size(new Preview(null, false, "x", ""), 1f, 300, 200);

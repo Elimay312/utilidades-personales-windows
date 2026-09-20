@@ -564,3 +564,60 @@ dormir un rato fijo: una pasada se encontró Chrome ahí y otra `LanzadorVentana
 diciéndolo en vez de medir otra app.
 
 **Ficheros:** `SEGURIDAD.md`, `auditar.ps1`, `Hook.cs` (79 líneas), `HostWindow.cs`.
+
+---
+
+## M7.2 — Un vídeo de verdad, y el fallo de DPI que destapó
+
+Hasta aquí el camino de vídeo estaba verificado a trozos: la superficie de Composition con
+una sonda de un solo uso, y el resto por el camino de audio. Faltaba **ver un vídeo
+reproduciéndose en el panel**, y en esta máquina no hay ninguno.
+
+Así que se genera: `hacer_video.py` escribe **un AVI sin comprimir a mano**, por la misma
+razón que el PDF del M6 — no depende de que haya ffmpeg instalado y da el mismo fichero byte
+por byte en cualquier máquina. 32 fotogramas lisos de 256x192 a 8 fps que van cambiando de
+color, con sus cabeceras RIFF (`hdrl`, `strh`, `strf`), los fotogramas en `BI_RGB` de abajo a
+arriba, y el índice `idx1` con desplazamientos relativos al fourcc `movi` — equivocarse ahí
+da un vídeo que abre pero no avanza.
+
+**Funcionó a la primera:** panel abierto en el monitor 3, ni el shell ni el reproductor se
+quejaron, siguió vivo reproduciendo tres segundos, y `Esc` lo cerró soltando el reproductor.
+
+### El fallo que destapó: la vista previa se encogía en pantallas con DPI alto
+
+La sonda afirmaba que la tarjeta adoptaría la proporción del vídeo (1,333) y salió **1,116**.
+Parecía que el póster venía deformado. No era eso: la traza `[poster]` decía **256x192**, la
+proporción correcta.
+
+El fallo era mío, y de DPI. **El monitor 3 está al 175%**, y el tope de escalado estaba
+puesto a `1f` *en píxeles físicos*: la imagen se quedaba a su tamaño nativo mientras el margen
+y el pie —que van en unidades lógicas— crecían 1,75×. Resultado: una tarjeta de 312x329, casi
+cuadrada, con la imagen perdida dentro de un marco enorme.
+
+El tope correcto es **la escala de la pantalla**: así la vista previa se ve del mismo tamaño
+aparente al 100% y al 175%, que es lo que el usuario espera, y no se pierde más nitidez de la
+que ya ve cualquiera trabajando al 100%.
+
+Y **un vídeo no se topa nunca**: no es un mapa de bits de tamaño fijo, se compone a la
+resolución que se le pida, así que agrandarlo no cuesta nitidez ninguna.
+
+Esto llevaba ahí desde el M3 y no se había visto porque todas las pruebas anteriores habían
+caído en el monitor principal, al 100%. `--check` gana dos casos para que no vuelva: uno a
+1,75 que comprueba que la imagen sí se agranda y que la proporción aguanta, y otro que
+comprueba que un vídeo pequeño llena la caja.
+
+### Sobre las sondas y una máquina que alguien está usando
+
+Estas pruebas roban el primer plano unos segundos, y eso no se lleva bien con alguien
+trabajando o jugando delante. Dos cosas al respecto:
+
+- Las sondas ahora colocan el Explorador en el **monitor 3** con `SetWindowPos`, para no
+  invadir el principal. De paso es mejor banco de pruebas: al ser pequeño (1097x617) ejercita
+  el recorte de la tarjeta al área disponible, que es el caso feo que cubre `--check` — y
+  resultó ser también donde vivía el fallo de DPI.
+- Aun así, Chrome ganaba el primer plano una y otra vez y las últimas pasadas abortaron
+  diciéndolo en vez de medir otra app. **Eso es lo correcto**: una sonda que mide la app
+  equivocada es peor que una que no mide. Cuando pasó, se paró en vez de insistir.
+
+**Ficheros:** `Panel.cs`, `SelfCheck.cs`, `Content/Preview.cs`,
+`scratchpad/hacer_video.py`, `scratchpad/sonda-video.ps1`.

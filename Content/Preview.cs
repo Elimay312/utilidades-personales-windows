@@ -132,6 +132,7 @@ internal sealed record Preview(
             // un audio es la caratula.
             Pixels? poster = Shell.Image(path, ThumbnailSize, iconOnly: false);
             poster ??= Shell.Image(path, IconSize, iconOnly: true);
+            if (poster is not null) Log.Line($"[poster] {poster.Width}x{poster.Height}");
 
             return new Preview(poster, poster is not null && video, title, DetailOf(path),
                 null, 0, 0, path, video);

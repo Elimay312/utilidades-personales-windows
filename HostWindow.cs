@@ -105,7 +105,7 @@ internal sealed unsafe class HostWindow : IDisposable
             // Sin esto la unica salida era volver al Explorador y pulsar espacio otra
             // vez, que es lo que hacia que la ventana pareciese imposible de cerrar.
             case WM_TIMER when wParam.Value == WatchTimer:
-                _instance?.CloseIfAway();
+                _instance?.Watch();
                 return new LRESULT(0);
 
             case WM_DESTROY:
@@ -142,7 +142,7 @@ internal sealed unsafe class HostWindow : IDisposable
         }
 
         Console.WriteLine($"[seleccion] {path}");
-        _panel = Panel.Open(front, Preview.For(path));
+        _panel = Panel.Open(front, path, Preview.For(path));
 
         if (_panel is not null) PInvoke.SetTimer(_hwnd, WatchTimer, WatchMs, null);
     }
@@ -153,25 +153,56 @@ internal sealed unsafe class HostWindow : IDisposable
         if (_panel is null) return;
 
         PInvoke.KillTimer(_hwnd, WatchTimer);
-        _panel.Dispose();
+
+        // Se suelta la referencia YA, antes de que acabe la animacion: a partir de aqui el
+        // panel es cosa suya y de su batch. Si se esperase al final, un espacio pulsado
+        // durante esos 180 ms no abriria nada porque _panel no seria null todavia.
+        Panel going = _panel;
         _panel = null;
+        going.CloseAnimated();
     }
 
     /// <summary>
-    /// Si delante ya no hay ni el Explorador ni nuestro propio panel, el usuario se ha ido
-    /// a otra cosa y el panel se cierra solo.
+    /// Lo unico que corre mientras hay panel abierto, cada 200 ms. Hace dos cosas:
     ///
-    /// El panel cuenta como "delante" aunque nunca tome el foco: se comprueba por HWND, no
-    /// por foco, precisamente porque no lo roba.
+    /// <list type="number">
+    /// <item>Si delante ya no hay ni el Explorador ni nuestro propio panel, el usuario se
+    /// ha ido a otra cosa y el panel se cierra solo. El panel cuenta como "delante" aunque
+    /// nunca tome el foco: se compara por HWND y no por foco, precisamente porque no lo
+    /// roba.</item>
+    /// <item>Si has marcado otro archivo sin cerrar el panel, la tarjeta morfa al nuevo en
+    /// vez de cerrarse y volver a abrirse. Es el gesto que hace que esto se sienta como
+    /// Quick Look.</item>
+    /// </list>
+    ///
+    /// <para>
+    /// Se sondea en vez de escuchar eventos porque <c>SetWinEventHook</c> esta prohibido
+    /// por la regla 3 y para esto no hace falta: 200 ms esta por debajo de lo que se nota
+    /// al pasar de un archivo a otro, y el temporizador solo existe mientras hay panel
+    /// abierto. Con el panel cerrado no corre nada.
+    /// </para>
     /// </summary>
-    private void CloseIfAway()
+    private void Watch()
     {
         if (_panel is null) return;
 
         HWND front = PInvoke.GetForegroundWindow();
-        if (front == _panel.Handle || Foreground.IsExplorer(front)) return;
+        if (front == _panel.Handle) return;
 
-        Close();
+        if (!Foreground.IsExplorer(front))
+        {
+            Close();
+            return;
+        }
+
+        string? path = Selection.Path(front);
+
+        // Sin seleccion no se cierra: has podido deseleccionar sin querer al clicar el
+        // fondo de la carpeta, y hacer desaparecer el panel por eso seria molesto.
+        if (path is null || path == _panel.Path) return;
+
+        Console.WriteLine($"[seleccion] {path}");
+        _panel.Morph(path, Preview.For(path));
     }
 
     private static void EnsureClassRegistered()
@@ -197,7 +228,12 @@ internal sealed unsafe class HostWindow : IDisposable
         if (_disposed) return;
         _disposed = true;
 
-        Close();
+        // Al salir del programa no hay tiempo de animar nada: se destruye y punto. Una
+        // animacion aqui no llegaria a verse, porque el bucle de mensajes que la despacha
+        // es justo el que se acaba de parar.
+        PInvoke.KillTimer(_hwnd, WatchTimer);
+        _panel?.Dispose();
+        _panel = null;
 
         if (!_hwnd.IsNull)
         {

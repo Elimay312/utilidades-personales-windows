@@ -15,16 +15,16 @@ viene en el SDK.
 
 ## Estado
 
-**M3 — miniaturas.** El espacio abre el panel sobre el archivo seleccionado y enseña su
-miniatura real: imágenes, PDFs, vídeos y documentos de Office. Lo que no tiene miniatura
-cae a una ficha con su icono, nombre, tamaño y fecha. Se cierra con otro espacio, con un
-clic, con la ✕, o solo en cuanto te vas a otra app. Todavía sin animación.
+**M4 — el morph.** El espacio abre el panel sobre el archivo seleccionado y enseña su
+miniatura real: imágenes, PDFs, vídeos y documentos de Office. Lo que no tiene miniatura cae
+a una ficha con su icono, nombre, tamaño y fecha. Nace en el cursor, se cierra con otro
+espacio, con un clic, con la ✕, o solo en cuanto te vas a otra app — y si marcas otro
+archivo sin cerrarlo, la tarjeta **morfa** al nuevo en vez de parpadear.
 
 Lo que viene, en orden:
 
 | | |
 |---|---|
-| M4 | El morph |
 | M5 | Texto y código |
 | M6 | PDF paginado |
 | M7 | Vídeo y audio |
@@ -79,7 +79,10 @@ Tres decisiones que explican casi todo lo demás:
    `MA_NOACTIVATE` a `WM_MOUSEACTIVATE`. Si lo robara, el Explorador perdería el resaltado
    de la selección y el segundo espacio no llegaría por el mismo camino que el primero.
 3. **La animación no corre en nuestro hilo.** Todo es Composition sobre el hilo de DWM,
-   igual que el dock. El hilo de UI solo dispara.
+   igual que el dock. El hilo de UI solo dispara. De ahí sale la decisión que hace posible
+   el morph: **la ventana es siempre la caja máxima y lo que cambia de tamaño es la tarjeta
+   de dentro**, porque ajustar la ventana a cada contenido obligaría a un `SetWindowPos` por
+   fotograma desde nuestro hilo.
 
 Y una cuarta que no es de arquitectura pero decide si esto sirve: **si hay un campo de
 texto con el foco, el espacio pasa de largo.** Renombrar con F2, la caja de búsqueda, la
@@ -99,7 +102,8 @@ barra de direcciones. Sin eso, el programa hace el Explorador inusable.
 | `Visuals.cs` | El compositor, el device de dibujo y los pinceles. |
 | `Text.cs` | El texto del panel, con DirectWrite. |
 | `Content/Preview.cs` | Qué trato le toca a cada extensión. |
-| `Panel.cs` | El panel. No roba el foco, sí recibe ratón. |
+| `Panel.cs` | El panel. Ventana fija, tarjeta que morfa dentro. |
+| `Motion.cs` | Las tres animaciones: abrir, cerrar y morfar. |
 | `Foreground.cs` | Quién está delante. Lo preguntan el hook, el panel y la selección. |
 | `SelfCheck.cs` | Lo que `--check` comprueba: la lógica pura. |
 | `NativeMethods.txt` | La lista cerrada de P/Invokes. Si algo no está aquí, no compila. |

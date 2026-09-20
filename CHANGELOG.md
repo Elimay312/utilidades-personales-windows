@@ -225,3 +225,88 @@ entradas.
 
 **Ficheros:** `Foreground.cs`, `Panel.cs`, `HostWindow.cs`, `Hook.cs`, `Selection.cs`,
 `Program.cs`, `NativeMethods.txt`.
+
+---
+
+## M4 — El morph
+
+La parte que decide si esto se siente como Quick Look o como abrir y cerrar una ventana.
+
+### La decisión que lo hizo posible
+
+**La ventana pasa a ser siempre la caja máxima, y lo que cambia de tamaño es la tarjeta de
+dentro.** Antes la ventana se ajustaba a cada contenido, y con eso el morph al cambiar de
+archivo habría necesitado un `SetWindowPos` por fotograma desde nuestro hilo. Una animación
+movida a mano desde el hilo de UI se atasca en cuanto el shell tarda en devolver una
+miniatura, que es justo cuando más se nota. Así no se mueve ninguna ventana: la tarjeta
+crece, encoge y se recoloca dentro, y eso lo lleva el hilo de DWM.
+
+El precio es que la ventana recoge clics en toda la caja máxima, también fuera de la
+tarjeta. No es un problema: un clic ahí cierra el panel, que es lo que hace Quick Look en
+macOS al clicar fuera.
+
+### Las tres animaciones
+
+**Abrir.** Nace en el cursor —acabas de clicar el archivo, el ratón está encima— usando el
+`CenterPoint` del visual, así que la tarjeta crece *saliendo* de por donde estás mirando.
+Muelle con amortiguación 0,82 y periodo 40 ms para la escala, y una cúbica (0,16 · 1 · 0,3 ·
+1) de 260 ms para la opacidad: a mitad del muelle el panel ya se lee.
+
+```
+ponytail: crece desde el borde, no vuela desde el icono. Volar de verdad pide una
+ventana más grande que el panel para tener sitio por donde venir, y eso se come
+clics de todo lo que quede debajo.
+```
+
+**Cerrar.** 180 ms encogiendo a 0,92 y desvaneciéndose, y la ventana se destruye en el
+`Completed` de un `CompositionScopedBatch`, **no en un temporizador**: un temporizador
+acierta el tiempo pero no el fotograma, y destruir la ventana un fotograma antes es
+exactamente el corte seco que se quería evitar.
+
+**Morfar.** Al marcar otro archivo sin cerrar el panel se animan cuatro cosas a la vez y
+todas tienen que llegar juntas o se nota: el tamaño de la tarjeta, el de su geometría de
+esquinas —si no la acompaña, el material queda recortado a la forma vieja—, el radio de esas
+esquinas, y la posición, porque la tarjeta está centrada y al cambiar de tamaño su esquina
+se mueve. El contenido se cruza en 120 ms solapados: el viejo sale creciendo a 1,04 y el
+nuevo entra desde 0,96, los dos en el mismo sentido, para que se lea como que uno pasa por
+delante del otro y no como dos imágenes fundidas.
+
+El muelle del morph va más amortiguado que el de la apertura (0,9 frente a 0,82) **a
+propósito**: lo que rebota aquí es el tamaño de la tarjeta, y un sobrepaso se sale del
+recorte de las esquinas y se ve como un mordisco en el borde. Abriendo rebota la escala
+entera, que no se recorta contra nada.
+
+### Enmienda 1 a SEGURIDAD.md
+
+El morph **rompió un cortafuegos del propio documento**. El §3.2 prometía que *"no existe
+ningún camino de código que llegue a `Selection.cs` que no venga del `WM_APP_QUICKLOOK` que
+manda el hook"*, y detectar que has marcado otro archivo lo hace un temporizador.
+
+Se podía haber dejado pasar —el temporizador solo vive mientras el panel está abierto— pero
+entonces el documento habría empezado a describir un programa que ya no era, que es
+exactamente como estas cosas se vuelven decorativas. Así que se reescribe el cortafuegos con
+lo que de verdad hace (*"solo **durante** el gesto"*, apoyado en el precedente del §3.3 del
+dock: repetir mientras dura el gesto, sobre lo mismo, y parar al acabarlo), y se le añade la
+comprobación que lo ata en el código: **`Selection.Path` solo puede aparecer en
+`HostWindow.cs`**.
+
+Se le metió el fallo a propósito —una llamada colada en `Panel.cs`— y la auditoría la cazó:
+`3.2 la seleccion solo desde HostWindow INCUMPLE`, salida 1.
+
+### Medido
+
+- **Cierre animado:** a los 67 ms la ventana sigue ahí (o sea que anima) y desaparece a los
+  238 ms. Lo que importaba era lo segundo: el aviso sale de un `CompositionScopedBatch`, que
+  se despacha por la `DispatcherQueue` del hilo, y si esa cola no se bombeara el `Completed`
+  no llegaría nunca y la ventana quedaría colgada para siempre sin que nada fallara.
+- **Morph:** el HWND del panel es **el mismo** antes y después de cambiar de selección
+  (`0x240F12`), y la tarjeta pasa de `460x300 (ficha)` a `832x478 (miniatura)`. Si se hubiera
+  cerrado y reabierto sería otra ventana.
+- El tamaño de la tarjeta ya no se puede medir desde fuera, porque la ventana es siempre la
+  caja máxima. Se traza con `QL_LOG` — señal de texto en vez de diff de píxeles, como manda
+  el `CLAUDE.md`.
+- Las trazas de `Selection` se quitaron: con el temporizador corriendo escupían sesenta
+  líneas por prueba y dejaban el log inservible. Lo que explicaban vive en los comentarios.
+
+**Ficheros:** `Motion.cs`, `Panel.cs`, `HostWindow.cs`, `Selection.cs`, `SEGURIDAD.md`,
+`auditar.ps1`, `NativeMethods.txt`.

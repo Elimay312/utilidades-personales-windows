@@ -108,6 +108,19 @@ if ($otras) {
     Write-Output ("  {0,-38} solo VK_SPACE" -f '3.1 una sola tecla observada')
 }
 
+# La seleccion del Explorador se pregunta desde UN solo sitio: HostWindow, que es quien
+# abre el panel y quien lleva su temporizador. Si aparece en cualquier otro fichero, alguien
+# abrio un camino nuevo a los datos del usuario. Ver SEGURIDAD.md §3.2.
+$selHits = $codigo | Where-Object { $_.Texto -match 'Selection\.Path' }
+$selFuera = $selHits | Where-Object { $_.Fichero -notmatch '(^|\\|/)HostWindow\.cs$' }
+if ($selFuera) {
+    $fallos++
+    Write-Output ("  {0,-38} INCUMPLE" -f '3.2 la seleccion solo desde HostWindow')
+    $selFuera | ForEach-Object { Write-Output ("      {0}:{1}  {2}" -f $_.Fichero, $_.Linea, $_.Texto.Trim()) }
+} else {
+    Write-Output ("  {0,-38} si, {1} llamada(s)" -f '3.2 la seleccion solo desde HostWindow', $selHits.Count)
+}
+
 # Sin memoria: el callback no acumula nada. Si Hook.cs crece mucho, algo se colo.
 if (Test-Path 'Hook.cs') {
     $n = $hookCodigo.Count

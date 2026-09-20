@@ -148,9 +148,17 @@ intacta), no se lee memoria ajena, no se toca el portapapeles (regla 11).
 Pero **esto es leer datos del usuario**, así que lleva los tres cortes del §1 y se
 sostienen en el código:
 
-- **Solo tras el gesto.** No existe ningún camino de código que llegue a `Selection.cs` que
-  no venga del `WM_APP_QUICKLOOK` que manda el hook. Sin espacio pulsado, no se pregunta
-  nada.
+- **Solo durante el gesto.** Sin espacio pulsado no se pregunta nada: con el panel cerrado
+  no hay temporizador, no hay hilos y no existe ningún camino de código que llegue a
+  `Selection.cs`. **Mientras el panel está abierto** —y solo mientras— se vuelve a preguntar
+  cada 200 ms, para que marcar otro archivo haga que la tarjeta cambie a él en vez de
+  obligar a cerrar y abrir. Es el mismo trato que el dock le da a las miniaturas de ventana
+  en su §3.3: se repite **mientras dura el gesto**, sobre lo mismo, y se para al acabarlo.
+  El gesto aquí no es la pulsación, es el rato que tienes el panel delante.
+- **Un solo sitio la llama.** `Selection.Path` solo se invoca desde `HostWindow.cs`, que es
+  quien abre el panel y quien lleva su temporizador. Lo comprueba `auditar.ps1`: si aparece
+  en cualquier otro fichero —un hilo de fondo, un handler, lo que sea— la auditoría falla.
+  Eso es lo que sostiene el punto de arriba en el código y no solo en este párrafo.
 - **Solo lo seleccionado, y solo su ruta.** `SVGIO_SELECTION`, no `SVGIO_ALLVIEW`. Nunca se
   enumera el contenido de la carpeta, ni carpetas que el usuario no tenga abiertas. De lo
   que devuelve el shell se saca la ruta y se ignora todo lo demás.
@@ -159,8 +167,17 @@ sostienen en el código:
   mirado. Las reglas 6 y 10 siguen intactas.
 
 **Sigue cerrado:** `SVGIO_ALLVIEW` y enumerar la vista entera, leer columnas o metadatos
-más allá de lo que se dibuja en la ficha, y hablar con ventanas del Explorador que no sean
-la que está en primer plano.
+más allá de lo que se dibuja en la ficha, hablar con ventanas del Explorador que no sean la
+que está en primer plano, y preguntar nada con el panel cerrado.
+
+> **Enmienda 1, M4.** El párrafo "solo durante el gesto" decía antes *"no existe ningún
+> camino de código que llegue a `Selection.cs` que no venga del `WM_APP_QUICKLOOK` que manda
+> el hook"*, y el morph al cambiar de archivo lo rompía: lo llama un temporizador. Se podía
+> haber dejado pasar —el temporizador solo vive mientras el panel está abierto— pero
+> entonces este documento habría empezado a describir un programa que ya no era. Se
+> reescribe el cortafuegos con lo que de verdad hace, se apoya en el precedente del §3.3 del
+> dock, y se le añade la comprobación en `auditar.ps1` que lo ata: una sola llamada, desde
+> un solo fichero.
 
 ### 3.3 Leer el archivo para dibujarlo
 

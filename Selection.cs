@@ -43,7 +43,7 @@ internal static unsafe class Selection
     /// <summary>SID_STopLevelBrowser: el navegador de nivel superior de una ventana del shell.</summary>
     private static readonly Guid SID_STopLevelBrowser = new("4C96BE40-915C-11CF-99D3-00AA004AE837");
 
-    /// <summary>QL_LOG=1 para ver por donde se corta el baile de COM.</summary>
+    /// <summary>QL_LOG=1 para ver por que una ventana del shell se descarta.</summary>
     private static readonly bool Trace = Environment.GetEnvironmentVariable("QL_LOG") == "1";
 
     /// <summary>
@@ -111,10 +111,14 @@ internal static unsafe class Selection
     {
         // CLSCTX_ALL y no solo LOCAL_SERVER: el Explorador puede servir la coleccion
         // desde mas de un contexto segun como este arrancado el shell.
-        HRESULT created = PInvoke.CoCreateInstance(CLSID_ShellWindows, null, CLSCTX.CLSCTX_ALL,
-            out IShellWindows windows);
-        if (Trace) Console.WriteLine($"[seleccion] CoCreateInstance = 0x{(uint)created.Value:X8}");
-        if (created.Failed) return null;
+        //
+        // ponytail: se crea la coleccion en cada consulta, y con el panel abierto eso son
+        // cinco veces por segundo contra explorer.exe. No se ha medido que moleste; si
+        // alguna vez lo hace, se guarda viva mientras el panel exista y se suelta al
+        // cerrarlo.
+        if (PInvoke.CoCreateInstance(CLSID_ShellWindows, null, CLSCTX.CLSCTX_ALL,
+                out IShellWindows windows).Failed)
+            return null;
 
         // El Escritorio no sale al iterar: tiene su propia consulta.
         if (Foreground.IsDesktop(front))
@@ -128,8 +132,6 @@ internal static unsafe class Selection
         }
 
         int total = windows.Count;
-        if (Trace) Console.WriteLine($"[seleccion] {total} ventana(s) de shell, buscando 0x{(nint)front.Value:X}");
-
         for (int i = 0; i < total; i++)
         {
             object? shell = windows.Item(i);
@@ -164,12 +166,10 @@ internal static unsafe class Selection
                 // 0x390EA2 y 0x51402, y ninguna coincidia: son las ventanas de las
                 // PESTAÑAS, que cuelgan del marco. Por eso se compara el ancestro raiz.
                 HWND root = PInvoke.GetAncestor(owned, GET_ANCESTOR_FLAGS.GA_ROOT);
-                bool visible = PInvoke.IsWindowVisible(owned);
-                if (Trace) Console.WriteLine($"[seleccion]   pestaña 0x{(nint)owned.Value:X} raiz 0x{(nint)root.Value:X} visible={visible}");
 
                 // Y visible, porque un marco con varias pestañas tiene varias ventanas de
                 // shell y solo la de delante esta visible.
-                if (root != match || !visible) return null;
+                if (root != match || !PInvoke.IsWindowVisible(owned)) return null;
             }
 
             browser.QueryActiveShellView(out IShellView view);

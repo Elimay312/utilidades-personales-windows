@@ -59,6 +59,11 @@ GUITHREADINFO
 SetTimer
 KillTimer
 
+// --- De donde nace el morph del panel (M4) ---
+// Solo LECTURA de la posicion del raton, para que el panel crezca por donde esta el
+// cursor. No se mueve el raton ni se sintetiza nada: ver SEGURIDAD.md §2 regla 12.
+GetCursorPos
+
 // --- Donde cae el panel (M1) ---
 MonitorFromWindow
 GetMonitorInfoW

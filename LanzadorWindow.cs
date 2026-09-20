@@ -212,10 +212,10 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         // es la forma documentada de darle otros, y el pincel tiene que sobrevivir a la
         // llamada -- por eso es un campo y no una variable local.
         _fondoCaja = PInvoke.CreateSolidBrush(new COLORREF(ColorFranja));
-        // El orden importa: el hermano creado antes queda por debajo, asi que la franja
-        // va primero y la caja encima.
-        _franja = CrearFranja();
-        _edit = CrearCaja();
+        // MAQUETA: sin EDIT ni STATIC. Toda la franja la dibuja Composition, que es lo
+        // unico que puede ser translucido. En la maqueta el texto es falso.
+        _franja = default;
+        _edit = default;
         _visuals = new LanzadorVisuals(_hwnd, _dpi / 96f, _ancho, config.MaxResultados);
 
         if (!Config.LeerAtajo(config.Atajo, out HOT_KEY_MODIFIERS mods, out uint tecla))
@@ -277,7 +277,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         Reindexar();
 
         Colocar();
-        Escribir(string.Empty);
+        _consulta = Environment.GetEnvironmentVariable("LANZADOR_MAQUETA") ?? "conf";
         Refrescar();
 
         PInvoke.ShowWindow(_hwnd, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
@@ -286,7 +286,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         // Windows autoriza a ponerse delante al proceso que acaba de recibir WM_HOTKEY;
         // sin esto la ventana sale sin foco y no recibe lo que escribes.
         PInvoke.SetForegroundWindow(_hwnd);
-        PInvoke.SetFocus(_edit);
+        if (!_edit.IsNull) PInvoke.SetFocus(_edit);
 
         _visible = true;
 
@@ -382,19 +382,28 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         _dpi = dpi;
         _ancho = Escalar(AnchoLogico);
 
-        DeleteObjectSafeHandle vieja = _fuente;
-        _fuente = CrearFuente();
-        PInvoke.SendMessage(_edit, WM_SETFONT, (nuint)_fuente.DangerousGetHandle(), 1);
-        vieja.Dispose();
+        // Lo que sigue es del control EDIT, que en la maqueta no existe. El reescalado
+        // de los visuales va DESPUES y no debe saltarse: sin el, la lista se dibuja a
+        // escala 1 dentro de una ventana a 1,25 y sobran 147 px de panel vacio abajo.
+        if (!_edit.IsNull)
+        {
+            DeleteObjectSafeHandle vieja = _fuente;
+            _fuente = CrearFuente();
+            PInvoke.SendMessage(_edit, WM_SETFONT, (nuint)_fuente.DangerousGetHandle(), 1);
+            vieja.Dispose();
+        }
 
-        PInvoke.SetWindowPos(_franja, default, 0, 0, _ancho, Escalar(AltoFranja),
-            SET_WINDOW_POS_FLAGS.SWP_NOZORDER | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
+        if (!_edit.IsNull)
+        {
+            PInvoke.SetWindowPos(_franja, default, 0, 0, _ancho, Escalar(AltoFranja),
+                SET_WINDOW_POS_FLAGS.SWP_NOZORDER | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
 
-        PInvoke.SetWindowPos(_edit, default,
-            0, Escalar((AltoFranja - LanzadorVisuals.AltoDelTexto) / 2),
-            _ancho, Escalar(LanzadorVisuals.AltoDelTexto),
-            SET_WINDOW_POS_FLAGS.SWP_NOZORDER | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
-        Sangrar(_edit);
+            PInvoke.SetWindowPos(_edit, default,
+                0, Escalar((AltoFranja - LanzadorVisuals.AltoDelTexto) / 2),
+                _ancho, Escalar(LanzadorVisuals.AltoDelTexto),
+                SET_WINDOW_POS_FLAGS.SWP_NOZORDER | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
+            Sangrar(_edit);
+        }
 
         _visuals.Reescalar(dpi / 96f, _ancho);
     }
@@ -411,6 +420,8 @@ internal sealed unsafe class LanzadorWindow : IDisposable
 
     private void Escribir(string texto)
     {
+        if (_edit.IsNull) { _consulta = texto; return; }
+
         fixed (char* t = texto) PInvoke.SendMessage(_edit, WM_SETTEXT, 0, (nint)t);
         PInvoke.SendMessage(_edit, EM_SETSEL, (nuint)texto.Length, texto.Length);
         _consulta = texto;
@@ -423,6 +434,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     /// </summary>
     private string LeerCaja()
     {
+        if (_edit.IsNull) return _consulta;
         int largo = (int)PInvoke.SendMessage(_edit, WM_GETTEXTLENGTH, 0, 0).Value;
         if (largo <= 0) return string.Empty;
 
@@ -467,6 +479,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         }
 
         _elegido = 0;
+        _visuals.Consulta = _consulta;
 
         // Los iconos se piden con rebote; la lista se pinta ya, con los que hubiera.
         PInvoke.KillTimer(_hwnd, TemporizadorIconos);
@@ -480,12 +493,13 @@ internal sealed unsafe class LanzadorWindow : IDisposable
                               (_resultados.Count > 0 ? $", 1o {_resultados[0].Entrada.Nombre}" : ""));
         }
 
-        if (_visible)
-        {
-            PInvoke.SetWindowPos(_hwnd, default, 0, 0, _ancho, AltoActual(),
-                SET_WINDOW_POS_FLAGS.SWP_NOMOVE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER
-                | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
-        }
+        // Sin mirar si es visible: al asomarse, Colocar() dimensiona ANTES de que haya
+        // resultados, y con el guardia puesto la ventana se quedaba con el alto de la
+        // franja hasta que escribieras la primera letra. Redimensionar una ventana
+        // escondida no cuesta nada.
+        PInvoke.SetWindowPos(_hwnd, default, 0, 0, _ancho, AltoActual(),
+            SET_WINDOW_POS_FLAGS.SWP_NOMOVE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER
+            | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
     }
 
     /// <summary>
@@ -871,7 +885,11 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         PInvoke.DwmSetWindowAttribute(_hwnd, DWMWINDOWATTRIBUTE.DWMWA_USE_IMMERSIVE_DARK_MODE,
             &oscuro, sizeof(uint));
 
-        uint redondas = 2;   // DWMWCP_ROUND
+        // DWMWCP_ROUND, y no una region propia: MEDIDO en la maqueta, SetWindowRgn NO
+        // recorta el backdrop de DWM. Con region y DWMWCP_DONOTROUND las esquinas salian
+        // cuadradas; con esto salen redondeadas y suavizadas. El radio es el que da
+        // Windows y no se puede subir sin renunciar al acrilico del sistema.
+        uint redondas = 2;
         PInvoke.DwmSetWindowAttribute(_hwnd, DWMWINDOWATTRIBUTE.DWMWA_WINDOW_CORNER_PREFERENCE,
             &redondas, sizeof(uint));
     }

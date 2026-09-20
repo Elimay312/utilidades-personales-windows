@@ -60,6 +60,11 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
     public const int AltoDeLaFranja = (int)AltoFranja;
     public const int AltoDelTexto = 34;
 
+    // --- la pildora de busqueda (maqueta) -------------------------------------------
+    private const float MargenPildora = 10f;   // aire entre la pildora y el borde del panel
+    private const float AltoPildora = 44f;
+    private const float LupaAncho = 30f;       // hueco de la lupa dentro de la pildora
+
     private static Windows.System.DispatcherQueueController? _cola;
 
     private readonly Compositor _compositor;
@@ -92,8 +97,9 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
         // contenido de Composition se dibuja POR ENCIMA de las ventanas hijas, asi que un
         // SpriteVisual cubriendo la franja tapa el EDIT y desaparece lo que escribes. El
         // fondo de la franja lo pone un STATIC hermano, en LanzadorWindow.
+        // MAQUETA: el visual empieza arriba del todo, porque ahora tambien dibuja la
+        // franja de busqueda. Ya no hay ventana hija que respetar.
         _lista = _compositor.CreateSpriteVisual();
-        _lista.Offset = new Vector3(0, S(AltoFranja), 0);
         _raiz.Children.InsertAtTop(_lista);
     }
 
@@ -105,8 +111,6 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
     {
         _escala = escala;
         _ancho = anchoFisico;
-        _lista.Offset = new Vector3(0, S(AltoFranja), 0);
-
         // Cambio la escala, asi que la superficie ya no mide lo que tiene que medir.
         _superficie?.Dispose();
         _superficie = null;
@@ -117,15 +121,11 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
     /// Redibuja la lista entera. Con cero resultados la deja a tamano cero, que es como
     /// desaparece sin tener que quitarla del arbol.
     /// </summary>
+    /// <summary>Lo que se ensena en la pildora. En la maqueta lo pone la ventana.</summary>
+    public string Consulta { get; set; } = string.Empty;
+
     public void Pintar(IReadOnlyList<Resultado> resultados, int elegido)
     {
-        if (resultados.Count == 0)
-        {
-            // La superficie se queda; lo que se esconde es el visual. Tirarla aqui seria
-            // volver a pedirla en la siguiente tecla.
-            _lista.Size = Vector2.Zero;
-            return;
-        }
 
         // El visual mide siempre el maximo y la ventana mide lo que hay: lo que sobra de
         // la superficie cae por debajo del borde de la ventana y no se ve. Asi la
@@ -134,7 +134,51 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
         Dibujar(resultados, elegido);
     }
 
-    private float AltoMaximo() => S(MargenLista) * 2 + _filasMaximas * S(AltoFila);
+    /// <summary>
+    /// La pildora de busqueda, dibujada por nosotros. Es lo que un control EDIT no puede
+    /// ser: transparente, con el radio que queramos y dejando ver el acrilico de detras.
+    /// </summary>
+    private void Pildora(ID2D1DeviceContext ctx, float x, float y, string consulta)
+    {
+        float izq = x + S(MargenPildora);
+        float der = x + _ancho - S(MargenPildora);
+        float arr = y + (S(AltoFranja) - S(AltoPildora)) / 2f;
+        float aba = arr + S(AltoPildora);
+
+        // Un velo claro muy tenue: sobre el acrilico oscuro se lee como cristal, no como
+        // un rectangulo pintado. Y el radio es la mitad del alto, que es lo que la hace
+        // pildora y no caja.
+        Redondeado(ctx, izq, arr, der, aba, S(AltoPildora) / 2f, 1f, 1f, 1f, 0.10f);
+
+        // El borde, medio punto mas claro: es lo que le da el canto de cristal.
+        Borde(ctx, izq, arr, der, aba, S(AltoPildora) / 2f, 1f, 1f, 1f, 0.18f, S(1f));
+
+        float dentro = izq + S(18f);
+
+        // La lupa, glifo E721 de Segoe Fluent Icons.
+        Texto.Dibujar(ctx, "", S(14f), grueso: false, 0.65f,
+                      new System.Drawing.Point((int)dentro, (int)(arr + S(13f))), iconos: true);
+
+        Texto.Dibujar(ctx, consulta, S(17f), grueso: false, consulta.Length > 0 ? 0.95f : 0.40f,
+                      new System.Drawing.Point((int)(dentro + S(LupaAncho)), (int)(arr + S(10f))));
+    }
+
+    private void Borde(ID2D1DeviceContext ctx, float izq, float arr, float der, float aba,
+                       float radio, float r, float g, float b, float a, float grosor)
+    {
+        D2D1_COLOR_F color = new() { r = r, g = g, b = b, a = a };
+        ctx.CreateSolidColorBrush(&color, null, out ID2D1SolidColorBrush pincel);
+
+        D2D1_ROUNDED_RECT caja = new()
+        {
+            rect = new D2D_RECT_F { left = izq, top = arr, right = der, bottom = aba },
+            radiusX = radio,
+            radiusY = radio,
+        };
+        ctx.DrawRoundedRectangle(caja, pincel, grosor, null);
+    }
+
+    private float AltoMaximo() => S(AltoFranja) + S(MargenLista) * 2 + _filasMaximas * S(AltoFila);
 
     private void Dibujar(IReadOnlyList<Resultado> resultados, int elegido)
     {
@@ -166,9 +210,11 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
             D2D1_COLOR_F nada = default;
             ctx.Clear(&nada);
 
+            Pildora(ctx, desplazamiento.X, desplazamiento.Y, Consulta);
+
             for (int i = 0; i < resultados.Count; i++)
             {
-                float y = desplazamiento.Y + S(MargenLista) + i * S(AltoFila);
+                float y = desplazamiento.Y + S(AltoFranja) + S(MargenLista) + i * S(AltoFila);
                 Fila(ctx, resultados[i], desplazamiento.X, y, i == elegido);
             }
         }

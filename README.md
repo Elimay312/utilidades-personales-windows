@@ -18,8 +18,8 @@ no llega a verlas. Eso ocupa la §1 de `SEGURIDAD.md` y vale la pena leerlo.
 ## Estado
 
 **Terminado.** Las teclas de volumen son suyas, el aviso de Windows no sale, el HUD aparece
-también cuando el volumen lo cambia otra cosa — el mezclador, Spotify, unos auriculares — y
-funciona en las tres pantallas, que van a 125%, 100% y 175%.
+también — en menos de 150 ms — cuando el volumen lo cambia otra cosa, y funciona en las tres
+pantallas, que van a 125%, 100% y 175%. `hud.json` se recarga al guardarlo.
 
 ```
 Hud.exe             # lo normal
@@ -94,7 +94,8 @@ qué este programa no toca ninguna ventana ajena — y por qué no le hace falta
 
 ## Ajustes
 
-`%LOCALAPPDATA%\Hud\hud.json`. Admite comentarios y comas finales.
+`%LOCALAPPDATA%\Hud\hud.json`. Admite comentarios y comas finales, y **se recarga sola al
+guardarla**: no hace falta reiniciar para cambiar el paso, la posición o el autoarranque.
 
 | Clave | Por defecto | Qué hace |
 |---|---|---|

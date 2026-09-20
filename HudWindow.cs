@@ -51,18 +51,17 @@ internal sealed unsafe class HudWindow
     private const nuint TimerVigilar = 4;
 
     /// <summary>
-    /// Cada cuanto se mira si el volumen ha cambiado por su cuenta: el mezclador, una
-    /// app, el mando de unos auriculares. Nuestras propias pulsaciones no pasan por
-    /// aqui, que para eso esta el atajo.
+    /// Red de seguridad, no el camino normal. De los cambios de volumen avisa COM al
+    /// instante (<see cref="Volumen.Escuchar"/>); esto solo esta para el caso en que el
+    /// aviso se cae, que pasa al cambiar de altavoces: entonces hay que volver a
+    /// registrarlo, y de paso se mira el estado por si se perdio algo por el camino.
     ///
     /// <para>
-    /// ponytail: sondeo a 250 ms en vez de IAudioEndpointVolumeCallback. La isla ya
-    /// sondea audio ocho veces por segundo sin coste medible, y el callback de COM
-    /// entrega en un hilo ajeno y habria que marshalarlo. Si el retardo llega a
-    /// notarse, el techo es implementar la interfaz.
+    /// Aqui hubo un sondeo a 250 ms, que funcionaba pero llegaba tarde hasta un cuarto
+    /// de segundo y preguntaba cuatro veces por segundo para nada el 99% del tiempo.
     /// </para>
     /// </summary>
-    private const uint MsVigilar = 250;
+    private const uint MsVigilar = 2000;
 
     /// <summary>
     /// Lo que se tarda en cerrar la capsula. Pasado esto la ventana se esconde de
@@ -85,6 +84,10 @@ internal sealed unsafe class HudWindow
     private const uint WM_DPICHANGED = 0x02E0;
     private const uint WM_HOTKEY = 0x0312;
 
+    // Mensajes propios. WM_APP es el rango reservado para esto.
+    private const uint WM_APP_VOLUMEN = 0x8000 + 1;
+    private const uint WM_APP_RECARGAR = 0x8000 + 2;
+
     private const int MA_NOACTIVATE = 3;
     private static readonly HWND HWND_TOPMOST = new(-1);
 
@@ -102,7 +105,7 @@ internal sealed unsafe class HudWindow
     private static ushort _classAtom;
     private static HudWindow? _instancia;
 
-    private readonly HudConfig _config;
+    private HudConfig _config;
     private readonly HWND _hwnd;
     private readonly bool _demo;
     private HudVisuals? _visuals;
@@ -199,6 +202,9 @@ internal sealed unsafe class HudWindow
                 Console.Error.WriteLine("[hud] no hay dispositivo de salida; se reintenta solo.");
             }
 
+            // El camino normal: COM avisa en cuanto cambia el volumen, lo cambie quien
+            // lo cambie. El temporizador de abajo es solo la red por si el aviso se cae.
+            Volumen.Escuchar(_hwnd, WM_APP_VOLUMEN);
             PInvoke.SetTimer(_hwnd, TimerVigilar, MsVigilar, null);
         }
 
@@ -295,8 +301,14 @@ internal sealed unsafe class HudWindow
     }
 
     /// <summary>
-    /// Lo ha cambiado otro: el mezclador, una app, el mando de unos auriculares. El
-    /// HUD sale igual, que es algo que el de Windows no hace.
+    /// Lo ha cambiado otro: el mezclador, una app, el mando de unos auriculares. El HUD
+    /// sale igual, que es algo que el de Windows no hace.
+    ///
+    /// <para>
+    /// Tambien lo llaman nuestras propias pulsaciones, porque COM avisa de todos los
+    /// cambios sin distinguir quien los hizo. No hace falta filtrar: <see cref="Mostrar"/>
+    /// ya dejo el estado guardado, asi que al releer sale lo mismo y esto no hace nada.
+    /// </para>
     /// </summary>
     private void Vigilar()
     {
@@ -305,6 +317,42 @@ internal sealed unsafe class HudWindow
         if (e.Porcentaje == _porcentaje && e.Mudo == _silenciado) return;
 
         Mostrar(e.Porcentaje, e.Mudo);
+    }
+
+    /// <summary>
+    /// La red de seguridad, cada 2 s. Si el aviso de COM se cayo -- cambio de altavoces,
+    /// normalmente -- se vuelve a poner y se mira el estado por si se perdio algo.
+    /// </summary>
+    private void Red()
+    {
+        if (!Volumen.Escuchando)
+        {
+            Volumen.Escuchar(_hwnd, WM_APP_VOLUMEN);
+            Vigilar();
+        }
+    }
+
+    // --- configuracion en caliente -----------------------------------------------------
+
+    /// <summary>Se llama desde el vigilante de ficheros, que corre en otro hilo.</summary>
+    public static void Recargar()
+    {
+        HudWindow? hud = _instancia;
+        if (hud is not null) PInvoke.PostMessage(hud._hwnd, WM_APP_RECARGAR, default, default);
+    }
+
+    private void AplicarConfig()
+    {
+        HudConfig antes = _config;
+        _config = Config.Cargar();
+        Config.AplicarAutoArranque(_config.AutoArranque);
+
+        // Arriba y abajo cambian donde va la ventana, asi que hay que recolocarla ya:
+        // si se deja para la proxima aparicion, el primer aviso sale donde estaba.
+        if (_config.Abajo != antes.Abajo) Recolocar();
+
+        Console.WriteLine($"[hud] hud.json recargado: {_config.Posicion}, paso {_config.PasoVolumen}%, " +
+            $"{_config.MsAutoocultar} ms, autoarranque {(_config.AutoArranque ? "si" : "no")}");
     }
 
     // --- ensenar y esconder -----------------------------------------------------------
@@ -497,8 +545,16 @@ internal sealed unsafe class HudWindow
             case WM_TIMER:
                 if (wParam.Value == TimerAutoocultar) hud?.Ocultar();
                 else if (wParam.Value == TimerEsconder) hud?.Esconder();
-                else if (wParam.Value == TimerVigilar) hud?.Vigilar();
+                else if (wParam.Value == TimerVigilar) hud?.Red();
                 else if (wParam.Value == TimerDemo) hud?.PasoDemo();
+                return new LRESULT(0);
+
+            case WM_APP_VOLUMEN:
+                hud?.Vigilar();
+                return new LRESULT(0);
+
+            case WM_APP_RECARGAR:
+                hud?.AplicarConfig();
                 return new LRESULT(0);
 
             case WM_HOTKEY:
@@ -551,6 +607,7 @@ internal sealed unsafe class HudWindow
             hud._teclas = false;
         }
 
+        Volumen.Callar();
         hud._visuals?.Dispose();
         hud._visuals = null;
         PInvoke.DestroyWindow(hud._hwnd);

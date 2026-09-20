@@ -1,5 +1,27 @@
 # Changelog
 
+## Cabos: aviso de COM, recarga en caliente, y el agujero de la auditoría en los cinco vecinos
+
+**Se salda la única deuda `ponytail:` del proyecto.** El sondeo de 250 ms se sustituye por
+`IAudioEndpointVolumeCallback`: el sistema avisa en cuanto cambia el volumen. Medido por
+diferencia contra una foto en reposo (fondo quieto, 0 px de ruido de control): nada a los
+80 ms, **407 px de cápsula a los 150 ms**. Con el sondeo viejo no podía haber nada antes de
+los 250. El temporizador se queda a 2 s como red de seguridad — al cambiar de altavoces el
+aviso se cae con el endpoint y hay que volver a ponerlo.
+
+No hace falta filtrar nuestros propios cambios: el aviso llega para todos, pero el manejador
+relee el estado y lo compara con el guardado, así que cuando el cambio lo hicimos nosotros no
+hace nada.
+
+**`hud.json` se recarga al guardarlo**, con el rebote de 250 ms de la isla y su motivo: los
+editores disparan varios eventos por guardado y a veces truncan el fichero antes de
+escribirlo. Verificado que **aplica** y no solo lee: al poner `autoArranque: true` la entrada
+aparece en `HKCU\...\Run` sin reiniciar.
+
+Y la medida que falló primero, por el mismo motivo de siempre: contaba píxeles oscuros y el
+fondo ya era oscuro, así que el número **bajaba** al aparecer la cápsula. La buena compara
+contra una foto en reposo y comprueba antes que el fondo está quieto.
+
 ## H3 — bordes
 
 **Pantalla completa: verificado, y de rebote.** Las capturas de H2 se tomaron con VALORANT en

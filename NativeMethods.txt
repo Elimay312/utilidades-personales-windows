@@ -112,3 +112,10 @@ IAudioEndpointVolume
 EDataFlow
 ERole
 CLSCTX
+
+// --- H4: que COM avise de los cambios de volumen, en vez de preguntar ---
+// El callback llega en un hilo del pool, asi que lo unico que hace es mandarle un
+// mensaje a NUESTRA ventana con PostMessage. No se manda nada a nadie mas.
+IAudioEndpointVolumeCallback
+AUDIO_VOLUME_NOTIFICATION_DATA
+PostMessageW

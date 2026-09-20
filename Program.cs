@@ -52,10 +52,38 @@ internal static class Program
             return 2;
         }
 
+        using FileSystemWatcher vigilante = Vigilar();
+
         Console.WriteLine($"[hud] arrancado en {reloj.ElapsedMilliseconds} ms");
         Console.WriteLine("[hud] Ctrl+Alt+H para salir.");
 
         HudWindow.RunMessageLoop();
         return 0;
+    }
+
+    /// <summary>
+    /// Recarga hud.json al guardarlo, con rebote de 250 ms: los editores disparan varios
+    /// eventos por guardado y a veces truncan el fichero antes de escribirlo, asi que sin
+    /// esperar se leeria un JSON a medias. Copiado de la isla, incluido el porque.
+    /// </summary>
+    private static FileSystemWatcher Vigilar()
+    {
+        FileSystemWatcher vigilante = new(Config.Carpeta, "hud.json")
+        {
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+            EnableRaisingEvents = true,
+        };
+
+        Timer? espera = null;
+        void Cambio()
+        {
+            espera?.Dispose();
+            espera = new Timer(_ => HudWindow.Recargar(), null, 250, Timeout.Infinite);
+        }
+
+        vigilante.Changed += (_, _) => Cambio();
+        vigilante.Created += (_, _) => Cambio();
+        vigilante.Renamed += (_, _) => Cambio();
+        return vigilante;
     }
 }

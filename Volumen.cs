@@ -1,4 +1,5 @@
 using Windows.Win32;
+using Windows.Win32.Foundation;
 using Windows.Win32.Media.Audio;
 using Windows.Win32.Media.Audio.Endpoints;
 using Windows.Win32.System.Com;
@@ -25,6 +26,75 @@ internal static unsafe class Volumen
 {
     private static IAudioEndpointVolume? _endpoint;
     private static long _siguienteIntento;
+
+    /// <summary>
+    /// El objeto al que COM le avisa de los cambios. <b>Hay que guardarlo en un campo</b>:
+    /// si lo recoge el GC, el CCW muere y COM acaba llamando a memoria liberada.
+    /// </summary>
+    private static Aviso? _aviso;
+
+    /// <summary>Si el aviso esta puesto. Si se cae, alguien tiene que volver a ponerlo.</summary>
+    public static bool Escuchando => _aviso is not null;
+
+    /// <summary>
+    /// Pide que COM avise a <paramref name="ventana"/> con <paramref name="mensaje"/>
+    /// cada vez que cambie el volumen, lo cambie quien lo cambie.
+    ///
+    /// <para>
+    /// Sustituye al sondeo de 250 ms que tuvo este proyecto hasta aqui. El sondeo
+    /// funcionaba, pero llegaba tarde hasta un cuarto de segundo y preguntaba cuatro
+    /// veces por segundo para nada el 99% del tiempo.
+    /// </para>
+    /// </summary>
+    public static void Escuchar(HWND ventana, uint mensaje)
+    {
+        if (_aviso is not null) return;
+
+        try
+        {
+            Aviso a = new(ventana, mensaje);
+            Abrir().RegisterControlChangeNotify(a);
+            _aviso = a;
+        }
+        catch
+        {
+            Caido();
+        }
+    }
+
+    /// <summary>
+    /// Devuelve el aviso. Importa hacerlo en el cierre limpio: dejar un CCW registrado
+    /// en un endpoint que sigue vivo es pedirle a COM que llame a un objeto muerto.
+    /// </summary>
+    public static void Callar()
+    {
+        if (_aviso is null) return;
+
+        try
+        {
+            _endpoint?.UnregisterControlChangeNotify(_aviso);
+        }
+        catch
+        {
+            // Si el endpoint ya no esta, el registro se fue con el.
+        }
+
+        _aviso = null;
+    }
+
+    /// <summary>
+    /// Lo que COM llama cuando cambia el volumen. <b>Llega en un hilo del pool</b>, asi
+    /// que aqui no se toca nada: se le manda un mensaje a NUESTRA ventana y el hilo de
+    /// UI lee el estado cuando le toque. Es lo que hace la isla con los eventos de
+    /// medios, y por la misma razon.
+    /// </summary>
+    private sealed class Aviso(HWND ventana, uint mensaje) : IAudioEndpointVolumeCallback
+    {
+        public void OnNotify(AUDIO_VOLUME_NOTIFICATION_DATA* datos)
+        {
+            PInvoke.PostMessage(ventana, mensaje, default, default);
+        }
+    }
 
     /// <summary>El nivel en porcentaje y si esta silenciado, o null si no se pudo leer.</summary>
     public static (int Porcentaje, bool Mudo)? Leer()
@@ -70,13 +140,17 @@ internal static unsafe class Volumen
 
     /// <summary>
     /// Cambiar de altavoces invalida el objeto. Se tira, pero NO se reabre en la
-    /// siguiente llamada: montar el enumerador de COM no es gratis y esto se consulta
-    /// cuatro veces por segundo. Si el fallo es permanente, reabrirlo cada vez cuesta
-    /// mas que la funcion entera. Es lo que la isla anoto en su medidor de pico.
+    /// siguiente llamada: montar el enumerador de COM no es gratis, y si el fallo es
+    /// permanente reintentarlo sin pausa cuesta mas que la funcion entera. Es lo que la
+    /// isla anoto en su medidor de pico. La red de seguridad de HudWindow lo reintenta
+    /// cada 2 s, que es de sobra para enchufar unos auriculares.
     /// </summary>
     private static void Caido()
     {
         _endpoint = null;
+        // El aviso estaba registrado en el endpoint que se acaba de caer, asi que ya no
+        // sirve. Quien vigila lo vuelve a poner.
+        _aviso = null;
         _siguienteIntento = Environment.TickCount64 + 2000;
     }
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## Las tres comprobaciones a mano de SEGURIDAD.md §6
+
+Las que un script no puede hacer solo, ejecutadas por fin sobre el binario publicado y con el
+HUD corriendo:
+
+- **Sin red.** Cero conexiones TCP y cero endpoints UDP del proceso. Regla 7.
+- **Sin micrófono.** El HUD no aparece en la lista de apps que han pedido el micrófono
+  (`ConsentStore\microphone\NonPackaged`). Regla 11, la cara que el `auditar.ps1` no ve.
+- **Binario legible.** 160 KB con su `.pdb` al lado, y cero detecciones de Defender, que está
+  activo. Regla 9.
+
+Con esto el documento queda comprobado entero: las 16 reglas por script y las tres de fuera a
+mano.
+
 ## Cabos: aviso de COM, recarga en caliente, y el agujero de la auditoría en los cinco vecinos
 
 **Se salda la única deuda `ponytail:` del proyecto.** El sondeo de 250 ms se sustituye por

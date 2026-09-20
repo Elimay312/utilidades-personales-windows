@@ -10,6 +10,33 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### H10 — Los iconos, cuatro veces más rápidos, y fuera el relleno
+
+- **El cuello estaba medido mal hasta que se midió bien.** La primera sonda decía que los
+  261 iconos costaban 2 ms: contaba los **huecos reservados**, porque `Pedir` mete un
+  `null` al instante, no los iconos hechos. Con un contador de procesados salió la cifra
+  real: **33,4 ms por icono, 8,7 s el índice entero**. Otra sonda que medía otra cosa.
+- **Tres hilos en vez de uno: 8721 → 2169 ms** (33,4 → 9,1 ms efectivos). Casi todo el
+  coste es esperar al shell, no calcular, así que paralelizar lo parte. Tres y no más:
+  por encima el shell serializa por dentro y cada hilo es permanente, que es justo lo que
+  se corrigió en H8. **La memoria no subió**: 165 MB tras diez consultas, frente a 167
+  antes.
+- **El icono de la primera fila se pide sin esperar al rebote.** Es la que vas a abrir con
+  Enter, y verla completa al instante es casi toda la sensación de rapidez. Las demás
+  siguen con rebote de 110 ms, porque escribir `micro` pediría los iconos de cinco listas
+  para enseñar solo la última.
+- **Se precalientan al arrancar los 30 iconos más recientes de `uso.json`.** Recorriendo
+  el índice se saltaban justo los que más usas: lo que abres puede ser una carpeta o un
+  fichero de Everything, y esos no están en el índice.
+- **22 entradas de relleno fuera: 261 → 239.** Manuales, notas de versión, licencias,
+  muestras del SDK y tres desinstaladores. Las reglas salen de mirar el índice de verdad,
+  y filtran por el **destino** siempre que se puede: "Ayuda WinRAR" o "Website" son
+  nombres que otra aplicación podría usar para algo útil. Si buscas un manual, Everything
+  lo encuentra igual.
+- **`--iconos`**, que es la herramienta que contestó la pregunta de si precargarlo todo
+  compensaba: 239 iconos son 2,2 s y dejan el proceso en ~125 MB. Por eso se precalientan
+  los que usas y no los 239.
+
 ### H9 — El diseño translúcido, y la caja de texto pasa a ser nuestra
 
 - **La píldora de búsqueda es transparente de verdad**: radio de píldora, borde de

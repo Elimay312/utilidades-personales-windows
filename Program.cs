@@ -26,6 +26,7 @@ internal static class Program
             case "--check":   return Check();
             case "--indice":  return VolcarIndice(args.Length > 1 && args[1] == "--todo");
             case "--buscar":  return Buscar(args.Length > 1 ? args[1] : string.Empty);
+            case "--iconos":  return MedirIconos();
             case "--olvidar": return Olvidar();
             case "--ayuda" or "-h" or "/?": return Ayuda();
         }
@@ -64,9 +65,44 @@ internal static class Program
                               $"a los {reloj.ElapsedMilliseconds} ms.");
         });
 
+        Precalentar(uso);
+
         LanzadorWindow.Bucle();
         ventana.Dispose();
         return 0;
+    }
+
+    /// <summary>Cuantos iconos se dejan hechos al arrancar, de lo mas reciente.</summary>
+    private const int Precalentados = 30;
+
+    /// <summary>
+    /// Deja hechos, nada mas arrancar, los iconos de lo que sueles abrir. Como salen en
+    /// la primera fila casi siempre, en la practica el icono ya esta antes de que acabes
+    /// de escribir.
+    /// <para>
+    /// Se recorre <c>uso.json</c> y no el indice: lo que abres puede ser una carpeta o un
+    /// fichero que encontro Everything, y esos no estan en el indice. Recorriendo el
+    /// indice se saltaban justo los que mas usas.
+    /// </para>
+    /// <para>
+    /// <b>Solo los que usas, y como mucho 30.</b> Sacar los 239 del indice cuesta 2,2 s y
+    /// deja el proceso en ~125 MB, porque el shell carga en nuestro proceso el manejador
+    /// de iconos de cada aplicacion y ya no lo descarga. No hay ningun caso nuevo de
+    /// lectura: son los mismos iconos que se sacarian al buscarlos, solo que antes.
+    /// </para>
+    /// </summary>
+    private static void Precalentar(Uso uso)
+    {
+        List<string> recientes = uso.Lanzamientos
+            .OrderByDescending(l => l.Value.Ultimo)
+            .Take(Precalentados)
+            .Select(l => l.Key)
+            .ToList();
+
+        if (recientes.Count == 0) return;
+
+        foreach (string destino in recientes) Iconos.Pedir(destino);
+        Console.WriteLine($"[lanzador] precalentando {recientes.Count} iconos de los que usas.");
     }
 
     private static int Ayuda()
@@ -77,6 +113,7 @@ internal static class Program
               --check          comprueba el algoritmo, el decaimiento y la calculadora
               --indice         vuelca las aplicaciones encontradas y cuanto costo
               --buscar TEXTO   los mejores resultados, con su puntuacion desglosada
+              --iconos         cuanto cuesta tener todos los iconos en memoria
               --olvidar        borra uso.json entero
               sin modo         arranca y se queda esperando el atajo
             """);
@@ -578,12 +615,15 @@ internal static class Program
         HashSet<string> enFolder = new(appsFolder.Select(e => e.Nombre), StringComparer.OrdinalIgnoreCase);
         int soloEnMenus = menus.Count(e => !enFolder.Contains(e.Nombre));
 
+        List<Entrada> indice = Indice.Construir();
+        int enBruto = appsFolder.Count + soloEnMenus;
+
         Console.WriteLine($"shell:AppsFolder   {appsFolder.Count,5}   {msFolder,4} ms");
         Console.WriteLine($"menus Inicio .lnk  {menus.Count,5}   {msMenus,4} ms   ({soloEnMenus} no estan en AppsFolder)");
-        Console.WriteLine($"indice             {appsFolder.Count + soloEnMenus,5}   {msFolder + msMenus,4} ms");
+        Console.WriteLine($"sitios del sistema {Proveedores.Sistema().Count(),5}");
+        Console.WriteLine($"relleno quitado    {enBruto + Proveedores.Sistema().Count() - indice.Count,5}   documentos y desinstaladores");
+        Console.WriteLine($"indice             {indice.Count,5}   {msFolder + msMenus,4} ms");
         Console.WriteLine();
-
-        List<Entrada> indice = Indice.Construir();
         int cuantas = todo ? indice.Count : 40;
         foreach (Entrada e in indice.OrderBy(e => e.Nombre, StringComparer.OrdinalIgnoreCase).Take(cuantas))
         {
@@ -633,6 +673,45 @@ internal static class Program
                               $"   costumbre {r.Costumbre}");
         }
 
+        return 0;
+    }
+
+    /// <summary>
+    /// Cuanto cuesta tener TODOS los iconos del indice en memoria. Contesta la unica
+    /// pregunta que decide si precargarlos al arrancar compensa: si son 200 ms y 4 MB,
+    /// si; si son diez segundos y 200 MB, no.
+    /// </summary>
+    private static int MedirIconos()
+    {
+        List<Entrada> indice = Indice.Construir();
+        using Process yo = Process.GetCurrentProcess();
+        long antes = yo.WorkingSet64;
+
+        Stopwatch reloj = Stopwatch.StartNew();
+        using ManualResetEventSlim listo = new(false);
+        int faltan = indice.Count;
+
+        Iconos.Arrancar(() => { });
+        foreach (Entrada e in indice) Iconos.Pedir(e.Destino);
+
+        // Se espera contando los PROCESADOS, no los guardados: Pedir reserva el hueco
+        // con un null al instante, asi que contar los guardados daba 261 en 2 ms y la
+        // medicion decia que los iconos eran gratis. Otra sonda que media otra cosa.
+        while (Iconos.Procesados < indice.Count && reloj.ElapsedMilliseconds < 120000)
+        {
+            Thread.Sleep(50);
+        }
+
+        long ms = reloj.ElapsedMilliseconds;
+        (int cuantos, long bytes) = Iconos.Cuenta();
+        yo.Refresh();
+
+        int conIcono = 0;
+        foreach (Entrada e in indice) { if (Iconos.Hay(e.Destino) is not null) conIcono++; }
+        Console.WriteLine($"{indice.Count} entradas, {conIcono} con icono ({cuantos} pedidos)");
+        Console.WriteLine($"  tiempo    {ms} ms   ({(double)ms / Math.Max(1, cuantos):0.0} ms por icono)");
+        Console.WriteLine($"  guardados {bytes / 1048576.0:0.0} MB");
+        Console.WriteLine($"  trabajo   {antes / 1048576.0:0} MB -> {yo.WorkingSet64 / 1048576.0:0} MB");
         return 0;
     }
 

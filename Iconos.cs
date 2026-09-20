@@ -29,6 +29,15 @@ internal static class Iconos
     private static readonly BlockingCollection<string> Cola = new();
     private static Action? _avisar;
 
+    /// <summary>
+    /// Cuantos ha sacado ya el obrero. Hace falta contarlos aparte: en la cache, un
+    /// hueco reservado y un destino que resulto no tener icono son los dos null, y desde
+    /// fuera no se distingue "todavia no" de "ese no tiene".
+    /// </summary>
+    private static int _procesados;
+
+    public static int Procesados => Volatile.Read(ref _procesados);
+
     /// <summary>Cuantos iconos hay guardados y cuantos bytes ocupan. Solo para la traza.</summary>
     public static (int Cuantos, long Bytes) Cuenta()
     {
@@ -47,28 +56,43 @@ internal static class Iconos
     }
 
     /// <summary>
-    /// Arranca el hilo que extrae iconos. <paramref name="avisar"/> se llama <b>desde ese
-    /// hilo</b>: lo unico que debe hacer es avisar a la ventana.
+    /// Cuantos hilos sacan iconos a la vez.
     /// <para>
-    /// <b>Un solo hilo, y STA.</b> El dock creaba uno por extraccion y dejo escrito el
-    /// aviso: <i>"si algun dia los iconos se extraen en caliente, un unico hilo STA con
-    /// cola"</i>. Desde H7 se extraen en caliente, y se noto: 52 hilos tras diez
-    /// consultas. Esto es ese aviso cobrado.
+    /// <b>Tres, y el numero esta medido.</b> Cada extraccion cuesta ~33 ms y casi todo es
+    /// esperar al shell, no calcular: con un solo hilo, las ocho filas que se ven tardan
+    /// ~265 ms en tener icono. Con tres, ~90 ms, que ya no se percibe como "aparecen
+    /// despues". Mas de tres no baja mucho mas —el shell serializa por dentro— y cada uno
+    /// es un hilo permanente, que es justo lo que se corrigio en H8.
     /// </para>
+    /// </summary>
+    private const int Obreros = 3;
+
+    /// <summary>
+    /// Arranca los hilos que extraen iconos. <paramref name="avisar"/> se llama <b>desde
+    /// esos hilos</b>: lo unico que debe hacer es avisar a la ventana.
     /// <para>
-    /// Y tiene que ser STA: los manejadores de icono del shell se registran con
+    /// Tienen que ser STA: los manejadores de icono del shell se registran con
     /// <c>ThreadingModel=Apartment</c>, y desde un hilo MTA —cualquiera del pool—
     /// <c>GetImage</c> no llega a usarlos y devuelve el icono generico <b>sin fallar ni
     /// avisar</b>. Medido en el dock sobre un .url de Steam.
+    /// </para>
+    /// <para>
+    /// Y son estos y no uno por extraccion: el dock creaba uno cada vez y dejo escrito el
+    /// aviso de que con extracciones en caliente tocaba una cola. En H8 se cobro ese
+    /// aviso (52 hilos tras diez consultas); esto sube la cola de uno a tres obreros, que
+    /// sigue siendo un numero fijo.
     /// </para>
     /// </summary>
     public static void Arrancar(Action avisar)
     {
         _avisar = avisar;
 
-        Thread obrero = new(Obrero) { IsBackground = true, Name = "iconos" };
-        obrero.SetApartmentState(ApartmentState.STA);
-        obrero.Start();
+        for (int n = 0; n < Obreros; n++)
+        {
+            Thread obrero = new(Obrero) { IsBackground = true, Name = $"iconos{n}" };
+            obrero.SetApartmentState(ApartmentState.STA);
+            obrero.Start();
+        }
     }
 
     /// <summary>Lo pone en la cola si no estaba pedido ya.</summary>
@@ -99,6 +123,7 @@ internal static class Iconos
             catch (Exception) { /* un destino sin icono se queda con el hueco */ }
 
             lock (Candado) Cache[destino] = icono;
+            Interlocked.Increment(ref _procesados);
             if (icono is not null) _avisar?.Invoke();
         }
     }

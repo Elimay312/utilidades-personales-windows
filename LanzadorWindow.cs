@@ -447,7 +447,16 @@ internal sealed unsafe class LanzadorWindow : IDisposable
         _visuals.Caja = _caja;
         _visuals.CaretEncendido = _caretEncendido;
 
-        // Los iconos se piden con rebote; la lista se pinta ya, con los que hubiera.
+        // El icono de la PRIMERA fila se pide ya, sin esperar al rebote: es la que vas a
+        // abrir con Enter, y verla completa al instante es casi toda la sensacion de
+        // rapidez. Son como mucho una extraccion por tecla, y casi siempre ya esta hecha.
+        if (_resultados.Count > 0 && !_resultados[0].Entrada.SoloSeMira)
+        {
+            Iconos.Pedir(_resultados[0].Entrada.Destino);
+        }
+
+        // Las demas, con rebote: si no, escribir "micro" pediria los iconos de cinco
+        // listas distintas para ensenar solo la ultima.
         PInvoke.KillTimer(_hwnd, TemporizadorIconos);
         if (_resultados.Count > 0) PInvoke.SetTimer(_hwnd, TemporizadorIconos, ReboteIconosMs, null);
 

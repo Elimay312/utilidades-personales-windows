@@ -55,6 +55,7 @@ selección: solo cuenta si lo mueves de verdad.
 lanzador --check          # comprueba el algoritmo, el decaimiento y la calculadora
 lanzador --indice         # vuelca las aplicaciones encontradas y cuanto costo
 lanzador --buscar "br"    # los mejores resultados, con su puntuacion desglosada
+lanzador --iconos         # cuanto cuesta tener todos los iconos en memoria
 lanzador --olvidar        # borra uso.json entero
 ```
 

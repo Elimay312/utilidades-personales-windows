@@ -75,8 +75,50 @@ internal static class Indice
             if (vistos.Add(e.Nombre)) todo.Add(e);
         }
 
+        todo.RemoveAll(EsRelleno);
         return todo;
     }
+
+    /// <summary>
+    /// Documentos y desinstaladores. El menu Inicio los mete junto a las aplicaciones y
+    /// en un lanzador solo estorban: ninguno es algo que quieras <i>abrir</i> escribiendo
+    /// tres letras.
+    /// <para>
+    /// Las reglas salen de mirar el indice de verdad, no de imaginarlo: de 261 entradas
+    /// quitan 22, y las 22 son manuales, notas de version, licencias, muestras del SDK y
+    /// tres desinstaladores. Se filtra por el <b>destino</b> y no por el nombre siempre
+    /// que se puede, porque "Ayuda WinRAR" o "Website" son nombres que otra aplicacion
+    /// podria usar para algo util.
+    /// </para>
+    /// <para>
+    /// Y si buscas de verdad un manual, Everything lo encuentra: lo que se quita del
+    /// indice de aplicaciones sigue estando en el disco.
+    /// </para>
+    /// </summary>
+    private static bool EsRelleno(Entrada e)
+    {
+        // Un documento no es una aplicacion. .msc NO esta en la lista a proposito: son
+        // las consolas de administracion, que si se abren.
+        foreach (string ext in Documentos)
+        {
+            if (e.Destino.EndsWith(ext, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+
+        // Los desinstaladores hay que cogerlos por el nombre ademas de por el fichero:
+        // "Uninstall Go" apunta a un AUMID y no tiene ni ruta que mirar.
+        string nombre = e.Nombre.TrimStart();
+        foreach (string palabra in Desinstalar)
+        {
+            if (nombre.StartsWith(palabra, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+
+        return false;
+    }
+
+    private static readonly string[] Documentos =
+        [".chm", ".txt", ".rtf", ".pdf", ".html", ".htm", ".url"];
+
+    private static readonly string[] Desinstalar = ["uninstall", "desinstalar"];
 
     /// <summary>
     /// La carpeta virtual que pinta la lista "Todas las aplicaciones" del menu Inicio.

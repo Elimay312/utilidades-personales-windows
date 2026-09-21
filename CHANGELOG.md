@@ -87,6 +87,28 @@ Todo lo que hay. Falta probarlo en otros equipos y con otras aplicaciones de mú
   es lo mismo al 125%. Al rehacerse recalcula todas las medidas.
 - **`README.md`** (con las ocho cosas que se midieron y no son obvias) y **`CHANGELOG.md`**.
 
+### M8 — Instalarla
+
+- **`instalar.ps1`**: publica a `%LOCALAPPDATA%\Isla\app`, deja acceso directo en el
+  menú Inicio, enciende el autoarranque y la arranca. Con `-Desinstalar` lo deshace todo
+  menos el `isla.json`, que es del usuario. Copiado del `install.ps1` de Rayo, sin los
+  verbos del menú contextual.
+- **El autoarranque se enciende en el JSON, no en el registro.** La isla reescribe
+  `HKCU\...\Run` en cada arranque según lo que diga `autoArranque`, así que una entrada
+  puesta a mano por el instalador duraría hasta el siguiente inicio de sesión y después
+  desaparecería sola. El instalador toca el json y deja que la isla escriba el registro.
+- **Desinstalar sí borra el valor de Run a mano**, porque desinstalada ya no arranca
+  nunca y no hay quien lo limpie: quedaría una entrada muerta en la pestaña Inicio.
+
+### No era un fallo: "la isla se bugueó al cambiar de la ultrawide al portátil"
+
+No se había bugueado, **no estaba corriendo**: `autoArranque` venía en `false` y nadie la
+había lanzado. Medida en el portátil (`DISPLAY1` al 125%, ventana 650 × 325 en 635,0) la
+maqueta cae donde toca: carátula de 116 px, barra de 20 a 455, botones en 175 / 237 / 300,
+franja recogida de 872 a 1047 centrada en 960 — o sea las medidas lógicas por 1,25. El
+cambio de pantalla ya estaba resuelto desde M0: `WM_DISPLAYCHANGE` y `WM_DPICHANGED`
+rehacen la ventana entera. De aquí sale M8.
+
 ### Arreglado durante el camino
 
 - **La pastilla asomada salía vacía.** Medía 38 px de alto y la rampa del contenido no

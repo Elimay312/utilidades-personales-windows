@@ -70,15 +70,26 @@ Hace falta el **SDK de .NET 10** y Windows 11. La única referencia es
 # Compilar
 dotnet build
 
-# Instalar: publica a %LOCALAPPDATA%\Isla\app
-dotnet publish -c Release -o "$env:LOCALAPPDATA\Isla\app"
+# Instalar: publica, deja acceso directo en Inicio, enciende el autoarranque y arranca
+powershell -NoProfile -ExecutionPolicy Bypass -File instalar.ps1
 
-# Arrancar
-& "$env:LOCALAPPDATA\Isla\app\Isla.exe"
+# Quitarla (el isla.json se queda)
+powershell -NoProfile -ExecutionPolicy Bypass -File instalar.ps1 -Desinstalar
 
 # Comprobar que sigue cumpliendo SEGURIDAD.md
 powershell -NoProfile -ExecutionPolicy Bypass -File auditar.ps1
 ```
+
+`instalar.ps1` es lo de arriba a mano, que era `dotnet publish -c Release -o
+"$env:LOCALAPPDATA\Isla\app"` y acordarse de arrancarla. Con `-SinAutoArranque` no toca
+el registro. El autoarranque lo enciende poniendo `autoArranque` a `true` en el json y
+no escribiendo en `HKCU\...\Run` directamente: ese valor lo reescribe la isla en cada
+arranque según lo que diga el json, así que una entrada puesta a mano duraría hasta el
+siguiente inicio de sesión.
+
+**Para llevarla a otro PC:** copia la carpeta del proyecto y ejecuta `instalar.ps1`.
+Hace falta el SDK de .NET 10 allí también; no hay zip que copiar porque `SEGURIDAD.md`
+§9 prohíbe empaquetar, comprimir y recortar el binario.
 
 **Sobre `auditar.ps1`:** el `CLAUDE.md` del dock dice `pwsh -File`, pero en esta máquina
 no hay PowerShell 7 instalado. El script está escrito para correr también en Windows
@@ -199,6 +210,7 @@ la onda de 50 ms— solo corren con el panel desplegado.
 | `Texto.cs` | DirectWrite. Un formato por tamaño físico y peso. |
 | `Config.cs` | `isla.json` y el autoarranque. |
 | `NativeMethods.txt` | **La lista cerrada de P/Invokes.** Si no está aquí, no compila. |
+| `instalar.ps1` | Publica a `%LOCALAPPDATA%\Isla\app`, acceso directo y autoarranque. |
 | `auditar.ps1` | Comprueba que el código cumple `SEGURIDAD.md`. |
 
 ---

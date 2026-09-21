@@ -9,7 +9,8 @@ Las decisiones de diseño y las mediciones detrás de cada punto están en `CLAU
 ## 1.0.0 — 2026-09-21
 
 Primera versión completa: las ocho fases del plan, de la ventana vacía al gestor usable.
-Un solo `.exe` de 840 KB, sin instalador y sin redistribuibles (`/MT`).
+Un solo `.exe` de 840 KB, sin redistribuibles (`/MT`) y portable: el instalador solo lo
+copia y le pone un acceso directo.
 
 ### Añadido
 
@@ -41,6 +42,9 @@ Un solo `.exe` de 840 KB, sin instalador y sin redistribuibles (`/MT`).
   y tamaño de la ventana.
 - **Icono propio** embebido en el `.exe` (Explorador, barra de tareas, alt-tab y barra de
   título) e información de versión.
+- **`install.ps1`**: instalación por usuario en `%LOCALAPPDATA%\Programs\Rayo` con acceso
+  directo en el menú Inicio, y desinstalación con `-Uninstall` (que no borra la
+  configuración). Sin administrador y sin tocar el registro.
 - **Medición de arranque** por etapas en `%APPDATA%\Rayo\rayo.log`. En Debug, al mismo
   archivo van el informe de fugas del CRT y el de la capa de depuración de D3D.
 

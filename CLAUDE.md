@@ -25,6 +25,14 @@ cmake --build build
 build\rayo.exe
 ```
 
+Instalación por usuario (copia a `%LOCALAPPDATA%\Programs\Rayo` y acceso directo en el menú
+Inicio; no pide administrador ni toca el registro):
+
+```
+powershell -ExecutionPolicy Bypass -File install.ps1
+powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
+```
+
 Para depurar: `-DCMAKE_BUILD_TYPE=Debug` en otra carpeta (`build-debug`).
 Compilar siempre desde "x64 Native Tools Command Prompt for VS 2022" o con el entorno de MSVC cargado.
 

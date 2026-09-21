@@ -10,6 +10,22 @@ en el mensaje de su commit.
 
 ## Sin publicar
 
+### Instalador — un Windows 11 vacío
+
+`instalar.cmd` publica en `%LOCALAPPDATA%\Lanzador\app`. Si no hay SDK 10 con el runtime
+de escritorio, `preparar.ps1` lo baja al perfil (sin administrador) y deja `DOTNET_ROOT`
+apuntando ahí: el exe es framework-dependent y, si no, el autoarranque no encuentra el
+runtime. Si no hay Everything, baja `Everything-1.4.1.1032.x64-Setup.exe`, coteja el
+SHA256 fijado en el script con el que publica voidtools, y lo ejecuta. La Lite no: no
+tiene IPC. El servicio pide el permiso de administrador que el lanzador no va a pedir.
+
+Medido en PowerShell 5.1, que es el de un Windows recién instalado: el setup bajado
+pesa 1 998 736 bytes y su SHA256 es el fijado (`c42efad0…`). En 5.1 el fichero de
+sumas llega como `byte[]`; leído como string, el script no encontraba la línea.
+`preparar.ps1` encontró el SDK 10.0.401 y `WindowsDesktop.App 10.0.12` ya en el
+perfil, sin volver a bajarlos. Un publish a una carpeta temporal pasó `--check`.
+`auditar.ps1`: `TODO LIMPIO`. El setup de Everything no se llegó a ejecutar.
+
 ### H10 — Los iconos, cuatro veces más rápidos, y fuera el relleno
 
 - **El cuello estaba medido mal hasta que se midió bien.** La primera sonda decía que los

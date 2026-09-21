@@ -109,6 +109,17 @@ franja recogida de 872 a 1047 centrada en 960 — o sea las medidas lógicas por
 cambio de pantalla ya estaba resuelto desde M0: `WM_DISPLAYCHANGE` y `WM_DPICHANGED`
 rehacen la ventana entera. De aquí sale M8.
 
+### Arreglado: ocultar la barra de Windows escondía la isla
+
+No era que la isla se hubiera caído. Al poner la barra en auto-ocultar, el área de trabajo
+pasa a ser el monitor entero. Medido en esta máquina: una maximizada (Chrome) pasa de
+acabar en y=1040 a colgar `-8,-8-1928,1088` sobre un monitor de 1920×1080. El criterio
+viejo —sin marco y cubre el monitor— la daba por un juego en cuanto esa ventana no tenía
+caption. El escritorio (`Progman`, `0,0-1920,1080`) y `TextInputHost` cubren el monitor
+sin marco y tampoco son un vídeo; con el foco ahí la isla se quedaba escondida. Esos ya
+no cuentan, y un rectángulo que sobresale por los cuatro lados es una maximizada, no un
+vídeo.
+
 ### Arreglado durante el camino
 
 - **La pastilla asomada salía vacía.** Medía 38 px de alto y la rampa del contenido no

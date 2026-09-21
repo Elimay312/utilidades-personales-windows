@@ -48,6 +48,8 @@ target_link_libraries(imgui PUBLIC d3d11 dxgi)
 add_executable(rayo WIN32
   src/main.cpp
   src/app/App.cpp
+  src/app/Config.cpp
+  src/core/Diag.cpp
   src/core/TaskPool.cpp
   src/fs/DirectoryReader.cpp
   src/fs/DirectoryWatcher.cpp
@@ -102,6 +104,12 @@ target_compile_options(rayo_filter_check PRIVATE /W4 /permissive- /utf-8 /EHsc)
 target_compile_definitions(rayo_filter_check PRIVATE
   UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 target_link_libraries(rayo_filter_check PRIVATE shlwapi)
+
+add_executable(rayo_config_check tests/config_check.cpp src/app/Config.cpp)
+target_include_directories(rayo_config_check PRIVATE src)
+target_compile_options(rayo_config_check PRIVATE /W4 /permissive- /utf-8 /EHsc)
+target_compile_definitions(rayo_config_check PRIVATE
+  UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 
 add_executable(rayo_fileops_check tests/fileops_check.cpp
   src/fs/FileOps.cpp src/fs/DirectoryReader.cpp)

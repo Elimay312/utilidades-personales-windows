@@ -7,10 +7,14 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <cwchar>
 #include <optional>
 #include <thread>
 #include <utility>
 
+#include "core/Diag.h"
 #include "ui/MillerView.h"
 #include "ui/PreviewPane.h"
 #include "ui/Theme.h"
@@ -91,6 +95,44 @@ size_t CommonLength(const std::wstring& a, const std::wstring& b) {
     return length;
 }
 
+COLORREF ToColorRef(const ImVec4& color) {
+    const unsigned hex = Theme::ToHex(color);
+    return RGB((hex >> 16) & 0xFF, (hex >> 8) & 0xFF, hex & 0xFF);
+}
+
+// Un color mal escrito en el config se ignora y se queda el de fabrica: mas vale un tema a
+// medias que un panel negro sin explicacion.
+bool ParseHex(const std::wstring& text, unsigned& out) {
+    const wchar_t* start = text.c_str() + (text.size() > 1 && text[0] == L'#' ? 1 : 0);
+    wchar_t* end = nullptr;
+    const unsigned long value = wcstoul(start, &end, 16);
+    if (!end || end == start || *end != L'\0') return false;
+    out = static_cast<unsigned>(value);
+    return true;
+}
+
+// El archivo que se escribe la primera vez. Los colores y los atajos salen de las mismas
+// tablas que usa el programa: no hay dos listas que desincronizar.
+std::wstring DefaultConfig() {
+    std::wstring text =
+        L"; Rayo. Este archivo se crea solo la primera vez; borralo para volver a empezar.\r\n"
+        L"; Colores en RRGGBB hexadecimal.\r\n"
+        L"; [keys] es \"tecla=comando\". Si la seccion existe sustituye entera a los atajos de\r\n"
+        L"; fabrica, asi que borrar una linea quita ese atajo. Un caracter suelto ('~', '/')\r\n"
+        L"; es el caracter que produce el teclado, sea cual sea la distribucion; lo demas\r\n"
+        L"; (J, 1, DownArrow, Ctrl+D) son teclas fisicas con los nombres de ImGui.\r\n"
+        L"; [window], [state] y [bookmarks] los escribe la app al cerrarse.\r\n"
+        L"\r\n[colors]\r\n";
+    for (const Theme::NamedColor& color : Theme::Colors()) {
+        wchar_t line[64];
+        swprintf_s(line, L"%s=%06x\r\n", color.name, Theme::ToHex(*color.color));
+        text += line;
+    }
+    text += L"\r\n[options]\r\nshowHidden=0\r\n\r\n[keys]\r\n";
+    text += FromUtf8(Keymap::Defaults());
+    return text;
+}
+
 int IndexOfName(const std::vector<DirectoryEntry>& entries, const std::wstring& name) {
     for (size_t i = 0; i < entries.size(); ++i)
         if (entries[i].name == name) return static_cast<int>(i);
@@ -100,6 +142,8 @@ int IndexOfName(const std::vector<DirectoryEntry>& entries, const std::wstring& 
 }  // namespace
 
 App::~App() {
+    // Lo primero: mientras haya tareas vivas pueden seguir llegando previews al buzon.
+    m_pool.Stop();
     // Antes de destruir la ventana: su callback hace PostMessageW con el HWND.
     m_watcher.Stop();
     if (ImGui::GetCurrentContext()) {
@@ -107,17 +151,72 @@ App::~App() {
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext();
     }
+    // Las texturas de las previews son objetos de D3D y la cache es un miembro: sin
+    // vaciarla aqui moririan despues del dispositivo y saldrian como fuga en el informe.
+    m_previewFile.reset();
+    m_previewInbox.clear();
+    m_previewCache.Clear();
     m_gfx.Destroy();
     m_window.Destroy();
 }
 
 bool App::Init(const wchar_t* startPath) {
-    if (!m_window.Create(L"Rayo", 1280, 800)) return false;
-    if (!m_gfx.Create(m_window.Handle())) return false;
+    Diag::Open(AppFile(L"rayo.log"));
 
+    // El contexto de ImGui, lo primero: el keymap se lee del config con los nombres de
+    // tecla de ImGui. Es memoria y nada mas, no toca ni la ventana ni D3D.
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr;  // nada de imgui.ini
+    Diag::Mark("contexto");
+    const int badKeys = LoadConfig();
+    Diag::Mark("config");
+
+    Window::Layout saved;
+    saved.x = m_config.GetInt(L"window", L"x", 0);
+    saved.y = m_config.GetInt(L"window", L"y", 0);
+    saved.width = m_config.GetInt(L"window", L"width", 0);
+    saved.height = m_config.GetInt(L"window", L"height", 0);
+    saved.maximized = m_config.GetInt(L"window", L"maximized", 0) != 0;
+    if (!m_window.Create(L"Rayo", 1280, 800, ToColorRef(Theme::kBackground), &saved))
+        return false;
+    Diag::Mark("ventana");
+    // Visible ya, con el fondo pintado por GDI: crear el dispositivo D3D cuesta ~200 ms
+    // (cargar el driver) y esperar a eso para ensenar la ventana se ve como un arranque
+    // lento aunque no lo sea.
+    m_window.Show();
+    Diag::Mark("VISIBLE");
+
+    m_pool.Start(std::thread::hardware_concurrency() / 2);
+
+    // El vigilante avisa desde su propio hilo y en rafagas. Solo se despierta la UI con el
+    // primer aviso de cada tanda: mil archivos copiandose no pueden ser mil repintados.
+    m_watcher.Start([this, hwnd = m_window.Handle()](const std::wstring& path) {
+        bool first = false;
+        {
+            std::lock_guard<std::mutex> lock(m_inboxMutex);
+            if (std::find(m_changed.begin(), m_changed.end(), path) == m_changed.end()) {
+                m_changed.push_back(path);
+                first = true;
+            }
+        }
+        if (first) PostMessageW(hwnd, WM_APP_WAKE, 0, 0);
+    });
+
+    // La lectura de la carpeta se lanza antes de crear el dispositivo: mientras carga el
+    // driver, un hilo de trabajo ya esta listando. El primer frame sale con la carpeta
+    // dentro en vez de vacio.
+    m_tabs.emplace_back();
+    Navigate(startPath && startPath[0] ? std::wstring(startPath)
+                                       : m_config.Get(L"state", L"lastPath", UserFolder()));
+    // Despues de Navigate, que limpia la barra de estado.
+    if (badKeys > 0)
+        SetStatus("config: " + std::to_string(badKeys) +
+                  (badKeys == 1 ? " atajo sin entender" : " atajos sin entender"));
+    Diag::Mark("hilos");
+
+    if (!m_gfx.Create(m_window.Handle())) return false;
+    Diag::Mark("d3d");
 
     if (!ImGui_ImplWin32_Init(m_window.Handle())) return false;
     if (!ImGui_ImplDX11_Init(m_gfx.Device(), m_gfx.Context())) return false;
@@ -140,29 +239,65 @@ bool App::Init(const wchar_t* startPath) {
         Theme::Apply(scale);  // atlas dinamico: no hay nada que reconstruir
         RequestFrames();
     };
+    Diag::Mark("imgui");
 
-    m_pool.Start(std::thread::hardware_concurrency() / 2);
+    // El listado que se pidio antes de crear el dispositivo puede estar ya esperando: si
+    // ha llegado, el primer frame es el primer frame util.
+    DrainResults();
+    RenderFrame();
+    m_window.EndGdiBackground();  // a partir de aqui la ventana la pinta D3D
+    Diag::Mark("frame");
+    Diag::WriteStartup();
 
-    // El vigilante avisa desde su propio hilo y en rafagas. Solo se despierta la UI con el
-    // primer aviso de cada tanda: mil archivos copiandose no pueden ser mil repintados.
-    m_watcher.Start([this, hwnd = m_window.Handle()](const std::wstring& path) {
-        bool first = false;
-        {
-            std::lock_guard<std::mutex> lock(m_inboxMutex);
-            if (std::find(m_changed.begin(), m_changed.end(), path) == m_changed.end()) {
-                m_changed.push_back(path);
-                first = true;
-            }
-        }
-        if (first) PostMessageW(hwnd, WM_APP_WAKE, 0, 0);
-    });
-
-    Navigate(startPath && startPath[0] ? std::wstring(startPath) : UserFolder());
-
-    RenderFrame();  // un frame ya pintado antes de mostrar: sin flash blanco
-    m_window.Show();
     RequestFrames();
     return true;
+}
+
+// Los colores y los atajos se aplican aqui y no se vuelven a mirar: cambiar el config
+// pide reiniciar, que es lo que hace cualquier programa con un archivo de configuracion.
+// Devuelve cuantas lineas de [keys] no se entendieron; el aviso lo da Init, porque
+// Navigate limpia la barra de estado y se lo llevaria por delante.
+int App::LoadConfig() {
+    m_config.Load(DefaultConfig());
+
+    for (const auto& [key, value] : m_config.Section(L"colors")) {
+        unsigned hex = 0;
+        if (!ParseHex(value, hex)) continue;
+        for (const Theme::NamedColor& color : Theme::Colors())
+            if (_wcsicmp(key.c_str(), color.name) == 0) *color.color = Theme::Rgb(hex);
+    }
+
+    std::vector<std::pair<std::string, std::string>> keys;
+    for (const auto& [spec, command] : m_config.Section(L"keys"))
+        keys.emplace_back(ToUtf8(spec), ToUtf8(command));
+    const int bad = Keymap::Load(keys);
+
+    for (const auto& [letter, path] : m_config.Section(L"bookmarks"))
+        if (letter.size() == 1 && letter[0] < 128)
+            m_bookmarks[static_cast<char>(letter[0])] = path;
+
+    m_showHidden = m_config.GetInt(L"options", L"showHidden", 0) != 0;
+    return bad;
+}
+
+// Al final de Run, con la ventana todavia viva: su posicion es parte de lo que se guarda.
+void App::SaveConfig() {
+    const Window::Layout layout = m_window.Placement();
+    if (layout.width > 0 && layout.height > 0) {
+        m_config.SetInt(L"window", L"x", layout.x);
+        m_config.SetInt(L"window", L"y", layout.y);
+        m_config.SetInt(L"window", L"width", layout.width);
+        m_config.SetInt(L"window", L"height", layout.height);
+        m_config.SetInt(L"window", L"maximized", layout.maximized ? 1 : 0);
+    }
+    m_config.Set(L"state", L"lastPath", m_current.path);
+    m_config.SetInt(L"options", L"showHidden", m_showHidden ? 1 : 0);
+
+    // La seccion entera y no clave a clave: un marcador puede haberse quedado sin letra.
+    Config::Pairs bookmarks;
+    for (const auto& [letter, path] : m_bookmarks)
+        bookmarks.emplace_back(std::wstring(1, static_cast<wchar_t>(letter)), path);
+    m_config.SetSection(L"bookmarks", bookmarks);
 }
 
 int App::Run() {
@@ -212,6 +347,8 @@ int App::Run() {
             --m_pendingFrames;
         }
     }
+
+    SaveConfig();  // aqui y no en el destructor: la ventana aun existe
     return 0;
 }
 
@@ -222,6 +359,7 @@ void App::RequestFrames() {
 void App::Navigate(std::wstring path) {
     path = NormalizePath(path);
     m_pathUtf8 = path.empty() ? "Unidades" : ToUtf8(path);
+    if (m_tab < m_tabs.size()) m_tabs[m_tab] = path;  // la pestana es su carpeta y ya
     SetStatus({});
     // El filtro es de la carpeta en la que se escribio: arrastrarlo a la siguiente
     // esconderia media carpeta sin que se vea por que.
@@ -259,6 +397,43 @@ void App::RefreshDirty() {
     m_refreshDue = 0;
     for (const std::wstring& path : m_dirty) Request(path);
     m_dirty.clear();
+}
+
+// Las pestanas no guardan nada mas que su carpeta: el cursor lo restaura m_cursorMemory,
+// que ya va por ruta, y el filtro se queda en la carpeta donde se escribio (como al
+// navegar). Una pestana con su propio filtro seria estado duplicado para poco.
+void App::NewTab() {
+    m_tabs.insert(m_tabs.begin() + static_cast<ptrdiff_t>(m_tab) + 1, m_current.path);
+    ++m_tab;
+    SetStatus("pestana " + std::to_string(m_tab + 1));
+}
+
+void App::SelectTab(size_t index) {
+    if (index >= m_tabs.size() || index == m_tab) return;
+    m_tab = index;
+    Navigate(m_tabs[m_tab]);
+}
+
+void App::CloseTab() {
+    if (m_tabs.size() <= 1) return;  // cerrar la ultima seria salir, y para eso esta q
+    m_tabs.erase(m_tabs.begin() + static_cast<ptrdiff_t>(m_tab));
+    if (m_tab >= m_tabs.size()) m_tab = m_tabs.size() - 1;
+    Navigate(m_tabs[m_tab]);
+}
+
+void App::SetBookmark(char letter) {
+    if (!CanEdit()) return;  // la raiz virtual no es una carpeta a la que volver
+    m_bookmarks[letter] = m_current.path;
+    SetStatus(std::string("marcador ") + letter);
+}
+
+void App::GotoBookmark(char letter) {
+    const auto found = m_bookmarks.find(letter);
+    if (found == m_bookmarks.end()) {
+        SetStatus(std::string("sin marcador ") + letter);
+        return;
+    }
+    Navigate(found->second);
 }
 
 void App::GoParent() {
@@ -908,6 +1083,22 @@ void App::Execute(Command command) {
         m_showHidden = !m_showHidden;
         RebuildViews();
         return;
+    case Command::NewTab:
+        NewTab();
+        return;
+    case Command::SelectTab:
+        // Una letra en vez de un digito da un indice enorme y SelectTab lo descarta.
+        SelectTab(static_cast<size_t>(m_keys.letter - '1'));
+        return;
+    case Command::CloseTab:
+        CloseTab();
+        return;
+    case Command::SetBookmark:
+        SetBookmark(m_keys.letter);
+        return;
+    case Command::GotoBookmark:
+        GotoBookmark(m_keys.letter);
+        return;
     }
 }
 
@@ -965,6 +1156,15 @@ void App::BuildUi() {
 
     BeginPanel("##status", ImVec2(vp->WorkPos.x, top + bodyHeight),
                ImVec2(vp->WorkSize.x, statusHeight));
+    // Los numeros de pestana, solo si hay mas de una: la barra es una linea y la ruta
+    // manda. El nombre de la activa ya se lee justo al lado, que es la ruta.
+    if (m_tabs.size() > 1) {
+        for (size_t i = 0; i < m_tabs.size(); ++i) {
+            ImGui::TextColored(i == m_tab ? Theme::kAccent : Theme::kTextDim, "%zu", i + 1);
+            ImGui::SameLine();
+        }
+    }
+
     // TextUnformatted y no Text: una ruta o un nombre pueden llevar un % dentro.
     ImGui::PushStyleColor(ImGuiCol_Text, Theme::kTextDim);
     ImGui::TextUnformatted(m_pathUtf8.c_str());

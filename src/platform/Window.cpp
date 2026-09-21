@@ -33,7 +33,8 @@ bool NeedsRedraw(UINT msg) {
 
 }  // namespace
 
-bool Window::Create(const wchar_t* title, int widthDip, int heightDip) {
+bool Window::Create(const wchar_t* title, int widthDip, int heightDip, COLORREF background,
+                    const Layout* saved) {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -44,7 +45,9 @@ bool Window::Create(const wchar_t* title, int widthDip, int heightDip) {
     wc.lpszClassName = kClassName;
     if (!RegisterClassExW(&wc)) return false;
 
-    // Sin WS_VISIBLE: se muestra tras el primer frame para no ver un flash blanco.
+    m_brush = CreateSolidBrush(background);
+
+    // Sin WS_VISIBLE: la posicion se decide abajo y Show() la ensena ya colocada.
     if (!CreateWindowExW(0, kClassName, title, kStyle,
                          CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
                          nullptr, nullptr, wc.hInstance, this))
@@ -52,6 +55,22 @@ bool Window::Create(const wchar_t* title, int widthDip, int heightDip) {
 
     const UINT dpi = GetDpiForWindow(m_hwnd);
     m_dpiScale = static_cast<float>(dpi) / 96.0f;
+
+    // Lo guardado manda, pero solo si sigue cayendo en algun monitor: con la pantalla
+    // secundaria desenchufada, la ventana se abriria fuera de cualquier pantalla y ya no
+    // habria forma de traerla de vuelta.
+    if (saved && saved->width > 0 && saved->height > 0) {
+        const RECT r{saved->x, saved->y, saved->x + saved->width, saved->y + saved->height};
+        if (MonitorFromRect(&r, MONITOR_DEFAULTTONULL)) {
+            // Con la ventana aun oculta esta es la posicion "restaurada", asi que
+            // maximizar despues no la pierde.
+            SetWindowPos(m_hwnd, nullptr, r.left, r.top, saved->width, saved->height,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+            if (saved->maximized) m_showCmd = SW_SHOWMAXIMIZED;
+            Decorate();
+            return true;
+        }
+    }
 
     // El tamano pedido esta en DIP; llevarlo a pixeles del monitor donde cayo.
     RECT r{0, 0, static_cast<LONG>(widthDip * m_dpiScale), static_cast<LONG>(heightDip * m_dpiScale)};
@@ -72,9 +91,13 @@ bool Window::Create(const wchar_t* title, int widthDip, int heightDip) {
     SetWindowPos(m_hwnd, nullptr, x, y, width, height,
                  (x == CW_USEDEFAULT ? SWP_NOMOVE : 0) | SWP_NOZORDER | SWP_NOACTIVATE);
 
+    Decorate();
+    return true;
+}
+
+void Window::Decorate() const {
     const BOOL dark = TRUE;  // barra de titulo a juego con el tema oscuro
     DwmSetWindowAttribute(m_hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-    return true;
 }
 
 void Window::Destroy() {
@@ -82,11 +105,38 @@ void Window::Destroy() {
         DestroyWindow(m_hwnd);
         m_hwnd = nullptr;
     }
+    if (m_brush) {
+        DeleteObject(m_brush);
+        m_brush = nullptr;
+    }
 }
 
 void Window::Show() const {
-    ShowWindow(m_hwnd, SW_SHOW);
+    ShowWindow(m_hwnd, m_showCmd);
     SetForegroundWindow(m_hwnd);
+    // El WM_PAINT del fondo, ya: no hay bucle de mensajes hasta que el dispositivo D3D
+    // este creado, y sin esto la ventana se quedaria en blanco todo ese rato.
+    UpdateWindow(m_hwnd);
+}
+
+Window::Layout Window::Placement() const {
+    // Cerrar con la X destruye la ventana antes de que nadie pregunte: lo ultimo que se
+    // supo se guarda en WM_DESTROY y es lo que se devuelve a partir de ahi.
+    Layout layout = m_lastLayout;
+    WINDOWPLACEMENT placement{sizeof(placement)};
+    if (!m_hwnd || !GetWindowPlacement(m_hwnd, &placement)) return layout;
+
+    layout.maximized = placement.showCmd == SW_SHOWMAXIMIZED;
+    // Maximizada, lo unico que hay es la posicion restaurada de WINDOWPLACEMENT (que va
+    // en coordenadas del area de trabajo); normal, GetWindowRect es exacto.
+    RECT r = placement.rcNormalPosition;
+    if (!layout.maximized) GetWindowRect(m_hwnd, &r);
+
+    layout.x = r.left;
+    layout.y = r.top;
+    layout.width = r.right - r.left;
+    layout.height = r.bottom - r.top;
+    return layout;
 }
 
 LRESULT CALLBACK Window::Thunk(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -109,7 +159,16 @@ LRESULT Window::Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     switch (msg) {
     case WM_PAINT:
-        ValidateRect(hwnd, nullptr);  // ya repintamos nosotros
+        if (m_gdiBackground) {
+            // Antes de que exista D3D. Es lo que hace que la ventana salga oscura en
+            // cuanto aparece, sin esperar a que cargue el driver de la GPU.
+            PAINTSTRUCT ps;
+            const HDC dc = BeginPaint(hwnd, &ps);
+            FillRect(dc, &ps.rcPaint, m_brush);
+            EndPaint(hwnd, &ps);
+        } else {
+            ValidateRect(hwnd, nullptr);  // ya repintamos nosotros
+        }
         return 0;
 
     case WM_ERASEBKGND:
@@ -131,6 +190,7 @@ LRESULT Window::Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_DESTROY:
+        m_lastLayout = Placement();
         m_hwnd = nullptr;
         PostQuitMessage(0);
         return 0;

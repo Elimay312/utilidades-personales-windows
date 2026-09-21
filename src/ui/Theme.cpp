@@ -77,9 +77,27 @@ bool AddFont(const wchar_t* file, float sizePixels, bool merge) {
     return true;
 }
 
+const NamedColor kColors[] = {
+    {L"background", &kBackground}, {L"panel", &kPanel},     {L"selection", &kSelection},
+    {L"text", &kText},             {L"textDim", &kTextDim}, {L"accent", &kAccent},
+};
+
 }  // namespace
 
+std::span<const NamedColor> Colors() {
+    return kColors;
+}
+
+unsigned ToHex(const ImVec4& color) {
+    const auto channel = [](float value) {
+        return static_cast<unsigned>(value * 255.0f + 0.5f) & 0xFFu;
+    };
+    return (channel(color.x) << 16) | (channel(color.y) << 8) | channel(color.z);
+}
+
 void Apply(float dpiScale) {
+    kMarked = ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f);
+
     ImGuiStyle& style = ImGui::GetStyle();
     style = ImGuiStyle();  // partir de cero: Apply se repite en cada cambio de DPI
 

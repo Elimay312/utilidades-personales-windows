@@ -52,12 +52,12 @@ privada está hoy en ~54 MB, así que este presupuesto está pendiente de revisa
 ```
 src/
   main.cpp              Punto de entrada (wWinMain), mínimo
-  app/                  App: bucle principal, estado global, despacho de comandos
+  app/                  App: bucle principal, estado global, despacho de comandos; Config
   platform/             Ventana Win32, dispositivo D3D11, DPI, portapapeles
   fs/                   DirectoryReader, ListingCache, DirectoryWatcher, FileOps, rutas
   preview/              Decodificador WIC, vista previa de texto, caché de previews
   ui/                   MillerView, PreviewPane, StatusBar, Theme, Keymap
-  core/                 Cola de tareas / pool de hilos, tipos comunes
+  core/                 Cola de tareas / pool de hilos, tipos comunes, Diag (log)
 third_party/            (solo si algo no puede venir por FetchContent)
 ```
 
@@ -110,9 +110,12 @@ third_party/            (solo si algo no puede venir por FetchContent)
 | `.` | Mostrar / ocultar archivos ocultos |
 | `~` | Ir a la carpeta de usuario |
 | `:` | Ir a una ruta escrita |
+| `t` / `1`-`9` / `Ctrl+w` | Nueva pestaña / ir a la pestaña / cerrarla |
+| `m` + letra / `'` + letra | Guardar marcador / saltar a él |
 | `q` | Salir |
 
-El mapa de teclas vive en `ui/Keymap` como tabla de datos, no como `if` repartidos por el código, para poder hacerlo configurable más adelante.
+El mapa de teclas vive en `ui/Keymap` como tabla de datos, no como `if` repartidos por el código.
+Desde la fase 8 esa tabla se lee de `%APPDATA%\Rayo\config.ini`, sección `[keys]`.
 
 ## Tema visual
 
@@ -134,7 +137,7 @@ El plan completo está en `PROMPTS.md`. Estado actual:
 - [x] Fase 5 — Vigilancia de cambios en disco
 - [x] Fase 6 — Operaciones de archivos
 - [x] Fase 7 — Filtro, ir a ruta, archivos ocultos, barra de estado
-- [ ] Fase 8 — Pulido: configuración, pestañas, marcadores, medición de arranque
+- [x] Fase 8 — Pulido: configuración, pestañas, marcadores, medición de arranque
 
 Al terminar una fase: marcarla aquí, anotar decisiones importantes en la sección siguiente y hacer commit.
 
@@ -616,3 +619,117 @@ Medido tras la fase 6:
   shell; el deshacer del shell (Ctrl+Z en el Explorador tras una operación hecha desde Rayo);
   y qué pasa si se cierra Rayo con una copia grande a medias — el pool hace join, así que el
   cierre esperaría a que termine.
+
+### 2026-09-21 — Fase 8
+
+- **`config.ini` y no `config.toml`: `GetPrivateProfileStringW` es el parser entero.** Escribir
+  uno de TOML o de JSON serían cien líneas para leer veinte claves, y el enunciado dejaba
+  elegir "lo más simple sin dependencias". Lo más simple ya venía con Windows.
+  `GetPrivateProfileSectionW` devuelve una sección entera como `clave=valor\0...\0\0`, que es
+  justo lo que hacen falta para colores, atajos y marcadores. **Medido: 0,6 ms** leer las cinco
+  secciones al arrancar.
+- **El archivo se crea en UTF-16 con BOM a mano, y eso no es cosmético.** Las funciones `W` del
+  perfil solo escriben Unicode si el archivo *ya* lo es; si lo crea `WritePrivateProfileStringW`
+  sale en ANSI y un marcador a `C:\Users\Canción\音楽` se pierde sin ruido. Es lo que comprueba
+  `tests/config_check.cpp`, porque es lo único de la fase que no se ve en pantalla hasta que ya
+  ha decidido mal.
+- **El config por defecto lo escriben las mismas tablas que usa el programa.** Los colores salen
+  de `Theme::Colors()` (nombre + puntero) y los atajos de `Keymap::Defaults()`, que reconstruye
+  cada línea con `ImGui::GetKeyName`. Así no hay dos listas de hexadecimales ni dos listas de
+  teclas que desincronizar, y la sección `[keys]` del archivo es exactamente la tabla de fábrica.
+- **`[keys]` sustituye a la tabla entera, no la parcha.** Borrar una línea quita ese atajo, que
+  es lo que espera cualquiera que edite el archivo. Las líneas que no se entienden se cuentan y
+  se dicen en la barra ("config: 1 atajo sin entender") en vez de desaparecer.
+- **Los dígitos de las pestañas son teclas físicas, no caracteres, y por un motivo concreto:**
+  ImGui llama `"1"` a la tecla 1. Un atajo de carácter `'1'` escrito en el config vuelve como
+  tecla al releerse, así que la app se comportaría distinto con config que sin él. Moverlos a la
+  tabla de teclas hace que los dos caminos coincidan. `/`, `.`, `:`, `~` y `'` siguen siendo
+  caracteres porque ImGui llama a esas teclas `Slash`, `Period`... y no chocan.
+  **Se vio en pantalla**: `1` no cambiaba de pestaña hasta arreglarlo.
+- **`Home` y `End` son atajos nuevos porque un comando sin atajo de fábrica no se puede nombrar
+  en el config.** `MoveTop` solo salía de `gg`, que está escrito a mano en `Poll`.
+- **Una pestaña es su carpeta y nada más.** El cursor ya lo recuerda `m_cursorMemory` por ruta
+  desde la fase 3, así que cambiar de pestaña lo restaura solo: `std::vector<std::wstring>` y un
+  índice, sin estado por pestaña que mantener. `Navigate` escribe la ruta en la pestaña activa y
+  con eso basta. `Ctrl+w` sobre la última no hace nada: cerrar la última sería salir, y para eso
+  está `q`.
+- **`m` y `'` dejan a `Poll` esperando la letra.** `State::pending` guarda el comando y la tecla
+  siguiente llega por `InputQueueCharacters`; Escape o cualquier cosa que no sea letra o dígito
+  cancela. Es el mismo mecanismo que la primera `g` de `gg`, un campo más.
+- **La geometría se guarda con `GetWindowRect` y solo se recurre a `WINDOWPLACEMENT` si está
+  maximizada** (que es el único caso en el que `GetWindowRect` no dice el tamaño al que hay que
+  volver). Al restaurar, `MonitorFromRect(..., MONITOR_DEFAULTTONULL)`: con el monitor secundario
+  desenchufado la ventana se abriría fuera de toda pantalla y no habría forma de traerla.
+- **`Placement()` se cachea en `WM_DESTROY`.** Cerrar con la X destruye la ventana *antes* de que
+  el bucle salga, así que preguntar por su posición al guardar ya no devolvería nada. Se guarda
+  al final de `Run`, no en el destructor, por lo mismo.
+- **La ventana se muestra antes de crear el dispositivo D3D, y el fondo lo pinta GDI.** Es lo que
+  la fase 1 ya había anotado como única salida al presupuesto de arranque. Son tres cosas:
+  `hbrBackground` propio y `FillRect` en el `WM_PAINT` mientras `m_gdiBackground`, `UpdateWindow`
+  tras `ShowWindow` (sin bucle de mensajes todavía, el `WM_PAINT` hay que provocarlo), y
+  `EndGdiBackground()` tras el primer `Present`.
+- **El listado de la carpeta se lanza antes que D3D.** Los ~160 ms del driver son tiempo en el
+  que un hilo de trabajo puede estar leyendo: al llegar al primer frame se hace `DrainResults` y
+  la carpeta ya está. El primer frame es el primer frame útil, no uno vacío.
+- **El log va a `%APPDATA%\Rayo\rayo.log` y no a `OutputDebugString`.** Una app sin consola no
+  tiene dónde imprimir y el depurador no siempre está enganchado. `Diag::Open` además redirige
+  ahí el informe de fugas del CRT (`_CrtSetReportFile`), que se emite al final del proceso,
+  cuando ya no hay nadie escuchando. El archivo se trunca solo pasados 64 KB.
+
+Medido tras la fase 8 (8 arranques en caliente, mediana):
+
+| Etapa | ms |
+|---|---|
+| proceso → `wWinMain` (cargador de Windows) | 9,4 |
+| `ImGui::CreateContext` | 1,0 |
+| leer el config | 0,6 |
+| crear la ventana | 5,5 |
+| **ventana visible, con su fondo pintado** | 29,1 → **45 ms acumulados** |
+| lanzar hilos y pedir el listado | 0,2 |
+| `D3D11CreateDevice` + swap chain | 158,5 |
+| backends de ImGui + fuentes | 0,9 |
+| primer frame + `Present` | 8,7 |
+| **total hasta el primer frame de D3D** | **215 ms** |
+
+- **El presupuesto de <100 ms se cumple para "ventana visible" (45 ms) y no para "primer frame de
+  D3D" (215 ms).** De esos 215, **158 son `D3D11CreateDevice`**: cargar el driver de la GPU, que
+  ya en la fase 1 se midió aparte y no es código nuestro. Todo lo demás junto son 26 ms. No queda
+  nada que diferir: el config son 0,6 ms, las fuentes 0,9 (mapeadas, fase 2) y COM no se toca en
+  el hilo de UI. Lo único que quedaba por hacer —enseñar la ventana antes del driver— está hecho,
+  y es lo que cambia la sensación de arranque: la ventana aparece en 45 ms y se llena a los 215.
+- **La fase encontró una fuga de verdad, y era de orden de destrucción.** `PreviewCache` guarda
+  `ComPtr<ID3D11ShaderResourceView>` y es miembro de `App`: se destruía *después* de
+  `m_gfx.Destroy()`, es decir, después del dispositivo. El destructor ahora para el pool primero
+  (nadie más puede empujar texturas al buzón), vacía la caché y el buzón, y solo entonces suelta
+  el dispositivo. `ID3D11DeviceContext::ClearState()` + `Flush()` antes de soltarlo por lo mismo:
+  el contexto retiene lo último que se le ató.
+- **La capa de depuración de D3D no está instalada en esta máquina** (`Graphics Tools` es una
+  característica opcional de Windows y consultarla pide elevación), así que
+  `ReportLiveDeviceObjects` no puede decir nada: el código lo detecta y lo escribe en el log. La
+  comprobación que sí funciona sin nada opcional es **la cuenta del último `Release` del
+  dispositivo: 0 = no queda nadie agarrado**. Medido 0 en todas las ejecuciones.
+- **El informe de fugas del CRT se validó metiendo una fuga a propósito** (`new int[7]`): salió en
+  el log como "Detected memory leaks! ... 28 bytes long". Sin ella, el log no dice nada. Es decir,
+  el silencio significa "no hay fugas" y no "el mecanismo no está puesto".
+- **Ojo al medir CPU en reposo: el puntero del ratón encima de la ventana la despierta.** Medir
+  daba ~250 ms cada 20 s hasta que se contaron los mensajes: **45 `WM_MOUSEMOVE` en 20 s**, tres
+  frames cada uno. Con el puntero fuera, **0 ms en 20 s**. No es de esta fase (`NeedsRedraw`
+  despierta con el ratón desde la fase 1) pero invalida cualquier medida hecha con el ratón
+  encima.
+
+| Métrica | Objetivo | Medido |
+|---|---|---|
+| Ventana visible desde el arranque del proceso | < 100 ms | **45 ms** |
+| Primer frame de D3D | < 100 ms | 215 ms (158 son el driver) |
+| CPU en reposo, puntero fuera de la ventana | 0 % | 0 ms en 20 s |
+| Memoria recién abierto | < 50 MB | 45,9 MB working set (52,5 privada) |
+| Fugas al cerrar en Debug | ninguna | 0 del CRT; refcount del dispositivo 0 |
+| Warnings con `/W4 /permissive-` | 0 | 0 (Release y Debug) |
+
+- **El exe pasa de 788 a 830 KB**, sin dependencias nuevas: el config es kernel32 y el log
+  también.
+- **Sin verificar**: `ReportLiveDeviceObjects` de verdad (falta `Graphics Tools`; se activa con
+  `dism /online /add-capability /capabilityname:Tools.Graphics.DirectX~~~~0.0.1.0`); restaurar la
+  ventana en un monitor con otro DPI o desenchufado (solo hay uno en esta máquina; el camino de
+  descarte está escrito pero no probado); y qué hace el config si dos instancias de Rayo se
+  cierran a la vez — gana la última que escriba.

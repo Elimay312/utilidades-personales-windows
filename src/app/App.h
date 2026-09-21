@@ -3,12 +3,14 @@
 #include <Windows.h>
 
 #include <atomic>
+#include <map>
 #include <mutex>
 #include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "app/Config.h"
 #include "core/TaskPool.h"
 #include "fs/DirectoryReader.h"
 #include "fs/DirectoryWatcher.h"
@@ -48,7 +50,15 @@ private:
     void ProcessInput();
     void BuildUi();
 
+    int LoadConfig();  // devuelve los atajos del config que no se entendieron
+    void SaveConfig();
+
     void Navigate(std::wstring path);
+    void NewTab();
+    void SelectTab(size_t index);
+    void CloseTab();
+    void SetBookmark(char letter);
+    void GotoBookmark(char letter);
     void GoParent();
     void Open();
     void SetCursor(int cursor);
@@ -141,6 +151,14 @@ private:
     enum class Answer { None, Yes, No };
     Answer m_answer = Answer::None;
     std::vector<std::wstring> m_pendingDelete;
+
+    Config m_config;
+    // Una pestana es su carpeta y nada mas: el cursor ya lo recuerda m_cursorMemory por
+    // ruta, asi que cambiar de pestana lo restaura sin guardar nada por pestana.
+    std::vector<std::wstring> m_tabs;
+    size_t m_tab = 0;
+    // Marcadores: letra -> carpeta. Ordenado para que el config salga siempre igual.
+    std::map<char, std::wstring> m_bookmarks;
 
     ListingCache m_cache;
     // Ruta -> nombre seleccionado. Solo durante la sesion: volver a una carpeta deja el

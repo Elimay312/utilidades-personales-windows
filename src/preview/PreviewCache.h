@@ -12,6 +12,12 @@ public:
     // Nulo si no esta o si el archivo cambio de fecha desde que se guardo.
     PreviewPtr Get(const std::wstring& path, const FILETIME& modified);
     void Put(PreviewPtr preview);
+    // Al cerrar: las texturas son objetos de D3D y tienen que morir antes que el
+    // dispositivo, no despues (la cache es miembro de App y se destruiria mas tarde).
+    void Clear() {
+        m_items.clear();
+        m_bytes = 0;
+    }
 
 private:
     void Evict();

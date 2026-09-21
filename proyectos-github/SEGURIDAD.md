@@ -28,6 +28,13 @@ Si GitHub CLI está instalado y autenticado, se prefiere pedirle el token a él
 (`gh auth token`) y no guardarlo: el mejor sitio para una credencial es el de otro que ya
 la gestiona bien.
 
+*Anotado en la fase 3, porque tiene un precio:* el token que devuelve GitHub CLI es uno
+clásico —en esta máquina, `repo, read:org, gist`— y eso es muchísimo más ancho que el
+*fine-grained* que pide la regla 6. Se acepta a sabiendas: la credencial ya existe, ya la
+gestiona otro y no la acuñamos nosotros. Lo que sí se hace es leer `X-OAuth-Scopes` al
+validarla y guardarlo, para poder enseñar en los ajustes qué permisos tiene de verdad la
+que se está usando.
+
 ### 2. El token no se registra, ni entero ni a trozos
 
 Ni en el log, ni en un mensaje de error, ni en una excepción, ni en la ventana. Tampoco
@@ -40,11 +47,28 @@ Ni cuerpos de petición, ni cuerpos de respuesta, ni cabeceras. Son nombres, des
 y mensajes de commit de repositorios privados de trabajo. Del intercambio se puede anotar
 el código de estado, el momento y cuántos repositorios llegaron; el contenido no.
 
+*La fase 3 decidió no tener log, y esta regla es el motivo.* Un archivo de registro que
+nadie mira y que va llenándose de lo que contesta la API es justo lo que esta regla intenta
+evitar, así que el papel lo hace la fila de estado de SQLite: cuándo fue la última
+sincronización, cuántos repositorios, qué protocolo y el último error ya redactado.
+
+Y no es solo una costumbre: el tipo `Model::Error` **no tiene dónde meter** un cuerpo de
+respuesta. Su campo `detail` es una frase que redactamos nosotros. Lo que sí lleva es el
+`X-GitHub-Request-Id`, que identifica el intercambio ante GitHub sin contener nada de
+dentro.
+
 ### 4. Nada sale del equipo salvo hacia GitHub
 
-Un único destino: `api.github.com`, por HTTPS. Sin telemetría, sin analítica, sin informes
-de fallo remotos, sin comprobación de actualizaciones. Si algún día hace falta abrir un
-segundo destino, se escribe aquí antes de escribirlo en el código.
+Un único destino al que Brújula habla: `api.github.com`, por HTTPS. Sin telemetría, sin
+analítica, sin informes de fallo remotos, sin comprobación de actualizaciones.
+
+*Y la excepción que la fase 3 escribe aquí antes de escribirla en el código:* la hoja de
+bienvenida abre `https://github.com/settings/personal-access-tokens/new` **en el navegador
+del sistema**, que es donde se crea el token. Brújula no pide esa página ni la lee: se la
+pasa a Windows. Sigue sin haber un segundo sitio con el que Brújula hable.
+
+La fase 4 querrá los avatares, que están en `githubusercontent.com`. Eso sí sería un
+segundo destino de verdad, y se escribe aquí cuando toque.
 
 ### 5. Escribir en un repositorio es siempre una decisión del usuario
 
@@ -60,9 +84,16 @@ más archivo que `PROYECTO.md`.
 
 ### 6. Permisos mínimos, y crecen solo cuando el usuario lo pide
 
-El token que se pide es *fine-grained* con **Metadata: read**. *Contents: read and write*
-solo se pide si el usuario activa el modo repo, y la ventana que lo explica dice para qué
-es antes de pedirlo.
+El token que se pide es *fine-grained* con **Metadata: read** y **Contents: read**, y la
+hoja que los explica dice para qué es cada uno antes de pedirlos.
+
+*Contents: read* entró en la fase 3 al medirlo: leer `PROYECTO.md` es leer contenido del
+repositorio, y con *Metadata* a secas ese campo vuelve vacío en los 109. Se pidió la mínima
+ampliación que hacía falta —lectura, no escritura— y la sincronización degrada sola: si la
+credencial no llega, repite la tanda sin ese campo y lo anota, en vez de no sincronizar.
+
+*Contents: **write*** sigue siendo solo del modo repo, y sigue confirmándose repositorio
+por repositorio. Esa parte de la regla no se ha tocado.
 
 ### 7. No se ejecuta nada que venga de la red
 

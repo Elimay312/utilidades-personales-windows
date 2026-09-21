@@ -517,6 +517,10 @@ LRESULT Window::Proc(UINT message, WPARAM wparam, LPARAM lparam) {
         if (callbacks.onTheme) callbacks.onTheme();
         return 0;
 
+    case kSyncMessage:
+        if (callbacks.onSync) callbacks.onSync();
+        return 0;
+
     case WM_SETTINGCHANGE:
         if (wparam == SPI_SETCLIENTAREAANIMATION) {
             if (callbacks.onMotionSetting) callbacks.onMotionSetting();

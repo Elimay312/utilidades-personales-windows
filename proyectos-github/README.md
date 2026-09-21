@@ -14,18 +14,20 @@ resulta que corre en Windows.
 
 ## Estado
 
-**Fase 2 de 8 terminada.** Hay ventana y hay kit de componentes; sigue sin haber
-datos. En una compilación de Debug, F12 abre el catálogo que los enseña todos, en
-claro y en oscuro a la vez.
+**Fase 3 de 8 terminada.** Ya hay datos: al abrirla se conecta con GitHub, trae los
+repositorios de la cuenta y los guarda. Medido contra la cuenta del autor —109
+repositorios—, la primera sincronización tarda entre **5,4 y 6,7 segundos** y la segunda
+**2,6**, porque solo vuelve a pedir el detalle de lo que ha cambiado.
 
-Lo que ya funciona: la ventana con Mica, la barra de título propia (arrastrable, doble
-clic para maximizar, botones dibujados por nosotros con el comportamiento de Windows y el
-menú de ajuste al pasar sobre maximizar), el tema claro/oscuro siguiendo al del sistema
-con transición cruzada, el respeto a «Mostrar animaciones en Windows», y una demo temporal
-con una tarjeta que se convierte en panel y vuelve, interrumpible a mitad.
+Lo que ya funciona: la ventana con Mica, la barra de título propia, el tema claro/oscuro
+siguiendo al del sistema, el kit de componentes entero (F12 abre su catálogo en una
+compilación de Debug), y ahora la credencial —de GitHub CLI si está, y si no una hoja que
+explica los permisos y la recoge—, el cliente de la API, la caché en SQLite y la
+sincronización en segundo plano.
 
-Lo que no hay todavía: GitHub, base de datos, prioridades, inspector ni nada que se
-parezca a un dato real. El plan completo, fase por fase, está en
+Lo que no hay todavía: la vista principal. De momento se ve un panel de estado provisional
+con la cuenta, el número de repositorios y cuándo se sincronizó; las prioridades, la lista,
+el inspector y la revisión semanal son las fases 4 a 7. El plan completo está en
 [`PROMPTS.md`](PROMPTS.md).
 
 ## Compilar y ejecutar
@@ -65,14 +67,18 @@ src/
   shell/        ventana, marco propio, Mica, DPI, tema
   compositor/   escena, dispositivo gráfico, superficies, muelles, materiales, sombras
   ui/           el kit: texto, elementos, entrada, botones, campo, lista, barra, flotantes
-  views/        la demo de la fase 1 (temporal) y el catálogo (solo en Debug)
+  model/        tipos de dominio, reglas, tiempo en UTC y el borde UTF-8
+  store/        SQLite: esquema, migraciones, repositorios y notas
+  github/       credencial, cliente de la API y la sincronización en dos pases
+  views/        la demo de la fase 1 y el panel de estado (los dos temporales)
 tests/          doctest sobre el núcleo puro
 ```
 
 `brujula_core` es una biblioteca aparte con lo que no necesita ni Win32 ni WinRT para
 decidir —la geometría de la barra de título, la tabla de colores, los muelles, la rejilla,
-el contador de clics, el modelo del campo de texto y la aritmética de la lista
-virtualizada—, y es lo único que enlazan las pruebas. La regla para decidir si algo va ahí
+el contador de clics, el modelo del campo de texto, la aritmética de la lista virtualizada
+y, desde la fase 3, las reglas de dominio, el esquema de la base, el parser de las
+respuestas y la política de reintentos—, y es lo que enlazan las pruebas. La regla para decidir si algo va ahí
 es la que este proyecto viene aplicando: *¿se equivocaría esto en silencio, sin que se vea
 en pantalla hasta que ya ha decidido mal?* El cursor de un campo de texto y el rango de
 filas de una lista, sí. El color de una brocha, no.

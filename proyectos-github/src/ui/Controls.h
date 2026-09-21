@@ -16,6 +16,7 @@
 #include <functional>
 #include <string>
 
+#include "model/Types.h"
 #include "ui/Element.h"
 #include "ui/Text.h"
 
@@ -100,7 +101,11 @@ protected:
 
 // La etiqueta de prioridad: el color de la prioridad sobre un relleno del mismo tono muy
 // rebajado. Ni un bloque de color, que gritaría, ni solo texto, que no se distinguiría.
-enum class Priority { Focus, Secondary, Someday, Archived, Unsorted };
+//
+// La prioridad la define el dominio, no el kit: la fase 2 la estrenó aquí porque todavía no
+// había model/. Con el alias, quien ya escribía Ui::Priority sigue escribiéndolo y solo hay
+// una enumeración, que es lo que impide que las dos se separen sin que nadie lo note.
+using Priority = Model::Priority;
 
 const wchar_t* NameOf(Priority priority);
 Theme::Color ColorOf(Priority priority, const Theme::Tokens& tokens);
@@ -123,7 +128,9 @@ private:
 // El punto de actividad. Un círculo de 8 DIP, sin material: es un FillEllipse, porque una
 // geometría de rectángulo redondeado con radio la mitad del lado sale igual pero cuesta
 // un visual más por cada fila de la lista.
-enum class Activity { Active, Paused, Dormant };
+//
+// La actividad también es del dominio: la deduce model/Rules.h del último push.
+using Activity = Model::Activity;
 
 const wchar_t* NameOf(Activity activity);
 Theme::Color ColorOf(Activity activity, const Theme::Tokens& tokens);

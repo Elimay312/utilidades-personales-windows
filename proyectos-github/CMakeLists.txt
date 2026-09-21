@@ -86,8 +86,32 @@ add_library(brujula_core STATIC
   src/shell/Input.cpp
   src/compositor/MotionSpec.cpp
   src/ui/Edit.cpp
-  src/ui/Virtual.cpp)
+  src/ui/Virtual.cpp
+  # Fase 3. La regla para decidir que algo entra aquí no ha cambiado: ¿se equivocaría en
+  # silencio? Una eñe mal convertida, una fecha leída en horario local y un repositorio
+  # clasificado en el grupo equivocado son exactamente eso — la aplicación sigue andando y
+  # solo el dato está mal.
+  src/model/Result.cpp
+  src/model/Utf.cpp
+  src/model/Time.cpp
+  src/model/Types.cpp
+  src/model/Rules.cpp
+  src/store/Db.cpp
+  src/store/Schema.cpp
+  src/store/Repos.cpp
+  # De github/ entra lo que decide y no lo que habla: construir la consulta, entender la
+  # respuesta y saber qué se reintenta. WinHTTP, la credencial y el hilo se quedan fuera.
+  src/github/Query.cpp
+  src/github/Parse.cpp
+  src/github/Retry.cpp)
 target_include_directories(brujula_core PUBLIC src)
+# SQLite entra en el núcleo, y no rompe la regla de la biblioteca: lo que el README dice que
+# no entra aquí es Win32 y WinRT "para decidir", y SQLite es C portable. Lo que se gana es
+# que el esquema y sus migraciones se puedan probar — y lo que vigilan esas pruebas es que
+# una sincronización no se lleve por delante las notas del usuario, que es la prioridad 1.
+#
+# PUBLIC y no PRIVATE: brujula lo recibe por herencia y no hay que repetirlo abajo.
+target_link_libraries(brujula_core PUBLIC sqlite3 nlohmann_json::nlohmann_json)
 target_compile_options(brujula_core PRIVATE ${BRUJULA_FLAGS})
 target_compile_definitions(brujula_core PRIVATE ${BRUJULA_DEFS})
 
@@ -116,7 +140,20 @@ add_executable(brujula WIN32
   src/ui/List.cpp
   src/ui/Sidebar.cpp
   src/ui/Overlays.cpp
+  # Fase 3, lo que habla con el sistema: WinHTTP, el Administrador de credenciales y el
+  # hilo de sincronización. Lo que decide —consulta, parser, reintentos, esquema— está en
+  # brujula_core y tiene pruebas.
+  src/store/Paths.cpp
+  src/github/Http.cpp
+  src/github/Client.cpp
+  src/github/Auth.cpp
+  src/github/Gh.cpp
+  src/github/Sync.cpp
   src/views/Demo.cpp
+  # La raíz provisional de la fase 3 y la hoja de la credencial. La fase 4 tira Status; la
+  # hoja se queda.
+  src/views/Status.cpp
+  src/views/Welcome.cpp
   # El catálogo solo existe en Debug: es una pantalla de revisión, no una función del
   # producto, y en Release ni se compila ni deja su texto de ejemplo dentro del binario.
   #
@@ -150,7 +187,15 @@ target_link_libraries(brujula PRIVATE
   # imm32: colocar la ventana de composición del IME en el cursor del campo de texto. La
   # cadena confirmada la reparte DefWindowProc como WM_CHAR, así que esto es lo único que
   # hace falta enlazar para que escribir con un método de entrada funcione.
-  imm32)
+  imm32
+  # winhttp: el cliente de GitHub. Viene con Windows, que es lo que evita una dependencia.
+  winhttp
+  # shell32 + ole32: SHGetKnownFolderPath para %LOCALAPPDATA% —y su CoTaskMemFree—, y
+  # ShellExecuteW para abrir GitHub en el navegador desde la hoja de bienvenida.
+  shell32 ole32
+  # advapi32: CredWriteW, CredReadW y CredDeleteW. La credencial no toca el disco en claro
+  # por ningún otro camino (SEGURIDAD.md, regla 1).
+  advapi32)
 # wWinMain sin WinMain: el CRT necesita que se lo digan.
 target_link_options(brujula PRIVATE /ENTRY:wWinMainCRTStartup)
 
@@ -169,8 +214,23 @@ add_executable(brujula_tests
   tests/metrics_test.cpp
   tests/input_test.cpp
   tests/edit_test.cpp
-  tests/virtual_test.cpp)
+  tests/virtual_test.cpp
+  tests/utf_test.cpp
+  tests/time_test.cpp
+  tests/rules_test.cpp
+  tests/store_test.cpp
+  tests/query_test.cpp
+  tests/parse_test.cpp
+  tests/retry_test.cpp
+  tests/auth_test.cpp
+  # Auth.cpp es del ejecutable, pero el tipo de la credencial y la comprobación de forma son
+  # decisiones puras y se prueban. La prueba NO toca el Administrador de credenciales:
+  # escribir ahí desde un test pisaría la credencial de verdad del usuario, que vive en el
+  # mismo sitio y con el mismo nombre.
+  src/github/Auth.cpp)
 target_compile_options(brujula_tests PRIVATE ${BRUJULA_FLAGS})
 target_compile_definitions(brujula_tests PRIVATE ${BRUJULA_DEFS})
 target_link_libraries(brujula_tests PRIVATE
-  brujula_core doctest::doctest nlohmann_json::nlohmann_json sqlite3)
+  brujula_core doctest::doctest nlohmann_json::nlohmann_json sqlite3
+  # Lo que pide Auth.cpp. No se llama en las pruebas, pero hay que enlazarlo.
+  advapi32)

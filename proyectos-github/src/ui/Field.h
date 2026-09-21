@@ -33,6 +33,10 @@ public:
     const std::wstring& Text() const { return m_editor.Text(); }
     void SetMaxLength(std::size_t units) { m_editor.SetMaxLength(units); }
 
+    // Un campo para escribir una credencial. Apaga el historial de deshacer, que si no se
+    // queda con una copia del texto pegado. Ver el comentario de Ui::Editor::SetHistoryEnabled.
+    void SetSecret(bool secret) { m_editor.SetHistoryEnabled(!secret); }
+
     void OnChanged(std::function<void(const std::wstring&)> handler) {
         m_changed = std::move(handler);
     }

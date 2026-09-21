@@ -106,6 +106,18 @@ public:
 
     // Un límite duro, no una sugerencia. 0 = sin límite.
     void SetMaxLength(std::size_t units) { m_max = units; }
+
+    // Apaga el historial de deshacer, y de paso lo vacía.
+    //
+    // Existe por la hoja de bienvenida. Cada paso del historial conserva el texto que se
+    // insertó, así que una credencial pegada en un campo normal queda en al menos dos copias
+    // en memoria: la del texto y la del paso que la insertó. Vaciar el campo al aceptar no
+    // basta si el historial sigue guardando lo que había.
+    //
+    // No es una garantía —una cadena que ya se copió no se puede perseguir del todo— pero
+    // quita la copia que sabemos que existe, que es lo que sí se puede hacer.
+    void SetHistoryEnabled(bool enabled);
+    bool HistoryEnabled() const { return m_history; }
     std::size_t MaxLength() const { return m_max; }
 
 private:
@@ -124,6 +136,8 @@ private:
 
     bool Apply(std::size_t at, std::size_t removeLen, std::wstring_view inserted, Group group);
     void Push(Step step, Group group);
+
+    bool m_history = true;
     std::size_t Clamp(std::size_t index) const;
 
     std::wstring m_text;

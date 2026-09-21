@@ -10,6 +10,96 @@ lo dice.
 
 ## Sin publicar
 
+### Fase 3 — GitHub, SQLite y sincronización
+
+Ya hay datos. La cuenta de verdad —109 repositorios personales, 108 privados— entra en la
+caché y se vuelve a sincronizar sin repetir lo que no ha cambiado.
+
+**Lo que hay**
+
+- **Núcleo ampliado, y todo probado**: `model/Result` (los errores como valores),
+  `model/Utf` (el borde UTF-8 ↔ UTF-16 escrito a mano), `model/Time` (ISO-8601 y todo en
+  UTC), `model/Types` y `model/Rules` (clasificación por actividad, límite de Enfoque y
+  «Necesita decisión»), `store/` entero, y de `github/` lo que decide: construir la
+  consulta, entender la respuesta y la política de reintentos.
+- **Credencial**: `gh auth token` con `CreateProcessW` y una tubería, y si no hay, una hoja
+  que explica los permisos y recoge el token pegado. La que pega el usuario va al
+  Administrador de credenciales con `CredWriteW`; la de GitHub CLI no se guarda.
+- **Cliente WinHTTP** con reintentos, lectura de las cabeceras de cuota y cancelación que
+  cierra los handles en vuelo.
+- **SQLite** en `%LOCALAPPDATA%\Brujula\`, con migraciones por `PRAGMA user_version`, WAL, y
+  dos mitades que no se mezclan: lo del servidor y lo del usuario.
+- **Sincronización en dos pases** en un hilo director, con seis hilos para el segundo, y el
+  aviso al hilo de UI por `PostMessageW` sin carga.
+- **Interfaz provisional**: un panel de estado que sustituye a `Views::Demo` como raíz, la
+  hoja de bienvenida y los avisos discretos. La fase 4 tira el panel.
+
+**Medido**
+
+Contra la cuenta real: 109 repositorios, 108 privados, 0 archivados, 0 forks. **76 de 109
+sin descripción y 7 sin lenguaje principal** — el nulo es el caso normal, no el raro.
+
+| | Objetivo | Medido |
+|---|---|---|
+| Warnings con `/W4 /permissive-` | 0 | 0 |
+| Pruebas | pasan | **175 casos, 1416 aserciones** (eran 86 y 891) |
+| Auditoría de seguridad | sale 0 | **10 reglas, 0 pendientes** |
+| Primera sincronización de los ~120 | pocos segundos | **5,4 – 6,7 s** los 109, en cuatro arranques |
+| — de los cuales, la lista entera en la caché | | **2,9 – 4,2 s**; el detalle va entrando después |
+| Segunda sincronización, sin novedades | solo lo que cambió | **2,6 s y CERO peticiones de detalle** |
+| Protocolo negociado | HTTP/2 | **HTTP/2** |
+| Cerrar la ventana a mitad de sincronizar | sin cuelgue | **0,26 s**, salida 0, cortando a los 0,8 / 2,5 / 4,0 y 5,2 s |
+| Coste de cuota por sincronización | poco | 8 puntos de 5000/hora |
+| Notas escritas a mano tras sincronizar | siguen | siguen |
+
+La comprobación de que la caché quedó bien:
+`select count(*), count(description), count(language), count(enriched_push) from repos`
+devuelve **109 / 33 / 102 / 109**.
+
+Y una anécdota que vale como medición: al añadir `tests/auth_test.cpp`, la regla 1 del
+auditor lo marcó al instante. El ejemplo de credencial de la prueba empezaba por
+`github_pat_`, que es justo lo que esa regla busca. No era un token de verdad, pero la regla
+no puede saberlo, y así es como tiene que ser: el ejemplo se cambió por uno sin prefijo real.
+La fase 2 ya dejó escrito que `auditar.ps1` no se toca para acallar un aviso.
+
+**Lo que se probó y no valía**
+
+**La consulta de un solo pase que pedía este documento no cumple su propio criterio.** Los
+~120 repositorios con todos los campos, 100 por página, tardan **8,3–9,1 s por página**, y
+una de las ocho peticiones de la medición devolvió un **HTTP 502**. Dos páginas son
+diecisiete segundos.
+
+Bajar el tamaño de página tampoco: la latencia va por repositorio (~85 ms) y no por
+petición, así que `first:25` son 2,6 s por página y los 109 siguen siendo once segundos. El
+cursor obliga a ir en serie.
+
+Desglose por campo a `first:100`, descontando el arranque de `gh`: metadatos ~1,6 s,
+`defaultBranchRef` +2,6 s, contadores de issues y PR +1,9 s, el blob de PROYECTO.md +0,7 s.
+
+De ahí los dos pases. El segundo va por `nodes(ids:)`, que no lleva cursor y por eso se
+puede pedir en paralelo: seis peticiones de veinte a la vez frente a tres de cincuenta en
+serie son **2,2 s frente a 11,0 s**.
+
+**El ajuste de HTTP/2 hay que comprobarlo midiendo, no leyendo.** WinHTTP limita las
+conexiones por servidor, y seis peticiones «en paralelo» estranguladas a dos tardarían el
+triple sin dar un solo error. Por eso `Response` lleva un campo con el protocolo que se
+negoció de verdad y la sincronización lo escribe en `ajustes`: dice `HTTP/2`.
+
+**Lo que no se pudo comprobar**
+
+- **La credencial pegada a mano.** Esta máquina tiene GitHub CLI autenticado, así que la
+  aplicación nunca llega a esa rama por sí sola. Se comprobó que al quitar `gh` del PATH el
+  proceso se queda esperando, no sincroniza y no toca la caché; y el tipo `Secret` y la
+  comprobación de forma tienen pruebas. Lo que falta por ver es el viaje completo de pegar,
+  validar, guardar con `CredWriteW` y volver a leer con `CredReadW`. Las pruebas no lo hacen
+  a propósito: escriben en el mismo sitio y con el mismo nombre que la credencial de verdad.
+- **Las organizaciones.** Esta cuenta no pertenece a ninguna, así que la consulta
+  `organization(login:)` está escrita y sin estrenar.
+- **PROYECTO.md.** Ninguno de los 109 repositorios tiene el archivo, así que el camino del
+  blob se ha probado con respuestas enlatadas y no contra uno de verdad.
+- **Un token sin permiso de Contents.** El camino que repite la tanda sin el blob tiene
+  prueba con JSON enlatado, pero no se ha visto con una credencial recortada de verdad.
+
 ### Fase 2 — Kit de UI y catálogo
 
 Los ocho componentes que pedía `PROMPTS.md`, la base de entrada y repintado que necesitan,

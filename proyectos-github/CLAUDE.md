@@ -64,9 +64,11 @@ tests/
 
 - **Token:** orden de preferencia:
   1. Si GitHub CLI está instalado y autenticado, obtenerlo con `gh auth token`.
-  2. Si no, pedir un fine-grained personal access token con permisos mínimos: *Metadata: read* y, solo si el usuario activa el modo repo (ver abajo), *Contents: read and write*.
+  2. Si no, pedir un fine-grained personal access token con *Metadata: read* **y *Contents: read***, que es lo que hace falta para leer `PROYECTO.md`; con *Metadata* a secas ese campo vuelve vacío. *Contents: **write*** sigue siendo solo del modo repo (ver abajo). Si la credencial no llega a *Contents: read*, la sincronización lo detecta y repite la tanda sin ese campo: se sincroniza sin `PROYECTO.md` en vez de no sincronizarse.
 - **El token se guarda en el Administrador de credenciales de Windows** (`CredWriteW` / `CredReadW`), nunca en archivos, logs ni SQLite.
-- **Sincronización con GraphQL:** traer los ~120 repos en pocas peticiones paginadas (100 por página) con: nombre, dueño, descripción, privado/archivado, lenguaje principal, `pushedAt`, fecha y mensaje del último commit de la rama principal, número de issues y PRs abiertos, y el contenido de `PROYECTO.md` si existe (`object(expression: "HEAD:PROYECTO.md")`).
+- **Sincronización con GraphQL, en dos pases.** Pedir todos los campos de golpe, 100 por página, tarda 8,3-9,1 s por página y devuelve algún 502: medido en la fase 3, y son diecisiete segundos para los ~120. Así que:
+  1. **Metadatos**, paginado por cursor, 100 por página: nombre, dueño, descripción, privado/archivado, lenguaje principal, `pushedAt`, `updatedAt`, `createdAt`, estrellas y tamaño. ~1,3 s los 109. Con esto ya se puede pintar.
+  2. **Detalle**, por `nodes(ids:)` y solo de los repos cuyo `pushedAt` cambió: fecha y mensaje del último commit de la rama principal, número de issues y PRs abiertos, y el contenido de `PROYECTO.md` si existe (`object(expression: "HEAD:PROYECTO.md")`). Sin cursor, así que va en paralelo: seis peticiones de veinte, ~2,2 s.
 - Incluir repos personales y de organizaciones a las que el usuario pertenece; qué organizaciones incluir es configurable.
 - Sincronización incremental: solo actualizar repos cuyo `pushedAt` cambió. Respetar los límites de la API y mostrar cuándo fue la última sincronización.
 
@@ -184,7 +186,7 @@ El plan completo está en `PROMPTS.md`.
 
 - [x] Fase 1 — Ventana Mac: Mica, barra de título propia, composición y muelles
 - [x] Fase 2 — Kit de UI propio y catálogo de componentes
-- [ ] Fase 3 — GitHub: token seguro, GraphQL, SQLite y sincronización
+- [x] Fase 3 — GitHub: token seguro, GraphQL, SQLite y sincronización
 - [ ] Fase 4 — Vista principal: barra lateral, lista y clasificación
 - [ ] Fase 5 — Inspector, notas y PROYECTO.md
 - [ ] Fase 6 — Priorizar: arrastrar, límite de Enfoque, atajos y paleta
@@ -194,6 +196,105 @@ El plan completo está en `PROMPTS.md`.
 Al terminar una fase: marcarla aquí, anotar decisiones abajo y hacer commit.
 
 ## Decisiones y notas
+
+### Fase 3 — 21 de septiembre de 2026
+
+El detalle con todas las mediciones está en `CHANGELOG.md`. Aquí van solo las decisiones
+que condicionan lo que venga después.
+
+**La consulta de un solo pase no cumplía el criterio de aceptación de este documento.** Con
+todos los campos y 100 por página son 8,3-9,1 s por página y un 502 de cada ocho peticiones:
+diecisiete segundos para los ~120. Y reducir la página no ayuda, porque la latencia va por
+repositorio (~85 ms) y el cursor obliga a ir en serie. La línea de arriba ya está reescrita
+con los dos pases; lo que hay que llevarse de aquí es **por qué el segundo se puede
+paralelizar y el primero no**: `nodes(ids:)` no tiene cursor. Cualquier consulta futura que
+haya que pedir en paralelo tiene que ir por identificadores, no por páginas.
+
+**Y lo incremental salió de ahí, no se diseñó aparte.** Como el pase 2 ya recibe una lista
+de identificadores, restringirla a los que cambiaron es la misma línea de SQL. La segunda
+sincronización del día hace el pase 1 y **cero** peticiones de detalle.
+
+**`enriched_push` es una columna, no una comparación.** Guarda el `pushedAt` que venía en la
+respuesta del pase 2 —no el del pase 1— y se escribe *después* de que el detalle haya
+entrado en SQLite. Las dos cosas importan: con el del pase 1, un push que caiga entre los
+dos pases obliga a volver a pedirlo; escribiéndola antes, una sincronización cortada a mitad
+daría por enriquecido lo que no lo está y no volvería a pedirlo jamás.
+
+**La sincronización no borra filas de `repos`.** Un repositorio que deja de aparecer se
+marca con `gone_at`. Con `ON DELETE CASCADE`, un 502 en la segunda página se llevaría por
+delante el siguiente paso y las novedades escritas a mano. Las claves ajenas van **sin**
+cascada al borrar y **con** `ON UPDATE CASCADE`, que es lo contrario de lo que uno escribe
+por inercia y es justo lo que hace falta: borrar tiene que fallar, y renumerar tiene que
+arrastrar las notas.
+
+**Y por eso `repos` tiene dos claves.** Pidiendo `nodes(ids:)` con un identificador viejo, la
+API contesta con un aviso: *«The id … is deprecated. Update your cache to use the
+next_global_id»*. GitHub está migrando los identificadores globales. Si algún día cambian,
+reconocer la fila solo por el id convertiría los 109 repositorios en 109 nuevos y dejaría las
+notas colgando de identificadores que ya no existen — sin un solo error por ningún lado. La
+escritura empareja por id y, si no lo encuentra, por `name_with_owner`.
+
+**El aviso del hilo de trabajo no lleva carga, y eso ya estaba decidido.** `Github::Sync`
+publica `WM_APP+2` vacío y el hilo de UI relee, exactamente como `Shell::ThemeWatcher` desde
+la fase 1. Lo que la fase 3 añade es el reuso del truco de `Ui::Painter`: un `atomic_flag`
+evita que seis trozos terminando a la vez publiquen seis mensajes.
+
+**Cancelar no es poner una bandera.** Una bandera mirada entre peticiones no saca a un hilo
+de un `WinHttpReceiveResponse` que está esperando: haría falta agotar los treinta segundos
+del tiempo de espera. Lo que lo saca es **cerrarle el handle desde otro hilo**, y por eso
+`Http::Session` lleva un registro de las peticiones en vuelo. Cada una se apunta con un
+número propio y creciente y no solo con su handle, porque si WinHTTP reutiliza el valor de
+uno recién cerrado para otra petición, su dueño cerraría el de otro. Medido: cerrar la
+ventana a mitad de sincronizar tarda 0,26 s, cortando en cuatro momentos distintos.
+
+**El límite por conexiones habría anulado el pase 2 en silencio.** WinHTTP limita las
+conexiones por servidor; seis peticiones estranguladas a dos tardan el triple y no dan ni un
+error, solo tiempo. Se ponen las dos defensas —HTTP/2, que multiplexa las seis sobre una
+conexión, y `MAX_CONNS_PER_SERVER` explícito por si no se negocia— y, como esto no se puede
+comprobar leyendo, `Response` lleva el protocolo que se negoció de verdad y la sincronización
+lo escribe en `ajustes`. Dice `HTTP/2`.
+
+**nlohmann lanza excepciones por omisión, y eso aquí es un `std::terminate`.** El JSON se lee
+en el hilo de trabajo, y una excepción que se escape de ahí no es un error que se enseñe: es
+la ventana desapareciendo de la pantalla. Todo pasa por
+`json::parse(…, nullptr, /*allow_exceptions*/ false)` y `is_discarded()`.
+
+**Los nulos son el camino normal, no el raro.** 76 de los 109 repositorios no tienen
+descripción y 7 no tienen lenguaje. Un `dump()` sobre un nulo devuelve las cuatro letras
+`null`, y esa cadena acabaría impresa en 76 tarjetas como si fuera la descripción. Todos los
+lectores del parser tratan «no está la clave» y «la clave vale null» igual.
+
+**El tipo `Error` no puede llevar el cuerpo de una respuesta, y es a propósito.** La regla 3
+de `SEGURIDAD.md` dice que no se registran las respuestas de la API. La manera de que eso
+siga siendo verdad dentro de tres fases no es acordarse: es que no haya dónde meterlo.
+`detail` es una frase que redactamos nosotros; lo que sí viaja es el `X-GitHub-Request-Id`,
+que identifica el intercambio sin contener nada de dentro.
+
+**La credencial es un tipo, no una cadena.** `Github::Secret` no tiene `c_str()`, no tiene
+accesor al valor y copiarlo es un error de compilación; la única salida es la cabecera
+`Authorization` ya montada. Lo que **no** promete, y hay que decirlo: borrar de memoria una
+cadena que ya se copió no es posible del todo. Se quitan las copias que sabemos que existen
+—el búfer de la tubería, la cabecera, el valor al morir— y se reserva capacidad fija para que
+no se reubique. Es una mitigación, no una garantía.
+
+**Y había una fuga en código de la fase 2.** `Ui::Field` guarda el texto en `Ui::Editor`, que
+lleva historial de deshacer: cada paso conserva lo que se insertó, así que una credencial
+pegada quedaba en dos copias. De ahí `Ui::Editor::SetHistoryEnabled` y `Ui::Field::SetSecret`.
+Quince líneas, y convierten una promesa en algo que se puede probar.
+
+**`Ui::Priority` y `Ui::Activity` se mudaron a `model/`.** La fase 2 las estrenó en
+`ui/Controls.h` porque todavía no había dominio. Ahora la verdad está en `model/Types.h` y
+`Controls.h` las recibe con un `using`: ningún llamador cambió, y no hay dos enumeraciones
+para un concepto esperando a separarse.
+
+**El catálogo y `Views::Demo` siguen ahí, y la raíz ya no es la demo.** `Views::Status` es la
+raíz provisional de esta fase y la fase 4 la tira. `Views::Demo` no se borra porque todavía
+dibuja los botones de la ventana y es la única prueba viva de la transición compartida.
+
+**Faltan cuatro cosas por comprobar**, y las cuatro por no tener con qué: la credencial
+pegada a mano de principio a fin —esta máquina tiene GitHub CLI autenticado y la aplicación
+nunca llega a esa rama sola—, las organizaciones, un `PROYECTO.md` de verdad (ninguno de los
+109 repositorios lo tiene) y una credencial recortada sin permiso de Contents.
 
 ### Fase 2 — 21 de septiembre de 2026
 

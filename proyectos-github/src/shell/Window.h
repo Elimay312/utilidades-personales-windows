@@ -54,12 +54,20 @@ public:
 
         // Toca vaciar el conjunto de repintado.
         std::function<void()> onFlush;
+
+        // El hilo de sincronización tiene algo nuevo. Como el de ThemeWatcher, el aviso no
+        // lleva carga: quien escucha vuelve a leer el estado. Un puntero dentro del WPARAM
+        // sería un puntero cruzando hilos, y el día que el mensaje llegue tarde apuntará a
+        // algo que ya no existe.
+        std::function<void()> onSync;
     };
 
     // El aviso que publica ThemeWatcher desde su hilo.
     static constexpr UINT kThemeMessage = WM_APP + 0;
     // El que se publica a sí misma para repintar lo sucio de una sola vez.
     static constexpr UINT kFlushMessage = WM_APP + 1;
+    // El que publica el hilo de sincronización de la fase 3.
+    static constexpr UINT kSyncMessage = WM_APP + 2;
 
     bool Create(HINSTANCE instance, const wchar_t* title, float widthDip, float heightDip);
     void Show(int showCommand);

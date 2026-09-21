@@ -361,3 +361,47 @@ TEST_CASE("cambiar el texto por programa vacía el historial") {
     CHECK_FALSE(editor.CanUndo());
     CHECK(editor.Cursor().head == 4);
 }
+
+TEST_CASE("un campo secreto no deja la credencial en el historial de deshacer") {
+    // La fase 3 pega una credencial de GitHub en un Ui::Field. Cada paso del historial
+    // conserva el texto que se insertó, así que con el historial encendido el valor queda
+    // en dos sitios: el texto y el paso. Vaciar el campo al aceptar no basta si el paso
+    // sigue guardando lo que había, y eso no se ve por ningún lado — es memoria del proceso.
+    Ui::Editor editor;
+    editor.SetHistoryEnabled(false);
+    CHECK_FALSE(editor.HistoryEnabled());
+
+    editor.Insert(L"credencial-de-mentira-para-la-prueba");
+    CHECK(editor.Text() == L"credencial-de-mentira-para-la-prueba");
+    CHECK_FALSE(editor.CanUndo());
+    CHECK_FALSE(editor.Undo());
+
+    // Y al vaciarlo no queda nada que deshacer que pudiera devolverlo.
+    editor.SetText(L"");
+    CHECK(editor.Text().empty());
+    CHECK_FALSE(editor.CanUndo());
+}
+
+TEST_CASE("apagar el historial vacía el que ya hubiera") {
+    // Importa el orden: si alguien escribe antes de que el campo se marque como secreto
+    // —o si el campo se reutiliza—, lo de antes tiene que irse también.
+    Ui::Editor editor;
+    editor.Insert(L"algo escrito antes");
+    REQUIRE(editor.CanUndo());
+
+    editor.SetHistoryEnabled(false);
+    CHECK_FALSE(editor.CanUndo());
+    CHECK_FALSE(editor.CanRedo());
+}
+
+TEST_CASE("volver a encender el historial lo deja funcionando") {
+    Ui::Editor editor;
+    editor.SetHistoryEnabled(false);
+    editor.Insert(L"nada de esto se guarda");
+    editor.SetHistoryEnabled(true);
+
+    editor.Insert(L" y esto sí");
+    CHECK(editor.CanUndo());
+    CHECK(editor.Undo());
+    CHECK(editor.Text() == L"nada de esto se guarda");
+}

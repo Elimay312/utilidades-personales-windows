@@ -150,8 +150,24 @@ bool Editor::SetText(std::wstring_view value) {
     return true;
 }
 
+void Editor::SetHistoryEnabled(bool enabled) {
+    m_history = enabled;
+    if (!enabled) {
+        m_undo.clear();
+        m_redo.clear();
+        m_group = Group::None;
+    }
+}
+
 void Editor::Push(Step step, Group group) {
     m_redo.clear();
+
+    // Con el historial apagado no se guarda nada, ni siquiera el paso actual: es lo que hace
+    // que un campo secreto no deje el texto pegado dentro de una pila de deshacer.
+    if (!m_history) {
+        m_group = Group::None;
+        return;
+    }
 
     if (group != Group::None && group == m_group && !m_undo.empty()) {
         Step& last = m_undo.back();

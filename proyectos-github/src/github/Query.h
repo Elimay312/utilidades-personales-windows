@@ -44,6 +44,7 @@ const char* OrgMetadataQuery();    // los de una organización
 const char* DetailQuery();         // el pase 2, con PROYECTO.md
 const char* DetailQueryNoContents();  // el pase 2 sin PROYECTO.md, para credenciales sin Contents
 const char* ViewerQuery();         // validar una credencial
+const char* FileQuery();           // el texto de UN archivo de la raíz, bajo demanda
 
 // --- Los cuerpos JSON --------------------------------------------------------------
 //
@@ -55,6 +56,31 @@ std::string MetadataBody(const std::optional<std::string>& cursor);
 std::string OrgMetadataBody(const std::string& org, const std::optional<std::string>& cursor);
 std::string DetailBody(const std::vector<std::string>& ids, bool withContents);
 std::string ViewerBody();
+std::string FileBody(const std::string& repoId, const std::wstring& path);
+
+// --- La escritura, que es lo único del modo repo ------------------------------------
+//
+// El mensaje del commit, tal cual lo pide CLAUDE.md. Es una constante y no una cadena suelta
+// porque el criterio de aceptación de la fase habla de él: «el commit aparece en GitHub con
+// el formato correcto».
+inline constexpr const char* kCommitMessage = "chore: actualizar PROYECTO.md";
+// El ÚNICO archivo que Brújula escribe (SEGURIDAD.md, regla 5). Está aquí, en una constante
+// y en un solo sitio, para que auditar.ps1 pueda comprobarlo.
+inline constexpr const wchar_t* kProyectoFile = L"PROYECTO.md";
+
+// /repos/{dueño}/{nombre}/contents/PROYECTO.md, o vacío si el nombre completo no tiene la
+// forma que debe.
+//
+// Se VALIDA y no se pega y ya está: el nombre viene de la respuesta de GitHub, acaba dentro
+// de una URL, y una ruta construida con algo que no se ha mirado es la clase de descuido que
+// se arregla mucho más barato antes de existir. Con un nombre raro, la escritura falla con
+// un aviso en vez de pedir una dirección inventada.
+std::wstring ContentsPath(const std::wstring& nameWithOwner);
+
+// El cuerpo del PUT. 'sha' vacío significa que el archivo no existía —la API lo pide solo
+// para sobrescribir—, y 'branch' vacío deja que GitHub use la rama por omisión.
+std::string ContentsBody(const std::wstring& text, const std::wstring& sha,
+                         const std::wstring& branch);
 
 // Parte la lista en trozos del tamaño pedido. Ni pierde ni repite ninguno, que es lo único
 // que hay que acertar aquí y lo que la prueba comprueba con números que no son múltiplos.

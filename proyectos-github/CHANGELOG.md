@@ -10,6 +10,162 @@ lo dice.
 
 ## Sin publicar
 
+### Fase 5 — Inspector, notas y PROYECTO.md
+
+La primera fase en la que Brújula **escribe**. Hasta aquí todo lo que se veía se podía
+volver a descargar; desde aquí hay datos que solo existen porque alguien los escribió, y
+eso cambia qué es un fallo grave: ya no es una pantalla en blanco, es un párrafo que
+desaparece de un archivo ajeno dentro de un commit que dice «actualizar PROYECTO.md».
+
+**Lo que hay**
+
+- **Inspector** (`views/Inspector`): se abre con clic o con Enter y **la tarjeta se
+  transforma en el panel** —posición, tamaño y radio con el muelle estándar, contenido con
+  fundido cruzado—; Esc lo cierra devolviéndola a su sitio. Dentro: prioridad y estado con
+  menú, siguiente paso editable en línea (`E`), novedades con fecha (`N` añade, `Supr`
+  borra), los cinco últimos commits, issues y PR abiertos, el bloque de PROYECTO.md, los
+  otros `.md` de la raíz y los botones de abrir en GitHub y en la carpeta local.
+- **`projectfile/Proyecto`**, puro y probado: lee y escribe el formato de `CLAUDE.md`,
+  **conservando lo que no entiende** —claves inventadas del frontmatter, párrafos, secciones
+  enteras— y fusionando novedades por fecha y texto.
+- **Esquema v2**: tablas `commits` y `raiz_md`, y dos columnas nuevas en `local`,
+  `repo_confirmed` y `push_pending`.
+- **Modo repo**: se enciende por repositorio, pasa por una hoja de confirmación una vez por
+  repositorio, y escribe `PROYECTO.md` con la API de contenidos. Con conflicto, relee,
+  vuelve a fusionar y reintenta; si el archivo ya dice lo mismo, **no commitea**.
+- **Copia de seguridad**: exportar e importar todo lo del usuario a un JSON.
+- **Ajustes** al pie de la barra lateral: la carpeta donde se clonan los repositorios, el
+  modo repo por omisión y las dos copias.
+- **El pase 2 trae más**: los cinco últimos commits y la lista de `.md` de la raíz, para
+  que abrir el inspector no espere a la red.
+
+**Lo medido**
+
+El pase 2 engorda, y era la decisión que había que comprobar antes de seguir. Tres tandas
+de cada, el mismo día y contra los 109 repositorios de la cuenta, forzando el
+reenriquecimiento entero —que es el peor caso, no el de un día normal—:
+
+| | pase 1 | pase 2 |
+|---|---|---|
+| fase 3, medido entonces | 1,3 s | 2,2 s |
+| hoy, sin los campos nuevos | 2,6 / 2,4 s | 3,1 / 2,7 s |
+| hoy, con los cinco commits y la raíz | 2,2 / 2,3 / 2,4 s | **4,3 / 4,4 / 3,2 s** |
+
+El pase 1 no cambió de consulta y sin embargo subió de 1,3 s a ~2,4 s: la red de hoy es más
+lenta que la del día de la fase 3, así que la comparación buena es la del mismo día. Contra
+esa, el pase 2 pasa de ~2,9 s a ~4,0 s: **poco más de un segundo**, y solo en una
+sincronización que tenga que reenriquecerlo todo. La de un día normal sigue sin hacer ni una
+petición de detalle. Se queda en el pase 2.
+
+De ahí salen 303 commits y 126 archivos `.md` de raíz guardados en la caché — o sea, unos
+2,8 commits de media por repositorio y `.md` importables en más de la mitad de ellos.
+
+Los tiempos de cada pase se guardan ahora en la tabla de ajustes (`ms_pase1`, `ms_pase2`,
+`repos_detalle`). Es lo mismo que la fase 3 decidió para el resto: la fila de estado hace
+de registro, porque un archivo de log es justo lo que la regla 3 de `SEGURIDAD.md` evita.
+
+**Lo comprobado contra la cuenta de verdad**
+
+Con `Elimay312/pruebaFable`, que es un repositorio de pruebas:
+
+1. El commit sale con el mensaje exacto: `chore: actualizar PROYECTO.md` (`c21c8bb`), y el
+   archivo con el frontmatter y la sección de novedades del formato de `CLAUDE.md`.
+2. Editando el archivo **desde fuera** —otra clave en el frontmatter, un párrafo suelto y
+   una sección `## Licencia` al final— y guardando después desde Brújula sin sincronizar en
+   medio: GitHub contesta 409, se relee, se vuelve a fusionar y el segundo intento
+   (`f304796`) deja **lo nuestro actualizado y lo ajeno intacto**, con las dos novedades.
+3. Editar el siguiente paso y cerrar la aplicación conserva el cambio: se comprueba leyendo
+   SQLite con el proceso ya muerto.
+
+**Lo que se arregló, y venía de la fase 4**
+
+**Una tecla usada como atajo se escribía además como letra.** `E` enfocaba el campo del
+siguiente paso y acto seguido metía una «e» dentro; `N` abría una novedad que empezaba por
+«n». El motivo es de Windows y no del kit: `TranslateMessage` pone el `WM_CHAR` en la cola
+al sacar el mensaje, **antes** de que nadie haya podido decir que la tecla era un atajo, así
+que consumir el `WM_KEYDOWN` no lo evita. `Shell::Window` se come ahora el `WM_CHAR` que
+sigue a una tecla consumida.
+
+Y el detalle que costó encontrarlo: la marca la tocan **solo las pulsaciones y nunca las
+sueltas**. Con un teclado de verdad el `WM_CHAR` suele llegar antes que el `WM_KEYUP`, pero
+no siempre — y al mandar los mensajes a mano para probarlo, nunca. Un `WM_KEYUP` colándose
+en medio apagaba la marca justo antes de que sirviera.
+
+Esto venía de la fase 4 sin que se viera: su único atajo de una sola letra era `/`, que
+enfoca la búsqueda… y se escribía dentro del propio campo que acababa de enfocar.
+
+**Decisiones**
+
+- **Lo que viaja es el elemento, no un `Gfx::Morph`.** Un `Morph` lleva dos capas de
+  píxeles, y el inspector tiene un campo de texto, botones y una lista, que son elementos
+  con entrada: usarlo obligaría a dibujar el panel dos veces, una como textura para el viaje
+  y otra como árbol al aterrizar. En su lugar el kit gana `Element::MorphTo`, que anima
+  posición, tamaño y radio del material **solo en elementos sin superficie propia** —con
+  textura habría que reasignarla en cada fotograma— y `Element::SetContentOpacity`, que
+  cruza el contenido sin tocar el material. Por eso, en el primer fotograma, el panel es la
+  tarjeta: misma forma, mismo color, mismo sitio.
+- **La lista se estrecha de golpe y las celdas se deslizan.** Es la misma decisión que la
+  fase 4 tomó para el paso de lista a cuadrícula, y por el mismo motivo.
+- **El inspector no guarda punteros al estado.** `App::State` se reconstruye entero después
+  de cada sincronización, así que un puntero a una `App::Entry` apuntaría a memoria liberada
+  en cuanto llegara el hilo de trabajo. Recibe una copia de lo que enseña.
+- **Y se reengancha por identificador, no por posición.** Al cambiar la prioridad, el
+  repositorio puede salirse de la vista que se está mirando; el panel tiene que seguir
+  enseñando lo que el usuario acaba de tocar en vez de cerrarse en su cara.
+- **El texto estático del panel vive en UNA pizarra.** Un contenedor cuyos hijos tienen
+  superficie no puede pintar (regla del orden en z de `ui/Element.h`), y el inspector no
+  puede tener superficie propia porque tiene que poder morfear. La pizarra se añade la
+  primera y queda debajo de todo lo demás.
+- **Los cinco commits son cinco etiquetas y no una con saltos de línea.** `Ui::Text` recorta
+  con elipsis midiendo el texto entero, así que cinco renglones en una sola se recortarían
+  por un punto cualquiera del bloque en vez de uno por renglón.
+- **Guardar es del `OnBlur` y Enter solo suelta el foco.** Con dos caminos de guardado uno
+  de los dos se olvida, y el que se olvida siempre es el de perder el foco — que es la mitad
+  de las veces que alguien termina de escribir.
+- **Primero SQLite y después la red, siempre.** El criterio de aceptación de la fase no
+  puede depender de que haya cobertura. Lo que no llega a GitHub se queda marcado en
+  `push_pending` y se reintenta al terminar la siguiente sincronización.
+- **Un commit que no cambia nada no se hace.** Antes de escribir se compara con el texto que
+  hay; si coinciden, se da por bueno. Tapa además el reintento de red de un PUT cuya
+  respuesta se perdió: el commit ya existe y al releer sale exactamente esto.
+- **El modo repo son DOS columnas.** `repo_mode` es el interruptor y `repo_confirmed` es
+  «alguien dijo que sí en ESTE repositorio». Escribir exige las dos, y solo una línea de
+  todo el programa enciende la segunda. Con un solo booleano, «modo repo por omisión» sería
+  exactamente el interruptor global que la regla 5 de `SEGURIDAD.md` dice que no existe.
+- **Y la copia de seguridad no lo importa.** Se exporta, para que la copia diga la verdad de
+  cómo estaba la cosa, y al restaurar hay que volver a confirmar repositorio por
+  repositorio. Un archivo que encendiera ciento nueve escrituras sería ese mismo interruptor
+  entrando por la puerta de atrás.
+- **El trabajador pasa a atender una cola.** Sincronizar y escribir comparten la credencial,
+  el cliente y la conexión a SQLite, y dos dueños de una credencial son dos vidas que
+  sincronizar. Queda además serializado, que es lo que se quiere: un PUT no puede correr a
+  la vez que el segundo pase escribiendo la misma fila. La decisión de que el hilo se muera
+  se toma bajo el mismo candado que usa quien encola — fuera de él, un trabajo que llegara
+  entre la comprobación y el `return` se quedaría en la cola sin nadie que lo recogiera, y
+  eso no daría ningún error: solo un commit que nunca sube.
+- **La ruta de la API se valida, no se pega.** El nombre del repositorio viene de la
+  respuesta de GitHub y acaba dentro de una URL. Con un nombre que no tenga forma de nombre,
+  la escritura falla con un aviso en vez de pedir una dirección inventada.
+- **`auditar.ps1` gana la regla 11**, que hasta ahora no tenía código que vigilar: el archivo
+  está en una constante y vale exactamente `PROYECTO.md`, toda ruta `/repos/` termina en esa
+  constante, y el único verbo que llega al cliente REST es `PUT`. Comprobada con dos sondas
+  —un `DELETE` y una segunda ruta— antes de darla por buena.
+
+**Lo que falta por comprobar**, y todo por no tener con qué:
+
+- La **nitidez a otras escalas**, heredada de las cuatro fases anteriores: esta máquina
+  tiene una sola pantalla al 100 % y `WM_DPICHANGED` sigue sin dispararse. El inspector
+  añade un elemento más que anima su tamaño, así que la lista crece en vez de encoger.
+- El **IME de verdad** y el **panel táctil de precisión**, también heredados.
+- Una credencial **sin permiso de escritura**: la de esta máquina viene de GitHub CLI y es
+  ancha, así que el 403 del modo repo no se dispara solo. El camino existe y traduce el
+  código a una frase, pero no se ha visto.
+- Los **cuadros de archivo** —carpeta de repositorios, exportar, importar— se han escrito y
+  compilan, pero no se han podido accionar: probarlos necesita traer la ventana al frente y
+  esta máquina tenía otra aplicación reteniendo el foco.
+
+---
+
 ### Fase 4 — Vista principal
 
 Ya se ve de qué va la aplicación. Los 109 repositorios de la cuenta entran por la barra

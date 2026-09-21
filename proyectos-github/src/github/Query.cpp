@@ -2,6 +2,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include "model/Base64.h"
+#include "model/Utf.h"
+
 namespace Github {
 namespace {
 
@@ -29,14 +32,26 @@ constexpr const char* kMetaFragment =
 
 constexpr const char* kRateFragment = "  rateLimit { limit cost remaining resetAt }\n";
 
-// El detalle. 'proyecto' es un alias del objeto del árbol, y se pide aparte porque es lo
-// único de aquí que necesita permiso de Contents.
+// El detalle. 'proyecto' y 'raiz' son alias de objetos del árbol y se piden aparte porque
+// son lo único de aquí que necesita permiso de Contents.
+//
+// Los cinco commits se piden en el PASE 2 y no cuando se abre el inspector, y es la regla 1
+// de arquitectura: la interfaz no espera a la red. El primero de 'history' es el mismo que
+// los tres campos sueltos de arriba; esos se quedan porque son las columnas con las que el
+// pase 2 decide qué repetir, y quitarlos obligaría a leer una lista para saber una fecha.
 constexpr const char* kDetailFields =
     "      id\n"
     "      pushedAt\n"
     "      defaultBranchRef {\n"
     "        name\n"
-    "        target { ... on Commit { oid committedDate messageHeadline } }\n"
+    "        target {\n"
+    "          ... on Commit {\n"
+    "            oid committedDate messageHeadline\n"
+    "            history(first: 5) {\n"
+    "              nodes { oid committedDate messageHeadline author { name user { login } } }\n"
+    "            }\n"
+    "          }\n"
+    "        }\n"
     "      }\n"
     "      issues(states: OPEN) { totalCount }\n"
     "      pullRequests(states: OPEN) { totalCount }\n";
@@ -100,6 +115,12 @@ const char* DetailQuery() {
         "      proyecto: object(expression: \"HEAD:PROYECTO.md\") {\n"
         "        ... on Blob { oid byteSize isTruncated text }\n"
         "      }\n"
+        // La raíz entera, solo nombres y tipos. Es de donde salen los OTROS .md que el
+        // inspector ofrece copiar a las novedades. 'entries' no es una conexión —no lleva
+        // first: ni cursor— así que no suma al coste por nodos de la consulta.
+        "      raiz: object(expression: \"HEAD:\") {\n"
+        "        ... on Tree { entries { name type } }\n"
+        "      }\n"
         "    }\n"
         "  }\n"
         "}\n";
@@ -126,6 +147,22 @@ const char* ViewerQuery() {
     return "query { viewer { login name } }\n";
 }
 
+const char* FileQuery() {
+    // Por identificador y no por dueño y nombre: el identificador es lo que la caché ya
+    // tiene, y no hay que volver a partir un nombre completo para preguntar por un archivo.
+    static const std::string query =
+        "query($id: ID!, $expr: String!) {\n"
+        "  node(id: $id) {\n"
+        "    ... on Repository {\n"
+        "      object(expression: $expr) {\n"
+        "        ... on Blob { oid byteSize isTruncated text }\n"
+        "      }\n"
+        "    }\n"
+        "  }\n"
+        "}\n";
+    return query.c_str();
+}
+
 std::string MetadataBody(const std::optional<std::string>& cursor) {
     nlohmann::json variables;
     // null explícito y no la clave ausente: GraphQL trata las dos igual, pero escribirlo
@@ -149,6 +186,52 @@ std::string DetailBody(const std::vector<std::string>& ids, bool withContents) {
 
 std::string ViewerBody() {
     return Compose(ViewerQuery(), nlohmann::json::object());
+}
+
+std::string FileBody(const std::string& repoId, const std::wstring& path) {
+    nlohmann::json variables;
+    variables["id"] = repoId;
+    variables["expr"] = "HEAD:" + Model::ToUtf8(path);
+    return Compose(FileQuery(), std::move(variables));
+}
+
+// --- La escritura ------------------------------------------------------------------
+
+std::wstring ContentsPath(const std::wstring& nameWithOwner) {
+    // Letras, dígitos, punto, guion, guion bajo y UNA barra. Es lo que GitHub admite en un
+    // nombre de usuario y en uno de repositorio, así que cualquier otra cosa no es un nombre
+    // raro: es algo que no debería estar ahí.
+    int slashes = 0;
+    for (const wchar_t c : nameWithOwner) {
+        if ((c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || (c >= L'0' && c <= L'9') ||
+            c == L'.' || c == L'-' || c == L'_') {
+            continue;
+        }
+        if (c == L'/') {
+            ++slashes;
+            continue;
+        }
+        return std::wstring();
+    }
+    if (slashes != 1 || nameWithOwner.size() < 3) return std::wstring();
+    if (nameWithOwner.front() == L'/' || nameWithOwner.back() == L'/') return std::wstring();
+    // Y ni un punto suelto ni dos seguidos: «..» dentro de una ruta es lo único de esta lista
+    // que además significa algo.
+    if (nameWithOwner.find(L"..") != std::wstring::npos) return std::wstring();
+
+    return L"/repos/" + nameWithOwner + L"/contents/" + kProyectoFile;
+}
+
+std::string ContentsBody(const std::wstring& text, const std::wstring& sha,
+                         const std::wstring& branch) {
+    nlohmann::json body;
+    body["message"] = kCommitMessage;
+    // A UTF-8 y de ahí a base64, que es como la API de contenidos recibe el archivo.
+    body["content"] = Model::ToBase64(Model::ToUtf8(text));
+    // El sha solo si el archivo ya estaba: mandarlo vacío al crear uno nuevo es un 422.
+    if (!sha.empty()) body["sha"] = Model::ToUtf8(sha);
+    if (!branch.empty()) body["branch"] = Model::ToUtf8(branch);
+    return body.dump();
 }
 
 std::vector<std::vector<std::string>> Chunk(const std::vector<std::string>& ids,

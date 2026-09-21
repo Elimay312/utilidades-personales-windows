@@ -135,7 +135,8 @@ void Field::OnTheme(const Theme::Tokens& tokens, float crossfadeMs) {
 }
 
 void Field::OnFocusChanged() {
-    if (!Focused()) {
+    const bool left = !Focused();
+    if (left) {
         // Salir del campo termina «lo que acabo de escribir»: el siguiente Ctrl+Z no debe
         // juntar lo de antes con lo de después.
         m_editor.BreakUndo();
@@ -143,6 +144,9 @@ void Field::OnFocusChanged() {
     }
     PlaceCaretVisual();
     Invalidate();
+    // El aviso va AL FINAL: quien lo escucha puede rehacer la maquetación de medio panel, y
+    // hacerlo antes de dejar el campo en su sitio dejaría el cursor donde ya no está.
+    if (left && m_blur) m_blur();
 }
 
 void Field::OnPaint(const Paint& paint, const Rect& box) {

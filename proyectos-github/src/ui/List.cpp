@@ -197,14 +197,17 @@ void List::Refresh() {
 
 void List::OnArrange() {
     if (!Attached()) return;
+    const bool slide = m_animateArrange;
+    m_animateArrange = false;
+
     Reextend();
     // El ancho de la celda cambió con la ventanilla: hay que recolocar las vivas, no solo
     // reciclar. Sin esto, las columnas se quedan con el ancho de antes hasta que la fila
     // sale de la pantalla y vuelve.
     for (Row& row : m_rows) {
-        if (row.index >= 0) PlaceRow(row, row.index, false);
+        if (row.index >= 0) PlaceRow(row, row.index, slide);
     }
-    Recycle(false);
+    Recycle(slide);
 }
 
 void List::OnScroll(float) { Recycle(false); }
@@ -381,6 +384,18 @@ void List::MoveSelection(int index) {
 
 void List::SetSelected(int index) { MoveSelection(index); }
 
+Rect List::RowRect(int index) const {
+    if (index < 0 || index >= m_count || m_cellHeight <= 0.0f) return Rect{};
+
+    // CellY ya lleva el relleno de arriba; lo que falta es lo desplazado. Es la misma cuenta
+    // de IndexAtLocal, del derecho en vez de del revés.
+    const float localY = CellY(index) - m_scroller.Position();
+    if (localY + m_cellHeight <= 0.0f || localY >= Frame().height) return Rect{};
+
+    const Rect box = WindowRect();
+    return Rect{box.x + CellX(index), box.y + localY, CellWidth(), m_cellHeight};
+}
+
 int List::IndexAtLocal(float localX, float localY) const {
     if (m_cellHeight <= 0.0f || m_count <= 0) return -1;
 
@@ -439,6 +454,9 @@ bool List::OnPointer(const Input::Pointer& e) {
 
     if (e.action == Input::Action::Down && e.button == Input::Button::Left) {
         if (index >= 0) MoveSelection(index);
+        // El aviso del clic va DESPUÉS de mover la selección: quien lo escuche va a leer cuál
+        // está elegida, y al revés leería la de antes.
+        if (index >= 0 && m_clicked) m_clicked(index);
         if (index >= 0 && e.clicks >= 2 && m_activate) m_activate(index);
         return true;
     }

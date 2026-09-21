@@ -60,4 +60,25 @@ Model::Result<Batch> ParseDetail(std::string_view json);
 // Validar una credencial: devuelve el login.
 Model::Result<std::wstring> ParseViewerLogin(std::string_view json);
 
+// --- Lo de la fase 5 ----------------------------------------------------------------
+
+// El texto de un archivo pedido bajo demanda. 'found' distingue «el archivo no está» de
+// «está y está vacío», que no es lo mismo cuando lo que se va a hacer es copiarlo.
+struct FileText {
+    std::wstring oid;
+    std::wstring text;
+    bool found = false;
+    // GitHub corta los blobs grandes. Un archivo a medias no se copia: se dice.
+    bool truncated = false;
+};
+Model::Result<FileText> ParseFileText(std::string_view json);
+
+// La respuesta del PUT de la API de contenidos.
+struct Written {
+    // El sha del blob nuevo. Es el que hay que guardar para poder volver a escribir encima.
+    std::wstring blobSha;
+    std::wstring commitUrl;
+};
+Model::Result<Written> ParseContentsWrite(std::string_view json);
+
 }  // namespace Github

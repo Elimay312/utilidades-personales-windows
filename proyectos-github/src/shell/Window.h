@@ -106,6 +106,8 @@ private:
     float m_widthDip = 0.0f;
     float m_heightDip = 0.0f;
     bool m_mica = false;
+    // El WM_CHAR que sigue a una tecla que ya se usó como atajo. Ver WM_KEYDOWN.
+    bool m_swallowChar = false;
     bool m_trackingNc = false;
     bool m_trackingClient = false;
     Input::Clicks m_clicks;

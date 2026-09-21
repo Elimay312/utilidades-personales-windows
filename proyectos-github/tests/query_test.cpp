@@ -10,6 +10,8 @@
 #include <nlohmann/json.hpp>
 
 #include "github/Query.h"
+#include "model/Base64.h"
+#include "model/Utf.h"
 
 #include <string>
 #include <vector>
@@ -53,6 +55,12 @@ TEST_CASE("la consulta de detalle pide lo caro, y por identificadores") {
     CHECK(Has(query, "HEAD:PROYECTO.md"));
     // Vuelve a pedir pushedAt: es la fecha que se guarda como enriched_push.
     CHECK(Has(query, "pushedAt"));
+
+    // Fase 5. Los cinco commits y la raiz se piden AQUI y no al abrir el inspector, que es
+    // la regla 1 de arquitectura: la interfaz no espera a la red.
+    CHECK(Has(query, "history(first: 5)"));
+    CHECK(Has(query, "HEAD:"));
+    CHECK(Has(query, "entries { name type }"));
 }
 
 TEST_CASE("la consulta sin contenidos no pide PROYECTO.md y sí todo lo demás") {
@@ -62,6 +70,11 @@ TEST_CASE("la consulta sin contenidos no pide PROYECTO.md y sí todo lo demás")
     CHECK_FALSE(Has(query, "PROYECTO.md"));
     CHECK(Has(query, "defaultBranchRef"));
     CHECK(Has(query, "issues(states: OPEN)"));
+    // La raiz tambien necesita Contents: read, asi que se cae con PROYECTO.md. Los commits
+    // no, y por eso siguen pidiendose: una credencial estrecha se queda sin los .md de la
+    // raiz, no sin el historial.
+    CHECK_FALSE(Has(query, "entries"));
+    CHECK(Has(query, "history(first: 5)"));
 }
 
 TEST_CASE("la consulta de organización pide los mismos campos que la personal") {
@@ -144,4 +157,61 @@ TEST_CASE("trocear casos raros no se cuelga ni inventa trozos") {
     const auto bigger = Github::Chunk({"a"}, 20);
     REQUIRE(bigger.size() == 1);
     CHECK(bigger[0].size() == 1);
+}
+
+// ------------------------------------------------------ La escritura, que es de la fase 5 --
+
+TEST_CASE("el mensaje del commit es el que dice CLAUDE.md, letra por letra") {
+    // El criterio de aceptacion de la fase habla de el: «el commit aparece en GitHub con el
+    // formato correcto». Si esto cambia, cambia el historial de ciento nueve repositorios.
+    CHECK(std::string(Github::kCommitMessage) == "chore: actualizar PROYECTO.md");
+}
+
+TEST_CASE("la ruta de contenidos lleva el repositorio y termina en PROYECTO.md") {
+    const std::wstring path = Github::ContentsPath(L"Elimay312/brujula");
+    CHECK(path == L"/repos/Elimay312/brujula/contents/PROYECTO.md");
+}
+
+TEST_CASE("un nombre que no tiene forma de nombre no produce ruta") {
+    // La ruta acaba dentro de una URL y el nombre viene de la respuesta de GitHub. Validar
+    // antes es mucho mas barato que arrepentirse: con un nombre raro la escritura falla con
+    // un aviso en vez de pedir una direccion inventada.
+    for (const wchar_t* malo : {L"", L"sinbarra", L"dos/barras/aqui", L"/empieza",
+                                L"termina/", L"con espacio/repo", L"repo/../otro",
+                                L"con?query/repo", L"acentuó/repo"}) {
+        CHECK(Github::ContentsPath(malo).empty());
+    }
+}
+
+TEST_CASE("el cuerpo del PUT lleva el texto en base64 y el sha cuando lo hay") {
+    const std::wstring texto = L"---\nprioridad: enfoque\n---\n\n## Novedades\n";
+    const std::string body = Github::ContentsBody(texto, L"abc123", L"main");
+
+    const nlohmann::json parsed = nlohmann::json::parse(body, nullptr, false);
+    REQUIRE_FALSE(parsed.is_discarded());
+    CHECK(parsed["message"] == "chore: actualizar PROYECTO.md");
+    CHECK(parsed["sha"] == "abc123");
+    CHECK(parsed["branch"] == "main");
+    // Y el contenido va de ida y vuelta: lo que se codifica es el UTF-8 del archivo.
+    CHECK(parsed["content"] == Model::ToBase64(Model::ToUtf8(texto)));
+}
+
+TEST_CASE("sin sha no se manda la clave, y sin rama tampoco") {
+    // Mandar un sha vacio al crear un archivo nuevo es un 422, y el error que devuelve no
+    // menciona la palabra "vacio" por ninguna parte.
+    const std::string body = Github::ContentsBody(L"hola", std::wstring(), std::wstring());
+    const nlohmann::json parsed = nlohmann::json::parse(body, nullptr, false);
+    REQUIRE_FALSE(parsed.is_discarded());
+    CHECK(parsed.find("sha") == parsed.end());
+    CHECK(parsed.find("branch") == parsed.end());
+    CHECK(parsed["content"] == "aG9sYQ==");
+}
+
+TEST_CASE("la consulta de un archivo va por identificador y por expresion") {
+    const std::string body = Github::FileBody("R_1", L"NOTAS.md");
+    const nlohmann::json parsed = nlohmann::json::parse(body, nullptr, false);
+    REQUIRE_FALSE(parsed.is_discarded());
+    CHECK(parsed["variables"]["id"] == "R_1");
+    CHECK(parsed["variables"]["expr"] == "HEAD:NOTAS.md");
+    CHECK(std::string(Github::FileQuery()).find("isTruncated") != std::string::npos);
 }

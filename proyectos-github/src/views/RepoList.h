@@ -34,6 +34,12 @@ public:
     // deslice y lo que entra aparezca; al recolocar por un cambio de tamaño, no.
     void Refresh(bool animate);
 
+    // Recoloca las celdas con animación después de que la columna cambie de ancho. Al
+    // abrirse el inspector el ancho cambia de GOLPE —animarlo reasignaría la textura de cada
+    // celda en cada fotograma— y lo que se desliza es su posición, que es exactamente la
+    // decisión que la fase 4 ya escribió para el paso de lista a cuadrícula.
+    void ReflowCells();
+
     void FocusSearch();
     void ClearSearch();
     bool SearchFocused() const;
@@ -43,6 +49,9 @@ public:
     // funcionen sin haber pulsado antes en ninguna parte.
     void FocusList();
     int Selected() const;
+    // Dónde está la tarjeta elegida en coordenadas de ventana, o vacío si no se ve. Es de
+    // donde sale la transición compartida hacia el inspector.
+    Ui::Rect SelectedCardRect() const;
     void SelectSlot(int slot);
     // Las teclas de navegación cuando el foco está en el campo de búsqueda: bajar desde la
     // búsqueda tiene que entrar en la lista, no quedarse a medias.
@@ -58,6 +67,11 @@ public:
     void OnSelectionChanged(std::function<void(int)> handler) {
         m_selectionChanged = std::move(handler);
     }
+    // Enter o doble clic sobre una tarjeta. La fase 4 lo dejó sin enganchar a propósito:
+    // «lo que se abre —el inspector— es de la fase 5».
+    void OnActivated(std::function<void(int)> handler) { m_activated = std::move(handler); }
+    // Un clic, aunque esa tarjeta ya estuviera elegida. Ver Ui::List::OnClicked.
+    void OnClicked(std::function<void(int)> handler) { m_clicked = std::move(handler); }
 
 protected:
     bool OnAttach() override;
@@ -101,8 +115,13 @@ private:
     std::function<void(App::Lens)> m_lensRequested;
     std::function<void()> m_syncRequested;
     std::function<void(int)> m_selectionChanged;
+    std::function<void(int)> m_activated;
+    std::function<void(int)> m_clicked;
 
     CardLayout m_layout = CardLayout::List;
+    // La próxima recolocación es una transición y no un cambio de tamaño. Lo pide
+    // ReflowCells, y se consume en la siguiente pasada de OnArrange.
+    bool m_animateArrange = false;
 };
 
 }  // namespace Views

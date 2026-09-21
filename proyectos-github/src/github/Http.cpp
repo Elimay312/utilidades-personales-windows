@@ -195,7 +195,8 @@ bool Session::Unregister(std::uint64_t ticket) {
     return true;
 }
 
-Model::Result<Response> Session::Post(const wchar_t* path, const std::wstring& authorization,
+Model::Result<Response> Session::Send(const wchar_t* verb, const std::wstring& path,
+                                      const std::wstring& authorization,
                                       std::string_view body) {
     if (m_connect == nullptr) {
         return Model::Oops(Model::Fail::Network, L"La conexión con GitHub no está abierta");
@@ -204,7 +205,7 @@ Model::Result<Response> Session::Post(const wchar_t* path, const std::wstring& a
         return Model::Oops(Model::Fail::Cancelled, L"Sincronización cancelada");
     }
 
-    RequestHandle request(WinHttpOpenRequest(m_connect, L"POST", path, nullptr,
+    RequestHandle request(WinHttpOpenRequest(m_connect, verb, path.c_str(), nullptr,
                                              WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                              WINHTTP_FLAG_SECURE));
     if (request.Get() == nullptr) return WinError(L"No se pudo preparar la petición a GitHub");

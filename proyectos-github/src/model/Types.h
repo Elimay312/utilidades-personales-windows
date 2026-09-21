@@ -17,6 +17,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "model/Time.h"
 
@@ -43,6 +44,16 @@ const char* SlugOf(State state);
 // y quien llama decide con qué se queda.
 std::optional<Priority> PriorityFromSlug(std::string_view slug);
 std::optional<State> StateFromSlug(std::string_view slug);
+
+// Un commit de la rama principal. El inspector enseña los cinco últimos.
+struct Commit {
+    std::wstring oid;
+    std::wstring title;
+    std::wstring author;
+    // Vacío no pasa con un commit de verdad, pero la respuesta puede venir sin el campo y
+    // una fecha inventada se lee igual que una buena.
+    std::optional<Instant> committedAt;
+};
 
 // Lo que dice el servidor. Las cadenas en wstring porque su destino es la pantalla; el id
 // en string porque su destino es una clave de SQLite y una variable de GraphQL, y nunca se
@@ -82,10 +93,18 @@ struct Repo {
     int openIssues = 0;
     int openPrs = 0;
 
-    // Crudo. Interpretarlo es de la fase 5; aquí solo se guarda, con su oid para saber si
-    // cambió sin volver a leerlo entero.
+    // Crudo. Lo interpreta projectfile/Proyecto.h; aquí solo se guarda, con su oid para
+    // saber si cambió sin volver a leerlo entero — y porque es el 'sha' que pide la API de
+    // contenidos para escribir encima sin pisar a nadie.
     std::wstring proyectoOid;
     std::wstring proyectoText;
+
+    // Los cinco últimos commits de la rama principal, el más nuevo primero. Vienen del
+    // segundo pase y viven en la caché para que abrir el inspector no espere a la red.
+    std::vector<Commit> commits;
+    // Los otros .md de la raíz: los que se pueden copiar a las novedades. Sin README,
+    // CHANGELOG, LICENSE ni el propio PROYECTO.md, que no son notas de nadie.
+    std::vector<std::wstring> rootMarkdown;
 
     Instant seenAt{};
     // Dejó de aparecer en la cuenta. La fila NO se borra: colgarían las notas del usuario.
@@ -93,14 +112,24 @@ struct Repo {
 };
 
 // Lo del usuario. Nada de aquí viene de GitHub ni vuelve a GitHub salvo que se active el
-// modo repo, que es la fase 5.
+// modo repo.
 struct Local {
     std::string repoId;
     Priority priority = Priority::Unsorted;
     State state = State::Active;
     std::wstring nextStep;
-    bool repoMode = false;  // escribir PROYECTO.md en ese repositorio; confirmado uno a uno
-    std::wstring folder;    // carpeta local, para el botón de abrir
+    bool repoMode = false;  // el interruptor: escribir PROYECTO.md en ese repositorio
+    // El usuario ha confirmado alguna vez que se escriba en ESTE repositorio. Es una
+    // columna aparte del interruptor y no un detalle: la regla 5 de SEGURIDAD.md dice que no
+    // hay un ajuste global que active el modo repo en los 120 de golpe sin pasar por la
+    // confirmación una vez por repositorio. Con un solo booleano, «modo repo por omisión»
+    // sería exactamente ese ajuste. Escribir exige los dos.
+    bool repoConfirmed = false;
+    // Hay un guardado local que todavía no ha llegado a GitHub. Se pone al guardar y se
+    // quita cuando el commit sale bien; los pendientes se reintentan al terminar la
+    // siguiente sincronización. Sin esto, editar sin cobertura pierde el commit en silencio.
+    bool pushPending = false;
+    std::wstring folder;  // carpeta local, para el botón de abrir
     Instant updatedAt{};
 };
 

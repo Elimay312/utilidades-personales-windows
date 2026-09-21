@@ -29,6 +29,7 @@ constexpr wchar_t kGlyphAll[] = {0xE71D, 0};        // AllApps       — Todos
 constexpr wchar_t kGlyphWarning[] = {0xE7BA, 0};    // Warning       — Necesita decisión
 constexpr wchar_t kGlyphStopwatch[] = {0xE916, 0};  // Stopwatch     — Dormidos
 constexpr wchar_t kGlyphCalendar[] = {0xE787, 0};   // Calendar      — Esta semana
+constexpr wchar_t kGlyphMore[] = {0xE712, 0};       // More          — los ajustes
 
 const wchar_t* GlyphOf(App::Lens lens) {
     switch (lens) {
@@ -90,6 +91,16 @@ bool Sidebar::OnAttach() {
         if (m_signOut) m_signOut();
     });
 
+    // Los ajustes, al lado de la cuenta. Un icono y no un botón con texto: lo que hay
+    // dentro son cuatro cosas que se usan una vez al año, y un botón ancho al lado de
+    // «Sincronizar» pesaría lo mismo que él sin merecerlo.
+    m_settingsButton = Add<Ui::IconButton>(kGlyphMore, Ui::ButtonKind::Plain);
+    m_settingsButton->OnActivate([this] {
+        if (m_settings == nullptr || !Attached()) return;
+        const Rect anchor = m_settingsButton->WindowRect();
+        m_settings(anchor.x, anchor.Bottom() + 4.0f);
+    });
+
     // El separador de la derecha va el ÚLTIMO: los hijos se insertan arriba, así que el
     // último añadido es el que se pinta encima, y una línea que quede debajo de la columna
     // no se ve.
@@ -115,9 +126,15 @@ void Sidebar::OnArrange() {
     // depender de cuántos grupos haya por encima.
     const float footerTop = std::max(Frame().height - kFooterHeight, y + Metrics::kSpace4);
     if (m_footerRule) m_footerRule->SetFrame(Rect{kPad, footerTop, inner, hairline});
+    constexpr float kSettingsSize = 24.0f;
     if (m_footer) {
-        m_footer->SetFrame(Rect{kPad, footerTop + Metrics::kSpace2, inner, 20.0f});
-        if (m_account) m_account->SetFrame(Rect{Metrics::kSpace1, 0.0f, inner, 20.0f});
+        const float accountWidth = std::max(inner - kSettingsSize - Metrics::kSpace1, 1.0f);
+        m_footer->SetFrame(Rect{kPad, footerTop + Metrics::kSpace2, accountWidth, 20.0f});
+        if (m_account) m_account->SetFrame(Rect{Metrics::kSpace1, 0.0f, accountWidth, 20.0f});
+    }
+    if (m_settingsButton) {
+        m_settingsButton->SetFrame(Rect{width - kPad - kSettingsSize, footerTop + 10.0f,
+                                        kSettingsSize, kSettingsSize});
     }
     if (m_syncButton) {
         m_syncButton->SetFrame(Rect{kPad, footerTop + 40.0f, inner, Metrics::kControlHeight});

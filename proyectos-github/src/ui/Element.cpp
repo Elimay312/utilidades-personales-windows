@@ -201,6 +201,74 @@ void Element::SlideTo(float xDip, float yDip, Motion::Kind kind) {
     m_host->Animator().Offset(m_visual, {xDip, yDip, 0.0f}, kind);
 }
 
+void Element::MorphTo(const Rect& frame, float radiusDip, Motion::Kind kind) {
+    if (m_layer) {
+        // Con superficie propia no hay transición posible: animar el tamaño obligaría a
+        // reasignar la textura sesenta veces por segundo. Se coloca de golpe, que es mucho
+        // mejor que tirar fotogramas sin que se sepa por qué.
+        SetFrame(frame);
+        if (m_material) m_material->SetRadius(radiusDip);
+        return;
+    }
+
+    m_frame = frame;
+    if (!m_visual || !m_host) return;
+
+    const Motion::Animator& animator = m_host->Animator();
+    animator.Offset(m_visual, {frame.x, frame.y, 0.0f}, kind);
+    if (m_material) {
+        // Las dos a la vez y con el mismo muelle. Si la geometría se quedara atrás, el
+        // material saldría recortado a la forma vieja y se vería un mordisco en el borde
+        // mientras dura el viaje.
+        animator.SizeTogether(m_visual, m_material->Geometry(), {frame.width, frame.height},
+                              kind);
+        m_material->AnimateRadius(animator, radiusDip, kind);
+    } else {
+        animator.Size(m_visual, {frame.width, frame.height}, kind);
+    }
+    if (m_ring) m_ring->AnimateSize(animator, frame.width, frame.height, kind);
+
+    m_reservedScale = m_host->Scale();
+    // Los hijos van ya a su sitio de destino: lo que viaja es la forma, no el contenido.
+    OnArrange();
+}
+
+void Element::SnapTo(const Rect& frame, float radiusDip) {
+    SetFrame(frame);
+    if (m_material) m_material->SetRadius(radiusDip);
+}
+
+void Element::SetClipsChildren(bool clips) {
+    if (!m_visual || !m_host) return;
+    if (!clips) {
+        m_visual.Clip(nullptr);
+        return;
+    }
+    // Un InsetClip sin márgenes recorta al tamaño del visual, y ese tamaño puede estar
+    // animándose: el recorte lo sigue solo, que es justo lo que hace falta durante un morfeo.
+    m_visual.Clip(m_host->Compositor().CreateInsetClip());
+}
+
+void Element::SetOpacity(float value, float durationMs) {
+    if (!m_visual) return;
+    if (durationMs <= 0.0f || m_host == nullptr) {
+        m_visual.StopAnimation(L"Opacity");
+        m_visual.Opacity(value);
+        return;
+    }
+    m_host->Animator().Opacity(m_visual, value, durationMs);
+}
+
+void Element::SetContentOpacity(float value, float durationMs) {
+    if (!m_childHost) return;
+    if (durationMs <= 0.0f || m_host == nullptr) {
+        m_childHost.StopAnimation(L"Opacity");
+        m_childHost.Opacity(value);
+        return;
+    }
+    m_host->Animator().Opacity(m_childHost, value, durationMs);
+}
+
 Rect Element::WindowRect() const {
     Rect rect = m_frame;
     for (const Element* parent = m_parent; parent != nullptr; parent = parent->m_parent) {

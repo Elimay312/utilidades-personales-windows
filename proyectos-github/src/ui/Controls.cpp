@@ -236,6 +236,16 @@ const wchar_t* NameOf(Priority priority) {
     return L"";
 }
 
+const wchar_t* NameOf(Model::State state) {
+    switch (state) {
+    case Model::State::Active:  return L"Activo";
+    case Model::State::Blocked: return L"Bloqueado";
+    case Model::State::Waiting: return L"En espera";
+    case Model::State::Done:    return L"Terminado";
+    }
+    return L"";
+}
+
 Theme::Color ColorOf(Priority priority, const Theme::Tokens& tokens) {
     switch (priority) {
     case Priority::Focus:     return tokens.priorityFocus;

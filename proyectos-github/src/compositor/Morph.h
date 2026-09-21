@@ -1,9 +1,18 @@
 #pragma once
 
 // La transición compartida: un mismo elemento que cambia de sitio, de tamaño y de radio
-// mientras su contenido se cruza. En la fase 1 es la tarjeta que se convierte en panel;
-// en la fase 5 será la tarjeta del repositorio que se convierte en el inspector, y por
-// eso vive aquí y no en views/.
+// mientras su contenido se cruza. En la fase 1 era la tarjeta que se convertía en panel.
+//
+// **Y NO es lo que usa el inspector de la fase 5**, aunque esta cabecera lo prometiera. Un
+// Morph lleva dos Gfx::Layer, o sea dos trozos de píxeles; el inspector tiene un campo de
+// texto, botones y una lista, que son elementos con entrada, así que usarlo obligaría a
+// dibujar el panel dos veces: una como textura para el viaje y otra como árbol al aterrizar.
+// Lo que hace la fase 5 es Element::MorphTo, que anima la forma de un elemento del kit y
+// cruza su contenido con SetContentOpacity.
+//
+// Esto se queda porque sigue siendo la única manera de morfear algo que NO es un elemento
+// —píxeles contra píxeles— y la revisión semanal de la fase 7 va de eso: una pila de
+// tarjetas que no reciben entrada mientras vuelan.
 //
 // El material va aparte del contenido: es un ShapeVisual con una geometría de rectángulo
 // redondeado rellena de un color. Se probó lo evidente —meter el contenido dentro de la

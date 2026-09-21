@@ -144,6 +144,35 @@ if ($guardaFuera) { Regla '10. El token solo en la caja fuerte' 'FALLA' $guardaF
 elseif ($usaCred) { Regla '10. El token solo en la caja fuerte' 'bien' }
 else { Regla '10. El token solo en la caja fuerte' 'pendiente' 'todavia no hay codigo de token (fase 3)' }
 
+# 11. Lo unico que Brujula escribe en un repositorio es PROYECTO.md (SEGURIDAD.md, regla 5).
+#     Hasta la fase 5 esta regla no tenia codigo que vigilar; ahora si. Se mira por tres
+#     sitios, porque con uno solo se esquiva sin querer:
+#
+#       a) el nombre del archivo esta en UNA constante y vale exactamente PROYECTO.md;
+#       b) toda ruta que empiece por /repos/ termina en esa constante dentro de la misma
+#          sentencia — o sea, no hay una segunda ruta a la API de contenidos;
+#       c) el unico verbo que llega al cliente REST es PUT. Un DELETE o un PATCH que se
+#          colara no daria ningun error aqui: lo daria en el repositorio de alguien.
+$nombre = Buscar 'kProyectoFile\s*=\s*L"PROYECTO\.md"'
+$rutas = Buscar '"/repos/'
+# Vale de las dos maneras: la ruta montada en el codigo —que termina en la constante— y la
+# escrita entera, que es como la comprueba la prueba de query_test.cpp.
+$rutasBuenas = Buscar '"/repos/"[^;]*kProyectoFile|"/repos/[^"]*PROYECTO\.md"'
+$verbos = Buscar 'Rest\(\s*L"[A-Z]+"'
+$verbosMalos = @($verbos | Where-Object { $_ -notmatch 'L"PUT"' })
+
+if (-not $nombre) {
+    Regla '11. Solo se escribe PROYECTO.md' 'FALLA' 'no encuentro la constante del archivo'
+} elseif ($verbosMalos) {
+    Regla '11. Solo se escribe PROYECTO.md' 'FALLA' $verbosMalos[0]
+} elseif ($rutas.Count -ne $rutasBuenas.Count) {
+    Regla '11. Solo se escribe PROYECTO.md' 'FALLA' 'hay una ruta /repos/ que no acaba en PROYECTO.md'
+} elseif (-not $rutas) {
+    Regla '11. Solo se escribe PROYECTO.md' 'pendiente' 'todavia no hay codigo que escriba'
+} else {
+    Regla '11. Solo se escribe PROYECTO.md' 'bien'
+}
+
 # --- Salida ------------------------------------------------------------------------
 
 Write-Output ''

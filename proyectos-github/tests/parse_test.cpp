@@ -344,3 +344,205 @@ TEST_CASE("el login de la cuenta se lee al validar la credencial") {
     CHECK_FALSE(empty.IsOk());
     CHECK(empty.Err().kind == Model::Fail::Auth);
 }
+
+// ------------------------------------------------- Lo que el pase 2 trae desde la fase 5 --
+
+TEST_CASE("los cinco últimos commits llegan en orden") {
+    const std::string body = Q(
+        "{`data`: {`nodes`: [{"
+        "  `id`: `R_1`, `pushedAt`: `2026-09-21T10:00:00Z`,"
+        "  `defaultBranchRef`: {`name`: `main`, `target`: {"
+        "    `oid`: `aaa1`, `committedDate`: `2026-09-21T10:00:00Z`,"
+        "    `messageHeadline`: `El de la punta`,"
+        "    `history`: {`nodes`: ["
+        "      {`oid`: `aaa1`, `committedDate`: `2026-09-21T10:00:00Z`,"
+        "       `messageHeadline`: `El de la punta`,"
+        "       `author`: {`name`: `Elimay`, `user`: {`login`: `Elimay312`}}},"
+        "      {`oid`: `bbb2`, `committedDate`: `2026-09-20T10:00:00Z`,"
+        "       `messageHeadline`: `El anterior`,"
+        "       `author`: {`name`: `Alguien Sin Cuenta`, `user`: null}}"
+        "    ]}"
+        "  }},"
+        "  `issues`: {`totalCount`: 3}, `pullRequests`: {`totalCount`: 1}"
+        "}]}}");
+
+    const auto parsed = Github::ParseDetail(body);
+    REQUIRE(parsed.IsOk());
+    REQUIRE(parsed.Value().repos.size() == 1);
+    const Model::Repo& repo = parsed.Value().repos[0];
+
+    REQUIRE(repo.commits.size() == 2);
+    CHECK(repo.commits[0].oid == L"aaa1");
+    CHECK(repo.commits[0].title == L"El de la punta");
+    // El login de GitHub cuando lo hay…
+    CHECK(repo.commits[0].author == L"Elimay312");
+    // …y el nombre que puso git cuando el correo no está en ninguna cuenta, que en
+    // repositorios viejos es la mitad de los commits.
+    CHECK(repo.commits[1].author == L"Alguien Sin Cuenta");
+    CHECK(repo.commits[1].committedAt.has_value());
+
+    // Y los campos sueltos del commit de la punta siguen llegando: son las columnas con las
+    // que el pase 2 decide qué repetir, y leerlos de la lista sería leer una lista para
+    // saber una fecha.
+    CHECK(repo.commitOid == L"aaa1");
+    CHECK(repo.commitTitle == L"El de la punta");
+}
+
+TEST_CASE("un repositorio sin historia no rompe ni inventa commits") {
+    const std::string body = Q(
+        "{`data`: {`nodes`: [{"
+        "  `id`: `R_1`,"
+        "  `defaultBranchRef`: {`name`: `main`, `target`: {`oid`: `aaa1`, `history`: null}}"
+        "}]}}");
+
+    const auto parsed = Github::ParseDetail(body);
+    REQUIRE(parsed.IsOk());
+    REQUIRE(parsed.Value().repos.size() == 1);
+    CHECK(parsed.Value().repos[0].commits.empty());
+    CHECK(parsed.Value().repos[0].commitOid == L"aaa1");
+}
+
+TEST_CASE("un commit sin oid dentro de la historia se salta") {
+    const std::string body = Q(
+        "{`data`: {`nodes`: [{"
+        "  `id`: `R_1`,"
+        "  `defaultBranchRef`: {`name`: `main`, `target`: {`history`: {`nodes`: ["
+        "    null,"
+        "    {`messageHeadline`: `Sin oid`},"
+        "    {`oid`: `ccc3`, `messageHeadline`: `Este sí`}"
+        "  ]}}}"
+        "}]}}");
+
+    const auto parsed = Github::ParseDetail(body);
+    REQUIRE(parsed.IsOk());
+    REQUIRE(parsed.Value().repos.size() == 1);
+    REQUIRE(parsed.Value().repos[0].commits.size() == 1);
+    CHECK(parsed.Value().repos[0].commits[0].oid == L"ccc3");
+}
+
+TEST_CASE("de la raíz solo salen los .md que son notas de alguien") {
+    // README, CHANGELOG y LICENSE los tiene todo el mundo y no dicen nada del proyecto;
+    // PROYECTO.md ya se lee aparte y ofrecerlo para copiarse a sí mismo no tiene sentido.
+    const std::string body = Q(
+        "{`data`: {`nodes`: [{"
+        "  `id`: `R_1`,"
+        "  `raiz`: {`entries`: ["
+        "    {`name`: `README.md`, `type`: `blob`},"
+        "    {`name`: `readme.md`, `type`: `blob`},"
+        "    {`name`: `README.es.md`, `type`: `blob`},"
+        "    {`name`: `CHANGELOG-2025.md`, `type`: `blob`},"
+        "    {`name`: `LICENSE.md`, `type`: `blob`},"
+        "    {`name`: `PROYECTO.md`, `type`: `blob`},"
+        "    {`name`: `NOTAS.md`, `type`: `blob`},"
+        "    {`name`: `Ideas.MD`, `type`: `blob`},"
+        "    {`name`: `docs`, `type`: `tree`},"
+        "    {`name`: `notas.md`, `type`: `tree`},"
+        "    {`name`: `main.cpp`, `type`: `blob`},"
+        "    {`name`: `.md`, `type`: `blob`}"
+        "  ]}"
+        "}]}}");
+
+    const auto parsed = Github::ParseDetail(body);
+    REQUIRE(parsed.IsOk());
+    REQUIRE(parsed.Value().repos.size() == 1);
+    const std::vector<std::wstring>& raiz = parsed.Value().repos[0].rootMarkdown;
+
+    REQUIRE(raiz.size() == 2);
+    CHECK(raiz[0] == L"NOTAS.md");
+    // Con la extensión en mayúsculas, y con el nombre tal cual vino: es el que hay que pedir
+    // después, y GitHub distingue mayúsculas en las rutas.
+    CHECK(raiz[1] == L"Ideas.MD");
+}
+
+TEST_CASE("un repositorio sin raíz legible no trae .md, y no es un error") {
+    const std::string body = Q("{`data`: {`nodes`: [{`id`: `R_1`, `raiz`: null}]}}");
+    const auto parsed = Github::ParseDetail(body);
+    REQUIRE(parsed.IsOk());
+    REQUIRE(parsed.Value().repos.size() == 1);
+    CHECK(parsed.Value().repos[0].rootMarkdown.empty());
+}
+
+TEST_CASE("la falta de permiso sobre la raíz se trata como la de PROYECTO.md") {
+    // Los dos campos necesitan Contents: read y fallan por el mismo camino. Si solo se
+    // reconociera 'proyecto', una credencial estrecha daría un aviso por cada tanda en vez
+    // de degradar en silencio y repetir sin esos campos.
+    const std::string body = Q(
+        "{`data`: {`nodes`: [{`id`: `R_1`, `proyecto`: null, `raiz`: null}]},"
+        " `errors`: [{`type`: `FORBIDDEN`, `path`: [`nodes`, 0, `raiz`],"
+        "             `message`: `Resource not accessible by personal access token`}]}");
+
+    const auto parsed = Github::ParseDetail(body);
+    REQUIRE(parsed.IsOk());
+    CHECK(parsed.Value().contentsForbidden);
+    // Y no se enseña como aviso: no es algo que el usuario tenga que leer en cada tanda.
+    CHECK(parsed.Value().warnings.empty());
+}
+
+// ------------------------------------------------- Lo que contesta la API de contenidos --
+
+TEST_CASE("del PUT salen el sha nuevo y la dirección del commit") {
+    // Esta respuesta NO es GraphQL: no trae ni 'data' ni 'errors'. Si pasara por el mismo
+    // lector que las demás, una escritura correcta se leería como una respuesta sin datos.
+    const std::string body = Q(
+        "{`content`: {`name`: `PROYECTO.md`, `sha`: `blob123`},"
+        " `commit`: {`sha`: `commit456`,"
+        "            `html_url`: `https://github.com/yo/uno/commit/commit456`}}");
+
+    const auto parsed = Github::ParseContentsWrite(body);
+    REQUIRE(parsed.IsOk());
+    CHECK(parsed.Value().blobSha == L"blob123");
+    CHECK(parsed.Value().commitUrl == L"https://github.com/yo/uno/commit/commit456");
+}
+
+TEST_CASE("una escritura sin sha no sirve aunque sea un 200") {
+    // Sin el sha nuevo, el siguiente guardado tendría que releer el archivo para poder
+    // escribir encima. Es un éxito que no deja seguir, así que se trata como lo que es.
+    const auto parsed = Github::ParseContentsWrite(Q("{`commit`: {`sha`: `abc`}}"));
+    CHECK_FALSE(parsed.IsOk());
+    CHECK_FALSE(parsed.Err().detail.empty());
+}
+
+TEST_CASE("un cuerpo que no es JSON tampoco lanza aquí") {
+    CHECK_FALSE(Github::ParseContentsWrite("").IsOk());
+    CHECK_FALSE(Github::ParseContentsWrite("<html>502</html>").IsOk());
+    CHECK_FALSE(Github::ParseContentsWrite("[1,2,3]").IsOk());
+}
+
+TEST_CASE("el texto de un archivo llega con su oid") {
+    const std::string body = Q(
+        "{`data`: {`node`: {`object`: {`oid`: `blob1`, `byteSize`: 42,"
+        "                              `isTruncated`: false, `text`: `- una nota`}}}}");
+
+    const auto parsed = Github::ParseFileText(body);
+    REQUIRE(parsed.IsOk());
+    CHECK(parsed.Value().found);
+    CHECK(parsed.Value().oid == L"blob1");
+    CHECK(parsed.Value().text == L"- una nota");
+    CHECK_FALSE(parsed.Value().truncated);
+}
+
+TEST_CASE("un archivo que ya no está no es un error") {
+    // Pudo borrarse entre la sincronización que lo vio y el momento de pedirlo. Quien llama
+    // lo dice y se acabó; tirar un error aquí sería contar como avería lo normal.
+    const auto parsed = Github::ParseFileText(Q("{`data`: {`node`: {`object`: null}}}"));
+    REQUIRE(parsed.IsOk());
+    CHECK_FALSE(parsed.Value().found);
+    CHECK(parsed.Value().text.empty());
+}
+
+TEST_CASE("un archivo cortado llega marcado y vacío") {
+    // Medio archivo copiado a las novedades es peor que ninguno: parece entero.
+    const std::string body = Q(
+        "{`data`: {`node`: {`object`: {`oid`: `blob1`, `isTruncated`: true,"
+        "                              `text`: `la mitad de`}}}}");
+    const auto parsed = Github::ParseFileText(body);
+    REQUIRE(parsed.IsOk());
+    CHECK(parsed.Value().found);
+    CHECK(parsed.Value().truncated);
+    CHECK(parsed.Value().text.empty());
+}
+
+TEST_CASE("un repositorio que no existe sí es un error") {
+    const auto parsed = Github::ParseFileText(Q("{`data`: {`node`: null}}"));
+    CHECK_FALSE(parsed.IsOk());
+}

@@ -167,7 +167,7 @@ Parser tolerante: si el archivo no tiene frontmatter o tiene campos desconocidos
 | Esc | Cerrar inspector o modal |
 | 1 / 2 / 3 / 4 | Enfoque / Secundario / Algún día / Archivado |
 | E | Editar siguiente paso |
-| N | Añadir novedad |
+| N | Añadir novedad (con el inspector abierto) |
 | Ctrl+R | Sincronizar ahora |
 | Ctrl+Shift+R | Empezar revisión semanal |
 | Ctrl+O | Abrir el repo en GitHub |
@@ -188,7 +188,7 @@ El plan completo está en `PROMPTS.md`.
 - [x] Fase 2 — Kit de UI propio y catálogo de componentes
 - [x] Fase 3 — GitHub: token seguro, GraphQL, SQLite y sincronización
 - [x] Fase 4 — Vista principal: barra lateral, lista y clasificación
-- [ ] Fase 5 — Inspector, notas y PROYECTO.md
+- [x] Fase 5 — Inspector, notas y PROYECTO.md
 - [ ] Fase 6 — Priorizar: arrastrar, límite de Enfoque, atajos y paleta
 - [ ] Fase 7 — Revisión semanal
 - [ ] Fase 8 — Pulido final y rendimiento
@@ -196,6 +196,107 @@ El plan completo está en `PROMPTS.md`.
 Al terminar una fase: marcarla aquí, anotar decisiones abajo y hacer commit.
 
 ## Decisiones y notas
+
+### Fase 5 — 21 de septiembre de 2026
+
+El detalle con todas las mediciones está en `CHANGELOG.md`. Aquí van solo las decisiones
+que condicionan lo que venga después.
+
+**Esta es la primera fase que ESCRIBE, y eso cambia qué es un fallo grave.** Hasta aquí,
+todo lo que se veía se podía volver a descargar. Desde aquí hay datos que existen solo
+porque alguien los escribió, y el peor fallo posible ya no es una pantalla en blanco: es un
+párrafo que desaparece del archivo de otro dentro de un commit que dice «actualizar
+PROYECTO.md». De ahí sale casi todo lo demás de esta lista.
+
+**Primero SQLite y después la red, siempre.** Toda edición se guarda en la caché antes de
+intentar ningún commit. El criterio de aceptación de la fase —editar el siguiente paso y
+cerrar la aplicación conserva el cambio— no puede depender de que haya cobertura ni de que
+el modo repo esté encendido. Lo que no llega a GitHub se queda marcado en `push_pending` y
+se reintenta al terminar la siguiente sincronización.
+
+**El modo repo son DOS columnas y no una.** `repo_mode` es el interruptor; `repo_confirmed`
+es «alguien dijo que sí en ESTE repositorio». Escribir exige las dos, y solo una línea de
+todo el programa enciende la segunda: la que contesta la hoja de confirmación. Con un solo
+booleano, «modo repo por omisión» sería exactamente el interruptor global que la regla 5 de
+`SEGURIDAD.md` dice que no existe. Por lo mismo, **la copia de seguridad exporta el modo
+repo pero no lo importa**: un archivo que encendiera ciento nueve escrituras sería ese
+interruptor entrando por la puerta de atrás.
+
+**Un commit que no cambia nada no se hace.** Antes de escribir se compara lo que se iba a
+subir con lo que hay; si coinciden, se da por bueno sin commitear. Tapa además el reintento
+de red de un PUT cuya respuesta se perdió: el commit ya existe, y al releer sale justo esto
+en vez de un segundo commit idéntico.
+
+**El parser de PROYECTO.md conserva lo que no entiende, y eso es el requisito, no un
+adorno.** Las claves inventadas del frontmatter vuelven a escribirse en crudo, y los
+párrafos y las secciones de alrededor de las novedades también. Incluso un valor que no
+reconocemos —`prioridad: urgentísimo`— se guarda tal cual para poder devolverlo: sin eso, el
+`optional` sale vacío y la línea desaparece al escribir. Comprobado contra un repositorio de
+verdad editando el archivo desde fuera y volviendo a guardar desde Brújula.
+
+**Lo que viaja en la transición compartida es el ELEMENTO, no un `Gfx::Morph`.** Un `Morph`
+lleva dos capas de píxeles; el inspector tiene un campo de texto, botones y una lista, que
+son elementos con entrada. Usarlo obligaría a dibujar el panel dos veces. En su lugar el kit
+gana `Element::MorphTo` —posición, tamaño y radio del material con un muelle, **solo en
+elementos sin superficie propia**— y `Element::SetContentOpacity`, que cruza el contenido
+sin tocar el material. Por eso en el primer fotograma el panel ES la tarjeta: misma forma,
+mismo color y mismo sitio. `Gfx::Morph` se queda sin llamadores y NO se borra: la fase 7 lo
+quiere para la revisión semanal.
+
+**Una tecla usada como atajo se escribía además como letra, y venía de la fase 4.**
+`TranslateMessage` pone el `WM_CHAR` en la cola al sacar el mensaje, antes de que nadie haya
+podido decir que la tecla era un atajo, así que consumir el `WM_KEYDOWN` no lo evita.
+`Shell::Window` se come ahora ese `WM_CHAR`. El detalle que costó encontrarlo: la marca la
+tocan **solo las pulsaciones y nunca las sueltas**, porque un `WM_KEYUP` colándose en medio
+la apagaba justo antes de que sirviera. La fase 4 lo tenía sin saberlo: su único atajo de
+una letra era `/`, que enfoca la búsqueda y se escribía dentro del campo que acababa de
+enfocar.
+
+**El inspector no guarda punteros al estado, y se reengancha por identificador.**
+`App::State` se reconstruye entero después de cada sincronización, así que un puntero a una
+`App::Entry` apuntaría a memoria liberada en cuanto llegara el hilo de trabajo. Y por
+posición tampoco: al cambiar la prioridad, el repositorio puede salirse de la vista que se
+está mirando, y el panel tiene que seguir enseñando lo que el usuario acaba de tocar.
+
+**Guardar es del `OnBlur`; Enter solo suelta el foco.** Con dos caminos de guardado, uno de
+los dos se olvida — y el que se olvida siempre es el de perder el foco, que es la mitad de
+las veces que alguien termina de escribir.
+
+**El trabajador de GitHub pasa a atender una cola.** Sincronizar y escribir comparten la
+credencial, el cliente y la conexión a SQLite; dos dueños de una credencial son dos vidas
+que sincronizar. Queda además serializado, que es lo que se quiere: un PUT no puede correr a
+la vez que el segundo pase escribiendo la misma fila. La decisión de que el hilo se muera se
+toma **bajo el mismo candado** que usa quien encola: fuera de él, un trabajo que llegara
+entre la comprobación y el `return` se quedaría ahí para siempre sin dar ningún error — solo
+un commit que nunca sube.
+
+**Los cinco commits y los `.md` de la raíz se piden en el PASE 2 y no al abrir el
+inspector.** Es la regla 1 de arquitectura: la interfaz no espera a la red. Medido el mismo
+día contra la cuenta real, el pase 2 pasa de ~2,9 s a ~4,0 s reenriqueciendo los 109 — poco
+más de un segundo, y solo en el peor caso, porque la sincronización de un día normal no hace
+ni una petición de detalle. **Y ese número ahora se puede volver a mirar**: `ms_pase1`,
+`ms_pase2` y `repos_detalle` se guardan en la tabla de ajustes, que es el mismo papel de
+registro que la fase 3 le dio a esa tabla.
+
+**La ruta de la API se valida, no se pega.** El nombre del repositorio viene de la respuesta
+de GitHub y acaba dentro de una URL. Con un nombre que no tenga forma de nombre, la
+escritura falla con un aviso en vez de pedir una dirección inventada. Y `auditar.ps1` gana
+la **regla 11**, que hasta ahora no tenía código que vigilar: el archivo está en una
+constante y vale exactamente `PROYECTO.md`, toda ruta `/repos/` termina en esa constante, y
+el único verbo que llega al cliente REST es `PUT`. Comprobada con dos sondas antes de darla
+por buena.
+
+**Se añadió una vista que no está en este documento: el botón de ajustes del pie.** La
+carpeta donde se clonan los repositorios, el modo repo por omisión y las dos copias de
+seguridad no tenían dónde vivir, y una hoja de Ajustes entera es más pantalla de la que esta
+fase pedía. Es un `Ui::Menu`, que ya existía desde la fase 2.
+
+**Falta comprobar cinco cosas**, cuatro heredadas y una nueva: la nitidez a otras escalas
+—`WM_DPICHANGED` sigue sin dispararse, y ahora hay un elemento más que anima su tamaño—, el
+IME de verdad, el panel táctil de precisión, una credencial sin permiso de escritura (la de
+esta máquina viene de GitHub CLI y es ancha, así que el 403 del modo repo no se dispara
+solo) y los tres cuadros de archivo, que compilan pero no se han podido accionar: probarlos
+necesita traer la ventana al frente, y esta máquina tenía otra aplicación reteniendo el foco.
 
 ### Fase 4 — 21 de septiembre de 2026
 

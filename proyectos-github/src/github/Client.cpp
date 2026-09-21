@@ -5,7 +5,7 @@
 namespace Github {
 namespace {
 
-constexpr const wchar_t* kGraphQlPath = L"/graphql";
+const std::wstring kGraphQlPath = L"/graphql";
 
 // Una fuente de dispersión que no necesita <random> ni semilla: lo que se pide de ella es
 // que seis hilos que fallan a la vez no vuelvan a la vez, no que sea impredecible.
@@ -36,6 +36,22 @@ Model::Error FromStatus(const Response& response) {
                 error.kind = Model::Fail::Auth;
                 error.detail = L"La credencial no tiene permiso para esto";
             }
+            break;
+
+        case 404:
+            // En una escritura son las dos cosas a la vez: o el repositorio no está, o la
+            // credencial no alcanza a verlo. GitHub contesta 404 y no 403 a propósito, para
+            // no confirmar que algo privado existe.
+            error.kind = Model::Fail::Auth;
+            error.detail = L"GitHub no encuentra eso, o la credencial no llega a verlo";
+            break;
+
+        case 409:
+        case 422:
+            // El archivo cambió debajo. No es un error que se enseñe: quien escribe lo relee
+            // y lo vuelve a fusionar, que es lo único que puede arreglarlo.
+            error.kind = Model::Fail::Http;
+            error.detail = L"El archivo cambió en GitHub mientras se escribía";
             break;
 
         case 429:
@@ -117,8 +133,17 @@ Limits Client::LastLimits() const {
     return m_limits;
 }
 
-Model::Result<Response> Client::PostGraphQL(const Secret& credential,
-                                           std::string_view body) {
+Model::Result<Response> Client::PostGraphQL(const Secret& credential, std::string_view body) {
+    return Perform(L"POST", kGraphQlPath, credential, body);
+}
+
+Model::Result<Response> Client::Rest(const wchar_t* verb, const std::wstring& path,
+                                    const Secret& credential, std::string_view body) {
+    return Perform(verb, path, credential, body);
+}
+
+Model::Result<Response> Client::Perform(const wchar_t* verb, const std::wstring& path,
+                                        const Secret& credential, std::string_view body) {
     std::wstring authorization = credential.AuthorizationHeader();
     Scrub wipe(authorization);
 
@@ -127,13 +152,14 @@ Model::Result<Response> Client::PostGraphQL(const Secret& credential,
     for (int attempt = 1; attempt <= m_policy.attempts; ++attempt) {
         if (Cancelled()) return Model::Oops(Model::Fail::Cancelled, L"Sincronización cancelada");
 
-        Model::Result<Response> sent = m_session.Post(kGraphQlPath, authorization, body);
+        Model::Result<Response> sent = m_session.Send(verb, path, authorization, body);
 
         if (sent.IsOk()) {
             Response response = sent.Take();
             Remember(response);
 
-            if (response.status == 200) return response;
+            // 200 y 201: la API de contenidos devuelve 201 cuando el archivo no existía.
+            if (response.status == 200 || response.status == 201) return response;
             last = FromStatus(response);
 
             // Retry-After manda sobre lo que calcularíamos: si el servidor dice cuánto,

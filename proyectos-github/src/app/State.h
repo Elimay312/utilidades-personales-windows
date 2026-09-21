@@ -136,6 +136,15 @@ public:
     void Load(std::vector<Model::Repo> repos, const std::vector<Model::Local>& locals,
               Model::Instant now);
 
+    // Lo del usuario de UN repositorio, sin releer los otros ciento ocho. Vuelve a derivar
+    // lo suyo —el desajuste y lo que mira la búsqueda— y rehace contadores y visibles.
+    //
+    // No reordena, y no hace falta: el orden de la lista es el del último push, que es del
+    // servidor. Lo que sí cambia es en qué vistas entra, y de eso se encarga Recompute.
+    // Devuelve false si ese repositorio no está cargado.
+    bool ApplyLocal(const Model::Local& local, Model::Instant now);
+    const Entry* EntryOf(const std::string& repoId) const;
+
     void SetLens(Lens lens);
     Lens CurrentLens() const { return m_lens; }
 
@@ -164,6 +173,7 @@ public:
 
 private:
     void Recompute();
+    void Recount();
 
     std::vector<Entry> m_entries;
     std::vector<int> m_visible;

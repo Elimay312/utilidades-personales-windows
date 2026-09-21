@@ -4,6 +4,7 @@
 #include "github/Parse.h"
 #include "github/Query.h"
 #include "model/Utf.h"
+#include "projectfile/Proyecto.h"
 #include "store/Schema.h"
 
 namespace Github {
@@ -14,6 +15,19 @@ constexpr const char* kSettingLastSync = "ultima_sync";
 constexpr const char* kSettingScopes = "alcance";
 constexpr const char* kSettingContents = "sin_contenidos";
 constexpr const char* kSettingProtocol = "protocolo";
+// Cuánto tardó cada pase y sobre cuántos repositorios. La fase 3 decidió no tener log —la
+// regla 3 de SEGURIDAD.md— y que ese papel lo hiciera la tabla de ajustes; esto es lo mismo
+// para el tiempo. Hace falta porque la fase 5 le metió al pase 2 los cinco commits y el
+// listado de la raíz, y «va parecido» no es una medida: si se dispara, hay que verlo.
+constexpr const char* kSettingPassOneMs = "ms_pase1";
+constexpr const char* kSettingPassTwoMs = "ms_pase2";
+constexpr const char* kSettingDetailCount = "repos_detalle";
+
+int MillisSince(std::chrono::steady_clock::time_point start) {
+    const auto spent = std::chrono::steady_clock::now() - start;
+    return static_cast<int>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(spent).count());
+}
 
 // Setting() devuelve un Result, y llamar a Value() sobre uno fallido lanza. Al arrancar eso
 // sería una excepción antes de que exista la ventana, así que aquí "no se pudo leer" y "no
@@ -26,6 +40,12 @@ std::string SettingOr(Store::Repos& repos, const char* key) {
 Model::Instant Now() {
     return std::chrono::time_point_cast<std::chrono::seconds>(
         std::chrono::system_clock::now());
+}
+
+// La frase que se enseña de un error. Nunca un cuerpo de respuesta: 'detail' lo redactamos
+// nosotros (SEGURIDAD.md, regla 3) y esto solo le pone delante de qué clase es.
+std::wstring Phrase(const Model::Error& error) {
+    return std::wstring(Model::NameOf(error.kind)) + L". " + error.detail;
 }
 
 }  // namespace
@@ -79,16 +99,16 @@ void Sync::Close() {
 }
 
 void Sync::Start() {
-    if (m_running.load(std::memory_order_acquire)) return;
     if (Stopping()) return;
-
-    // El hilo anterior ya terminó pero sigue siendo joinable: hay que unirlo antes de
-    // asignar otro, o std::thread llama a terminate.
-    if (m_thread.joinable()) m_thread.join();
-
-    m_running.store(true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> gate(m_gate);
+        // Ya pedida y todavía sin empezar: pulsar Ctrl+R dos veces es pedirlo una vez.
+        if (m_wantSync) return;
+        m_wantSync = true;
+    }
     {
         std::lock_guard<std::mutex> guard(m_mutex);
+        if (m_progress.running) return;
         m_progress.running = true;
         m_progress.stage = Stage::Connecting;
         m_progress.error.reset();
@@ -101,14 +121,69 @@ void Sync::Start() {
         m_progress.gone = 0;
     }
     Notify();
+    Wake();
+}
 
+void Sync::Enqueue(Job job) {
+    if (Stopping()) return;
+    {
+        std::lock_guard<std::mutex> gate(m_gate);
+        m_jobs.push_back(std::move(job));
+    }
+    Wake();
+}
+
+void Sync::Wake() {
+    if (Stopping() || m_hwnd == nullptr) return;
+    std::lock_guard<std::mutex> gate(m_gate);
+    // Si hay trabajador vivo, ya lo recogerá: la comprobación de si queda algo la hace él
+    // bajo este mismo candado justo antes de morirse.
+    if (m_worker) return;
+    // El anterior ya terminó pero sigue siendo joinable: hay que unirlo antes de asignar
+    // otro, o std::thread llama a terminate.
+    if (m_thread.joinable()) m_thread.join();
+    m_worker = true;
     m_thread = std::thread(&Sync::Run, this);
+}
+
+void Sync::Run() {
+    for (;;) {
+        bool sync = false;
+        Job job;
+        bool hasJob = false;
+        {
+            std::lock_guard<std::mutex> gate(m_gate);
+            if (Stopping()) {
+                m_worker = false;
+                return;
+            }
+            if (m_wantSync) {
+                m_wantSync = false;
+                sync = true;
+            } else if (!m_jobs.empty()) {
+                job = std::move(m_jobs.front());
+                m_jobs.pop_front();
+                hasJob = true;
+            } else {
+                // Aquí, y solo aquí, se decide morirse: bajo el mismo candado que usa quien
+                // encola. Fuera de él, un trabajo que llegara entre la comprobación y el
+                // return se quedaría en la cola sin nadie que lo recogiera.
+                m_worker = false;
+                return;
+            }
+        }
+        if (sync) {
+            RunSync();
+        } else if (hasJob) {
+            RunJob(job);
+        }
+    }
 }
 
 void Sync::UseCredential(Secret credential) {
     // Llega del hilo de UI y solo cuando no hay sincronización en marcha, que es cuando la
     // hoja de bienvenida está abierta.
-    if (m_running.load(std::memory_order_acquire)) return;
+    if (Busy()) return;
 
     m_credential = std::move(credential);
     m_credentialIsOurs = true;
@@ -120,7 +195,7 @@ void Sync::UseCredential(Secret credential) {
 }
 
 void Sync::SignOut() {
-    if (m_running.load(std::memory_order_acquire)) return;
+    if (Busy()) return;
 
     Vault::Forget();
     m_credential.Clear();
@@ -236,6 +311,7 @@ Model::Outcome Sync::EnsureCredential() {
 // ----------------------------------------------------------------------- Pase 1 --
 
 Model::Outcome Sync::PassOne(std::int64_t seq) {
+    const auto started = std::chrono::steady_clock::now();
     {
         std::lock_guard<std::mutex> guard(m_mutex);
         m_progress.stage = Stage::Metadata;
@@ -279,6 +355,8 @@ Model::Outcome Sync::PassOne(std::int64_t seq) {
         if (!page.hasNextPage || page.endCursor.empty()) break;
         cursor = page.endCursor;
     }
+
+    m_passOneMs = MillisSince(started);
     return Model::Ok();
 }
 
@@ -332,8 +410,17 @@ void Sync::EnrichChunks(const std::vector<std::vector<std::string>>& chunks) {
 
             {
                 std::lock_guard<std::mutex> lock(m_dbMutex);
-                Store::Repos repos(m_db);
-                for (const Model::Repo& repo : batch.repos) repos.ApplyEnrichment(repo);
+                // Una transacción por tanda. Desde la fase 5 cada repositorio son tres
+                // escrituras —la fila, sus cinco commits y sus .md de la raíz—, así que veinte
+                // repositorios sueltos serían sesenta confirmaciones a disco. Y de paso una
+                // tanda entra entera o no entra: un repositorio con la fila puesta al día y
+                // los commits del mes pasado no da ningún error, solo miente.
+                Store::Transaction tx(m_db);
+                if (tx.Begin().IsOk()) {
+                    Store::Repos repos(m_db);
+                    for (const Model::Repo& repo : batch.repos) repos.ApplyEnrichment(repo);
+                    (void)tx.Commit();
+                }
             }
 
             {
@@ -381,9 +468,14 @@ Model::Outcome Sync::PassTwo() {
 
     // Y aquí es donde lo incremental se nota: con los datos de un día normal esta lista
     // viene vacía y el pase 2 no hace ni una petición.
-    if (pending.empty()) return Model::Ok();
+    if (pending.empty()) {
+        m_passTwoMs = 0;
+        return Model::Ok();
+    }
 
+    const auto started = std::chrono::steady_clock::now();
     EnrichChunks(Chunk(pending, kDetailChunk));
+    m_passTwoMs = MillisSince(started);
 
     if (Stopping()) return Model::Oops(Model::Fail::Cancelled, L"Sincronización cancelada");
 
@@ -392,9 +484,228 @@ Model::Outcome Sync::PassTwo() {
     return Model::Ok();
 }
 
+// ------------------------------------------------ Los trabajos de un solo repositorio --
+
+bool Sync::Busy() const {
+    std::lock_guard<std::mutex> guard(m_mutex);
+    return m_progress.running;
+}
+
+std::vector<JobResult> Sync::TakeFinished() {
+    std::lock_guard<std::mutex> guard(m_mutex);
+    std::vector<JobResult> out;
+    out.swap(m_finished);
+    return out;
+}
+
+void Sync::Finish(JobResult result) {
+    {
+        std::lock_guard<std::mutex> guard(m_mutex);
+        m_finished.push_back(std::move(result));
+    }
+    Notify();
+}
+
+void Sync::MarkPushed(const std::string& repoId, const std::wstring& sha,
+                      const std::wstring& text) {
+    std::lock_guard<std::mutex> lock(m_dbMutex);
+    Store::Repos repos(m_db);
+    // Lo que de verdad hay ahora en el repositorio. Sin esto, el siguiente guardado fusionaría
+    // sobre el texto de la última sincronización y desharía lo que se acaba de subir.
+    repos.SaveProyectoBlob(repoId, sha, text);
+    repos.SetPushPending(repoId, false);
+}
+
+void Sync::RunJob(const Job& job) {
+    JobResult result;
+    result.kind = job.kind;
+    result.repoId = job.repoId;
+    result.path = job.path;
+
+    if (Model::Outcome opened = m_client.Open(); !opened) {
+        result.detail = Phrase(opened.Err());
+        Finish(std::move(result));
+        return;
+    }
+    if (Model::Outcome credential = EnsureCredential(); !credential) {
+        result.detail = Phrase(credential.Err());
+        Finish(std::move(result));
+        return;
+    }
+
+    switch (job.kind) {
+    case JobKind::PushProyecto:
+        PushProyecto(job, result);
+        break;
+    case JobKind::ReadFile:
+        ReadFile(job, result);
+        break;
+    }
+    Finish(std::move(result));
+}
+
+void Sync::PushProyecto(const Job& job, JobResult& result) {
+    Model::Repo repo;
+    Model::Local local;
+    std::vector<Model::Novedad> novedades;
+    {
+        std::lock_guard<std::mutex> lock(m_dbMutex);
+        Store::Repos repos(m_db);
+
+        Model::Result<Model::Repo> got = repos.RepoOf(job.repoId);
+        if (!got) {
+            result.detail = Phrase(got.Err());
+            return;
+        }
+        repo = got.Take();
+
+        Model::Result<Model::Local> mine = repos.LocalOf(job.repoId);
+        if (!mine) {
+            result.detail = Phrase(mine.Err());
+            return;
+        }
+        local = mine.Take();
+
+        if (Model::Result<std::vector<Model::Novedad>> notes = repos.NovedadesOf(job.repoId);
+            notes.IsOk()) {
+            novedades = notes.Take();
+        }
+    }
+
+    // Las dos, y las dos hacen falta: el interruptor Y la confirmación de ESE repositorio
+    // (SEGURIDAD.md, regla 5). Se vuelve a comprobar aquí, en el trabajador, y no solo en la
+    // interfaz: entre que se encoló y se atiende, el usuario ha podido apagarlo.
+    if (!local.repoMode || !local.repoConfirmed) {
+        result.detail = L"Ese repositorio no tiene el modo repo confirmado";
+        return;
+    }
+
+    const std::wstring path = ContentsPath(repo.nameWithOwner);
+    if (path.empty()) {
+        result.detail = L"El nombre de ese repositorio no tiene la forma que espera GitHub";
+        return;
+    }
+
+    std::wstring remoteRaw = repo.proyectoText;
+    std::wstring sha = repo.proyectoOid;
+
+    // Dos vueltas como mucho: la primera con lo que teníamos guardado, y si el archivo cambió
+    // debajo, la segunda con lo que acaba de llegar. Más vueltas serían un bucle contra
+    // alguien que está escribiendo a la vez, y de eso no se sale insistiendo.
+    for (int round = 0; round < 2; ++round) {
+        if (Stopping()) {
+            result.detail = L"Cancelado";
+            return;
+        }
+
+        const std::wstring text = Proyecto::Render(
+            Proyecto::Merge(Proyecto::Parse(remoteRaw), local, novedades, Now()));
+
+        // Un commit que no cambia nada no se hace. Tapa además el caso feo del reintento de
+        // red: si la respuesta de un PUT se perdió, el commit ya existe, y al releer sale
+        // exactamente esto en vez de un segundo commit idéntico.
+        if (text == remoteRaw) {
+            MarkPushed(job.repoId, sha, text);
+            result.ok = true;
+            result.unchanged = true;
+            result.detail = L"PROYECTO.md ya decía lo mismo: no hizo falta ningún commit";
+            return;
+        }
+
+        Model::Result<Response> answered = m_client.Rest(
+            L"PUT", path, m_credential, ContentsBody(text, sha, repo.defaultBranch));
+
+        if (answered.IsOk()) {
+            const Response response = answered.Take();
+            Model::Result<Written> written = ParseContentsWrite(response.body);
+            if (!written) {
+                result.detail = Phrase(written.Err());
+                return;
+            }
+            MarkPushed(job.repoId, written.Value().blobSha, text);
+            result.ok = true;
+            result.commitUrl = written.Value().commitUrl;
+            result.detail = L"PROYECTO.md actualizado en " + repo.nameWithOwner;
+            return;
+        }
+
+        const Model::Error error = answered.Err();
+        const bool conflict =
+            error.kind == Model::Fail::Http && (error.code == 409 || error.code == 422);
+        if (!conflict || round == 1) {
+            // El pendiente se queda puesto: lo escrito está en SQLite desde antes de la
+            // primera petición, así que no se pierde nada — solo tarda en llegar allí.
+            result.detail = Phrase(error);
+            return;
+        }
+
+        Model::Result<Response> reread =
+            m_client.PostGraphQL(m_credential, FileBody(job.repoId, kProyectoFile));
+        if (!reread) {
+            result.detail = Phrase(reread.Err());
+            return;
+        }
+        Model::Result<FileText> fresh = ParseFileText(reread.Value().body);
+        if (!fresh) {
+            result.detail = Phrase(fresh.Err());
+            return;
+        }
+        remoteRaw = fresh.Value().text;
+        sha = fresh.Value().oid;
+    }
+}
+
+void Sync::ReadFile(const Job& job, JobResult& result) {
+    Model::Result<Response> answered =
+        m_client.PostGraphQL(m_credential, FileBody(job.repoId, job.path));
+    if (!answered) {
+        result.detail = Phrase(answered.Err());
+        return;
+    }
+
+    Model::Result<FileText> file = ParseFileText(answered.Value().body);
+    if (!file) {
+        result.detail = Phrase(file.Err());
+        return;
+    }
+    if (!file.Value().found) {
+        result.detail = L"Ese archivo ya no está en el repositorio";
+        return;
+    }
+    if (file.Value().truncated) {
+        // Medio archivo copiado a las novedades es peor que ninguno: parece entero.
+        result.detail = L"Ese archivo es demasiado grande para traerlo entero";
+        return;
+    }
+    result.ok = true;
+    result.text = file.Take().text;
+}
+
+void Sync::QueuePending() {
+    std::vector<std::string> pending;
+    {
+        std::lock_guard<std::mutex> lock(m_dbMutex);
+        Store::Repos repos(m_db);
+        if (Model::Result<std::vector<std::string>> got = repos.PendingPushes(); got.IsOk()) {
+            pending = got.Take();
+        }
+    }
+    if (pending.empty()) return;
+
+    // Van a la cola y no se hacen aquí: el bucle del trabajador los recoge en cuanto vuelve,
+    // y así un pendiente se cancela igual que cualquier otro trabajo al cerrar la ventana.
+    std::lock_guard<std::mutex> gate(m_gate);
+    for (std::string& id : pending) {
+        Job job;
+        job.kind = JobKind::PushProyecto;
+        job.repoId = std::move(id);
+        m_jobs.push_back(std::move(job));
+    }
+}
+
 // ---------------------------------------------------------------- El hilo director --
 
-void Sync::Run() {
+void Sync::RunSync() {
     Model::Outcome result = Model::Ok();
 
     do {
@@ -460,6 +771,14 @@ void Sync::Run() {
         // algo: sin él, las seis peticiones del segundo pase van por turnos y tardan el
         // triple sin dar ni un error.
         repos.SetSetting(kSettingProtocol, m_client.LastLimits().http2 ? "HTTP/2" : "HTTP/1.1");
+        // Lo que tardó cada pase, y sobre cuántos repositorios tardó el segundo: un pase 2 de
+        // cero segundos sobre cero repositorios no dice nada, y es el caso normal.
+        repos.SetSetting(kSettingPassOneMs, std::to_string(m_passOneMs));
+        repos.SetSetting(kSettingPassTwoMs, std::to_string(m_passTwoMs));
+        {
+            std::lock_guard<std::mutex> guard(m_mutex);
+            repos.SetSetting(kSettingDetailCount, std::to_string(m_progress.toEnrich));
+        }
     }
 
     {
@@ -476,8 +795,11 @@ void Sync::Run() {
         }
     }
 
-    m_running.store(false, std::memory_order_release);
     Notify();
+    // Y los que se quedaron a medias otro día. Va al final y solo si todo fue bien: con un
+    // error por delante, lo que falla es la red y reintentar diez commits es empujar a algo
+    // que ya no puede.
+    if (result.IsOk()) QueuePending();
 }
 
 }  // namespace Github

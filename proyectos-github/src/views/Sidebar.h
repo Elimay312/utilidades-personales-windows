@@ -18,6 +18,7 @@
 
 namespace Ui {
 class Button;
+class IconButton;
 class Label;
 class Rule;
 class SidebarGroup;
@@ -40,6 +41,12 @@ public:
     void OnLens(std::function<void(App::Lens)> handler) { m_lens = std::move(handler); }
     void OnSync(std::function<void()> handler) { m_sync = std::move(handler); }
     void OnSignOut(std::function<void()> handler) { m_signOut = std::move(handler); }
+    // Los ajustes: la carpeta de los repositorios, la copia de seguridad y el modo repo por
+    // omisión. Llegan con el punto donde abrir el menú, porque quien sabe qué hay dentro de
+    // ese menú es App —abre cuadros de diálogo y escribe archivos— y no una vista.
+    void OnSettings(std::function<void(float, float)> handler) {
+        m_settings = std::move(handler);
+    }
 
 protected:
     bool OnAttach() override;
@@ -57,10 +64,12 @@ private:
     Ui::Label* m_account = nullptr;
     Ui::Button* m_syncButton = nullptr;
     Ui::Button* m_signOutButton = nullptr;
+    Ui::IconButton* m_settingsButton = nullptr;
 
     std::function<void(App::Lens)> m_lens;
     std::function<void()> m_sync;
     std::function<void()> m_signOut;
+    std::function<void(float, float)> m_settings;
 
     App::Lens m_selected = App::Lens::All;
     bool m_hasAccount = false;

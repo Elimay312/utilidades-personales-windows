@@ -275,3 +275,90 @@ TEST_CASE("filtrar es instantáneo con muchos más de los 120 de la cuenta") {
     // una pulsación tiene que caber muchas veces dentro de uno.
     CHECK(perKeystroke < 2.0);
 }
+
+// ---------------------------------------------- Editar uno sin releer los otros ciento ocho --
+
+TEST_CASE("cambiar la prioridad de uno lo mueve de grupo y recuenta") {
+    // Es lo que hace el inspector con cada pulsación. Releer los 109 de SQLite también
+    // funcionaría; lo que no puede pasar es que el contador de la barra lateral y la lista
+    // digan cosas distintas, porque ninguna de las dos da un error cuando se separan.
+    App::State state;
+    state.Load({MakeRepo("R_1", L"yo/uno", "2026-09-20T00:00:00Z"),
+                MakeRepo("R_2", L"yo/dos", "2026-09-19T00:00:00Z")},
+               {}, kNow);
+
+    CHECK(state.CountOf(App::Lens::Unsorted) == 2);
+    CHECK(state.CountOf(App::Lens::Focus) == 0);
+
+    Model::Local local;
+    local.repoId = "R_1";
+    local.priority = Model::Priority::Focus;
+    local.nextStep = L"Medir el pase 2";
+    REQUIRE(state.ApplyLocal(local, kNow));
+
+    CHECK(state.CountOf(App::Lens::Focus) == 1);
+    CHECK(state.CountOf(App::Lens::Unsorted) == 1);
+
+    state.SetLens(App::Lens::Focus);
+    REQUIRE(state.VisibleCount() == 1);
+    CHECK(state.At(0)->repo.id == "R_1");
+    CHECK(state.At(0)->local.nextStep == L"Medir el pase 2");
+}
+
+TEST_CASE("el siguiente paso entra en lo que mira la búsqueda") {
+    // El pajar se calcula al cargar, así que si ApplyLocal no lo rehiciera, buscar por lo que
+    // uno acaba de escribir no encontraría nada — y una lista vacía se parece muchísimo a una
+    // lista correcta.
+    App::State state;
+    state.Load({MakeRepo("R_1", L"yo/uno", "2026-09-20T00:00:00Z")}, {}, kNow);
+
+    state.SetQuery(L"carpetas");
+    CHECK(state.VisibleCount() == 0);
+
+    Model::Local local;
+    local.repoId = "R_1";
+    local.nextStep = L"Conectar el lector de CARPETAS";
+    REQUIRE(state.ApplyLocal(local, kNow));
+    CHECK(state.VisibleCount() == 1);
+}
+
+TEST_CASE("editar uno que no está cargado no hace nada y lo dice") {
+    App::State state;
+    state.Load({MakeRepo("R_1", L"yo/uno", nullptr)}, {}, kNow);
+
+    Model::Local local;
+    local.repoId = "R_inventado";
+    CHECK_FALSE(state.ApplyLocal(local, kNow));
+    CHECK(state.Entries().size() == 1);
+}
+
+TEST_CASE("el identificador de la fila local es siempre el del repositorio") {
+    // Una fila recién creada puede llegar con el identificador vacío. Si se copiara tal cual,
+    // ese repositorio no volvería a encontrarse nunca — y sin dar ningún error.
+    App::State state;
+    state.Load({MakeRepo("R_1", L"yo/uno", nullptr)}, {}, kNow);
+
+    Model::Local local;
+    local.repoId = "R_1";
+    local.state = Model::State::Blocked;
+    REQUIRE(state.ApplyLocal(local, kNow));
+
+    const App::Entry* entry = state.EntryOf("R_1");
+    REQUIRE(entry != nullptr);
+    CHECK(entry->local.repoId == "R_1");
+    CHECK(entry->local.state == Model::State::Blocked);
+}
+
+TEST_CASE("un repositorio en Enfoque y parado sale en Necesita decisión al cambiarlo") {
+    // El desajuste se deriva, no se guarda. Sin volver a derivarlo en ApplyLocal, subir a
+    // Enfoque un repositorio dormido no lo metería en la vista que existe justo para eso.
+    App::State state;
+    state.Load({MakeRepo("R_1", L"yo/dormido", "2026-01-01T00:00:00Z")}, {}, kNow);
+    CHECK(state.CountOf(App::Lens::NeedsDecision) == 0);
+
+    Model::Local local;
+    local.repoId = "R_1";
+    local.priority = Model::Priority::Focus;
+    REQUIRE(state.ApplyLocal(local, kNow));
+    CHECK(state.CountOf(App::Lens::NeedsDecision) == 1);
+}

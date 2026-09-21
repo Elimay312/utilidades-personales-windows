@@ -41,6 +41,10 @@ public:
         m_changed = std::move(handler);
     }
     void OnSubmit(std::function<void()> handler) { m_submit = std::move(handler); }
+    // Al PERDER el foco. Un campo que solo guarda con Enter pierde lo escrito en cuanto
+    // alguien pincha en otro sitio — y lo que se escribe en el inspector es lo único de esta
+    // aplicación que no se puede volver a descargar.
+    void OnBlur(std::function<void()> handler) { m_blur = std::move(handler); }
 
     bool Focusable() const override { return true; }
     const wchar_t* CursorId() const override;
@@ -82,6 +86,7 @@ private:
 
     std::function<void(const std::wstring&)> m_changed;
     std::function<void()> m_submit;
+    std::function<void()> m_blur;
 };
 
 }  // namespace Ui

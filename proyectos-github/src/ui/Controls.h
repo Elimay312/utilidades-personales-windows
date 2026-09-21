@@ -141,6 +141,12 @@ using Priority = Model::Priority;
 const wchar_t* NameOf(Priority priority);
 Theme::Color ColorOf(Priority priority, const Theme::Tokens& tokens);
 
+// El estado del proyecto, el del frontmatter de PROYECTO.md. Va aquí al lado de la prioridad
+// porque las dos son enumeraciones del dominio que la interfaz tiene que saber escribir, y
+// dos sitios para eso son dos traducciones que un día dejan de decir lo mismo. NO lleva
+// color: es un dato que se lee, no una etiqueta que se reconoce de un vistazo.
+const wchar_t* NameOf(Model::State state);
+
 // La píldora dibujada, sin elemento detrás. La necesitan las tarjetas de la lista: son
 // superficies recicladas y no árboles, así que una píldora por tarjeta no puede ser un
 // visual —serían veinticinco de más para algo que no se mueve ni recibe entrada—.

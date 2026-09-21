@@ -69,6 +69,16 @@ public:
     void SetCount(int count, bool animateEntry);
     int Count() const { return m_count; }
 
+    // La PRÓXIMA recolocación se anima: las celdas se deslizan a su celda nueva en vez de
+    // aparecer ya en ella. De un solo uso y a propósito — recolocar es casi siempre la
+    // realidad nueva, como al cambiar el tamaño de la ventana, y solo a veces una
+    // transición, como cuando el inspector estrecha la columna.
+    //
+    // El TAMAÑO sigue sin animarse: hacerlo reasignaría la textura de cada celda en cada
+    // fotograma. Cambia de golpe y se mueve con muelle, que es la misma decisión que la
+    // fase 4 tomó para el paso de lista a cuadrícula.
+    void AnimateNextArrange() { m_animateArrange = true; }
+
     // Repinta las filas vivas sin moverlas. El contenido cambió —una selección, un tema—
     // pero no quiénes son ni dónde están.
     void Refresh();
@@ -76,11 +86,23 @@ public:
     void SetSelected(int index);
     int Selected() const { return m_selected; }
 
+    // Dónde está una celda en coordenadas de VENTANA, o un rectángulo vacío si esa celda no
+    // se ve ahora mismo. De aquí sale el punto de partida de la transición compartida: la
+    // tarjeta que se convierte en el inspector. Vacío no es un fallo — una tarjeta que se
+    // desplazó fuera de la ventanilla no es de donde sale nada, y quien llama cierra con un
+    // fundido en vez de con un viaje desde ninguna parte.
+    Rect RowRect(int index) const;
+
     // Para que un ancestro pueda mandarle las teclas de navegación cuando el foco está en
     // otra parte —el campo de búsqueda, por ejemplo— sin duplicar lo que la lista ya sabe
     // hacer. Duplicarlo sería tener dos ideas de qué significa "el siguiente".
     bool Navigate(const Input::Key& e) { return OnKey(e); }
     void OnActivate(std::function<void(int)> handler) { m_activate = std::move(handler); }
+    // Un clic sobre una celda, sea o no la que ya estaba elegida. Es distinto de
+    // OnSelectionChanged —que también salta con las flechas— y de OnActivate —que es Enter y
+    // el doble clic—, y hace falta para «Enter o clic abre el inspector» sin que moverse con
+    // las flechas lo abra también.
+    void OnClicked(std::function<void(int)> handler) { m_clicked = std::move(handler); }
     void OnSelectionChanged(std::function<void(int)> handler) {
         m_selectionChanged = std::move(handler);
     }
@@ -142,6 +164,7 @@ private:
     std::vector<std::uint64_t> m_keys;
     RowPainter m_painter;
     std::function<void(int)> m_activate;
+    std::function<void(int)> m_clicked;
     std::function<void(int)> m_selectionChanged;
     std::function<void()> m_recycled;
 
@@ -154,6 +177,7 @@ private:
     float m_padX = 0.0f;
     float m_padY = 0.0f;
     float m_lastRecycleMs = 0.0f;
+    bool m_animateArrange = false;
 };
 
 }  // namespace Ui

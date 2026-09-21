@@ -447,8 +447,24 @@ LRESULT Window::Proc(UINT message, WPARAM wparam, LPARAM lparam) {
         key.repeat = (lparam & 0x40000000) != 0;
         key.system = message == WM_SYSKEYDOWN || message == WM_SYSKEYUP;
         key.modifiers = CurrentModifiers();
-        if (callbacks.onKey && callbacks.onKey(key)) return 0;
+        if (callbacks.onKey && callbacks.onKey(key)) {
+            // Una tecla que se usó como ATAJO no se escribe además como letra. Su WM_CHAR
+            // ya está en la cola —TranslateMessage lo puso al sacar el mensaje, antes de
+            // que nadie pudiera opinar— así que hay que comérselo aquí.
+            //
+            // No es un caso raro: la «/» de la búsqueda se escribiría dentro del propio
+            // campo que acaba de enfocar, y la «e» y la «n» del inspector dentro del campo
+            // que acaban de abrir. Se ve enseguida, pero solo con un teclado de verdad.
+            //
+            // La marca la tocan SOLO las pulsaciones y nunca las sueltas. TranslateMessage
+            // pone el WM_CHAR al final de la cola, así que un WM_KEYUP que llegue entre
+            // medias —pasa al pulsar deprisa, y siempre al mandar los mensajes a mano—
+            // se colaría antes y apagaría la marca justo antes de que sirviera.
+            if (key.down) m_swallowChar = true;
+            return 0;
+        }
         // Si nadie la quiso, que la vea Windows: ahí viven Alt+F4 y Alt+Espacio.
+        if (key.down) m_swallowChar = false;
         break;
     }
 
@@ -457,6 +473,10 @@ LRESULT Window::Proc(UINT message, WPARAM wparam, LPARAM lparam) {
     // es no dejar pasar los controles: Ctrl+V manda un 0x16 por aquí además de su
     // WM_KEYDOWN, y sin este filtro se escribe un carácter invisible en el campo.
     case WM_CHAR:
+        if (m_swallowChar) {
+            m_swallowChar = false;
+            return 0;
+        }
         if (wparam >= 0x20 && wparam != 0x7F && callbacks.onChar) {
             callbacks.onChar(static_cast<wchar_t>(wparam));
         }

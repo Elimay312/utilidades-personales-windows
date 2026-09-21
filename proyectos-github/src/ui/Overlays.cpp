@@ -284,45 +284,111 @@ bool Toast::OnPointer(const Input::Pointer& e) {
 // ============================================================================ Sheet ==
 
 Sheet::Sheet(std::wstring title, std::wstring body)
-    : m_title(std::move(title)), m_body(std::move(body)) {}
+    : m_title(std::move(title)),
+      m_body(std::move(body)),
+      m_acceptText(L"Cerrar") {}
+
+void Sheet::SetActions(std::wstring accept, std::wstring cancel) {
+    m_acceptText = std::move(accept);
+    m_cancelText = std::move(cancel);
+    if (m_acceptButton) m_acceptButton->SetLabel(m_acceptText);
+    if (m_cancelButton) {
+        m_cancelButton->SetLabel(m_cancelText);
+        m_cancelButton->SetVisible(!m_cancelText.empty());
+    }
+    if (Attached()) Relayout();
+}
 
 bool Sheet::OnAttach() {
     m_panel = Add<Panel>(Panel::Surface::Sheet, Metrics::Radius::Sheet, Metrics::kElevationSheet);
     m_titleLabel = m_panel->Add<Label>(m_title, Style::Heading, Weight::Semibold);
     m_bodyLabel = m_panel->Add<Label>(m_body, Style::Body, Weight::Regular);
     m_bodyLabel->UseSecondary();
+    // En varias líneas: es una explicación, y una elipsis a mitad de una explicación la
+    // convierte en nada.
+    m_bodyLabel->SetWrap(true);
 
-    Button* close = m_panel->Add<Button>(L"Cerrar", ButtonKind::Primary);
-    close->OnActivate([this] { HostRef().PopLayer(this); });
+    m_cancelButton = m_panel->Add<Button>(m_cancelText, ButtonKind::Plain);
+    m_cancelButton->SetVisible(!m_cancelText.empty());
+    m_cancelButton->OnActivate([this] { Leave(false); });
+
+    m_acceptButton = m_panel->Add<Button>(m_acceptText, ButtonKind::Primary);
+    m_acceptButton->OnActivate([this] { Leave(true); });
     return true;
 }
 
+void Sheet::Leave(bool accepted) {
+    // La acción se copia ANTES de cerrar: cerrar destruye la hoja, y con ella la lambda
+    // desde la que estamos. Es lo mismo que hace Ui::Menu::Activate.
+    const std::function<void()> action = accepted ? m_accepted : m_cancelled;
+    Host& host = HostRef();
+    Element* self = this;
+    if (const auto queue = host.Queue()) {
+        queue.TryEnqueue([&host, self] { host.PopLayer(self); });
+    } else {
+        host.PopLayer(self);
+    }
+    if (action) action();
+}
+
+bool Sheet::OnKey(const Input::Key& e) {
+    if (!e.down) return false;
+    // Enter acepta y Esc se va. Una hoja que pregunta si se puede escribir en el repositorio
+    // de alguien tiene que poder contestarse sin buscar el ratón.
+    if (e.virtualKey == VK_RETURN) {
+        Leave(true);
+        return true;
+    }
+    if (e.virtualKey == VK_ESCAPE) {
+        Leave(false);
+        return true;
+    }
+    return false;
+}
+
 void Sheet::OnArrange() {
-    if (!m_panel) return;
+    if (!m_panel || !Attached()) return;
 
     const float width = std::min(kSheetWidth, std::max(Frame().width - Metrics::kSpace5 * 2.0f,
                                                        240.0f));
-    const float height = 200.0f;
+    const float inner = std::max(width - kSheetPadding * 2.0f, 1.0f);
+
+    // El alto sale del texto MEDIDO. Con un número fijo, una explicación de cuatro renglones
+    // se queda con dos dentro del panel y dos fuera — y esta hoja es justo la que no puede
+    // salir recortada.
+    const float bodyHeight = std::max(
+        HostRef().Text().Measure(m_body, Style::Body, Weight::Regular, Figures::Proportional,
+                                 inner).height,
+        20.0f);
+
+    constexpr float kTitleHeight = 30.0f;
+    const float height = kSheetPadding + kTitleHeight + Metrics::kSpace2 + bodyHeight +
+                         Metrics::kSpace4 + Metrics::kControlHeight + kSheetPadding;
+
     const float x = (Frame().width - width) * 0.5f;
-    const float y = (Frame().height - height) * 0.5f;
+    const float y = std::max((Frame().height - height) * 0.5f, Metrics::kSpace4);
 
     m_panelRect = Rect{x, y, width, height};
     m_panel->SetFrame(m_panelRect);
 
-    const float inner = width - kSheetPadding * 2.0f;
-    if (m_titleLabel) {
-        m_titleLabel->SetFrame(Rect{kSheetPadding, kSheetPadding, inner, 28.0f});
+    float cursor = kSheetPadding;
+    m_titleLabel->SetFrame(Rect{kSheetPadding, cursor, inner, kTitleHeight});
+    cursor += kTitleHeight + Metrics::kSpace2;
+    m_bodyLabel->SetFrame(Rect{kSheetPadding, cursor, inner, bodyHeight});
+
+    const float buttonsTop = height - kSheetPadding - Metrics::kControlHeight;
+    const float acceptWidth =
+        std::min(std::max(m_acceptButton->PreferredWidth(), 110.0f), inner);
+    m_acceptButton->SetFrame(Rect{width - kSheetPadding - acceptWidth, buttonsTop, acceptWidth,
+                                  Metrics::kControlHeight});
+    if (m_cancelButton->Visible()) {
+        const float cancelWidth =
+            std::min(std::max(m_cancelButton->PreferredWidth(), 90.0f), inner - acceptWidth);
+        m_cancelButton->SetFrame(Rect{width - kSheetPadding - acceptWidth - Metrics::kSpace1 -
+                                          cancelWidth,
+                                      buttonsTop, cancelWidth, Metrics::kControlHeight});
     }
-    if (m_bodyLabel) {
-        m_bodyLabel->SetFrame(Rect{kSheetPadding, kSheetPadding + 36.0f, inner, 24.0f});
-    }
-    // El botón, abajo a la derecha.
-    if (!m_panel->Children().empty()) {
-        Element* last = m_panel->Children().back().get();
-        last->SetFrame(Rect{width - kSheetPadding - 110.0f,
-                            height - kSheetPadding - Metrics::kControlHeight, 110.0f,
-                            Metrics::kControlHeight});
-    }
+
     // Expresivo: es una hoja modal, y es el muelle que pide la tabla de CLAUDE.md.
     m_panel->Appear(Motion::Kind::Expressive);
 }

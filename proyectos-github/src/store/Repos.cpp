@@ -204,6 +204,106 @@ Model::Result<std::vector<std::string>> Repos::NeedingEnrichment() {
     return ids;
 }
 
+Model::Outcome Repos::SaveCommits(const std::string& repoId,
+                                  const std::vector<Model::Commit>& commits) {
+    // Borrar y volver a escribir, no fusionar. Un rebase en la rama principal cambia los
+    // cinco de golpe, y fusionar por oid dejaría en pantalla commits que ya no existen.
+    Model::Result<Stmt> cleared = m_db.Prepare("DELETE FROM commits WHERE repo_id = ?1");
+    if (!cleared) return cleared.Err();
+    Stmt wipe = cleared.Take();
+    wipe.Bind(1, repoId);
+    if (Model::Result<bool> stepped = wipe.Step(); !stepped) return stepped.Err();
+
+    if (commits.empty()) return Model::Ok();
+
+    Model::Result<Stmt> prepared = m_db.Prepare(
+        "INSERT INTO commits (repo_id, ord, oid, title, author, committed) "
+        "VALUES (?1,?2,?3,?4,?5,?6)");
+    if (!prepared) return prepared.Err();
+
+    Stmt stmt = prepared.Take();
+    for (std::size_t i = 0; i < commits.size(); ++i) {
+        const Model::Commit& commit = commits[i];
+        stmt.Reset();
+        stmt.Bind(1, repoId);
+        stmt.Bind(2, static_cast<std::int64_t>(i));
+        stmt.Bind(3, commit.oid);
+        stmt.Bind(4, commit.title);
+        BindTextOrNull(stmt, 5, commit.author);
+        stmt.Bind(6, commit.committedAt);
+        if (Model::Result<bool> stepped = stmt.Step(); !stepped) return stepped.Err();
+    }
+    return Model::Ok();
+}
+
+Model::Result<std::vector<Model::Commit>> Repos::CommitsOf(const std::string& repoId) {
+    Model::Result<Stmt> prepared = m_db.Prepare(
+        "SELECT oid, title, author, committed FROM commits WHERE repo_id = ?1 ORDER BY ord");
+    if (!prepared) return prepared.Err();
+
+    Stmt stmt = prepared.Take();
+    stmt.Bind(1, repoId);
+
+    std::vector<Model::Commit> out;
+    for (;;) {
+        Model::Result<bool> row = stmt.Step();
+        if (!row) return row.Err();
+        if (!row.Value()) break;
+
+        Model::Commit commit;
+        commit.oid = stmt.Wide(0);
+        commit.title = stmt.Wide(1);
+        commit.author = stmt.Wide(2);
+        commit.committedAt = stmt.When(3);
+        out.push_back(std::move(commit));
+    }
+    return out;
+}
+
+Model::Outcome Repos::SaveRootMarkdown(const std::string& repoId,
+                                       const std::vector<std::wstring>& names) {
+    Model::Result<Stmt> cleared = m_db.Prepare("DELETE FROM raiz_md WHERE repo_id = ?1");
+    if (!cleared) return cleared.Err();
+    Stmt wipe = cleared.Take();
+    wipe.Bind(1, repoId);
+    if (Model::Result<bool> stepped = wipe.Step(); !stepped) return stepped.Err();
+
+    if (names.empty()) return Model::Ok();
+
+    // OR IGNORE: dos entradas con el mismo nombre no pueden pasar en un árbol de Git, pero
+    // la clave primaria haría fallar la sincronización entera si alguna vez pasara.
+    Model::Result<Stmt> prepared =
+        m_db.Prepare("INSERT OR IGNORE INTO raiz_md (repo_id, name) VALUES (?1, ?2)");
+    if (!prepared) return prepared.Err();
+
+    Stmt stmt = prepared.Take();
+    for (const std::wstring& name : names) {
+        stmt.Reset();
+        stmt.Bind(1, repoId);
+        stmt.Bind(2, name);
+        if (Model::Result<bool> stepped = stmt.Step(); !stepped) return stepped.Err();
+    }
+    return Model::Ok();
+}
+
+Model::Result<std::vector<std::wstring>> Repos::RootMarkdownOf(const std::string& repoId) {
+    Model::Result<Stmt> prepared =
+        m_db.Prepare("SELECT name FROM raiz_md WHERE repo_id = ?1 ORDER BY name");
+    if (!prepared) return prepared.Err();
+
+    Stmt stmt = prepared.Take();
+    stmt.Bind(1, repoId);
+
+    std::vector<std::wstring> out;
+    for (;;) {
+        Model::Result<bool> row = stmt.Step();
+        if (!row) return row.Err();
+        if (!row.Value()) break;
+        out.push_back(stmt.Wide(0));
+    }
+    return out;
+}
+
 Model::Outcome Repos::ApplyEnrichment(const Model::Repo& repo) {
     Model::Result<Stmt> prepared = m_db.Prepare(
         "UPDATE repos SET enriched = 1, enriched_push = ?1, pushed_at = ?1, "
@@ -228,7 +328,11 @@ Model::Outcome Repos::ApplyEnrichment(const Model::Repo& repo) {
     stmt.Bind(10, repo.id);
 
     if (Model::Result<bool> stepped = stmt.Step(); !stepped) return stepped.Err();
-    return Model::Ok();
+
+    // Las dos listas van DESPUÉS de la fila y dentro de la misma tanda: quien llama envuelve
+    // el lote entero en una transacción, así que o entra todo o no entra nada.
+    if (Model::Outcome saved = SaveCommits(repo.id, repo.commits); !saved) return saved;
+    return SaveRootMarkdown(repo.id, repo.rootMarkdown);
 }
 
 Model::Result<std::vector<Model::Repo>> Repos::All() {
@@ -247,6 +351,27 @@ Model::Result<std::vector<Model::Repo>> Repos::All() {
         repos.push_back(ReadRepo(stmt));
     }
     return repos;
+}
+
+Model::Result<Model::Repo> Repos::RepoOf(const std::string& repoId) {
+    const std::string sql =
+        std::string("SELECT ") + kRepoColumns + " FROM repos WHERE id = ?1";
+
+    Model::Result<Stmt> prepared = m_db.Prepare(sql);
+    if (!prepared) return prepared.Err();
+
+    Stmt stmt = prepared.Take();
+    stmt.Bind(1, repoId);
+
+    Model::Result<bool> row = stmt.Step();
+    if (!row) return row.Err();
+    if (!row.Value()) {
+        // Vacío es un error aquí y no en LocalOf, y la diferencia importa: no tener notas es
+        // normal, no tener repositorio significa que alguien pidió escribir en algo que esta
+        // caché no conoce.
+        return Model::Oops(Model::Fail::Storage, L"Ese repositorio no está en la caché");
+    }
+    return ReadRepo(stmt);
 }
 
 Model::Result<Stats> Repos::Counts() {
@@ -271,7 +396,8 @@ Model::Result<Stats> Repos::Counts() {
 
 Model::Result<Model::Local> Repos::LocalOf(const std::string& repoId) {
     Model::Result<Stmt> prepared = m_db.Prepare(
-        "SELECT priority, state, next_step, repo_mode, folder, updated_at "
+        "SELECT priority, state, next_step, repo_mode, folder, updated_at, "
+        "       repo_confirmed, push_pending "
         "  FROM local WHERE repo_id = ?1");
     if (!prepared) return prepared.Err();
 
@@ -298,6 +424,8 @@ Model::Result<Model::Local> Repos::LocalOf(const std::string& repoId) {
     local.repoMode = stmt.Int(3) != 0;
     local.folder = stmt.Wide(4);
     local.updatedAt = Model::FromEpoch(stmt.Int(5));
+    local.repoConfirmed = stmt.Int(6) != 0;
+    local.pushPending = stmt.Int(7) != 0;
     return local;
 }
 
@@ -306,7 +434,8 @@ Model::Result<std::vector<Model::Local>> Repos::AllLocal() {
     // fase 4 es que la ventana enseñe la lista en menos de 200 ms, y lo que se hace antes
     // de enseñarla hay que poder contarlo con los dedos.
     Model::Result<Stmt> prepared = m_db.Prepare(
-        "SELECT repo_id, priority, state, next_step, repo_mode, folder, updated_at FROM local");
+        "SELECT repo_id, priority, state, next_step, repo_mode, folder, updated_at, "
+        "       repo_confirmed, push_pending FROM local");
     if (!prepared) return prepared.Err();
 
     Stmt stmt = prepared.Take();
@@ -326,19 +455,27 @@ Model::Result<std::vector<Model::Local>> Repos::AllLocal() {
         local.repoMode = stmt.Int(4) != 0;
         local.folder = stmt.Wide(5);
         local.updatedAt = Model::FromEpoch(stmt.Int(6));
+        local.repoConfirmed = stmt.Int(7) != 0;
+        local.pushPending = stmt.Int(8) != 0;
         locals.push_back(std::move(local));
     }
     return locals;
 }
 
 Model::Outcome Repos::SaveLocal(const Model::Local& local) {
+    // Fíjate en lo que NO aparece: push_pending. Lo escribe SetPushPending y nadie más,
+    // porque el que lo apaga es el hilo de trabajo cuando el commit sale bien y el que lo
+    // enciende es la interfaz al guardar. Listarlo aquí haría que un guardado hecho mientras
+    // sube el anterior borrase la marca del que todavía está en vuelo.
     Model::Result<Stmt> prepared = m_db.Prepare(
-        "INSERT INTO local (repo_id, priority, state, next_step, repo_mode, folder, updated_at) "
-        "VALUES (?1,?2,?3,?4,?5,?6,?7) "
+        "INSERT INTO local (repo_id, priority, state, next_step, repo_mode, folder, "
+        "                   updated_at, repo_confirmed) "
+        "VALUES (?1,?2,?3,?4,?5,?6,?7,?8) "
         "ON CONFLICT(repo_id) DO UPDATE SET "
         "  priority = excluded.priority, state = excluded.state, "
         "  next_step = excluded.next_step, repo_mode = excluded.repo_mode, "
-        "  folder = excluded.folder, updated_at = excluded.updated_at");
+        "  folder = excluded.folder, updated_at = excluded.updated_at, "
+        "  repo_confirmed = excluded.repo_confirmed");
     if (!prepared) return prepared.Err();
 
     Stmt stmt = prepared.Take();
@@ -349,7 +486,55 @@ Model::Outcome Repos::SaveLocal(const Model::Local& local) {
     stmt.Bind(5, local.repoMode);
     BindTextOrNull(stmt, 6, local.folder);
     stmt.Bind(7, Model::ToEpoch(local.updatedAt));
+    stmt.Bind(8, local.repoConfirmed);
 
+    if (Model::Result<bool> stepped = stmt.Step(); !stepped) return stepped.Err();
+    return Model::Ok();
+}
+
+Model::Outcome Repos::SetPushPending(const std::string& repoId, bool pending) {
+    // INSERT y no UPDATE a secas: puede no haber fila todavía —un repositorio del que solo
+    // se ha tocado el interruptor— y un UPDATE sobre cero filas no da error, no hace nada y
+    // deja el pendiente sin apuntar.
+    Model::Result<Stmt> prepared = m_db.Prepare(
+        "INSERT INTO local (repo_id, push_pending) VALUES (?1, ?2) "
+        "ON CONFLICT(repo_id) DO UPDATE SET push_pending = excluded.push_pending");
+    if (!prepared) return prepared.Err();
+
+    Stmt stmt = prepared.Take();
+    stmt.Bind(1, repoId);
+    stmt.Bind(2, pending);
+    if (Model::Result<bool> stepped = stmt.Step(); !stepped) return stepped.Err();
+    return Model::Ok();
+}
+
+Model::Result<std::vector<std::string>> Repos::PendingPushes() {
+    Model::Result<Stmt> prepared = m_db.Prepare(
+        "SELECT repo_id FROM local "
+        " WHERE push_pending = 1 AND repo_mode = 1 AND repo_confirmed = 1");
+    if (!prepared) return prepared.Err();
+
+    Stmt stmt = prepared.Take();
+    std::vector<std::string> ids;
+    for (;;) {
+        Model::Result<bool> row = stmt.Step();
+        if (!row) return row.Err();
+        if (!row.Value()) break;
+        ids.push_back(stmt.Text(0));
+    }
+    return ids;
+}
+
+Model::Outcome Repos::SaveProyectoBlob(const std::string& repoId, const std::wstring& oid,
+                                       const std::wstring& text) {
+    Model::Result<Stmt> prepared =
+        m_db.Prepare("UPDATE repos SET proyecto_oid = ?1, proyecto_text = ?2 WHERE id = ?3");
+    if (!prepared) return prepared.Err();
+
+    Stmt stmt = prepared.Take();
+    BindTextOrNull(stmt, 1, oid);
+    BindTextOrNull(stmt, 2, text);
+    stmt.Bind(3, repoId);
     if (Model::Result<bool> stepped = stmt.Step(); !stepped) return stepped.Err();
     return Model::Ok();
 }
@@ -365,6 +550,16 @@ Model::Outcome Repos::AddNovedad(const Model::Novedad& novedad) {
     stmt.Bind(3, novedad.text);
     stmt.Bind(4, Model::ToEpoch(novedad.createdAt));
 
+    if (Model::Result<bool> stepped = stmt.Step(); !stepped) return stepped.Err();
+    return Model::Ok();
+}
+
+Model::Outcome Repos::DeleteNovedad(std::int64_t id) {
+    Model::Result<Stmt> prepared = m_db.Prepare("DELETE FROM novedades WHERE id = ?1");
+    if (!prepared) return prepared.Err();
+
+    Stmt stmt = prepared.Take();
+    stmt.Bind(1, id);
     if (Model::Result<bool> stepped = stmt.Step(); !stepped) return stepped.Err();
     return Model::Ok();
 }
@@ -390,6 +585,30 @@ Model::Result<std::vector<Model::Novedad>> Repos::NovedadesOf(const std::string&
         novedad.day = stmt.Text(1);
         novedad.text = stmt.Wide(2);
         novedad.createdAt = Model::FromEpoch(stmt.Int(3));
+        out.push_back(std::move(novedad));
+    }
+    return out;
+}
+
+Model::Result<std::vector<Model::Novedad>> Repos::AllNovedades() {
+    Model::Result<Stmt> prepared = m_db.Prepare(
+        "SELECT id, repo_id, day, text, created_at FROM novedades "
+        " ORDER BY repo_id, day DESC, id DESC");
+    if (!prepared) return prepared.Err();
+
+    Stmt stmt = prepared.Take();
+    std::vector<Model::Novedad> out;
+    for (;;) {
+        Model::Result<bool> row = stmt.Step();
+        if (!row) return row.Err();
+        if (!row.Value()) break;
+
+        Model::Novedad novedad;
+        novedad.id = stmt.Int(0);
+        novedad.repoId = stmt.Text(1);
+        novedad.day = stmt.Text(2);
+        novedad.text = stmt.Wide(3);
+        novedad.createdAt = Model::FromEpoch(stmt.Int(4));
         out.push_back(std::move(novedad));
     }
     return out;

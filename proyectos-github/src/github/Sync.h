@@ -19,6 +19,7 @@
 #include <Windows.h>
 
 #include <atomic>
+#include <deque>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -62,6 +63,40 @@ struct Progress {
     Limits limits;
 };
 
+// Trabajo de UN repositorio, pedido desde la interfaz. Va por el mismo hilo que la
+// sincronización y no por uno propio, y eso no es ahorro: comparten la credencial, el
+// cliente y la conexión a SQLite, y dos dueños de una credencial son dos vidas que
+// sincronizar. De paso queda serializado, que además es lo que se quiere — un PUT no puede
+// correr a la vez que el segundo pase escribiendo la misma fila.
+enum class JobKind {
+    PushProyecto,  // escribir PROYECTO.md en el repositorio
+    ReadFile,      // traer el texto de un .md de la raíz, para copiarlo a las novedades
+};
+
+struct Job {
+    JobKind kind = JobKind::PushProyecto;
+    std::string repoId;
+    std::wstring path;  // solo ReadFile
+};
+
+// Lo que hay que contarle al usuario cuando un trabajo termina. NO viaja dentro de Progress:
+// Snapshot() se llama en cada mensaje y copiaría el texto de un archivo entero cada vez.
+struct JobResult {
+    JobKind kind = JobKind::PushProyecto;
+    std::string repoId;
+    std::wstring path;
+    bool ok = false;
+    // Una frase redactada por nosotros. Nunca un cuerpo de respuesta (SEGURIDAD.md, regla 3).
+    std::wstring detail;
+    // ReadFile: el contenido pedido. Es del repositorio del usuario y se queda en memoria el
+    // rato que tarda en verse en una hoja.
+    std::wstring text;
+    // PushProyecto: a dónde fue el commit, para poder abrirlo.
+    std::wstring commitUrl;
+    // PushProyecto: no hizo falta commitear porque el archivo ya decía lo mismo.
+    bool unchanged = false;
+};
+
 class Sync {
 public:
     Sync() = default;
@@ -80,6 +115,8 @@ public:
 
     // --- Desde el hilo de UI ---
     void Start();
+    // Pide un trabajo de un repositorio. Vuelve enseguida: lo hace el trabajador.
+    void Enqueue(Job job);
     void UseCredential(Secret credential);
     void SignOut();
 
@@ -87,9 +124,32 @@ public:
     // el siguiente cambio vuelva a avisar— y luego lee.
     void Acknowledge();
     Progress Snapshot() const;
+    // Saca los trabajos terminados desde la última vez. Se vacía al leer: son avisos, no
+    // estado, y repetirlos en cada mensaje sería enseñar dos veces el mismo.
+    std::vector<JobResult> TakeFinished();
 
 private:
+    // El trabajador: sincroniza si se lo han pedido, vacía la cola y se muere. La decisión
+    // de morirse se toma BAJO EL MISMO CANDADO que usa quien encola, y esa es toda la
+    // sincronización que hay aquí: sin eso, un trabajo encolado entre la última comprobación
+    // y la salida del hilo se quedaría ahí para siempre y no daría ningún error — solo un
+    // commit que nunca sube.
     void Run();
+    void Wake();
+    void RunSync();
+    void RunJob(const Job& job);
+    void PushProyecto(const Job& job, JobResult& result);
+    void ReadFile(const Job& job, JobResult& result);
+    void Finish(JobResult result);
+    void MarkPushed(const std::string& repoId, const std::wstring& sha,
+                    const std::wstring& text);
+    // Hay una sincronización en marcha. Antes era un atomic aparte; ahora la verdad está en
+    // Progress::running y solo hay un sitio donde mirarla.
+    bool Busy() const;
+    // Los que quedaron pendientes de una vez anterior. Se reintentan al terminar una
+    // sincronización que fue bien.
+    void QueuePending();
+
     void Notify();
 
     Model::Outcome EnsureCredential();
@@ -115,14 +175,27 @@ private:
 
     std::thread m_thread;
     std::atomic<bool> m_stop{false};
-    std::atomic<bool> m_running{false};
+
+    // La puerta del trabajador. Protege las tres cosas que deciden si hay que arrancar uno o
+    // si el que hay puede irse: si se ha pedido una sincronización, qué trabajos esperan, y
+    // si hay alguien vivo atendiéndolos.
+    std::mutex m_gate;
+    std::deque<Job> m_jobs;
+    bool m_wantSync = false;
+    bool m_worker = false;
     // Si una tanda dice que no hay permiso de Contents, se apaga y se repite sin el blob.
     std::atomic<bool> m_withContents{true};
     // Sin ATOMIC_FLAG_INIT: en C++20 está obsoleto y un atomic_flag nace ya limpio.
     std::atomic_flag m_notified;
 
+    // Lo que tardó cada pase. Los escribe y los lee SOLO el hilo director, entre el final de
+    // un pase y el final de Run(), así que no hacen falta ni candado ni átomo.
+    int m_passOneMs = 0;
+    int m_passTwoMs = 0;
+
     mutable std::mutex m_mutex;
     Progress m_progress;
+    std::vector<JobResult> m_finished;
 };
 
 }  // namespace Github

@@ -47,6 +47,13 @@ public:
     // una sola llamada, en vez de andar por ahí viva durante toda la sincronización.
     Model::Result<Response> PostGraphQL(const Secret& credential, std::string_view body);
 
+    // Una petición a la API REST, con la MISMA política de reintentos. La usa el modo repo,
+    // que es lo único que escribe. No hace falta tocar Retry.h: Retryable(Fail::Http, 409)
+    // ya es false, así que un conflicto no se repite a ciegas — se relee y se vuelve a
+    // fusionar, que es lo único que puede arreglarlo.
+    Model::Result<Response> Rest(const wchar_t* verb, const std::wstring& path,
+                                 const Secret& credential, std::string_view body);
+
     Limits LastLimits() const;
 
     // Por debajo de esto no se empieza una sincronización. Con ocho puntos por sincronización
@@ -59,6 +66,10 @@ private:
     // con la ventana ya cerrada.
     bool Pause(int ms);
     void Remember(const Response& response);
+    // El bucle de intentos, que es lo mismo para GraphQL y para REST. Escrito dos veces
+    // serían dos políticas de reintento esperando a separarse.
+    Model::Result<Response> Perform(const wchar_t* verb, const std::wstring& path,
+                                    const Secret& credential, std::string_view body);
 
     Session m_session;
     RetryPolicy m_policy;

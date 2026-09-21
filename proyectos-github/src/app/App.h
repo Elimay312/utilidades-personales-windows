@@ -30,6 +30,10 @@
 #include "views/Catalog.h"
 #endif
 
+namespace Ui {
+class Sheet;
+}
+
 namespace App {
 
 class Application {
@@ -44,6 +48,48 @@ private:
     void WireView();
 
     void InstallMain();
+    // --- El inspector. App es quien sabe de SQLite y de hilos; la vista solo pide. --------
+    void WireInspector();
+    void BindInspector(const std::string& repoId);
+    void RebindInspector();
+    // El camino de TODA edición, y en este orden: primero SQLite, después el estado y la
+    // pantalla. El criterio de aceptación de la fase —editar el siguiente paso y cerrar la
+    // aplicación conserva el cambio— no puede depender de que haya red ni de que el modo
+    // repo esté encendido, así que lo primero que pasa siempre es que se guarda.
+    void SaveLocal(Model::Local local);
+    void SetPriority(Model::Priority priority);
+    void SetProjectState(Model::State state);
+    void SetNextStep(const std::wstring& text);
+    void AddNovedad(const std::wstring& text);
+    void DeleteNovedad(std::int64_t id);
+    void OpenFolder();
+    // El interruptor del modo repo. Encenderlo en un repositorio que nunca se ha confirmado
+    // abre la hoja; apagarlo no pregunta nada.
+    void SetRepoMode(bool wanted);
+    void ConfirmRepoMode(const Entry& entry);
+    // Una hoja modal con dos salidas, ya colocada y con el tema puesto. Las tres preguntas
+    // de esta fase se montan igual, y montarlas tres veces sería tres sitios donde olvidarse
+    // del ApplyTheme y quedarse con una hoja en el tema de antes.
+    Ui::Sheet* Ask(std::wstring title, std::wstring body, std::wstring accept,
+                   std::wstring cancel);
+    // El botón «Importar»: lo que dice el PROYECTO.md del repositorio pasa a ser lo de aquí.
+    // Pregunta antes, porque pisa lo que el usuario tenga escrito.
+    void ImportProyecto();
+    // Los trabajos que terminaron en el hilo de GitHub: un commit, o el texto de un .md.
+    void DrainJobs();
+    // Llegó el texto de un .md de la raíz: se enseña lo que se copiaría antes de copiarlo.
+    void OnFileArrived(const Github::JobResult& done);
+
+    // --- Los ajustes del pie de la barra lateral -----------------------------------------
+    void ShowSettings(float x, float y);
+    void ChooseReposRoot();
+    void ExportBackup();
+    void ImportBackup();
+    void ToggleRepoModeDefault();
+    void ChooseFolderFor(const std::string& repoId);
+    // La carpeta que abriría el botón: la del repositorio si se eligió, y si no la que sale
+    // de la raíz configurada. Vacía si no hay ninguna que exista.
+    std::wstring ResolveFolder(const Entry& entry) const;
     // Lee la caché entera y la mete en el estado. Es lo que corre antes de enseñar la
     // ventana, y por eso son dos consultas y no ciento diez.
     void LoadFromCache();
@@ -83,6 +129,17 @@ private:
     Views::Welcome* m_welcome = nullptr;
     // El último error que ya se enseñó como aviso, para no repetirlo en cada mensaje.
     std::wstring m_shownError;
+    // A qué repositorio está enganchado el inspector. Se guarda el IDENTIFICADOR y no la
+    // posición: la lista se reordena y se filtra debajo, y una posición guardada acabaría
+    // apuntando a otro repositorio sin dar ningún error.
+    std::string m_inspectorRepo;
+    // Dónde clona el usuario sus repositorios. Vacío hasta que lo elija: sin ella, el botón
+    // de la carpeta local invita a elegirla en vez de abrir la que no es.
+    std::wstring m_reposRoot;
+    // Los repositorios nuevos nacen con el interruptor puesto. NO se saltan la confirmación:
+    // escribir sigue exigiendo que alguien diga que sí en ESE repositorio (SEGURIDAD.md,
+    // regla 5). Lo único que ahorra es tener que encenderlo a mano cada vez.
+    bool m_repoModeDefault = false;
     std::wstring m_account;
     // La vista guardada se lee una sola vez, al arrancar. Ver LoadFromCache.
     bool m_lensLoaded = false;

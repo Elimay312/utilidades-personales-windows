@@ -70,12 +70,17 @@ public:
     void Cancel();
     bool Cancelled() const;
 
-    // POST a api.github.com. Se llama desde varios hilos a la vez.
+    // Una petición a api.github.com. Se llama desde varios hilos a la vez.
     //
     // 'authorization' es la cabecera Authorization ya montada; esta clase no sabe de dónde
     // sale ni la guarda.
-    Model::Result<Response> Post(const wchar_t* path, const std::wstring& authorization,
-                                 std::string_view body);
+    //
+    // El verbo entra por parámetro desde la fase 5: hasta entonces todo era POST a /graphql,
+    // y el modo repo escribe con PUT a la API de contenidos. La ruta pasa a ser una cadena
+    // porque esa se calcula —lleva el dueño y el nombre del repositorio dentro— y quien la
+    // calcula la valida antes (Github::ContentsPath).
+    Model::Result<Response> Send(const wchar_t* verb, const std::wstring& path,
+                                 const std::wstring& authorization, std::string_view body);
 
 private:
     // Cada petición en vuelo se apunta con un número propio y creciente, no solo con su

@@ -106,12 +106,27 @@ private:
 
 // ------------------------------------------------------------------------- Hoja --
 
+// Una pregunta con dos salidas. La fase 2 la dejó con un solo botón de «Cerrar» porque el
+// catálogo solo tenía que enseñarla; la fase 5 la necesita de verdad, para lo único de la
+// aplicación que no se puede deshacer: el primer commit en un repositorio de trabajo.
+//
+// El alto sale del texto MEDIDO y no de un número fijo. Una hoja que pregunta si se puede
+// escribir en el repositorio de alguien no puede tener la explicación recortada.
 class Sheet : public Element {
 public:
     Sheet(std::wstring title, std::wstring body);
 
+    // Sin esto la hoja solo sabe cerrarse, que es lo que hacía en la fase 2. Con esto son
+    // dos botones: el de la derecha acepta y el de su izquierda se va sin hacer nada.
+    void SetActions(std::wstring accept, std::wstring cancel);
+    // El de aceptar en rojo de advertencia no existe en la tabla de CLAUDE.md; lo que sí hay
+    // es el acento, y un botón primario ya dice cuál es la salida por omisión.
+    void OnAccept(std::function<void()> handler) { m_accepted = std::move(handler); }
+    void OnCancel(std::function<void()> handler) { m_cancelled = std::move(handler); }
+
     bool ClipsInput() const override { return true; }
     bool HitTest(float lx, float ly) const override;
+    bool OnKey(const Input::Key& e) override;
 
     // Para que quien la abra pueda meterle lo suyo.
     Panel* Content() const { return m_panel; }
@@ -121,11 +136,22 @@ protected:
     void OnArrange() override;
 
 private:
+    // Cerrar destruye la hoja, y con ella la lambda desde la que se está llamando. Por eso
+    // la acción se copia antes y el cierre se aplaza al siguiente turno de la cola, que es
+    // el mismo truco que ya usan Ui::Toast y la hoja de bienvenida.
+    void Leave(bool accepted);
+
     std::wstring m_title;
     std::wstring m_body;
+    std::wstring m_acceptText;
+    std::wstring m_cancelText;
     Panel* m_panel = nullptr;
     Label* m_titleLabel = nullptr;
     Label* m_bodyLabel = nullptr;
+    Button* m_acceptButton = nullptr;
+    Button* m_cancelButton = nullptr;
+    std::function<void()> m_accepted;
+    std::function<void()> m_cancelled;
     Rect m_panelRect;
 };
 

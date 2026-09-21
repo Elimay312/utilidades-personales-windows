@@ -56,11 +56,17 @@ bool RepoList::OnAttach() {
         [this](const Ui::Paint& paint, const Rect& box, const Ui::List::RowState& state) {
             PaintCardRow(paint, box, state.index, state.hovered, state.selected);
         });
-    // Sin OnActivate: la fase 4 no abre nada. Enter y el doble clic eligen, y lo que se abre
-    // —el inspector— es de la fase 5. Dejarlo enganchado a algo provisional sería enseñar
-    // una conducta que hay que desaprender dentro de una fase.
     m_list->OnSelectionChanged([this](int index) {
         if (m_selectionChanged) m_selectionChanged(index);
+    });
+    // Los dos, y distintos: Enter y el doble clic ACTIVAN, y un clic suelto es un clic. Sin
+    // separarlos, moverse con las flechas —que también cambia la selección— abriría el
+    // inspector en cada pulsación.
+    m_list->OnActivate([this](int index) {
+        if (m_activated) m_activated(index);
+    });
+    m_list->OnClicked([this](int index) {
+        if (m_clicked) m_clicked(index);
     });
 
     m_empty = Add<Ui::Slate>();
@@ -124,9 +130,15 @@ void RepoList::OnArrange() {
         if (m_count) m_count->SetFrame(Rect{0.0f, 27.0f, headerWidth, 18.0f});
     }
 
+    const bool slide = m_animateArrange;
+    m_animateArrange = false;
+
     const float listTop = kTop + kHeaderHeight;
     const float listHeight = std::max(Frame().height - listTop, 1.0f);
-    if (m_list) m_list->SetFrame(Rect{0.0f, listTop, width, listHeight});
+    if (m_list) {
+        if (slide) m_list->AnimateNextArrange();
+        m_list->SetFrame(Rect{0.0f, listTop, width, listHeight});
+    }
 
     // El estado vacío, en el tercio de arriba de la lista y no en el centro exacto: un
     // bloque de texto centrado en una ventana alta queda flotando muy abajo.
@@ -149,7 +161,7 @@ void RepoList::OnArrange() {
     }
 
     // Después de colocar: el número de columnas depende del ancho que acabamos de recibir.
-    ApplyLayout(false);
+    ApplyLayout(slide);
 }
 
 // ----------------------------------------------------------------------- El contenido --
@@ -321,11 +333,22 @@ void RepoList::FocusList() {
 
 int RepoList::Selected() const { return m_list ? m_list->Selected() : -1; }
 
+Ui::Rect RepoList::SelectedCardRect() const {
+    if (m_list == nullptr) return Ui::Rect{};
+    return m_list->RowRect(m_list->Selected());
+}
+
 void RepoList::SelectSlot(int slot) {
     if (m_list) m_list->SetSelected(slot);
 }
 
 bool RepoList::Navigate(const Input::Key& e) { return m_list && m_list->Navigate(e); }
+
+void RepoList::ReflowCells() {
+    // Solo levanta la bandera: quien recoloca de verdad es OnArrange, y hacerlo aquí además
+    // dejaría las celdas puestas en su sitio nuevo ANTES de que hubiera nada que animar.
+    m_animateArrange = true;
+}
 
 void RepoList::ToggleLayout() {
     m_layout = m_layout == CardLayout::List ? CardLayout::Grid : CardLayout::List;

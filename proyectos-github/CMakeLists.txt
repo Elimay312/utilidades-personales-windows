@@ -107,7 +107,14 @@ add_library(brujula_core STATIC
   # respuesta y saber qué se reintenta. WinHTTP, la credencial y el hilo se quedan fuera.
   src/github/Query.cpp
   src/github/Parse.cpp
-  src/github/Retry.cpp)
+  src/github/Retry.cpp
+  # Fase 5. La misma regla otra vez, y aquí es donde más se nota: un PROYECTO.md leído a
+  # medias no da un error, da un archivo más corto la próxima vez que se escriba —dentro de
+  # un commit que dice "actualizar PROYECTO.md"—, y un relleno de base64 mal puesto sube un
+  # archivo con la última línea cortada que GitHub acepta tan contento.
+  src/model/Base64.cpp
+  src/projectfile/Proyecto.cpp
+  src/store/Backup.cpp)
 target_include_directories(brujula_core PUBLIC src)
 # SQLite entra en el núcleo, y no rompe la regla de la biblioteca: lo que el README dice que
 # no entra aquí es Win32 y WinRT "para decidir", y SQLite es C portable. Lo que se gana es
@@ -148,6 +155,9 @@ add_executable(brujula WIN32
   # hilo de sincronización. Lo que decide —consulta, parser, reintentos, esquema— está en
   # brujula_core y tiene pruebas.
   src/store/Paths.cpp
+  # Fase 5: los cuadros de archivo del sistema. Son ventanas APARTE, no controles hijos, así
+  # que no chocan con la decisión de la fase 1 de no tener ni un HWND dentro de la ventana.
+  src/shell/Files.cpp
   src/github/Http.cpp
   src/github/Client.cpp
   src/github/Auth.cpp
@@ -162,6 +172,8 @@ add_executable(brujula WIN32
   src/views/Sidebar.cpp
   src/views/RepoList.cpp
   src/views/Card.cpp
+  # Fase 5. El panel de la derecha: lo primero de la aplicación que ESCRIBE.
+  src/views/Inspector.cpp
   # La hoja de la credencial, de la fase 3. Se queda.
   src/views/Welcome.cpp
   # El catálogo solo existe en Debug: es una pantalla de revisión, no una función del
@@ -233,6 +245,9 @@ add_executable(brujula_tests
   tests/query_test.cpp
   tests/parse_test.cpp
   tests/retry_test.cpp
+  tests/base64_test.cpp
+  tests/proyecto_test.cpp
+  tests/backup_test.cpp
   tests/auth_test.cpp
   # Auth.cpp es del ejecutable, pero el tipo de la credencial y la comprobación de forma son
   # decisiones puras y se prueban. La prueba NO toca el Administrador de credenciales:

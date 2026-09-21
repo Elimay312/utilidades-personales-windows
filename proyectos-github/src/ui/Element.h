@@ -87,8 +87,39 @@ public:
     // un muelle reasignaría la textura en cada fotograma.
     void SetFrame(const Rect& frame);
     void SlideTo(float xDip, float yDip, Motion::Kind kind);
+    // La transición compartida: sitio, tamaño y radio del material a la vez y con el mismo
+    // muelle. Es lo que convierte una tarjeta en el inspector, y lo que la deshace.
+    //
+    // **Solo para elementos SIN superficie propia.** Animar el tamaño de un dueño de
+    // superficie reasignaría su textura en cada fotograma, que es lo que la fase 1 midió que
+    // no se puede hacer; aquí lo que se anima es la forma —una propiedad de la GPU— y el
+    // contenido se cruza con un fundido. Si el elemento tiene Gfx::Layer, esto NO anima: se
+    // coloca de golpe, que es preferible a tirar fotogramas sin avisar.
+    //
+    // Los hijos se colocan ya en su marco de destino, así que hace falta recortar: ver
+    // SetClipsChildren.
+    void MorphTo(const Rect& frame, float radiusDip, Motion::Kind kind);
+    // El punto de partida de un MorphTo: colocarse sin animar y con el radio que se le diga.
+    void SnapTo(const Rect& frame, float radiusDip);
     const Rect& Frame() const { return m_frame; }
     Rect WindowRect() const;
+
+    // Recorta a su propio marco lo que se salga. Lo quiere lo que se transforma: durante el
+    // viaje el contenido ya está maquetado para el tamaño de destino y asomaría por fuera de
+    // la forma pequeña. Es el mismo clip que Gfx::Morph pone en su raíz desde la fase 1.
+    //
+    // Y el mismo límite: un Visual.Clip explícito SÍ recorta las sombras, así que nada que
+    // proyecte sombra puede llevar esto (compositor/Shadow.h).
+    void SetClipsChildren(bool clips);
+
+    // La opacidad del elemento entero, con fundido o sin él. Hasta ahora solo Ui::Panel
+    // sabía hacerlo, y solo para sí mismo.
+    void SetOpacity(float value, float durationMs);
+    // La de los HIJOS, sin tocar el material propio. Es lo que hace que una tarjeta se
+    // convierta en un panel: la forma viaja opaca desde el primer fotograma —y con el color
+    // de la tarjeta, así que al empezar son indistinguibles— y lo que se cruza es lo de
+    // dentro. Con la opacidad del elemento entero se vería el panel aparecer, no crecer.
+    void SetContentOpacity(float value, float durationMs);
 
     void SetVisible(bool visible);
     bool Visible() const { return m_visible; }

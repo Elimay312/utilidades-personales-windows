@@ -73,6 +73,39 @@ CREATE TABLE ajustes (
 );
 )SQL";
 
+// --- v2 ---------------------------------------------------------------------------
+//
+// Lo que el inspector de la fase 5 necesita enseñar sin esperar a la red, y lo que hace falta
+// para escribir en el repositorio.
+//
+// Las dos tablas nuevas van con las mismas claves ajenas que las de v1 y por el mismo motivo,
+// que es el contrario del que uno escribe por inercia: SIN cascada al borrar —borrar un
+// repositorio tiene que fallar, porque colgaría las notas— y CON cascada al renumerar, para
+// que el día que GitHub cambie sus identificadores globales todo siga colgando de su sitio.
+constexpr const char* kV2 = R"SQL(
+CREATE TABLE commits (
+  repo_id   TEXT NOT NULL REFERENCES repos(id) ON UPDATE CASCADE,
+  ord       INTEGER NOT NULL,
+  oid       TEXT NOT NULL,
+  title     TEXT NOT NULL,
+  author    TEXT,
+  committed INTEGER,
+  PRIMARY KEY (repo_id, ord)
+);
+
+-- Los .md de la raíz que no son README, CHANGELOG ni LICENSE. Solo el NOMBRE: el contenido
+-- se pide cuando alguien quiere copiarlo a las novedades, y guardar ciento nueve archivos
+-- para enseñar una lista de nombres sería llenar la caché de texto que nadie mira.
+CREATE TABLE raiz_md (
+  repo_id TEXT NOT NULL REFERENCES repos(id) ON UPDATE CASCADE,
+  name    TEXT NOT NULL,
+  PRIMARY KEY (repo_id, name)
+);
+
+ALTER TABLE local ADD COLUMN repo_confirmed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE local ADD COLUMN push_pending   INTEGER NOT NULL DEFAULT 0;
+)SQL";
+
 struct Migration {
     int version;
     const char* sql;
@@ -80,6 +113,7 @@ struct Migration {
 
 constexpr Migration kMigrations[] = {
     {1, kV1},
+    {2, kV2},
 };
 
 }  // namespace

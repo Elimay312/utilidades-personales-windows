@@ -68,18 +68,49 @@ std::wstring MessageOf(const Json& error) {
     return message.empty() ? std::wstring(L"GitHub devolvió un error sin explicación") : message;
 }
 
-// Un error de permisos sobre el campo del blob. Es lo que contesta una credencial con
-// Metadata: read pero sin Contents: read, y no tiene por qué tirar la sincronización.
-bool IsProyectoForbidden(const Json& error) {
+// Un error de permisos sobre uno de los dos campos del árbol. Es lo que contesta una
+// credencial con Metadata: read pero sin Contents: read, y no tiene por qué tirar la
+// sincronización: se repite la tanda sin esos campos.
+//
+// Los dos alias juntos y no solo 'proyecto': la fase 5 añadió 'raiz' al lado, necesita el
+// mismo permiso y falla por el mismo camino. Con solo el primero en la lista, una credencial
+// estrecha daría un aviso por cada tanda en vez de degradar en silencio.
+bool IsContentsForbidden(const Json& error) {
     const std::string type = Narrow(error, "type");
     if (type != "FORBIDDEN") return false;
 
     const Json* path = Field(error, "path");
     if (path == nullptr || !path->is_array()) return false;
     for (const Json& step : *path) {
-        if (step.is_string() && step.get<std::string>() == "proyecto") return true;
+        if (!step.is_string()) continue;
+        const std::string name = step.get<std::string>();
+        if (name == "proyecto" || name == "raiz") return true;
     }
     return false;
+}
+
+// Los .md de la raíz que son notas de alguien. Fuera los tres archivos que tiene todo el
+// mundo y que no dicen nada del proyecto, y fuera el propio PROYECTO.md, que ya se lee
+// aparte y ofrecerlo para copiarse a sí mismo no tendría sentido.
+//
+// Sin distinguir mayúsculas: en la cuenta de verdad hay readme.md, Readme.md y README.md.
+bool IsImportableMarkdown(const Json& entry) {
+    if (Narrow(entry, "type") != "blob") return false;
+
+    std::string name = Narrow(entry, "name");
+    if (name.size() < 4) return false;
+    for (char& c : name) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    if (name.compare(name.size() - 3, 3, ".md") != 0) return false;
+
+    // Por prefijo y no por igualdad: README.es.md y CHANGELOG-2025.md son los mismos tres
+    // archivos con otro nombre.
+    for (const std::string_view known :
+         {"readme", "changelog", "license", "licence", "proyecto.md"}) {
+        if (name.compare(0, known.size(), known) == 0) return false;
+    }
+    return true;
 }
 
 RateInfo ReadRate(const Json& data) {
@@ -128,7 +159,7 @@ Model::Result<Body> ReadBody(std::string_view text) {
 
     if (errors != nullptr && errors->is_array() && !errors->empty()) {
         for (const Json& error : *errors) {
-            if (IsProyectoForbidden(error)) {
+            if (IsContentsForbidden(error)) {
                 body.contentsForbidden = true;
                 continue;
             }
@@ -201,11 +232,45 @@ void ReadDetail(const Json& node, Model::Repo& repo) {
             repo.commitOid = Wide(*target, "oid");
             repo.commitTitle = Wide(*target, "messageHeadline");
             repo.commitDate = When(*target, "committedDate");
+
+            if (const Json* history = Field(*target, "history")) {
+                if (const Json* nodes = Field(*history, "nodes"); nodes && nodes->is_array()) {
+                    repo.commits.reserve(nodes->size());
+                    for (const Json& one : *nodes) {
+                        if (!one.is_object()) continue;
+                        Model::Commit commit;
+                        commit.oid = Wide(one, "oid");
+                        commit.title = Wide(one, "messageHeadline");
+                        commit.committedAt = When(one, "committedDate");
+                        // El login de GitHub si lo hay, y si no el nombre que puso git. Un
+                        // commit hecho desde un correo que no está en ninguna cuenta no tiene
+                        // 'user', y son bastantes en repositorios viejos.
+                        if (const Json* author = Field(one, "author")) {
+                            if (const Json* user = Field(*author, "user")) {
+                                commit.author = Wide(*user, "login");
+                            }
+                            if (commit.author.empty()) commit.author = Wide(*author, "name");
+                        }
+                        if (commit.oid.empty()) continue;
+                        repo.commits.push_back(std::move(commit));
+                    }
+                }
+            }
         }
     }
 
     repo.openIssues = CountIn(node, "issues");
     repo.openPrs = CountIn(node, "pullRequests");
+
+    if (const Json* raiz = Field(node, "raiz")) {
+        if (const Json* entries = Field(*raiz, "entries"); entries && entries->is_array()) {
+            for (const Json& entry : *entries) {
+                if (!entry.is_object()) continue;
+                if (!IsImportableMarkdown(entry)) continue;
+                repo.rootMarkdown.push_back(Wide(entry, "name"));
+            }
+        }
+    }
 
     if (const Json* blob = Field(node, "proyecto")) {
         repo.proyectoOid = Wide(*blob, "oid");
@@ -293,6 +358,53 @@ Model::Result<Batch> ParseDetail(std::string_view json) {
         batch.repos.push_back(std::move(repo));
     }
     return batch;
+}
+
+Model::Result<FileText> ParseFileText(std::string_view json) {
+    Model::Result<Body> read = ReadBody(json);
+    if (!read) return read.Err();
+
+    Body body = read.Take();
+    const Json* data = body.Data();
+    const Json* node = data != nullptr ? Field(*data, "node") : nullptr;
+    if (node == nullptr) {
+        return Model::Oops(Model::Fail::Protocol, L"GitHub no encuentra ese repositorio");
+    }
+
+    FileText file;
+    const Json* blob = Field(*node, "object");
+    // Sin blob NO es un error: el archivo pudo borrarse entre la sincronización que lo vio y
+    // el momento de pedirlo. Quien llama lo dice y se acabó.
+    if (blob == nullptr) return file;
+
+    file.found = true;
+    file.oid = Wide(*blob, "oid");
+    file.truncated = Flag(*blob, "isTruncated");
+    // Un blob cortado se devuelve vacío y marcado. Copiar medio archivo a las novedades es
+    // peor que no copiarlo: parece entero.
+    if (!file.truncated) file.text = Wide(*blob, "text");
+    return file;
+}
+
+Model::Result<Written> ParseContentsWrite(std::string_view json) {
+    // Esta NO pasa por ReadBody: la API REST no devuelve ni 'data' ni 'errors', devuelve el
+    // objeto y ya. Lo único que se comparte es la manera de no caerse.
+    const Json root = Json::parse(json, nullptr, false);
+    if (root.is_discarded() || !root.is_object()) {
+        return Model::Oops(Model::Fail::Protocol,
+                           L"La respuesta de GitHub llegó incompleta o no es JSON");
+    }
+
+    Written written;
+    if (const Json* content = Field(root, "content")) written.blobSha = Wide(*content, "sha");
+    if (const Json* commit = Field(root, "commit")) written.commitUrl = Wide(*commit, "html_url");
+
+    if (written.blobSha.empty()) {
+        // Sin sha no se puede volver a escribir encima sin releer. Es un 200 que no sirve.
+        return Model::Oops(Model::Fail::Protocol,
+                           L"GitHub aceptó el cambio pero no dijo con qué identificador");
+    }
+    return written;
 }
 
 Model::Result<std::wstring> ParseViewerLogin(std::string_view json) {

@@ -430,3 +430,236 @@ TEST_CASE("los ajustes van y vuelven, y lo que no existe sale vacío") {
     REQUIRE(fresh.repos.SetSetting("ultima_sync", "otra").IsOk());
     CHECK(fresh.repos.Setting("ultima_sync").Value() == "otra");
 }
+
+// -------------------------------------------------------- Lo que añadió la fase 5 --
+
+TEST_CASE("una base de la versión 1 sube a la 2 sin perder lo que había") {
+    // Lo que de verdad se comprueba es el ALTER TABLE sobre una tabla CON DATOS. Un esquema
+    // nuevo siempre sale bien; el que se rompe es el de quien ya tenía notas escritas.
+    Store::Db db;
+    REQUIRE(db.Open(":memory:").IsOk());
+
+    // La forma que tenía 'local' en la v1, con lo justo para que las claves ajenas peguen.
+    REQUIRE(db.Exec(
+                  "CREATE TABLE repos (id TEXT PRIMARY KEY, name_with_owner TEXT NOT NULL "
+                  "UNIQUE);"
+                  "CREATE TABLE local ("
+                  "  repo_id TEXT PRIMARY KEY REFERENCES repos(id) ON UPDATE CASCADE,"
+                  "  priority TEXT NOT NULL DEFAULT 'sin-clasificar',"
+                  "  state TEXT NOT NULL DEFAULT 'activo',"
+                  "  next_step TEXT NOT NULL DEFAULT '',"
+                  "  repo_mode INTEGER NOT NULL DEFAULT 0,"
+                  "  folder TEXT,"
+                  "  updated_at INTEGER NOT NULL DEFAULT 0);"
+                  "INSERT INTO repos VALUES ('R_1', 'yo/uno');"
+                  "INSERT INTO local (repo_id, next_step) VALUES ('R_1', 'No me pierdas');")
+                .IsOk());
+    REQUIRE(db.SetUserVersion(1).IsOk());
+
+    REQUIRE(Store::Migrate(db).IsOk());
+    CHECK(db.UserVersion().Value() == Store::kSchemaVersion);
+
+    Store::Repos repos(db);
+    const auto mine = repos.LocalOf("R_1");
+    REQUIRE(mine.IsOk());
+    CHECK(mine.Value().nextStep == L"No me pierdas");
+    // Y las columnas nuevas llegan apagadas, que es lo único correcto: nadie ha confirmado
+    // todavía que se escriba en ningún repositorio.
+    CHECK_FALSE(mine.Value().repoConfirmed);
+    CHECK_FALSE(mine.Value().pushPending);
+}
+
+TEST_CASE("los commits se reescriben enteros, no se fusionan") {
+    // Un rebase en la rama principal cambia los cinco de golpe. Fusionando por oid se
+    // quedarían en pantalla commits que ya no existen en ninguna parte.
+    Fresh fresh;
+    const auto seq = fresh.repos.BeginSync().Value();
+    REQUIRE(fresh.repos.UpsertMetadata({MakeRepo("R_1", L"yo/uno", nullptr)}, seq, kNow).IsOk());
+
+    std::vector<Model::Commit> antes;
+    for (int i = 0; i < 5; ++i) {
+        Model::Commit commit;
+        commit.oid = L"viejo" + std::to_wstring(i);
+        commit.title = L"Commit viejo";
+        commit.committedAt = kNow;
+        antes.push_back(commit);
+    }
+    REQUIRE(fresh.repos.SaveCommits("R_1", antes).IsOk());
+    CHECK(fresh.repos.CommitsOf("R_1").Value().size() == 5);
+
+    Model::Commit uno;
+    uno.oid = L"nuevo";
+    uno.title = L"El único que queda";
+    uno.author = L"elimay";
+    REQUIRE(fresh.repos.SaveCommits("R_1", {uno}).IsOk());
+
+    const auto back = fresh.repos.CommitsOf("R_1");
+    REQUIRE(back.IsOk());
+    REQUIRE(back.Value().size() == 1);
+    CHECK(back.Value()[0].oid == L"nuevo");
+    CHECK(back.Value()[0].author == L"elimay");
+    CHECK_FALSE(back.Value()[0].committedAt.has_value());
+}
+
+TEST_CASE("los commits y los .md de la raíz siguen al repositorio si cambia el id") {
+    Fresh fresh;
+    const auto seq1 = fresh.repos.BeginSync().Value();
+    REQUIRE(fresh.repos.UpsertMetadata({MakeRepo("MDEw_viejo", L"yo/uno", nullptr)}, seq1, kNow)
+                .IsOk());
+
+    Model::Commit commit;
+    commit.oid = L"abc1234";
+    commit.title = L"Tiene que viajar";
+    REQUIRE(fresh.repos.SaveCommits("MDEw_viejo", {commit}).IsOk());
+    REQUIRE(fresh.repos.SaveRootMarkdown("MDEw_viejo", {L"NOTAS.md"}).IsOk());
+
+    const auto seq2 = fresh.repos.BeginSync().Value();
+    REQUIRE(fresh.repos.UpsertMetadata({MakeRepo("R_nuevo", L"yo/uno", nullptr)}, seq2, kNow)
+                .IsOk());
+
+    CHECK(fresh.repos.CommitsOf("R_nuevo").Value().size() == 1);
+    CHECK(fresh.repos.RootMarkdownOf("R_nuevo").Value().size() == 1);
+    CHECK(fresh.repos.CommitsOf("MDEw_viejo").Value().empty());
+}
+
+TEST_CASE("borrar un repositorio con commits colgando falla") {
+    // Las claves ajenas van SIN cascada al borrar a propósito: borrar tiene que fallar, o
+    // una sincronización a medias se llevaría por delante lo que cuelga de la fila.
+    Fresh fresh;
+    const auto seq = fresh.repos.BeginSync().Value();
+    REQUIRE(fresh.repos.UpsertMetadata({MakeRepo("R_1", L"yo/uno", nullptr)}, seq, kNow).IsOk());
+
+    Model::Commit commit;
+    commit.oid = L"abc1234";
+    commit.title = L"Aquí sigo";
+    REQUIRE(fresh.repos.SaveCommits("R_1", {commit}).IsOk());
+
+    CHECK_FALSE(fresh.db.RunOnce("DELETE FROM repos WHERE id = 'R_1'").IsOk());
+}
+
+TEST_CASE("el detalle escribe las dos listas de una sentada") {
+    Fresh fresh;
+    const auto seq = fresh.repos.BeginSync().Value();
+    REQUIRE(fresh.repos.UpsertMetadata({MakeRepo("R_1", L"yo/uno", nullptr)}, seq, kNow).IsOk());
+
+    Model::Repo detail;
+    detail.id = "R_1";
+    detail.commitTitle = L"El de la punta";
+    Model::Commit commit;
+    commit.oid = L"abc1234";
+    commit.title = L"El de la punta";
+    detail.commits.push_back(commit);
+    detail.rootMarkdown = {L"NOTAS.md", L"IDEAS.md"};
+    REQUIRE(fresh.repos.ApplyEnrichment(detail).IsOk());
+
+    CHECK(fresh.repos.CommitsOf("R_1").Value().size() == 1);
+    const auto raiz = fresh.repos.RootMarkdownOf("R_1");
+    REQUIRE(raiz.IsOk());
+    REQUIRE(raiz.Value().size() == 2);
+    // Ordenados por nombre, que es como se van a enseñar.
+    CHECK(raiz.Value()[0] == L"IDEAS.md");
+}
+
+TEST_CASE("un repositorio que no está en la caché no se puede escribir") {
+    Fresh fresh;
+    const auto missing = fresh.repos.RepoOf("R_inventado");
+    CHECK_FALSE(missing.IsOk());
+    CHECK(missing.Err().kind == Model::Fail::Storage);
+}
+
+TEST_CASE("el pendiente de subir solo cuenta si además está confirmado") {
+    // Los tres requisitos juntos. Un pendiente de un repositorio sin confirmar sería un
+    // commit que nadie autorizó, que es justo lo que la regla 5 de SEGURIDAD.md impide.
+    Fresh fresh;
+    const auto seq = fresh.repos.BeginSync().Value();
+    REQUIRE(fresh.repos
+                .UpsertMetadata({MakeRepo("R_1", L"yo/uno", nullptr),
+                                 MakeRepo("R_2", L"yo/dos", nullptr),
+                                 MakeRepo("R_3", L"yo/tres", nullptr)},
+                                seq, kNow)
+                .IsOk());
+
+    Model::Local confirmado;
+    confirmado.repoId = "R_1";
+    confirmado.repoMode = true;
+    confirmado.repoConfirmed = true;
+    REQUIRE(fresh.repos.SaveLocal(confirmado).IsOk());
+
+    Model::Local sinConfirmar;
+    sinConfirmar.repoId = "R_2";
+    sinConfirmar.repoMode = true;
+    REQUIRE(fresh.repos.SaveLocal(sinConfirmar).IsOk());
+
+    Model::Local sinModo;
+    sinModo.repoId = "R_3";
+    sinModo.repoConfirmed = true;
+    REQUIRE(fresh.repos.SaveLocal(sinModo).IsOk());
+
+    for (const char* id : {"R_1", "R_2", "R_3"}) {
+        REQUIRE(fresh.repos.SetPushPending(id, true).IsOk());
+    }
+
+    const auto pending = fresh.repos.PendingPushes();
+    REQUIRE(pending.IsOk());
+    REQUIRE(pending.Value().size() == 1);
+    CHECK(pending.Value()[0] == "R_1");
+}
+
+TEST_CASE("guardar no borra la marca de un envío que todavía está en vuelo") {
+    // SaveLocal no lista push_pending, y esto es lo que lo comprueba: si lo listara, editar
+    // mientras sube el guardado anterior apagaría la marca del que está a medias.
+    Fresh fresh;
+    const auto seq = fresh.repos.BeginSync().Value();
+    REQUIRE(fresh.repos.UpsertMetadata({MakeRepo("R_1", L"yo/uno", nullptr)}, seq, kNow).IsOk());
+
+    REQUIRE(fresh.repos.SetPushPending("R_1", true).IsOk());
+
+    Model::Local local;
+    local.repoId = "R_1";
+    local.nextStep = L"Otra edición mientras sube la anterior";
+    REQUIRE(fresh.repos.SaveLocal(local).IsOk());
+
+    CHECK(fresh.repos.LocalOf("R_1").Value().pushPending);
+    REQUIRE(fresh.repos.SetPushPending("R_1", false).IsOk());
+    CHECK_FALSE(fresh.repos.LocalOf("R_1").Value().pushPending);
+}
+
+TEST_CASE("después de un commit la caché dice lo que hay en el repositorio") {
+    // Sin esto, el siguiente guardado fusionaría sobre el texto de la última sincronización
+    // y desharía lo que se acaba de subir.
+    Fresh fresh;
+    const auto seq = fresh.repos.BeginSync().Value();
+    REQUIRE(fresh.repos.UpsertMetadata({MakeRepo("R_1", L"yo/uno", nullptr)}, seq, kNow).IsOk());
+
+    REQUIRE(fresh.repos.SaveProyectoBlob("R_1", L"sha_nuevo", L"---\nprioridad: enfoque\n---\n")
+                .IsOk());
+
+    const auto back = fresh.repos.RepoOf("R_1");
+    REQUIRE(back.IsOk());
+    CHECK(back.Value().proyectoOid == L"sha_nuevo");
+    CHECK(back.Value().proyectoText == L"---\nprioridad: enfoque\n---\n");
+}
+
+TEST_CASE("una novedad se puede borrar y las demás se quedan") {
+    Fresh fresh;
+    const auto seq = fresh.repos.BeginSync().Value();
+    REQUIRE(fresh.repos.UpsertMetadata({MakeRepo("R_1", L"yo/uno", nullptr)}, seq, kNow).IsOk());
+
+    for (const wchar_t* text : {L"la primera", L"la segunda"}) {
+        Model::Novedad novedad;
+        novedad.repoId = "R_1";
+        novedad.day = "2026-09-20";
+        novedad.text = text;
+        novedad.createdAt = kNow;
+        REQUIRE(fresh.repos.AddNovedad(novedad).IsOk());
+    }
+
+    auto all = fresh.repos.NovedadesOf("R_1");
+    REQUIRE(all.IsOk());
+    REQUIRE(all.Value().size() == 2);
+
+    REQUIRE(fresh.repos.DeleteNovedad(all.Value()[0].id).IsOk());
+    all = fresh.repos.NovedadesOf("R_1");
+    REQUIRE(all.IsOk());
+    CHECK(all.Value().size() == 1);
+}

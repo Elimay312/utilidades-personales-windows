@@ -15,6 +15,22 @@ namespace {
 
 using Ui::Rect;
 
+// El inspector, METIDO del borde derecho y del de abajo, no pegado a ellos. Así el viaje
+// desde una tarjeta es una forma que crece y ya está, y no una que además tiene que acabar
+// con dos esquinas cuadradas contra el marco de la ventana.
+constexpr float kInspectorWidth = 380.0f;
+constexpr float kInspectorGap = Metrics::kSpace2;
+// Por debajo de esto la columna de tarjetas deja de ser una lista y pasa a ser una columna
+// de elipsis, así que quien cede ancho en una ventana estrecha es el inspector.
+constexpr float kMinContentWidth = 320.0f;
+// Lo que se espera antes de esconder el inspector al cerrarlo: lo que tarda el muelle
+// estándar en asentarse, con un poco de margen. Sale de la tabla y no de un número escrito a
+// mano, así que afinar el muelle en la fase 8 lo arrastra solo. Al disparar se comprueba que
+// sigue cerrado, por si se reabrió entre medias.
+int HideDelayMs() {
+    return static_cast<int>(Motion::SettleMs(Motion::SpringFor(Motion::Kind::Standard))) + 80;
+}
+
 // Qué tecla produce la barra en la distribución de teclado de ahora mismo. En un teclado
 // estadounidense es VK_OEM_2 a secas y en uno español es Mayús+7, así que preguntarlo es lo
 // único que hace que el atajo "/" de CLAUDE.md exista en los dos. Con la tecla escrita a
@@ -57,6 +73,10 @@ bool Main::OnAttach() {
 
     m_sidebar = Add<Sidebar>();
     m_content = Add<RepoList>();
+    // Después de la lista y antes de la barra de título: por encima de las tarjetas y por
+    // debajo de los botones de la ventana.
+    m_inspector = Add<Inspector>();
+    m_inspector->SetVisible(false);
     // El último, y por eso el de arriba: los botones de la ventana no pueden quedar debajo
     // de nada.
     m_chrome = Add<Chrome>();
@@ -68,6 +88,9 @@ bool Main::OnAttach() {
     m_sidebar->OnSignOut([this] {
         if (m_signOutRequested) m_signOutRequested();
     });
+    m_sidebar->OnSettings([this](float x, float y) {
+        if (m_settings) m_settings(x, y);
+    });
 
     m_content->OnQueryChanged([this](const std::wstring& query) {
         if (m_state == nullptr) return;
@@ -78,6 +101,22 @@ bool Main::OnAttach() {
     m_content->OnSyncRequested([this] {
         if (m_syncRequested) m_syncRequested();
     });
+
+    // Clic y Enter abren. Mover la selección con las flechas NO abre, pero si ya está
+    // abierto lo reengancha al repositorio nuevo: es la conducta de Mail, y evita una
+    // animación de ida y vuelta por cada pulsación de una flecha.
+    m_content->OnClicked([this](int slot) { OpenInspector(slot); });
+    m_content->OnActivated([this](int slot) { OpenInspector(slot); });
+    m_content->OnSelectionChanged([this](int slot) {
+        if (!m_inspectorOpen) return;
+        if (slot < 0) {
+            CloseInspector();
+            return;
+        }
+        if (m_inspectorRequest) m_inspectorRequest(slot);
+    });
+
+    m_inspector->OnClose([this] { CloseInspector(); });
     return true;
 }
 
@@ -93,18 +132,136 @@ void Main::SetMica(bool hasMica) {
     if (Attached()) OnTheme(Tokens(), 0.0f);
 }
 
-void Main::OnArrange() {
+Rect Main::InspectorFrame() const {
     const float width = Frame().width;
     const float height = Frame().height;
+    const float left = std::min(Sidebar::kWidth, width);
+    // El inspector cede ancho antes que la lista: una columna de tarjetas por debajo de
+    // kMinContentWidth es una columna de elipsis.
+    const float panel =
+        std::clamp(width - left - kMinContentWidth - kInspectorGap * 2.0f, 200.0f,
+                   kInspectorWidth);
+    const float top = Caption::kBarHeight + Metrics::kSpace1;
+    return Rect{std::max(width - panel - kInspectorGap, left), top, panel,
+                std::max(height - top - kInspectorGap, 1.0f)};
+}
 
-    if (m_sidebar) {
-        m_sidebar->SetFrame(Rect{0.0f, 0.0f, std::min(Sidebar::kWidth, width), height});
-    }
+Rect Main::SelectedCardRect() const {
+    if (m_content == nullptr) return Rect{};
+    return m_content->SelectedCardRect();
+}
+
+void Main::LayoutColumns() {
+    const float width = Frame().width;
+    const float height = Frame().height;
+    const float left = std::min(Sidebar::kWidth, width);
+
+    if (m_sidebar) m_sidebar->SetFrame(Rect{0.0f, 0.0f, left, height});
     if (m_content) {
-        const float left = std::min(Sidebar::kWidth, width);
-        m_content->SetFrame(Rect{left, 0.0f, std::max(width - left, 1.0f), height});
+        const float reserved =
+            m_inspectorOpen ? InspectorFrame().width + kInspectorGap * 2.0f : 0.0f;
+        m_content->SetFrame(
+            Rect{left, 0.0f, std::max(width - left - reserved, 1.0f), height});
     }
     if (m_chrome) m_chrome->SetFrame(Rect{0.0f, 0.0f, width, Caption::kBarHeight});
+}
+
+void Main::OnArrange() {
+    LayoutColumns();
+    // Al recolocar por un cambio de tamaño el inspector se pone donde le toca y ya está:
+    // esto no es una transición, es la realidad nueva. Lo que viaja con muelle es abrir y
+    // cerrar, y eso lo hacen OpenInspector y CloseInspector sin pasar por aquí.
+    if (m_inspector && m_inspectorOpen) {
+        m_inspector->SnapTo(InspectorFrame(), Metrics::RadiusOf(Metrics::Radius::Panel));
+    }
+}
+
+// ---------------------------------------------------------------------- El inspector --
+
+void Main::OpenInspector(int slot) {
+    if (m_state == nullptr || m_inspector == nullptr) return;
+    if (m_state->At(slot) == nullptr) return;
+
+    if (m_inspectorOpen) {
+        // Ya está abierto: no se vuelve a morfear, solo se reengancha.
+        if (m_inspectorRequest) m_inspectorRequest(slot);
+        return;
+    }
+
+    const Rect from = SelectedCardRect();
+    m_inspectorOpen = true;
+    m_inspector->SetVisible(true);
+    m_inspector->SetOpacity(1.0f, 0.0f);
+
+    // El contenido se pide ANTES de colocar nada: el alto de la lista de novedades depende
+    // de cuántos botones lleve el panel, así que maquetar con el contenido viejo sería
+    // maquetar dos veces.
+    if (m_inspectorRequest) m_inspectorRequest(slot);
+
+    if (from.Empty()) {
+        // La tarjeta no se ve —se buscó y se fue de la lista, o la selección llegó por
+        // teclado sin haberla traído a la vista—. Sin punto de partida no hay viaje: entra
+        // donde le toca con un fundido corto.
+        m_inspector->SnapTo(InspectorFrame(), Metrics::RadiusOf(Metrics::Radius::Panel));
+        m_inspector->SetOpacity(0.0f, 0.0f);
+        m_inspector->SetContentOpacity(1.0f, 0.0f);
+        m_inspector->SetOpacity(1.0f, HostRef().Animator().FadeMs(Motion::Kind::Standard));
+    } else {
+        // Encima de la tarjeta y con SU radio: el material es del color de la tarjeta, así
+        // que en el primer fotograma son la misma cosa. Lo que se cruza es el contenido.
+        m_inspector->SnapTo(from, Metrics::RadiusOf(Metrics::Radius::Card));
+        m_inspector->SetContentOpacity(0.0f, 0.0f);
+        m_inspector->MorphTo(InspectorFrame(), Metrics::RadiusOf(Metrics::Radius::Panel),
+                             Motion::Kind::Standard);
+        m_inspector->SetContentOpacity(1.0f, HostRef().Animator().FadeMs(Motion::Kind::Standard));
+    }
+
+    // Y la columna se estrecha: el ancho de celda cambia de golpe y las posiciones se
+    // deslizan, que es la decisión de la fase 4 sobre lista y cuadrícula aplicada aquí. El
+    // aviso va ANTES de recolocar, porque quien coloca es la propia recolocación.
+    if (m_content) m_content->ReflowCells();
+    LayoutColumns();
+}
+
+void Main::CloseInspector() {
+    if (!m_inspectorOpen || m_inspector == nullptr) return;
+    m_inspectorOpen = false;
+
+    // Primero la columna: las tarjetas vuelven a su sitio mientras el panel encoge, y no
+    // después, que se leería como dos animaciones seguidas en vez de una.
+    if (m_content) m_content->ReflowCells();
+    LayoutColumns();
+
+    const Rect back = SelectedCardRect();
+    m_inspector->SetContentOpacity(0.0f, HostRef().Animator().FadeMs(Motion::Kind::Standard));
+    if (back.Empty()) {
+        m_inspector->SetOpacity(0.0f, HostRef().Animator().FadeMs(Motion::Kind::Standard));
+    } else {
+        m_inspector->MorphTo(back, Metrics::RadiusOf(Metrics::Radius::Card),
+                             Motion::Kind::Standard);
+    }
+
+    if (!m_hideInspector && Attached()) {
+        if (const auto queue = HostRef().Queue()) {
+            m_hideInspector = queue.CreateTimer();
+            m_hideInspector.Interval(std::chrono::milliseconds(HideDelayMs()));
+            m_hideInspector.IsRepeating(false);
+            m_hideInspector.Tick([this](auto&&, auto&&) {
+                // Se comprueba otra vez: entre el muelle y el temporizador puede haberse
+                // vuelto a abrir, y esconderlo entonces lo dejaría invisible y ocupando sitio.
+                if (!m_inspectorOpen && m_inspector) m_inspector->SetVisible(false);
+            });
+        }
+    }
+    if (m_hideInspector) {
+        m_hideInspector.Stop();
+        m_hideInspector.Start();
+    } else {
+        m_inspector->SetVisible(false);
+    }
+
+    if (m_content) m_content->FocusList();
+    if (m_inspectorClosed) m_inspectorClosed();
 }
 
 void Main::OnTheme(const Theme::Tokens& tokens, float crossfadeMs) {
@@ -161,9 +318,12 @@ void Main::SetSyncing(bool running) {
 bool Main::OnKey(const Input::Key& e) {
     if (!e.down || m_content == nullptr) return false;
 
-    // Mientras se escribe en la búsqueda, las letras son letras. Sin esta comprobación, la
-    // «j» de «bruja» movería la selección de la lista en vez de escribirse.
-    const bool typing = m_content->SearchFocused();
+    // Mientras se escribe, las letras son letras. Sin esta comprobación, la «j» de «bruja»
+    // movería la selección de la lista en vez de escribirse, y la «n» de «pantalla» abriría
+    // una novedad en mitad de una frase.
+    const bool searching = m_content->SearchFocused();
+    const bool editing = m_inspectorOpen && m_inspector && m_inspector->Editing();
+    const bool typing = searching || editing;
 
     if (e.virtualKey == 'F' && Input::Has(e.modifiers, Input::Modifiers::Control)) {
         m_content->FocusSearch();
@@ -174,14 +334,32 @@ bool Main::OnKey(const Input::Key& e) {
         return true;
     }
     if (e.virtualKey == VK_ESCAPE) {
-        // Esc vacía la búsqueda y devuelve el foco a la lista. Si no había búsqueda no hay
-        // nada que cerrar: las capas flotantes ya se las llevó el enrutador antes de llegar
-        // aquí.
+        // Por capas, de dentro afuera: primero la edición a medias, luego el inspector y
+        // luego la búsqueda. Las capas flotantes ya se las llevó el enrutador antes de
+        // llegar aquí.
+        if (m_inspectorOpen && m_inspector) {
+            if (m_inspector->CancelEditing()) return true;
+            CloseInspector();
+            return true;
+        }
         if (m_state && !m_state->Query().empty()) {
             m_content->ClearSearch();
             return true;
         }
         return false;
+    }
+
+    // E y N, de la tabla de atajos: editar el siguiente paso y añadir una novedad. Solo con
+    // el inspector abierto, que es donde existen las dos cosas.
+    if (!typing && m_inspectorOpen && m_inspector && !Input::Has(e.modifiers, Input::Modifiers::Control)) {
+        if (e.virtualKey == 'E') {
+            m_inspector->FocusNextStep();
+            return true;
+        }
+        if (e.virtualKey == 'N') {
+            m_inspector->BeginNovedad();
+            return true;
+        }
     }
     if (e.virtualKey == 'G' && Input::Has(e.modifiers, Input::Modifiers::Control)) {
         m_content->ToggleLayout();
@@ -192,8 +370,11 @@ bool Main::OnKey(const Input::Key& e) {
         return true;
     }
 
-    // Las flechas desde la búsqueda bajan a la lista; las letras, no.
+    // Las flechas desde la BÚSQUEDA bajan a la lista; las letras, no. Desde un campo del
+    // inspector no bajan: ahí arriba y abajo no son "el siguiente repositorio", son el
+    // renglón de al lado, y mover la selección en mitad de una edición la tiraría.
     if (typing) {
+        if (editing) return false;
         switch (e.virtualKey) {
         case VK_UP:
         case VK_DOWN:

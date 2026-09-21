@@ -222,7 +222,11 @@ void State::Load(std::vector<Model::Repo> repos, const std::vector<Model::Local>
     }
 
     std::stable_sort(m_entries.begin(), m_entries.end(), Earlier);
+    Recount();
+    Recompute();
+}
 
+void State::Recount() {
     for (int& count : m_counts) count = 0;
     for (const Entry& entry : m_entries) {
         for (const Lens lens : kPriorityLenses) {
@@ -232,8 +236,30 @@ void State::Load(std::vector<Model::Repo> repos, const std::vector<Model::Local>
             if (InLens(entry, lens)) ++m_counts[static_cast<int>(lens)];
         }
     }
+}
 
+bool State::ApplyLocal(const Model::Local& local, Model::Instant now) {
+    const auto found = std::find_if(m_entries.begin(), m_entries.end(),
+                                    [&local](const Entry& entry) {
+                                        return entry.repo.id == local.repoId;
+                                    });
+    if (found == m_entries.end()) return false;
+
+    found->local = local;
+    // El identificador es del repositorio, no de lo que llegue: una fila 'local' recién
+    // creada puede venir con él vacío y entonces no volvería a encontrarse nunca.
+    found->local.repoId = found->repo.id;
+    Derive(*found, now, m_limits);
+    Recount();
     Recompute();
+    return true;
+}
+
+const Entry* State::EntryOf(const std::string& repoId) const {
+    const auto found = std::find_if(
+        m_entries.begin(), m_entries.end(),
+        [&repoId](const Entry& entry) { return entry.repo.id == repoId; });
+    return found == m_entries.end() ? nullptr : &*found;
 }
 
 void State::SetLens(Lens lens) {

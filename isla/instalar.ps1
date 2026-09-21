@@ -52,7 +52,26 @@ if ($Desinstalar) {
 
 Parar
 
-dotnet publish -c Release -o $destino
+$dotnet = 'dotnet'
+$userDotnet = Join-Path $env:LOCALAPPDATA 'Microsoft\dotnet\dotnet.exe'
+if (Test-Path $userDotnet) {
+    $sdkList = & $dotnet --list-sdks 2>$null
+    if (-not ($sdkList -like '*10.*')) {
+        $dotnet = $userDotnet
+    }
+}
+
+$tieneSdk10 = (& $dotnet --list-sdks 2>$null) -like '*10.*'
+if (-not $tieneSdk10) {
+    $preparar = Join-Path $PSScriptRoot 'preparar.ps1'
+    if (Test-Path $preparar) {
+        Write-Host "SDK de .NET 10 no detectado. Preparando entorno automáticamente..." -ForegroundColor Yellow
+        & $preparar
+        if (Test-Path $userDotnet) { $dotnet = $userDotnet }
+    }
+}
+
+& $dotnet publish -c Release -o $destino
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish fallo. Hace falta el SDK de .NET 10." }
 
 # La isla siembra sola su isla.json en el primer arranque, pero aqui hace falta antes:

@@ -54,6 +54,26 @@ Hace falta el **SDK de .NET 10** y Windows 11 (build 26100 o superior). No hay m
 dependencias: la única referencia del proyecto es `Microsoft.Windows.CsWin32`, que es un
 generador de código y no aparece en la salida.
 
+### Instalación rápida
+
+Puedes instalar Dock automáticamente ejecutando el script instalador (haciendo doble clic en `instalar.cmd` o desde terminal). Si no tienes el SDK de .NET 10 o faltan los paquetes NuGet, los descargará e instalará automáticamente en tu perfil de usuario sin pedir elevación de administrador:
+
+```powershell
+# Instalación automática y arranque
+.\instalar.cmd
+
+# O mediante PowerShell directamente
+powershell -ExecutionPolicy Bypass -File .\instalar.ps1
+
+# Opciones disponibles:
+#   -SinAutoArranque   No activa el autoarranque en el inicio de sesión
+#   -Desinstalar       Desinstala la app y limpia los accesos directos
+```
+
+### Compilación manual
+
+Si prefieres compilar y publicar a mano:
+
 ```powershell
 # Compilar
 dotnet build

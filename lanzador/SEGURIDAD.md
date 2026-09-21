@@ -270,6 +270,13 @@ los primeros resultados, no el índice. Y lo que vuelve **son rutas**: no se abr
 esos ficheros (regla 12). Si `FindWindowW` devuelve cero, Everything no está: se enseñan solo
 aplicaciones y se dice en la lista. No se intenta arrancarlo ni instalarlo.
 
+Eso es el programa. `instalar.ps1` es otra cosa: se ejecuta una vez, a mano, y ahí sí hay
+red, porque un Windows 11 recién instalado no trae .NET 10 ni Everything. Baja el SDK al
+perfil del usuario y, si hace falta, el instalador oficial de voidtools. El binario que
+queda en `%LOCALAPPDATA%\Lanzador\app` no contiene ese código, y `auditar.ps1` sigue sin
+encontrar una llamada de red. Una vez instalado, Everything lo arranca su propio
+autoarranque; este programa sigue sin tocarlo.
+
 `WM_COPYDATA` a otro proceso es el único mensaje que este programa manda fuera de sí mismo, y
 va a un destinatario que existe únicamente para recibirlo.
 

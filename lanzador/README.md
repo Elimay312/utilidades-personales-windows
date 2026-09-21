@@ -39,15 +39,34 @@ selección: solo cuenta si lo mueves de verdad.
 
 ## Qué necesita
 
-- **Windows 11** y **.NET 10**.
-- **[Everything](https://www.voidtools.com/) de voidtools**, si quieres buscar ficheros. Sin
-  él el lanzador funciona igual, pero solo enseña aplicaciones, y lo dice. No se instala ni se
-  arranca desde aquí.
+- **Windows 11** (build 26100 o más).
+- **.NET 10**, el runtime de escritorio. En un Windows recién instalado no está.
+- **[Everything](https://www.voidtools.com/) de voidtools**, para buscar ficheros. Sin él el
+  lanzador abre aplicaciones y lo dice. El programa, una vez instalado, no lo instala ni lo
+  arranca. El instalador sí, porque se lo estás pidiendo al ejecutarlo.
 
-  Un detalle que cuesta encontrar: **tiene que estar abierta la aplicación, no basta con el
-  servicio.** Everything instala las dos cosas; el servicio mantiene el índice, pero el buzón
-  al que se le pregunta lo publica la aplicación. Si solo corre el servicio, el lanzador no
-  encuentra ficheros. Con "Start Everything on system startup" marcado queda resuelto.
+  **Tiene que estar abierta la aplicación, no basta con el servicio.** El servicio mantiene
+  el índice, pero el buzón al que se le pregunta lo publica la aplicación. Si solo corre el
+  servicio, el lanzador no encuentra ficheros. El instalador deja marcado el arranque con
+  la sesión.
+
+## Cómo se instala
+
+Doble clic en `instalar.cmd`, en el propio PC o en uno recién instalado. Si falta .NET 10
+lo baja al perfil del usuario, sin administrador. Si falta Everything, baja el instalador
+oficial (1.4.1.1032 x64, no la Lite: la Lite no abre el buzón), comprueba el SHA256 y lo
+ejecuta. Ahí Windows pide administrador una vez: el servicio que indexa el disco no se
+puede instalar sin eso.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File instalar.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File instalar.ps1 -SinEverything
+powershell -NoProfile -ExecutionPolicy Bypass -File instalar.ps1 -SinAutoArranque
+powershell -NoProfile -ExecutionPolicy Bypass -File instalar.ps1 -Desinstalar
+```
+
+Publica en `%LOCALAPPDATA%\Lanzador\app`, deja un acceso directo en Inicio y enciende el
+autoarranque. Desinstalar no borra `lanzador.json`, `uso.json` ni Everything.
 
 ## Cómo se usa desde la consola
 

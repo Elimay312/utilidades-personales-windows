@@ -3,8 +3,11 @@
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
+#include <objbase.h>
+#include <shellapi.h>
 
 #include <algorithm>
+#include <optional>
 #include <thread>
 #include <utility>
 
@@ -38,6 +41,12 @@ std::wstring UserFolder() {
     const DWORD length = GetEnvironmentVariableW(L"USERPROFILE", buffer, MAX_PATH);
     if (length == 0 || length >= MAX_PATH) return L"C:\\";
     return std::wstring(buffer, length);
+}
+
+int IndexOfName(const std::vector<DirectoryEntry>& entries, const std::wstring& name) {
+    for (size_t i = 0; i < entries.size(); ++i)
+        if (entries[i].name == name) return static_cast<int>(i);
+    return -1;
 }
 
 }  // namespace
@@ -124,16 +133,101 @@ void App::RequestFrames() {
 
 void App::Navigate(std::wstring path) {
     path = NormalizePath(path);
-    m_path = path;
-    m_pathUtf8 = ToUtf8(m_path);
+    m_pathUtf8 = path.empty() ? "Unidades" : ToUtf8(path);
     m_status.clear();
 
-    const unsigned long long generation = ++m_generation;
+    const std::optional<std::wstring> parent = ParentPath(path);
+    if (parent) {
+        // Bajar deja anotado por donde se bajo: subir luego restaura el cursor solo,
+        // por el mismo camino que cualquier otra vuelta a una carpeta ya visitada.
+        m_cursorMemory[*parent] = LastComponent(path);
+        SetPane(m_parent, *parent, LastComponent(path));
+    } else {
+        m_parent = Pane{};  // la raiz virtual no tiene columna izquierda
+    }
+
+    const auto remembered = m_cursorMemory.find(path);
+    SetPane(m_current, std::move(path),
+            remembered == m_cursorMemory.end() ? std::wstring() : remembered->second);
+}
+
+void App::GoParent() {
+    if (const std::optional<std::wstring> parent = ParentPath(m_current.path))
+        Navigate(*parent);
+}
+
+void App::Open() {
+    const DirectoryEntry* entry = Selected();
+    if (!entry) return;
+
+    std::wstring target = JoinPath(m_current.path, entry->name);
+    if (entry->IsDirectory()) {
+        Navigate(std::move(target));
+        return;
+    }
+
+    const HWND hwnd = m_window.Handle();
+    m_pool.Submit([this, target = std::move(target), hwnd] {
+        // ShellExecuteExW delega en extensiones del shell que usan COM, asi que el hilo
+        // tiene que estar inicializado en STA.
+        const HRESULT com =
+            CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+        SHELLEXECUTEINFOW info{};
+        info.cbSize = sizeof(info);
+        // NOASYNC: este hilo vuelve al pool en cuanto acabe y deja de bombear mensajes.
+        info.fMask = SEE_MASK_NOASYNC;
+        info.lpFile = target.c_str();  // lpVerb nulo: el verbo predeterminado
+        info.nShow = SW_SHOWNORMAL;
+        // Sin hwnd padre: los dialogos del shell ("abrir con") son de otro hilo y no
+        // queremos que deshabiliten nuestra ventana desde fuera del hilo de UI.
+        if (!ShellExecuteExW(&info)) Report(FormatWin32Error(GetLastError()), hwnd);
+
+        if (SUCCEEDED(com)) CoUninitialize();
+    });
+}
+
+void App::SetPane(Pane& pane, std::wstring path, std::wstring select) {
+    pane.active = true;
+    pane.path = std::move(path);
+    pane.select = std::move(select);
+    pane.scrollToCursor = true;
+
+    // La cache se sirve al instante para que ir y volver no parpadee...
+    if (const EntryList cached = m_cache.Get(pane.path)) {
+        ApplyListing(pane, cached);
+    } else {
+        pane.entries.reset();
+        pane.cursor = 0;
+    }
+    Request(pane.path);  // ...y a la vez se relee por detras para refrescarla
+}
+
+void App::ApplyListing(Pane& pane, const EntryList& entries) {
+    pane.entries = entries;
+
+    // El cursor sigue al nombre, no al indice: un refresco con entradas nuevas o
+    // borradas no mueve la seleccion de sitio.
+    const int found = IndexOfName(*entries, pane.select);
+    pane.cursor = found >= 0
+                      ? found
+                      : std::clamp(pane.cursor, 0, std::max(0, static_cast<int>(entries->size()) - 1));
+    if (found < 0 && !entries->empty()) pane.select = (*entries)[static_cast<size_t>(pane.cursor)].name;
+    pane.scrollToCursor = true;
+}
+
+// ponytail: sin dedupe por tiempo. Volver a una carpeta la relee aunque se acabe de leer; con
+// la cache sirviendo al instante no se nota, y la fase 5 (vigilante de disco) sustituye este
+// refresco entero. Si hiciera falta antes, un sello de tiempo por ruta en la cache.
+void App::Request(const std::wstring& path) {
+    if (std::find(m_inFlight.begin(), m_inFlight.end(), path) != m_inFlight.end()) return;
+    m_inFlight.push_back(path);
+
     // El HWND se copia por valor: la UI lo pone a null en WM_DESTROY y un hilo de
     // trabajo no debe leer ese miembro mientras tanto.
     const HWND hwnd = m_window.Handle();
-    m_pool.Submit([this, path = std::move(path), generation, hwnd] {
-        DirectoryListing listing = ReadDirectory(path, generation);
+    m_pool.Submit([this, path, hwnd] {
+        DirectoryListing listing = ReadDirectory(path);
         {
             std::lock_guard<std::mutex> lock(m_inboxMutex);
             m_inbox.push_back(std::move(listing));
@@ -142,33 +236,67 @@ void App::Navigate(std::wstring path) {
     });
 }
 
-void App::DrainResults() {
-    std::vector<DirectoryListing> ready;
+void App::Report(std::string message, HWND hwnd) {
     {
         std::lock_guard<std::mutex> lock(m_inboxMutex);
-        if (m_inbox.empty()) return;
+        m_messages.push_back(std::move(message));
+    }
+    PostMessageW(hwnd, WM_APP_WAKE, 0, 0);
+}
+
+void App::DrainResults() {
+    std::vector<DirectoryListing> ready;
+    std::vector<std::string> messages;
+    {
+        std::lock_guard<std::mutex> lock(m_inboxMutex);
+        if (m_inbox.empty() && m_messages.empty()) return;
         ready.swap(m_inbox);
+        messages.swap(m_messages);
     }
 
     for (DirectoryListing& listing : ready) {
-        if (listing.generation != m_generation) continue;  // el usuario ya se fue a otro sitio
+        std::erase(m_inFlight, listing.path);
 
         if (listing.error != ERROR_SUCCESS) {
             // Se queda el listado anterior en pantalla: el error va a la barra de estado.
-            m_status = FormatWin32Error(listing.error);
+            if (listing.path == m_current.path) m_status = FormatWin32Error(listing.error);
             continue;
         }
-        m_entries = std::move(listing.entries);
-        m_cursor = 0;
-        m_scrollToCursor = true;
-        m_status.clear();
+
+        const EntryList entries =
+            std::make_shared<const std::vector<DirectoryEntry>>(std::move(listing.entries));
+        m_cache.Put(listing.path, entries);
+
+        // La ruta identifica el resultado. Si el usuario ya se fue a otro sitio ninguna
+        // columna esta en esa ruta y el listado solo engorda la cache.
+        for (Pane* pane : {&m_current, &m_parent})
+            if (pane->active && pane->path == listing.path) ApplyListing(*pane, entries);
     }
+
+    for (std::string& message : messages) m_status = std::move(message);
+}
+
+void App::SetCursor(int cursor) {
+    const std::vector<DirectoryEntry>& rows = Rows(m_current.entries);
+    cursor = std::clamp(cursor, 0, std::max(0, static_cast<int>(rows.size()) - 1));
+    if (cursor == m_current.cursor) return;
+
+    m_current.cursor = cursor;
+    m_current.scrollToCursor = true;
+    if (rows.empty()) return;
+    m_current.select = rows[static_cast<size_t>(cursor)].name;
+    m_cursorMemory[m_current.path] = m_current.select;
+}
+
+const DirectoryEntry* App::Selected() const {
+    const std::vector<DirectoryEntry>& rows = Rows(m_current.entries);
+    if (rows.empty()) return nullptr;
+    const int cursor = std::clamp(m_current.cursor, 0, static_cast<int>(rows.size()) - 1);
+    return &rows[static_cast<size_t>(cursor)];
 }
 
 void App::Execute(Command command) {
-    const int count = static_cast<int>(m_entries.size());
     const int halfPage = std::max(1, m_visibleRows / 2);
-    int cursor = m_cursor;
 
     switch (command) {
     case Command::None:
@@ -176,30 +304,33 @@ void App::Execute(Command command) {
     case Command::Quit:
         m_running = false;
         return;
+    case Command::Open:
+        Open();
+        return;
+    case Command::GoParent:
+        GoParent();
+        return;
+    case Command::GoHome:
+        Navigate(UserFolder());
+        return;
     case Command::MoveDown:
-        cursor += 1;
-        break;
+        SetCursor(m_current.cursor + 1);
+        return;
     case Command::MoveUp:
-        cursor -= 1;
-        break;
+        SetCursor(m_current.cursor - 1);
+        return;
     case Command::MoveTop:
-        cursor = 0;
-        break;
+        SetCursor(0);
+        return;
     case Command::MoveBottom:
-        cursor = count - 1;
-        break;
+        SetCursor(static_cast<int>(Rows(m_current.entries).size()) - 1);
+        return;
     case Command::HalfPageDown:
-        cursor += halfPage;
-        break;
+        SetCursor(m_current.cursor + halfPage);
+        return;
     case Command::HalfPageUp:
-        cursor -= halfPage;
-        break;
-    }
-
-    cursor = std::clamp(cursor, 0, std::max(0, count - 1));
-    if (cursor != m_cursor) {
-        m_cursor = cursor;
-        m_scrollToCursor = true;
+        SetCursor(m_current.cursor - halfPage);
+        return;
     }
 }
 
@@ -232,12 +363,14 @@ void App::BuildUi() {
     float x = vp->WorkPos.x;
 
     BeginPanel("##parent", ImVec2(x, top), ImVec2(parentWidth, bodyHeight));
-    ImGui::TextColored(Theme::kTextDim, "Fase 3");
+    if (m_parent.active)
+        MillerView::DrawEntries(Rows(m_parent.entries), m_parent.cursor, m_parent.scrollToCursor);
     ImGui::End();
     x += parentWidth;
 
     BeginPanel("##current", ImVec2(x, top), ImVec2(currentWidth, bodyHeight));
-    MillerView::DrawEntries(m_entries, m_cursor, m_scrollToCursor, m_visibleRows);
+    m_visibleRows =
+        MillerView::DrawEntries(Rows(m_current.entries), m_current.cursor, m_current.scrollToCursor);
     ImGui::End();
     x += currentWidth;
 
@@ -254,8 +387,8 @@ void App::BuildUi() {
     ImGui::TextUnformatted(m_pathUtf8.c_str());
     ImGui::PopStyleColor();
     ImGui::SameLine();
-    ImGui::TextColored(Theme::kTextDim, "%d/%d", m_entries.empty() ? 0 : m_cursor + 1,
-                       static_cast<int>(m_entries.size()));
+    const int count = static_cast<int>(Rows(m_current.entries).size());
+    ImGui::TextColored(Theme::kTextDim, "%d/%d", count == 0 ? 0 : m_current.cursor + 1, count);
     if (!m_status.empty()) {
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text, Theme::kAccent);

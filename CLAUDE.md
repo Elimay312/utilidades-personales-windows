@@ -49,7 +49,7 @@ src/
   main.cpp              Punto de entrada (wWinMain), mínimo
   app/                  App: bucle principal, estado global, despacho de comandos
   platform/             Ventana Win32, dispositivo D3D11, DPI, portapapeles
-  fs/                   DirectoryReader, DirectoryWatcher, FileOps, utilidades de rutas
+  fs/                   DirectoryReader, ListingCache, DirectoryWatcher, FileOps, rutas
   preview/              Decodificador WIC, vista previa de texto, caché de previews
   ui/                   MillerView, PreviewPane, StatusBar, Theme, Keymap
   core/                 Cola de tareas / pool de hilos, tipos comunes
@@ -123,7 +123,7 @@ El plan completo está en `PROMPTS.md`. Estado actual:
 
 - [x] Fase 1 — Ventana, DirectX 11, ImGui y bucle por eventos
 - [x] Fase 2 — Lector de carpetas asíncrono y columna central
-- [ ] Fase 3 — Columnas Miller y navegación
+- [x] Fase 3 — Columnas Miller y navegación
 - [ ] Fase 4 — Vista previa (imágenes, texto, carpetas)
 - [ ] Fase 5 — Vigilancia de cambios en disco
 - [ ] Fase 6 — Operaciones de archivos
@@ -221,3 +221,65 @@ exe 663 KB, 0 warnings con `/W4 /permissive-`.
   afinar más. Sigue pendiente para la fase 8.
 - **Sin verificar**: el cambio de DPI al arrastrar entre monitores con escalados distintos (no hay
   segundo monitor en esta máquina). El camino inicial sí se ve bien.
+
+### 2026-09-21 — Fase 3
+
+- **La ruta sustituye al número de generación.** Cada `DirectoryListing` ya llevaba su `path`, y
+  ahora hay dos columnas cargando a la vez, así que un solo contador global no llegaba. Un
+  resultado se aplica a la columna cuya ruta coincide exactamente; si el usuario ya se fue, no
+  coincide ninguna y el listado solo engorda la caché. Es más fuerte que la generación (descarta
+  por *contenido equivocado*, no por *antigüedad*) y quita un miembro. El criterio de "teclear muy
+  rápido nunca muestra la carpeta equivocada" sale de aquí, no del orden de llegada.
+- **La caché LRU es la que quita el parpadeo, no un "seed" de la columna anterior.** Todo listado
+  que llega se guarda por ruta; al navegar, cada columna se sirve al instante de la caché y a la
+  vez se relanza la lectura. Como al bajar el padre ya estaba en pantalla (y por tanto en caché) y
+  al subir la carpeta actual también, ir y volver no tiene ni un frame vacío. La única lista vacía
+  posible es la primera visita a una carpeta nueva, que no se puede evitar.
+- **`EntryList` es un `shared_ptr<const vector<DirectoryEntry>>`.** Cambiar de carpeta mueve un
+  puntero; copiar 12.000 entradas por navegación habría costado ~2 ms y el doble de memoria. Como
+  efecto secundario, una columna sobrevive a que su listado sea desalojado de la caché.
+- **La caché tiene dos topes: 32 carpetas y 50.000 entradas.** Solo con el de 32, treinta y dos
+  carpetas de 12.000 entradas serían ~54 MB y el presupuesto entero son 50.
+- **El cursor se sigue por nombre, no por índice.** Cada columna guarda el nombre que debe quedar
+  seleccionado; al aplicar un listado se busca ese nombre. Así un refresco con archivos nuevos o
+  borrados no mueve la selección, y la memoria de cursor por carpeta (`ruta -> nombre`) usa el
+  mismo mecanismo. Bajar anota en la memoria del padre por dónde se bajó, así que `h` no necesita
+  ningún caso especial: restaura como cualquier otra vuelta a una carpeta ya visitada.
+- **La lista de unidades es la ruta vacía.** `ReadDirectory("")` fabrica el listado con
+  `GetLogicalDriveStringsW`, así que caché, memoria de cursor, columnas y navegación funcionan sin
+  tocar nada. El nombre de la entrada es `"C:"` (lo que unen `JoinPath` y la memoria) y la etiqueta
+  del volumen va solo en `nameUtf8`, que es lo único que se pinta. `JoinPath("", "C:")` da `"C:\"`
+  y no `"C:"`, que para Win32 significaría *el directorio actual de esa unidad*.
+  `SetThreadErrorMode(SEM_FAILCRITICALERRORS)` alrededor de `GetVolumeInformationW`: sin eso una
+  unidad extraíble vacía saca el diálogo "Inserte un disco" desde un hilo de trabajo.
+- **`~` es un atajo de carácter, no de tecla.** `ImGuiKey_GraveAccent` es VK_OEM_3, que en un
+  teclado español es la `ñ`: `Shift+ñ` habría disparado "ir a casa". Mirando
+  `io.InputQueueCharacters` el atajo funciona en cualquier distribución. La tabla `kCharBindings`
+  ya sirve para `/`, `.` y `:` de la fase 7.
+- **`Binding` lleva ahora un campo `repeat`.** Mantener `j` pulsado baja de forma continua, pero
+  mantener `l` no debe bucear tres carpetas por los 3 frames que se pintan por evento.
+- **Peticiones deduplicadas por ruta (`m_inFlight`).** Entrar y salir a lo bruto encolaba la misma
+  lectura una y otra vez por delante de la carpeta a la que el usuario acababa de llegar. Probado
+  con 30 vueltas `l`/`h` sin pausa: acaba en la carpeta correcta, con el cursor donde tocaba.
+- **Abrir archivo: `ShellExecuteExW` en un hilo del pool**, con COM en STA (sus extensiones lo
+  usan) y `SEE_MASK_NOASYNC` porque el hilo vuelve al pool y deja de bombear mensajes. Sin `hwnd`
+  padre: los diálogos del shell son de otro hilo y no queremos que deshabiliten la ventana desde
+  fuera del hilo de UI. Verificado: un `.txt` sin asociación saca el "Elegir una aplicación"
+  nativo. Los errores van a la barra de estado por un segundo buzón (`m_messages`).
+- **`tests/path_check.cpp`**: asserts sobre `ParentPath` / `JoinPath` / `LastComponent`, que son la
+  única lógica de la fase que no se ve en pantalla hasta que ya te ha llevado a otro sitio (raíz de
+  unidad, raíz virtual, recursos de red). `cmake --build build` lo compila; se ejecuta con
+  `build\rayo_path_check.exe` y no imprime nada si todo va bien.
+- **`fs/FileOps` sigue sin existir.** Abrir con la app predeterminada son 15 líneas dentro de
+  `App::Open`; el archivo se creará en la fase 6, cuando haya copiar, mover y borrar que meter.
+
+Medido tras la fase 3: memoria 43,8 MB recién abierto y 46,1 MB tras pasear por `C:\Windows` y
+volver varias veces (caché incluida), CPU en reposo 0 ms en 8 s, 0 warnings con `/W4 /permissive-`.
+Sin cambios en el arranque: los ~210 ms de `D3D11CreateDevice` siguen ahí y siguen pendientes para
+la fase 8.
+
+- **ponytail: sin dedupe por tiempo.** Volver a una carpeta siempre relanza la lectura, aunque se
+  acabe de leer hace medio segundo. Con la caché sirviendo al instante no se nota, y la fase 5
+  (vigilante de disco) sustituye este refresco por completo. Anotado en `App::Request`.
+- **Sin verificar**: unidades de red y recursos UNC (no hay ninguno en esta máquina); el camino de
+  `ParentPath` para `\\servidor\recurso` solo está cubierto por los asserts.

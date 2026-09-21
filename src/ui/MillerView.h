@@ -6,9 +6,8 @@
 
 namespace MillerView {
 
-// Solo dibuja: recibe el estado por const& y devuelve medidas del viewport.
+// Solo dibuja: recibe el estado por const& y devuelve cuantas filas caben en la columna.
 // scrollToCursor se consume cuando el scroll ya ha seguido al cursor.
-void DrawEntries(const std::vector<DirectoryEntry>& entries, int cursor, bool& scrollToCursor,
-                 int& outVisibleRows);
+int DrawEntries(const std::vector<DirectoryEntry>& entries, int cursor, bool& scrollToCursor);
 
 }  // namespace MillerView

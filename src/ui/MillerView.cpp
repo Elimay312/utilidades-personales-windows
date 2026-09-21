@@ -27,12 +27,10 @@ void DrawText(const char* text, const ImVec4& color) {
 
 }  // namespace
 
-void DrawEntries(const std::vector<DirectoryEntry>& entries, int cursor, bool& scrollToCursor,
-                 int& outVisibleRows) {
+int DrawEntries(const std::vector<DirectoryEntry>& entries, int cursor, bool& scrollToCursor) {
     const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
     const float viewHeight = ImGui::GetContentRegionAvail().y;
     const float rowWidth = ImGui::GetContentRegionAvail().x;
-    outVisibleRows = std::max(1, static_cast<int>(viewHeight / rowHeight));
 
     // Scroll minimo: solo se mueve si el cursor se ha salido de la vista. ImGui aplica el
     // objetivo en el Begin siguiente, y como pintamos 3 frames por evento no se nota.
@@ -77,6 +75,7 @@ void DrawEntries(const std::vector<DirectoryEntry>& entries, int cursor, bool& s
             DrawText(text.c_str(), Theme::kTextDim);
         }
     }
+    return std::max(1, static_cast<int>(viewHeight / rowHeight));
 }
 
 }  // namespace MillerView

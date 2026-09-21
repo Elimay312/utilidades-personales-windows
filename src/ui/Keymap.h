@@ -9,6 +9,9 @@ enum class Command {
     MoveBottom,
     HalfPageDown,
     HalfPageUp,
+    Open,        // entrar en la carpeta o abrir el archivo con la app predeterminada
+    GoParent,    // subir a la carpeta padre
+    GoHome,      // carpeta de usuario
     Quit,
 };
 

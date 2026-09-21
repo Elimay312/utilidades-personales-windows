@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,19 +20,31 @@ struct DirectoryEntry {
 };
 
 // Resultado de una peticion. error != ERROR_SUCCESS -> entries vacio y mensaje en la barra.
+// `path` identifica el resultado: si ninguna columna esta en esa ruta, se descarta.
 struct DirectoryListing {
     std::wstring path;
     std::vector<DirectoryEntry> entries;
     DWORD error = ERROR_SUCCESS;
-    unsigned long long generation = 0;
 };
 
 // Absoluta, con barras invertidas y sin . ni .. : el prefijo \\?\ exige exactamente eso.
+// La ruta vacia es la raiz virtual (lista de unidades) y se devuelve tal cual.
 std::wstring NormalizePath(const std::wstring& path);
+
+// nullopt = no hay donde subir. "" = raiz virtual con la lista de unidades.
+std::optional<std::wstring> ParentPath(const std::wstring& path);
+
+// JoinPath("", "C:") -> "C:\" : desde la lista de unidades se entra en la raiz, no en el
+// directorio actual de esa unidad (que es lo que entenderia "C:").
+std::wstring JoinPath(const std::wstring& dir, const std::wstring& name);
+
+// Nombre de la carpeta dentro de su padre: "C:\Windows" -> "Windows", "C:\" -> "C:".
+std::wstring LastComponent(const std::wstring& path);
 
 // Bloqueante y sin estado: se llama desde un hilo de trabajo, nunca desde el de UI.
 // Ordena carpetas primero y luego por orden natural (archivo2 antes que archivo10).
-DirectoryListing ReadDirectory(std::wstring path, unsigned long long generation);
+// Con la ruta vacia enumera las unidades logicas.
+DirectoryListing ReadDirectory(std::wstring path);
 
 std::string ToUtf8(const std::wstring& text);
 std::string FormatWin32Error(DWORD error);

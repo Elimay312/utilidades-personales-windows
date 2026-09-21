@@ -47,6 +47,7 @@ add_executable(rayo WIN32
   src/app/App.cpp
   src/core/TaskPool.cpp
   src/fs/DirectoryReader.cpp
+  src/fs/ListingCache.cpp
   src/platform/Window.cpp
   src/platform/GraphicsDevice.cpp
   src/ui/Keymap.cpp
@@ -56,5 +57,15 @@ add_executable(rayo WIN32
 target_include_directories(rayo PRIVATE src)
 target_compile_options(rayo PRIVATE /W4 /permissive- /utf-8 /EHsc)
 # shlwapi: StrCmpLogicalW (orden natural) y StrFormatByteSizeW.
-target_link_libraries(rayo PRIVATE imgui dwmapi shlwapi)
+# shell32 + ole32: ShellExecuteExW y el COM que sus extensiones necesitan.
+target_link_libraries(rayo PRIVATE imgui dwmapi shlwapi shell32 ole32)
 target_link_options(rayo PRIVATE /ENTRY:wWinMainCRTStartup)
+
+# Consola y con asserts activos aunque sea Release: son cuatro archivos y comprueba la
+# unica logica de rutas que no se ve en pantalla hasta que ya te ha llevado mal.
+add_executable(rayo_path_check tests/path_check.cpp src/fs/DirectoryReader.cpp)
+target_include_directories(rayo_path_check PRIVATE src)
+target_compile_options(rayo_path_check PRIVATE /W4 /permissive- /utf-8 /EHsc)
+target_compile_definitions(rayo_path_check PRIVATE
+  UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX WINVER=0x0A00 _WIN32_WINNT=0x0A00)
+target_link_libraries(rayo_path_check PRIVATE shlwapi)

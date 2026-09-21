@@ -23,6 +23,54 @@ std::wstring MakeSearchPattern(const std::wstring& path) {
     return pattern;
 }
 
+bool IsDriveRoot(const std::wstring& path) {
+    return path.size() == 3 && path[1] == L':' && path[2] == L'\\';
+}
+
+// Quita las barras finales sin llegar a vaciar la cadena ("C:\" -> "C:").
+std::wstring TrimTrailingSlashes(const std::wstring& path) {
+    std::wstring out = path;
+    while (out.size() > 1 && out.back() == L'\\') out.pop_back();
+    return out;
+}
+
+// La raiz virtual: ninguna API enumera "Este equipo" como carpeta, asi que el listado
+// de unidades se fabrica a mano y desde ahi todo lo demas funciona igual.
+DirectoryListing ReadDrives() {
+    DirectoryListing listing;
+
+    wchar_t buffer[512];
+    const DWORD length = GetLogicalDriveStringsW(ARRAYSIZE(buffer), buffer);
+    if (length == 0 || length > ARRAYSIZE(buffer)) {
+        listing.error = GetLastError();
+        return listing;
+    }
+
+    // Sin esto, una unidad extraible sin disco saca el dialogo "Inserte un disco" desde
+    // un hilo de trabajo, con la UI viva detras.
+    DWORD previousErrorMode = 0;
+    SetThreadErrorMode(SEM_FAILCRITICALERRORS, &previousErrorMode);
+    for (const wchar_t* root = buffer; *root; root += wcslen(root) + 1) {
+        DirectoryEntry entry;
+        entry.name.assign(root, 2);  // "C:" : lo que unen JoinPath y la memoria de cursor
+        entry.attributes = FILE_ATTRIBUTE_DIRECTORY;
+
+        // La etiqueta solo se pinta; el nombre con el que se navega sigue siendo "C:".
+        wchar_t label[MAX_PATH + 1] = {};
+        std::wstring text = entry.name;
+        if (GetVolumeInformationW(root, label, ARRAYSIZE(label), nullptr, nullptr, nullptr,
+                                  nullptr, 0) &&
+            label[0])
+            text += L"  " + std::wstring(label);
+        entry.nameUtf8 = ToUtf8(text);
+
+        listing.entries.push_back(std::move(entry));
+    }
+    SetThreadErrorMode(previousErrorMode, nullptr);
+
+    return listing;  // GetLogicalDriveStringsW ya las devuelve ordenadas
+}
+
 bool CompareEntries(const DirectoryEntry& a, const DirectoryEntry& b) {
     if (a.IsDirectory() != b.IsDirectory()) return a.IsDirectory();
 
@@ -55,6 +103,39 @@ std::wstring NormalizePath(const std::wstring& path) {
     return large;
 }
 
+std::optional<std::wstring> ParentPath(const std::wstring& path) {
+    if (path.empty()) return std::nullopt;         // ya estamos en la lista de unidades
+    if (IsDriveRoot(path)) return std::wstring();  // "C:\" -> lista de unidades
+
+    const std::wstring trimmed = TrimTrailingSlashes(path);
+    const size_t slash = trimmed.find_last_of(L'\\');
+    if (slash == std::wstring::npos || slash == 0) return std::nullopt;
+
+    // La raiz de un recurso de red no tiene padre navegable: por encima solo esta el
+    // servidor, que no se enumera con FindFirstFileExW.
+    if (trimmed.compare(0, 2, L"\\\\") == 0 && trimmed.find(L'\\', 2) == slash)
+        return std::nullopt;
+
+    // "C:\Windows" -> "C:\" : la raiz conserva la barra, si no seria la unidad a secas.
+    if (slash == 2 && trimmed[1] == L':') return trimmed.substr(0, 3);
+    return trimmed.substr(0, slash);
+}
+
+std::wstring JoinPath(const std::wstring& dir, const std::wstring& name) {
+    if (dir.empty()) return name + L"\\";  // raiz virtual: "C:" -> "C:\"
+
+    std::wstring out = dir;
+    if (out.back() != L'\\') out.push_back(L'\\');
+    out += name;
+    return out;
+}
+
+std::wstring LastComponent(const std::wstring& path) {
+    const std::wstring trimmed = TrimTrailingSlashes(path);
+    const size_t slash = trimmed.find_last_of(L'\\');
+    return slash == std::wstring::npos ? trimmed : trimmed.substr(slash + 1);
+}
+
 std::string ToUtf8(const std::wstring& text) {
     if (text.empty()) return {};
     const int length = static_cast<int>(text.size());
@@ -85,10 +166,11 @@ std::string FormatWin32Error(DWORD error) {
     return ToUtf8(message);
 }
 
-DirectoryListing ReadDirectory(std::wstring path, unsigned long long generation) {
+DirectoryListing ReadDirectory(std::wstring path) {
+    if (path.empty()) return ReadDrives();
+
     DirectoryListing listing;
     listing.path = std::move(path);
-    listing.generation = generation;
 
     WIN32_FIND_DATAW data;
     const HANDLE find =

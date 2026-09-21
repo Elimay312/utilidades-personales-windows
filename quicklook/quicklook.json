@@ -1,0 +1,25 @@
+{
+  // Config de QuickLook.
+  //
+  // Copia este archivo a  %LOCALAPPDATA%\QuickLook\quicklook.json  (un nivel por encima
+  // de la carpeta app\) y edítalo. El programa lo relee solo cuando cambia: no hace falta
+  // reiniciarlo.
+  //
+  // El programa NUNCA escribe aquí. Lo único que guarda entre sesiones es el autoarranque,
+  // y eso vive en el registro, en HKCU\...\Run, donde lo ves y lo quitas desde la pestaña
+  // Inicio del Administrador de tareas.
+
+  // Arrancar al iniciar sesión.
+  "autoStart": false,
+
+  // Tamaño máximo del panel, en fracción del área de trabajo del monitor.
+  // Se recorta a [0,2 - 0,95]: un 5 daría un panel más grande que la pantalla.
+  "panelWidth": 0.62,
+  "panelHeight": 0.72,
+
+  // El vídeo entra mudo: es un vistazo, y que se ponga a sonar un tráiler asusta.
+  "videoMuted": true,
+
+  // El audio sí suena, porque en un audio el sonido es todo el contenido.
+  "audioPlays": true
+}

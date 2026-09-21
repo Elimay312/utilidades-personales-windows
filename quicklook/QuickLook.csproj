@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- WinExe: sin esto el autoarranque abriria una consola al iniciar sesion. Los
+         mensajes no se pierden: Program engancha la consola del padre con
+         AttachConsole si se lanza desde una terminal. -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <AssemblyName>QuickLook</AssemblyName>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>QuickLook</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+
+    <!-- SEGURIDAD.md regla 8: nada de ofuscacion, packers ni compresion. El binario
+         debe tener PDB y secciones legibles para un analizador estatico. Con un hook
+         de teclado dentro, esto importa mas aqui que en el dock. -->
+    <DebugType>portable</DebugType>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="quicklook.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Unica dependencia. Source generator: no aparece en la salida. -->
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.333" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

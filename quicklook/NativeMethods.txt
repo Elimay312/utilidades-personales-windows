@@ -1,0 +1,147 @@
+// Lista auditable de P/Invokes. Fichero de entrada de CsWin32: si una funcion no esta
+// aqui, no se genera y el codigo no compila. Esta lista no puede desviarse de lo que el
+// binario realmente usa, y por eso es el primer sitio donde mira un auditor.
+//
+// Cada grupo va bajo un comentario que dice para que es.
+
+// --- Ventana propia (M0) ---
+// La ventana-host es invisible y no dibuja nada: existe porque WH_KEYBOARD_LL exige un
+// hilo con bucle de mensajes, y porque es donde aterriza el WM_APP del hook.
+RegisterClassExW
+CreateWindowExW
+DefWindowProcW
+DestroyWindow
+PostQuitMessage
+GetModuleHandleW
+ShowWindow
+SetWindowPos
+LoadCursorW
+
+// --- Bucle de mensajes propio (M0) ---
+GetMessageW
+TranslateMessage
+DispatchMessageW
+PostMessageW
+
+// --- Consola para --check estando compilado como WinExe (M0) ---
+AttachConsole
+
+// --- El hook de teclado (M1). Ver SEGURIDAD.md §3.1 ---
+// WH_KEYBOARD_LL NO carga ninguna DLL en ningun proceso ajeno: la doc dice que el
+// callback "is called in the context of the thread that installed it", mandandole un
+// mensaje a ese hilo. Es lo contrario de los hooks que si inyectan (WH_CBT,
+// WH_GETMESSAGE, WH_SHELL), que siguen prohibidos por la regla 3.
+//
+// Solo se mira VK_SPACE. GetKeyState esta aqui unicamente para poder DEJAR PASAR
+// Ctrl+Espacio, Alt+Espacio y Shift+Espacio, que son atajos de otros.
+// GetAsyncKeyState no esta aqui y no va a estar: se puede consultar en cualquier
+// momento sin que haya ocurrido ningun evento, y esa es justo la diferencia.
+SetWindowsHookExW
+UnhookWindowsHookEx
+CallNextHookEx
+KBDLLHOOKSTRUCT
+WINDOWS_HOOK_ID
+VIRTUAL_KEY
+GetKeyState
+
+// --- Con quien hay que estar hablando para que el espacio cuente (M1) ---
+// Solo lectura, y solo para decidir si el espacio es nuestro o no lo es.
+// GetGUIThreadInfo es lo que impide que el programa se cruce con lo que el usuario
+// escribe: si hay un cursor de texto parpadeando, la tecla pasa de largo.
+GetForegroundWindow
+GetClassNameW
+GetWindowThreadProcessId
+GetGUIThreadInfo
+GUITHREADINFO
+
+// --- Cerrar el panel solo cuando el usuario se va a otra app (M3.1) ---
+// Solo corre mientras hay panel abierto. Con el panel cerrado no hay temporizador.
+SetTimer
+KillTimer
+
+// --- De donde nace el morph del panel (M4) ---
+// Solo LECTURA de la posicion del raton, para que el panel crezca por donde esta el
+// cursor. No se mueve el raton ni se sintetiza nada: ver SEGURIDAD.md §2 regla 12.
+GetCursorPos
+
+// --- Donde cae el panel (M1) ---
+MonitorFromWindow
+GetMonitorInfoW
+MONITORINFO
+GetDpiForWindow
+
+// --- Composition interop, sobre el HWND propio (M1) ---
+ICompositorDesktopInterop
+CreateDispatcherQueueController
+DispatcherQueueOptions
+
+// --- Que archivo esta seleccionado en el Explorador (M2). Ver SEGURIDAD.md §3.2 ---
+// COM publico FUERA DE PROCESO: es la via que Microsoft documenta para automatizar el
+// Explorador. No se inyecta nada (la regla 4 sigue intacta), no se lee memoria ajena y
+// no se toca el portapapeles. Solo se pregunta por SVGIO_SELECTION, nunca por
+// SVGIO_ALLVIEW: no se enumera la carpeta ni nada que el usuario no tenga abierto.
+OleInitialize
+OleUninitialize
+CoCreateInstance
+CLSCTX
+IShellWindows
+IServiceProvider
+IShellBrowser
+IShellView
+IFolderView2
+IShellItemArray
+IShellItem
+SIGDN
+
+// El Explorador con pestañas de Windows 11 no da el HWND del marco: IShellBrowser
+// devuelve el de la pestaña, que cuelga de el. GetAncestor sube hasta la raiz para
+// poder emparejarlas, e IsWindowVisible distingue la pestaña activa de las demas.
+GetAncestor
+IsWindowVisible
+
+// --- Pixeles del archivo (M2, M3). Ver SEGURIDAD.md §3.3 ---
+// La MISMA llamada sirve para el icono del tipo (con SIIGBF_ICONONLY) y para la
+// miniatura real del contenido (sin ella). De ahi que imagenes, PDFs, videos y Office
+// salgan de un solo camino sin decodificador propio.
+SHCreateItemFromParsingName
+IShellItemImageFactory
+SIIGBF
+GetObject
+GetDIBits
+BITMAPINFO
+DIB_USAGE
+BITMAP
+BI_COMPRESSION
+DeleteObject
+GetDC
+ReleaseDC
+
+// --- Superficie de Composition para dibujar esos pixeles (M2) ---
+D3D11CreateDevice
+D2D1CreateDevice
+ID2D1Device
+ID2D1DeviceContext
+ID2D1Bitmap1
+ID2D1SolidColorBrush
+IDXGIDevice
+ID3D11Device
+D3D_DRIVER_TYPE
+D3D11_CREATE_DEVICE_FLAG
+D2D1_BITMAP_PROPERTIES1
+D2D1_ALPHA_MODE
+DXGI_FORMAT
+D2D1_BITMAP_INTERPOLATION_MODE
+ICompositionDrawingSurfaceInterop
+ICompositorInterop
+
+// --- Texto del panel, sobre nuestra propia superficie (M2) ---
+DWriteCreateFactory
+IDWriteFactory
+IDWriteTextFormat
+IDWriteTextLayout
+DWRITE_FACTORY_TYPE
+DWRITE_TEXT_METRICS
+DWRITE_FONT_WEIGHT
+DWRITE_FONT_STYLE
+DWRITE_FONT_STRETCH
+D2D1_DRAW_TEXT_OPTIONS

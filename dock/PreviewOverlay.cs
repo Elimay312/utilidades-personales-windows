@@ -67,6 +67,9 @@ internal sealed unsafe class PreviewOverlay : IDisposable
     private HWND _hwnd;
     private bool _disposed;
 
+    /// <summary>La captura subida al compositor, para poder soltarla al cambiarla.</summary>
+    private CompositionSurfaceBrush? _shot;
+
     private PreviewOverlay(DockVisuals owner, float scale, int x, int y, int w, int h)
     {
         _owner = owner;
@@ -142,6 +145,7 @@ internal sealed unsafe class PreviewOverlay : IDisposable
             SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER);
 
         _root.Children.RemoveAll();
+        SueltaCaptura();
         Build(shot, new Vector2(w, h));
     }
 
@@ -199,7 +203,10 @@ internal sealed unsafe class PreviewOverlay : IDisposable
         SpriteVisual image = _compositor.CreateSpriteVisual();
         image.Size = new Vector2(size.X - pad * 2f, size.Y - pad * 2f);
         image.Offset = new Vector3(pad, pad, 0f);
-        image.Brush = _owner.CreateBitmapBrush(shot);
+        // El tamaño del chip, no el de la ventana: una captura de 1920x1080 subida
+        // entera son 8 MB por refresco, y aquí hay dos por segundo.
+        _shot = _owner.CreateBitmapBrush(shot, MathF.Max(image.Size.X, image.Size.Y));
+        image.Brush = _shot;
 
         CompositionRoundedRectangleGeometry imageRound = _compositor.CreateRoundedRectangleGeometry();
         imageRound.Size = image.Size;
@@ -228,6 +235,19 @@ internal sealed unsafe class PreviewOverlay : IDisposable
         }
     }
 
+    /// <summary>
+    /// Suelta la captura subida. La superficie es dueña de los píxeles, así que va
+    /// también: mismo patrón que <see cref="GenieOverlay"/>, donde no soltarla costó
+    /// +5 MB por animación. Aquí se refresca dos veces por segundo, así que sin esto
+    /// cada miniatura queda esperando al finalizador.
+    /// </summary>
+    private void SueltaCaptura()
+    {
+        (_shot?.Surface as CompositionDrawingSurface)?.Dispose();
+        _shot?.Dispose();
+        _shot = null;
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -236,6 +256,7 @@ internal sealed unsafe class PreviewOverlay : IDisposable
         _target.Root = null;
         _root.Dispose();
         _target.Dispose();
+        SueltaCaptura();
 
         if (!_hwnd.IsNull)
         {

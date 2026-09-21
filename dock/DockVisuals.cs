@@ -172,11 +172,23 @@ internal sealed unsafe class DockVisuals : IDisposable
         return _graphics;
     }
 
-    /// <summary>Sube los píxeles de un icono a una superficie del compositor.</summary>
-    public CompositionSurfaceBrush CreateBitmapBrush(IconBitmap icon)
+    /// <summary>
+    /// Sube los píxeles de un icono a una superficie del compositor.
+    ///
+    /// Con <paramref name="maxSide"/> la superficie se hace más pequeña que los píxeles y
+    /// D2D escala al dibujar. Hace falta para las miniaturas de la rueda: subían la
+    /// captura entera -1920x1080 son 8 MB, y con WARP eso vive en memoria del sistema-
+    /// para enseñarla en un chip de 300x190. Medido: con la lista abierta la memoria
+    /// privada pasaba de 36 a 63 MB.
+    /// </summary>
+    public CompositionSurfaceBrush CreateBitmapBrush(IconBitmap icon, float maxSide = 0f)
     {
+        float shrink = maxSide > 0f ? MathF.Min(1f, maxSide / MathF.Max(icon.Width, icon.Height)) : 1f;
+        int width = Math.Max(1, (int)MathF.Round(icon.Width * shrink));
+        int height = Math.Max(1, (int)MathF.Round(icon.Height * shrink));
+
         CompositionDrawingSurface surface = EnsureGraphicsDevice().CreateDrawingSurface(
-            new global::Windows.Foundation.Size(icon.Width, icon.Height),
+            new global::Windows.Foundation.Size(width, height),
             DirectXPixelFormat.B8G8R8A8UIntNormalized,
             DirectXAlphaMode.Premultiplied);
 
@@ -225,8 +237,8 @@ internal sealed unsafe class DockVisuals : IDisposable
                 {
                     left = offset.X,
                     top = offset.Y,
-                    right = offset.X + icon.Width,
-                    bottom = offset.Y + icon.Height,
+                    right = offset.X + width,
+                    bottom = offset.Y + height,
                 };
 
                 context.DrawBitmap(

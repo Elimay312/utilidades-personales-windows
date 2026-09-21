@@ -1,8 +1,10 @@
 using System.Numerics;
+using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.System.Power;
+using Windows.Win32.System.Threading;
 using Windows.Win32.UI.HiDpi;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Windows.Win32.UI.WindowsAndMessaging;
@@ -83,6 +85,11 @@ internal sealed unsafe class IslaWindow : IDisposable
     private const uint WM_POWERBROADCAST = 0x0218;
     private const uint WM_DISPLAYCHANGE = 0x007E;
     private const uint WM_DPICHANGED = 0x02E0;
+    private const uint WM_SETTINGCHANGE = 0x001A;
+
+    // PROCESS_QUERY_LIMITED_INFORMATION. Solo para leer el nombre del exe del
+    // primer plano cuando hace falta distinguir TextInputHost de una app.
+    private const uint ProcessQueryLimitedInformation = 0x1000;
     private const nuint PBT_APMPOWERSTATUSCHANGE = 0xA;
 
     // WM_APP + 1. Lo manda Medios desde el pool de hilos para avisar de que hay
@@ -354,6 +361,14 @@ internal sealed unsafe class IslaWindow : IDisposable
             case WM_APP_RECARGAR:
                 PedirRehacer();
                 return new LRESULT(0);
+
+            // Ocultar la barra de tareas cambia el area de trabajo y lo anuncia asi,
+            // no con WM_DISPLAYCHANGE. Hay que volver a mirar el primer plano ya: si
+            // se espera al tic, la isla se queda escondida un segundo de mas, y si
+            // Windows nos movio al recolocar el area, hay que volver al filo.
+            case WM_SETTINGCHANGE:
+                isla?.RevisarPleno();
+                break;
 
             case WM_POWERBROADCAST:
                 if (wParam.Value == PBT_APMPOWERSTATUSCHANGE) isla?.OnEnergia();
@@ -668,18 +683,10 @@ internal sealed unsafe class IslaWindow : IDisposable
         }
 
         // Una vez por segundo: apartarse de lo que este a pantalla completa y volver
-        // al principio de la banda topmost.
-        if ((_tic & 7) == 0)
-        {
-            bool pleno = HayPlenoPantalla();
-            if (pleno != _apartada)
-            {
-                _apartada = pleno;
-                Pintar();
-            }
-
-            if (_visible && !_apartada) AsegurarTopmost();
-        }
+        // al principio de la banda topmost. El mismo criterio corre al cambiar un
+        // ajuste del sistema (WM_SETTINGCHANGE), que es como la barra anuncia que
+        // se oculta.
+        if ((_tic & 7) == 0) RevisarPleno();
 
         if (_base == Estado.Asomada && !_hayPomodoro && ahora > _finAsomo)
         {
@@ -700,9 +707,37 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// a pantalla completa. Con dos sitios llamando a ShowWindow se acaba con la isla
     /// parpadeando encima de un juego.
     /// </summary>
-    private void Pintar() => PInvoke.ShowWindow(
-        _hwnd,
-        _visible && !_apartada ? SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE : SHOW_WINDOW_CMD.SW_HIDE);
+    private void Pintar()
+    {
+        if (_visible && !_apartada)
+        {
+            PInvoke.ShowWindow(_hwnd, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
+            // ShowWindow a solas no deshace un movimiento: al cambiar el area de
+            // trabajo Windows recoloca las ventanas, y una isla escondida puede
+            // volver ya fuera del filo. Se clava aqui, no en cada tic.
+            Anclar();
+        }
+        else
+        {
+            PInvoke.ShowWindow(_hwnd, SHOW_WINDOW_CMD.SW_HIDE);
+        }
+    }
+
+    /// <summary>
+    /// Apartarse si el primer plano ocupa la pantalla, y si no, seguir en el filo y
+    /// en la banda topmost. Lo llaman el tic y el aviso de que cambio un ajuste.
+    /// </summary>
+    private void RevisarPleno()
+    {
+        bool pleno = HayPlenoPantalla();
+        if (pleno != _apartada)
+        {
+            _apartada = pleno;
+            Pintar();
+        }
+
+        if (_visible && !_apartada) Anclar();
+    }
 
     /// <summary>
     /// Si hay algo ocupando la pantalla entera. Lo decide la VENTANA, no el estado del
@@ -710,22 +745,48 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// de cualquier minimizado, y en el dock eso provocaba que se apartara sola una vez
     /// por minimizado. Aqui se comparan los estilos y el rectangulo, que no mienten.
     ///
-    /// Solo se LEE la geometria de una ventana, la que esta en primer plano. No se
-    /// enumera nada y no se toca nada (SEGURIDAD.md §3.5).
+    /// Con la barra de tareas en auto-ocultar el area de trabajo PASA A SER el monitor,
+    /// asi que una maximizada cubre los cuatro bordes y, si no tiene marco (una
+    /// CoreWindow de una app UWP, o el escritorio), antes se contaba como un juego.
+    /// La isla se escondia al ocultar la barra y no volvia.
+    ///
+    /// Solo se lee la ventana en primer plano, y el marco raiz si esa ventana es una
+    /// CoreWindow. No se enumera nada y no se toca nada (SEGURIDAD.md §3.5).
     /// </summary>
     private bool HayPlenoPantalla()
     {
         HWND frente = PInvoke.GetForegroundWindow();
         if (frente.IsNull || frente == _hwnd) return false;
+        if (frente == PInvoke.GetShellWindow() || frente == PInvoke.GetDesktopWindow()) return false;
 
         // Solo cuenta lo que pase en NUESTRA pantalla.
         if (PInvoke.MonitorFromWindow(frente, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST) != _monitor)
             return false;
 
-        // Una maximizada cubre el monitor igual que una a pantalla completa; lo que las
-        // separa son los estilos. IsZoomed devuelve true en los dos casos y no sirve.
+        string clase = NombreClase(frente);
+        if (clase is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd")
+            return false;
+
         const nint WsCaption = 0x00C00000;
         const nint WsThickFrame = 0x00040000;
+
+        // TextInputHost es del shell: una CoreWindow a pantalla completa que no es
+        // un video. Una app UWP maximizada tampoco: su CoreWindow no tiene marco,
+        // pero el marco raiz si.
+        if (clase == "Windows.UI.Core.CoreWindow")
+        {
+            if (EsProceso(frente, "TextInputHost")) return false;
+
+            HWND raiz = PInvoke.GetAncestor(frente, GET_ANCESTOR_FLAGS.GA_ROOT);
+            if (!raiz.IsNull && raiz != frente)
+            {
+                nint estiloRaiz = PInvoke.GetWindowLongPtr(raiz, WINDOW_LONG_PTR_INDEX.GWL_STYLE);
+                if ((estiloRaiz & (WsCaption | WsThickFrame)) != 0) return false;
+            }
+        }
+
+        // Una maximizada cubre el monitor igual que una a pantalla completa; lo que las
+        // separa son los estilos. IsZoomed devuelve true en los dos casos y no sirve.
         nint estilo = PInvoke.GetWindowLongPtr(frente, WINDOW_LONG_PTR_INDEX.GWL_STYLE);
         if ((estilo & (WsCaption | WsThickFrame)) != 0) return false;
 
@@ -735,21 +796,77 @@ internal sealed unsafe class IslaWindow : IDisposable
         if (!PInvoke.GetMonitorInfo(_monitor, &info)) return false;
 
         RECT p = info.rcMonitor;
+
+        // El marco invisible de una maximizada cuelga por fuera del monitor. Con la
+        // barra oculta eso cubre los cuatro bordes igual que un juego, pero un juego
+        // queda a ras: no sobresale. Medido aqui, con la barra en auto-ocultar:
+        // Chrome maximizado da -8,-8-1928,1088 sobre un monitor de 1920x1080.
+        const int cuelgue = 4;
+        if (r.left <= p.left - cuelgue && r.top <= p.top - cuelgue
+            && r.right >= p.right + cuelgue && r.bottom >= p.bottom + cuelgue)
+            return false;
+
         return r.left <= p.left && r.top <= p.top && r.right >= p.right && r.bottom >= p.bottom;
     }
 
-    /// <summary>
-    /// Windows saca las ventanas de la banda topmost sin quitarles el bit. Dos llamadas:
-    /// la primera vuelve a la banda, la segunda sube al principio de ella.
-    /// </summary>
-    private void AsegurarTopmost()
+    private static string NombreClase(HWND ventana)
     {
-        const SET_WINDOW_POS_FLAGS Quieta = SET_WINDOW_POS_FLAGS.SWP_NOMOVE
-            | SET_WINDOW_POS_FLAGS.SWP_NOSIZE
-            | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE;
+        Span<char> buffer = stackalloc char[64];
+        fixed (char* p = buffer)
+        {
+            int largo = PInvoke.GetClassName(ventana, p, buffer.Length);
+            return largo > 0 ? new string(buffer[..largo]) : string.Empty;
+        }
+    }
 
-        PInvoke.SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, Quieta);
-        PInvoke.SetWindowPos(_hwnd, HWND.Null, 0, 0, 0, 0, Quieta);
+    /// <summary>
+    /// El nombre del exe, sin ruta. Solo se llama para una CoreWindow: es la unica
+    /// forma estable de reconocer TextInputHost, porque el titulo va traducido.
+    /// </summary>
+    private static bool EsProceso(HWND ventana, string nombre)
+    {
+        uint pid = 0;
+        PInvoke.GetWindowThreadProcessId(ventana, &pid);
+        if (pid == 0) return false;
+
+        try
+        {
+            using SafeFileHandle handle = PInvoke.OpenProcess_SafeHandle(
+                (PROCESS_ACCESS_RIGHTS)ProcessQueryLimitedInformation, false, pid);
+            if (handle.IsInvalid) return false;
+
+            Span<char> buffer = stackalloc char[260];
+            uint largo = (uint)buffer.Length;
+            if (!PInvoke.QueryFullProcessImageName(
+                    handle, PROCESS_NAME_FORMAT.PROCESS_NAME_WIN32, buffer, ref largo)
+                || largo == 0)
+                return false;
+
+            ReadOnlySpan<char> ruta = buffer[..(int)largo];
+            int barra = ruta.LastIndexOf('\\');
+            ReadOnlySpan<char> fichero = barra >= 0 ? ruta[(barra + 1)..] : ruta;
+            return fichero.Equals(nombre + ".exe", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            // Un proceso que no se deja leer no es el shell. Se sigue con la geometria.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Windows saca las ventanas de la banda topmost sin quitarles el bit, y al
+    /// cambiar el area de trabajo (la barra que se oculta) las puede mover. Dos
+    /// llamadas para el orden: la primera vuelve a la banda, la segunda sube al
+    /// principio de ella. La posicion se clava en el filo, que es donde nacio.
+    /// </summary>
+    private void Anclar()
+    {
+        const SET_WINDOW_POS_FLAGS Quieta = SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE;
+
+        PInvoke.SetWindowPos(
+            _hwnd, HWND_TOPMOST, _x, _y, _w, (int)Scale(LogicalWindowHeight), Quieta);
+        PInvoke.SetWindowPos(_hwnd, HWND.Null, _x, _y, _w, (int)Scale(LogicalWindowHeight), Quieta);
     }
 
     private RECT ZonaCaliente(bool abierta)

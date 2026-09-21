@@ -154,10 +154,16 @@ consola**. Un atajo global que falla en silencio es media hora perdida.
 `GetForegroundWindow` + `GetWindowLongPtr(GWL_STYLE)` + `GetWindowRect`, comparado contra
 `GetMonitorInfo`. Sirve para apartarse cuando hay un juego o un vídeo.
 
-**Solo se lee geometría, y de una sola ventana: la que está en primer plano.** No se enumera
-nada, no se toca nada, no se mira el contenido. Es la misma comprobación que hace el dock, y
-por la misma razón medida allí: `SHQueryUserNotificationState` devuelve `BUSY` de forma
-transitoria después de cualquier minimizado, y eso ya provocó un fallo real en el vecino.
+**Se lee una sola ventana: la que está en primer plano.** De ella, la geometría, la clase y
+el estilo. Si esa ventana es una `CoreWindow`, también el estilo de su marco raíz y el
+nombre del exe (`OpenProcess` con `PROCESS_QUERY_LIMITED_INFORMATION` y
+`QueryFullProcessImageName`): hace falta para no confundir un juego con el escritorio
+(`Progman`) ni con `TextInputHost`, que cubren el monitor en cuanto la barra de tareas se
+oculta. No se enumera nada, no se toca nada, no se mira el contenido.
+
+Es la misma comprobación que hace el dock, y por la misma razón medida allí:
+`SHQueryUserNotificationState` devuelve `BUSY` de forma transitoria después de cualquier
+minimizado, y eso ya provocó un fallo real en el vecino.
 
 ### 3.6 Autoarranque
 

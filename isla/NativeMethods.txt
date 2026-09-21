@@ -124,10 +124,19 @@ SYSTEM_POWER_STATUS
 IAudioEndpointVolume
 
 // --- Pantallas y pantalla completa (solo lectura) ---
-// De la ventana en primer plano se lee SU GEOMETRIA y nada mas: ni se enumera nada
-// ni se la toca (SEGURIDAD.md �3.5).
+// De la ventana en primer plano se lee su geometria, su clase y, solo si esa clase
+// es la CoreWindow de una app UWP, el nombre del exe: para no confundir un juego
+// con el escritorio o con TextInputHost. Ni se enumera nada ni se toca nada
+// (SEGURIDAD.md 3.5).
 EnumDisplayMonitors
 MONITORINFOEXW
 GetForegroundWindow
 MonitorFromWindow
 GetWindowRect
+GetShellWindow
+GetDesktopWindow
+GetClassNameW
+GetAncestor
+GetWindowThreadProcessId
+OpenProcess
+QueryFullProcessImageNameW

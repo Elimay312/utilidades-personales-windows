@@ -37,6 +37,14 @@ public:
 
     // widthDip/heightDip es el tamaño lógico; scale, la escala de la ventana. La textura
     // sale del tamaño físico, que es lo que hace que el texto no se emborrone.
+    //
+    // RESERVAR LA TEXTURA LA VACÍA. ICompositionDrawingSurfaceInterop::Resize devuelve un
+    // hueco del atlas, y el hueco nuevo trae los píxeles de quien estuviera antes; por eso
+    // Surface::Draw empieza siempre por un Clear. O sea que un cambio de tamaño obliga a
+    // repintar: el que llama no puede quedarse con lo que había. Y por eso mismo aquí se
+    // sale sin tocar nada cuando el tamaño FÍSICO no cambia, que es lo que pasa en casi
+    // todas las llamadas —recolocar el árbol vuelve a escribir los mismos marcos— y lo que
+    // convertiría cada recolocación en un borrado de toda la pantalla.
     bool Resize(Device& device, float widthDip, float heightDip, float scale);
 
     // Redibuja entero. Devuelve false si el dispositivo se perdió y hay que rehacerlo.
@@ -56,6 +64,11 @@ private:
     float m_widthDip = 0.0f;
     float m_heightDip = 0.0f;
     float m_scale = 1.0f;
+    // El tamaño con el que se reservó de verdad. En píxeles y no en DIP: dos anchos
+    // lógicos distintos pueden redondear al mismo píxel, y lo que decide si la textura
+    // hay que pedirla otra vez es el píxel.
+    int m_widthPx = 0;
+    int m_heightPx = 0;
 };
 
 }  // namespace Gfx

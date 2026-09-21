@@ -91,6 +91,13 @@ public:
     // mientras se escribe se lee como un fallo de dibujo.
     void Solid(const winrt::Windows::UI::Composition::Visual& caret) const;
 
+    // El latido del indicador de sincronización: la opacidad va y viene entre dos valores,
+    // en bucle y en la GPU. No es decoración —dice que hay algo pasando ahora mismo, que es
+    // lo único que un indicador tiene que decir— y por eso es una rampa suave y no los
+    // escalones del cursor: un parpadeo seco aquí se leería como un aviso.
+    void Pulse(const winrt::Windows::UI::Composition::Visual& visual, float low, float high,
+               float periodMs) const;
+
     // Ata el desplazamiento del contenido al InteractionTracker. La posición del tracker
     // crece hacia abajo y el contenido se mueve hacia arriba, de ahí el signo.
     void BindScroll(

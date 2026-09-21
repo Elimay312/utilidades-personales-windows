@@ -14,21 +14,22 @@ resulta que corre en Windows.
 
 ## Estado
 
-**Fase 3 de 8 terminada.** Ya hay datos: al abrirla se conecta con GitHub, trae los
-repositorios de la cuenta y los guarda. Medido contra la cuenta del autor —109
-repositorios—, la primera sincronización tarda entre **5,4 y 6,7 segundos** y la segunda
-**2,6**, porque solo vuelve a pedir el detalle de lo que ha cambiado.
+**Fase 4 de 8 terminada.** Ya se ve de qué va: al abrirla aparece la lista de los
+repositorios de la cuenta —barra lateral con los grupos de prioridad y las vistas
+inteligentes, tarjetas con el siguiente paso, búsqueda en vivo— y la sincronización con
+GitHub ocurre detrás, sin que la ventana la espere. Medido contra la cuenta del autor —109
+repositorios— y con la caché llena, **la ventana está en pantalla con la lista en 106 ms**
+y filtrar mientras se escribe cuesta **0,006 ms por pulsación**.
 
-Lo que ya funciona: la ventana con Mica, la barra de título propia, el tema claro/oscuro
-siguiendo al del sistema, el kit de componentes entero (F12 abre su catálogo en una
-compilación de Debug), y ahora la credencial —de GitHub CLI si está, y si no una hoja que
-explica los permisos y la recoge—, el cliente de la API, la caché en SQLite y la
-sincronización en segundo plano.
+Lo que ya funciona: la ventana con Mica, la barra de título propia con su indicador de
+sincronización, el tema claro/oscuro siguiendo al del sistema, el kit de componentes entero
+(F12 abre su catálogo en una compilación de Debug), la credencial —de GitHub CLI si está, y
+si no una hoja que explica los permisos y la recoge—, el cliente de la API, la caché en
+SQLite, la sincronización en segundo plano y la vista principal.
 
-Lo que no hay todavía: la vista principal. De momento se ve un panel de estado provisional
-con la cuenta, el número de repositorios y cuándo se sincronizó; las prioridades, la lista,
-el inspector y la revisión semanal son las fases 4 a 7. El plan completo está en
-[`PROMPTS.md`](PROMPTS.md).
+Lo que no hay todavía: el inspector y las notas (fase 5), arrastrar y la paleta de comandos
+(fase 6) y la revisión semanal (fase 7). De momento las prioridades se pueden ver pero no
+asignar. El plan completo está en [`PROMPTS.md`](PROMPTS.md).
 
 ## Compilar y ejecutar
 
@@ -70,15 +71,17 @@ src/
   model/        tipos de dominio, reglas, tiempo en UTC y el borde UTF-8
   store/        SQLite: esquema, migraciones, repositorios y notas
   github/       credencial, cliente de la API y la sincronización en dos pases
-  views/        la demo de la fase 1 y el panel de estado (los dos temporales)
+  views/        la vista principal: barra de título, barra lateral, lista y tarjetas
 tests/          doctest sobre el núcleo puro
 ```
 
 `brujula_core` es una biblioteca aparte con lo que no necesita ni Win32 ni WinRT para
 decidir —la geometría de la barra de título, la tabla de colores, los muelles, la rejilla,
 el contador de clics, el modelo del campo de texto, la aritmética de la lista virtualizada
-y, desde la fase 3, las reglas de dominio, el esquema de la base, el parser de las
-respuestas y la política de reintentos—, y es lo que enlazan las pruebas. La regla para decidir si algo va ahí
+las reglas de dominio, el esquema de la base, el parser de las respuestas, la política de
+reintentos y, desde la fase 4, el estado de la vista principal: qué repositorios entran en
+cada vista, en qué orden salen y qué significa que dos textos coincidan—, y es lo que
+enlazan las pruebas. La regla para decidir si algo va ahí
 es la que este proyecto viene aplicando: *¿se equivocaría esto en silencio, sin que se vea
 en pantalla hasta que ya ha decidido mal?* El cursor de un campo de texto y el rango de
 filas de una lista, sí. El color de una brocha, no.

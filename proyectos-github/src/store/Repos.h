@@ -60,6 +60,9 @@ public:
     // Lo del usuario. Si no hay fila, devuelve un Local con los valores por omisión: un
     // repositorio recién visto está sin clasificar y activo, y eso no hace falta escribirlo.
     Model::Result<Model::Local> LocalOf(const std::string& repoId);
+    // Todas las filas que existen, de una sentada. Los repositorios sin nada escrito no
+    // tienen fila y no salen aquí: quien cruza las dos listas pone los valores por omisión.
+    Model::Result<std::vector<Model::Local>> AllLocal();
     Model::Outcome SaveLocal(const Model::Local& local);
 
     Model::Outcome AddNovedad(const Model::Novedad& novedad);

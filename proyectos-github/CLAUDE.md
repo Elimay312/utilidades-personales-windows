@@ -187,7 +187,7 @@ El plan completo está en `PROMPTS.md`.
 - [x] Fase 1 — Ventana Mac: Mica, barra de título propia, composición y muelles
 - [x] Fase 2 — Kit de UI propio y catálogo de componentes
 - [x] Fase 3 — GitHub: token seguro, GraphQL, SQLite y sincronización
-- [ ] Fase 4 — Vista principal: barra lateral, lista y clasificación
+- [x] Fase 4 — Vista principal: barra lateral, lista y clasificación
 - [ ] Fase 5 — Inspector, notas y PROYECTO.md
 - [ ] Fase 6 — Priorizar: arrastrar, límite de Enfoque, atajos y paleta
 - [ ] Fase 7 — Revisión semanal
@@ -196,6 +196,113 @@ El plan completo está en `PROMPTS.md`.
 Al terminar una fase: marcarla aquí, anotar decisiones abajo y hacer commit.
 
 ## Decisiones y notas
+
+### Fase 4 — 21 de septiembre de 2026
+
+El detalle con todas las mediciones está en `CHANGELOG.md`. Aquí van solo las decisiones
+que condicionan lo que venga después.
+
+**Reservar una textura la VACÍA, y eso era un fallo dormido desde la fase 2.** La vista
+principal salió en blanco: la barra lateral sin una sola letra, el título de la vista
+tampoco, los glifos de los botones de ventana tampoco — y sin embargo los materiales, las
+píldoras y las tarjetas de la lista, sí. Lo que quedaba en pantalla era exactamente lo que
+alguien había repintado *después* del último `Host::Layout`, y nada más.
+`ICompositionDrawingSurfaceInterop::Resize` devuelve un hueco del atlas con los píxeles de
+quien estuviera antes —por eso `Surface::Draw` empieza siempre por un `Clear`—, así que
+`Element::SetFrame` estaba borrando cada superficie del árbol en cada recolocación y nadie
+pedía repintarla. `Element::Relayout` invalida, sí, pero invalida `SurfaceOwner()`, y la
+raíz no tiene superficie: devolvía nulo y no se repintaba nada.
+
+*Por qué no se vio antes:* hasta la fase 3, cada refresco de la pantalla cambiaba también
+el contenido —`Views::Status::Show` reescribía sus etiquetas cada vez— y un `SetText`
+distinto invalida. Un título que dice siempre lo mismo no invalida nunca, y la fase 4 está
+llena de ellos. Son dos arreglos y los dos hacen falta: `Surface::Resize` sale sin tocar
+nada cuando el tamaño **físico** no cambia, y `Element::SetFrame` invalida cuando el marco
+o la escala sí cambiaron. El segundo es el que salva el cambio de monitor, donde el marco
+en DIP es el mismo y la textura no.
+
+**Cerrar un elemento no lo quitaba de la pantalla, y es el mismo tipo de fallo.**
+`Element::Close` soltaba su referencia al visual, pero el contenedor del padre tiene la
+suya: el visual se quedaba en el árbol de composición y se seguía dibujando. Al cambiar de
+raíz —F12, el catálogo— la vista vieja se quedaba detrás de la nueva. Casi no se ve porque
+lo que se cierra suele llevar su superficie cerrada y deja de pintar nada; un contenedor
+sin superficie propia no deja rastro. Ahora `Close` y el destructor sacan el visual del
+árbol. La fase 5 cambia de vista constantemente y esto le habría tocado a ella.
+
+*Y de ahí sale una consecuencia:* los botones de la ventana se dibujan dentro del kit
+—`Views::Chrome`— y no fuera como los dibujaba `Views::Demo`, así que **toda raíz necesita
+un Chrome**. El catálogo lleva el suyo, con su propio título. Siguen funcionando aunque no
+se dibujen, porque el hit-test del marco no depende del dibujo, y por eso el fallo no se
+nota hasta que alguien busca el aspa y no está.
+
+**La lista se actualiza por CLAVE y su índice es siempre el de la pantalla.** `Reorder`
+—que la fase 2 dejó preparado— se ha quitado. Barajar posiciones manteniendo el orden de
+los datos suena más barato hasta que se mira el teclado: con las posiciones barajadas, «el
+siguiente» de la flecha abajo es el siguiente del array y no el de debajo, y la selección
+va dando saltos. `List::Update(keys)` resuelve además lo que `Reorder` no podía —quién
+entra y quién sale— que es justo lo que pide filtrar en vivo. Y la selección sigue a su
+clave: el repositorio elegido sigue elegido después de sincronizar aunque cambie de sitio.
+
+**El tamaño de una celda no se anima, y la posición sí.** Al pasar de lista a cuadrícula
+las celdas cambian de tamaño de golpe y se deslizan a su sitio con el muelle suave.
+Animar el tamaño obligaría a reasignar la textura de cada celda en cada fotograma, que es
+justo lo que la fase 1 midió que no había que hacer. Lo que se lee en pantalla es «la
+rejilla ha fluido», y es la misma decisión que ya estaba escrita para `SlideTo`.
+
+**Un contenedor cuyos hijos tienen superficie no puede pintar, y de ahí salen dos piezas
+del kit.** La regla estaba escrita en `ui/Element.h` desde la fase 2 y la columna de la
+fase 4 es su caso extremo: lleva una lista, un campo y unos botones, todos dueños de
+superficie, y necesita además un título, un contador y las frases del estado vacío.
+`Ui::Slate` es un contenedor con superficie y sin pintura propia, para que ese texto tenga
+dónde caerse; `Ui::Rule` es un separador hecho MATERIAL y no píxeles, que además cruza de
+tema en la GPU. La fase 5 tendrá el mismo problema en el inspector.
+
+**El ajuste de línea va en la maquetación, no en el formato.** Los formatos de `Ui::Text`
+nacen con `NO_WRAP` y están cacheados y compartidos: ponerle ajuste de línea a uno se lo
+pone a todas las etiquetas de la aplicación, incluidos los nombres de repositorio, que
+tienen que recortarse con elipsis. Es la tercera propiedad que va en la maquetación por el
+mismo motivo, después de la alineación y de los números tabulares.
+
+**Los contadores de la barra lateral NO bajan al buscar.** Dicen cuántos hay en esa vista,
+no cuántos quedan del filtro. Es lo único que permite ver que lo que buscas está en otro
+grupo, que es la mitad de las veces que uno busca.
+
+**Se añadió una vista que no está en este documento: «Todos».** Sin ella la búsqueda solo
+puede mirar dentro del grupo elegido, y buscar un repositorio que no sabes dónde
+clasificaste es exactamente para lo que se busca. Es también la vista por omisión del
+primer arranque, cuando los 109 están sin clasificar y cualquier otra saldría vacía.
+
+**«/» se le pregunta a la distribución de teclado.** En un teclado estadounidense es
+`VK_OEM_2` a secas y en uno español es Mayús+7. `VkKeyScanW(L'/')` devuelve las dos cosas
+—tecla y estado de mayúsculas— para la distribución activa. Escrita a mano, la tecla
+habría funcionado en la máquina de quien la escribió y en ninguna otra.
+
+**Un repositorio con `gone_at` solo aparece en «Todos», y marcado.** No se esconde del
+todo porque sus notas siguen existiendo y hay que poder llegar a ellas; no sale en las
+demás porque una lista que existe para decidir no puede tener dentro cosas sobre las que
+ya no se puede decidir.
+
+**«Sin clasificar» no lleva píldora.** No es una prioridad, es la falta de una. Ponerle
+etiqueta significa escribir «Sin clasificar» ciento nueve veces en la primera pantalla que
+ve el usuario —la más ancha de todas, además, comiéndole el sitio al nombre— para decir
+exactamente nada. Lo que hay que mirar de un vistazo es cuáles SÍ tienen una.
+
+**El estado se recarga entero después de sincronizar.** Dos consultas y unos pocos
+milisegundos con 109 repositorios, y a cambio no hay un camino por el que la pantalla y
+SQLite acaben diciendo cosas distintas. La animación no se pierde por eso: la identidad la
+llevan las claves, así que lo que solo cambió de sitio se desliza.
+
+**La cuenta se lee de un solo sitio.** `Github::Progress` ya la trae, sacada de la tabla de
+ajustes al crearse la sincronización. Leerla otra vez desde `App` obligaba a repetir el
+nombre de la clave en dos archivos — y se repitió mal («login» en vez de «cuenta»), con el
+resultado de un «Sin cuenta conectada» permanente y ningún error por ninguna parte.
+
+**Falta comprobar cuatro cosas**, tres heredadas y una nueva: la nitidez a otras escalas
+—`WM_DPICHANGED` sigue sin dispararse en esta máquina, y ahora hay además el camino nuevo
+de invalidar al cambiar de escala—, el IME de verdad, el panel táctil de precisión, y la
+lista con repositorios repartidos por los cinco grupos: los 109 de la cuenta están todos
+sin clasificar, así que la píldora, el límite de Enfoque y «Necesita decisión» solo se han
+visto con datos hechos a mano en las pruebas.
 
 ### Fase 3 — 21 de septiembre de 2026
 

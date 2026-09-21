@@ -15,13 +15,22 @@
 // la sombra en los dos fondos— y los de verdad, que se abren con los botones y viven en
 // la capa flotante del Host con el tema del sistema.
 
+#include "shell/Caption.h"
 #include "ui/Element.h"
+#include "views/Chrome.h"
 
 namespace Views {
 
 class Catalog : public Ui::Element {
 public:
     Catalog();
+
+    // Los botones de la ventana también aquí. Antes los dibujaba Views::Demo, que vivía
+    // fuera del kit y se veía pasara lo que pasara; ahora son de Views::Chrome, y una raíz
+    // que no lo incluya deja la ventana sin minimizar, maximizar ni cerrar a la vista
+    // —siguen funcionando, porque el hit-test del marco no depende de lo que se dibuje, y
+    // por eso el fallo no se nota hasta que se busca el aspa y no está—.
+    void SetCaption(const Caption::Layout& layout, Caption::Zone hovered, Caption::Zone pressed);
 
 protected:
     bool OnAttach() override;
@@ -33,6 +42,7 @@ private:
 
     void RefreshStats();
 
+    Chrome* m_chrome = nullptr;
     Column* m_light = nullptr;
     Column* m_dark = nullptr;
     // Lo que costó el último reciclado de la lista de 500. Es la medida del criterio de

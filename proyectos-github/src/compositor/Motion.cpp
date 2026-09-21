@@ -210,6 +210,23 @@ void Animator::Solid(const wuc::Visual& caret) const {
     caret.Opacity(1.0f);
 }
 
+void Animator::Pulse(const wuc::Visual& visual, float low, float high, float periodMs) const {
+    if (!m_systemAnimations) {
+        // Sin animaciones del sistema, el indicador se queda encendido. Sigue diciendo que
+        // hay algo pasando: lo dice el texto de al lado, que es lo que de verdad lo dice.
+        visual.StopAnimation(L"Opacity");
+        visual.Opacity(high);
+        return;
+    }
+    auto animation = m_compositor.CreateScalarKeyFrameAnimation();
+    animation.Duration(Ms(periodMs));
+    animation.IterationBehavior(wuc::AnimationIterationBehavior::Forever);
+    animation.InsertKeyFrame(0.0f, high, Ease());
+    animation.InsertKeyFrame(0.5f, low, Ease());
+    animation.InsertKeyFrame(1.0f, high, Ease());
+    visual.StartAnimation(L"Opacity", animation);
+}
+
 void Animator::BindScroll(const wuc::Visual& content,
                           const wuci::InteractionTracker& tracker) const {
     // La posición del tracker crece hacia abajo —bajar por la lista es aumentar— y el

@@ -73,7 +73,23 @@ void Label::OnPaint(const Paint& paint, const Rect& box) {
     run.weight = m_weight;
     run.align = m_align;
     run.figures = m_figures;
+    run.wrap = m_wrap;
     paint.text->Draw(paint.dc, run, ToBox(box), brush.get());
+}
+
+// =============================================================================== Rule ==
+
+bool Rule::OnAttach() {
+    // Radio cero: una línea de un píxel con esquinas redondeadas es una línea con los
+    // extremos a medio tono.
+    return CreateMaterial(0.0f);
+}
+
+void Rule::OnTheme(const Theme::Tokens& tokens, float crossfadeMs) {
+    if (Gfx::Material* material = MaterialOf()) {
+        material->SetColor(tokens.separator, HostRef().Animator(), crossfadeMs);
+    }
+    Element::OnTheme(tokens, crossfadeMs);
 }
 
 // ============================================================================= Button ==
@@ -231,6 +247,30 @@ Theme::Color ColorOf(Priority priority, const Theme::Tokens& tokens) {
     return tokens.textSecondary;
 }
 
+float PillWidth(Ui::Text& text, Priority priority) {
+    return text.Measure(NameOf(priority), Style::Footnote, Weight::Semibold).width +
+           kPillPadding * 2.0f;
+}
+
+void DrawPill(const Paint& paint, const Rect& box, Priority priority) {
+    const Theme::Color color = ColorOf(priority, *paint.tokens);
+
+    winrt::com_ptr<ID2D1SolidColorBrush> fill;
+    paint.dc->CreateSolidColorBrush(Gfx::ToD2D(WithAlpha(color, kPillFillAlpha)), fill.put());
+    const float radius = Metrics::RadiusOf(Metrics::Radius::Control);
+    paint.dc->FillRoundedRectangle(D2D1::RoundedRect(ToBox(box), radius, radius), fill.get());
+
+    winrt::com_ptr<ID2D1SolidColorBrush> ink;
+    paint.dc->CreateSolidColorBrush(Gfx::ToD2D(color), ink.put());
+
+    Run run;
+    run.text = NameOf(priority);
+    run.style = Style::Footnote;
+    run.weight = Weight::Semibold;
+    run.align = Align::Center;
+    paint.text->Draw(paint.dc, run, ToBox(box), ink.get());
+}
+
 Pill::Pill(Priority priority) : m_priority(priority) {}
 
 void Pill::SetPriority(Priority priority) {
@@ -253,9 +293,7 @@ bool Pill::OnAttach() {
 
 float Pill::PreferredWidth() {
     if (!Attached()) return 0.0f;
-    const float text =
-        HostRef().Text().Measure(NameOf(m_priority), Style::Footnote, Weight::Semibold).width;
-    return text + kPillPadding * 2.0f;
+    return PillWidth(HostRef().Text(), m_priority);
 }
 
 void Pill::OnTheme(const Theme::Tokens& tokens, float crossfadeMs) {
@@ -298,6 +336,14 @@ Theme::Color ColorOf(Activity activity, const Theme::Tokens& tokens) {
     return tokens.activityDormant;
 }
 
+void DrawDot(const Paint& paint, float cxDip, float cyDip, Activity activity) {
+    winrt::com_ptr<ID2D1SolidColorBrush> brush;
+    paint.dc->CreateSolidColorBrush(Gfx::ToD2D(ColorOf(activity, *paint.tokens)), brush.put());
+    const float radius = kDotSize * 0.5f;
+    paint.dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cxDip, cyDip), radius, radius),
+                          brush.get());
+}
+
 Dot::Dot(Activity activity) : m_activity(activity) {}
 
 void Dot::SetActivity(Activity activity) {
@@ -307,13 +353,7 @@ void Dot::SetActivity(Activity activity) {
 }
 
 void Dot::OnPaint(const Paint& paint, const Rect& box) {
-    winrt::com_ptr<ID2D1SolidColorBrush> brush;
-    paint.dc->CreateSolidColorBrush(Gfx::ToD2D(ColorOf(m_activity, *paint.tokens)), brush.put());
-
-    const float radius = kDotSize * 0.5f;
-    const float cx = box.x + box.width * 0.5f;
-    const float cy = box.y + box.height * 0.5f;
-    paint.dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), radius, radius), brush.get());
+    DrawDot(paint, box.x + box.width * 0.5f, box.y + box.height * 0.5f, m_activity);
 }
 
 }  // namespace Ui

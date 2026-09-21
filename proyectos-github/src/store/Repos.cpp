@@ -301,6 +301,36 @@ Model::Result<Model::Local> Repos::LocalOf(const std::string& repoId) {
     return local;
 }
 
+Model::Result<std::vector<Model::Local>> Repos::AllLocal() {
+    // Una consulta y no 109. No es micro-optimización: el criterio de aceptación de la
+    // fase 4 es que la ventana enseñe la lista en menos de 200 ms, y lo que se hace antes
+    // de enseñarla hay que poder contarlo con los dedos.
+    Model::Result<Stmt> prepared = m_db.Prepare(
+        "SELECT repo_id, priority, state, next_step, repo_mode, folder, updated_at FROM local");
+    if (!prepared) return prepared.Err();
+
+    Stmt stmt = prepared.Take();
+    std::vector<Model::Local> locals;
+    for (;;) {
+        Model::Result<bool> row = stmt.Step();
+        if (!row) return row.Err();
+        if (!row.Value()) break;
+
+        Model::Local local;
+        local.repoId = stmt.Text(0);
+        if (const auto priority = Model::PriorityFromSlug(stmt.Text(1))) {
+            local.priority = *priority;
+        }
+        if (const auto state = Model::StateFromSlug(stmt.Text(2))) local.state = *state;
+        local.nextStep = stmt.Wide(3);
+        local.repoMode = stmt.Int(4) != 0;
+        local.folder = stmt.Wide(5);
+        local.updatedAt = Model::FromEpoch(stmt.Int(6));
+        locals.push_back(std::move(local));
+    }
+    return locals;
+}
+
 Model::Outcome Repos::SaveLocal(const Model::Local& local) {
     Model::Result<Stmt> prepared = m_db.Prepare(
         "INSERT INTO local (repo_id, priority, state, next_step, repo_mode, folder, updated_at) "

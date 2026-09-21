@@ -220,8 +220,13 @@ void Text::Draw(ID2D1DeviceContext* dc, const Run& run, const D2D1_RECT_F& box,
 
     IDWriteTextFormat* format = Format(run.style, run.weight);
     const float width = box.right - box.left;
-    auto layout = run.trim ? Fit(run.text, width, format) : Lay(run.text, width, format);
+    // Con ajuste de línea no hay nada que recortar: lo que no cabe a lo ancho baja al
+    // renglón siguiente, que es de lo que va.
+    auto layout = (run.trim && !run.wrap) ? Fit(run.text, width, format)
+                                          : Lay(run.text, width, format);
     if (!layout) return;
+
+    if (run.wrap) layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
 
     // La alineación va en la MAQUETACIÓN y nunca en el formato: el formato está cacheado
     // y compartido, y centrarlo aquí centraría todas las etiquetas de la aplicación.

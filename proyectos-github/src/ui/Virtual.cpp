@@ -14,6 +14,12 @@ constexpr float kMinRow = 1.0f;
 
 }  // namespace
 
+int RowsFor(int itemCount, int columns) {
+    if (itemCount <= 0) return 0;
+    const int cols = std::max(columns, 1);
+    return (itemCount + cols - 1) / cols;
+}
+
 float ContentHeight(int itemCount, float rowDip) {
     if (itemCount <= 0 || rowDip <= 0.0f) return 0.0f;
     return static_cast<float>(itemCount) * rowDip;

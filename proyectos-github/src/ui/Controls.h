@@ -34,6 +34,9 @@ public:
     const std::wstring& Text() const { return m_text; }
     void SetAlign(Align align) { m_align = align; }
     void SetFigures(Figures figures) { m_figures = figures; }
+    // Varias líneas en vez de una con elipsis. Lo quieren las frases del estado vacío, que
+    // son lo único de la aplicación que se escribe para leerse entero.
+    void SetWrap(bool wrap) { m_wrap = wrap; }
     // Por omisión, textPrimary. Con esto se elige otro token.
     void SetColor(Theme::Color color);
     void UseSecondary();
@@ -50,9 +53,37 @@ private:
     Weight m_weight = Weight::Regular;
     Align m_align = Align::Leading;
     Figures m_figures = Figures::Proportional;
+    bool m_wrap = false;
     bool m_custom = false;
     bool m_secondary = false;
     Theme::Color m_color;
+};
+
+// Un separador: la línea más fina que sabe dibujar la pantalla, como MATERIAL y no como
+// píxeles pintados. Siendo material, el cambio de tema es una brocha que se va al color
+// nuevo en la GPU, y no un repintado; y de paso no obliga a que su padre tenga superficie,
+// que es justo lo que no puede tener un contenedor de listas y campos.
+class Rule : public Element {
+public:
+    bool HitTest(float, float) const override { return false; }
+
+protected:
+    bool OnAttach() override;
+    void OnTheme(const Theme::Tokens& tokens, float crossfadeMs) override;
+};
+
+// Una pizarra: un contenedor que tiene superficie propia y no pinta nada él, para que sus
+// hijos —etiquetas, normalmente— tengan dónde pintarse.
+//
+// Existe por la regla del orden en z de Element.h leída del revés. Dentro de un elemento el
+// orden es material abajo, hijos en medio y contenido dibujado arriba, así que un contenedor
+// cuyos hijos son dueños de superficie no puede pintar contenido propio: le quedaría por
+// encima de ellos. La columna de la fase 4 es justo ese caso —lleva una lista, un campo y
+// unos botones, todos con superficie— y necesita además un título y unas frases. Con una
+// pizarra, ese texto tiene su superficie y se coloca como un hijo más.
+class Slate : public Element {
+protected:
+    bool OnAttach() override { return CreateLayer(); }
 };
 
 enum class ButtonKind {
@@ -110,6 +141,15 @@ using Priority = Model::Priority;
 const wchar_t* NameOf(Priority priority);
 Theme::Color ColorOf(Priority priority, const Theme::Tokens& tokens);
 
+// La píldora dibujada, sin elemento detrás. La necesitan las tarjetas de la lista: son
+// superficies recicladas y no árboles, así que una píldora por tarjeta no puede ser un
+// visual —serían veinticinco de más para algo que no se mueve ni recibe entrada—.
+//
+// Ui::Pill la usa también, y eso es lo que impide que las dos se separen: la píldora de una
+// tarjeta y la de un inspector tienen que ser exactamente la misma cosa.
+void DrawPill(const Paint& paint, const Rect& box, Priority priority);
+float PillWidth(Ui::Text& text, Priority priority);
+
 class Pill : public Element {
 public:
     explicit Pill(Priority priority);
@@ -134,6 +174,9 @@ using Activity = Model::Activity;
 
 const wchar_t* NameOf(Activity activity);
 Theme::Color ColorOf(Activity activity, const Theme::Tokens& tokens);
+
+// El punto dibujado, centrado en (cx, cy). Mismo motivo que DrawPill.
+void DrawDot(const Paint& paint, float cxDip, float cyDip, Activity activity);
 
 class Dot : public Element {
 public:

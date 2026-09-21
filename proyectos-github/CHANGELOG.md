@@ -10,6 +10,79 @@ lo dice.
 
 ## Sin publicar
 
+### Fase 4 — Vista principal
+
+Ya se ve de qué va la aplicación. Los 109 repositorios de la cuenta entran por la barra
+lateral, la lista y la búsqueda, y la ventana los enseña **antes** de hablar con la red.
+Se tiran las dos raíces provisionales: `Views::Demo` (fase 1) y `Views::Status` (fase 3).
+
+**Lo que hay**
+
+- **`app/State`, puro y probado**: las nueve vistas de la barra lateral, el filtro, la
+  búsqueda sin tildes ni mayúsculas, el orden por último push y las claves estables que
+  hacen que una tarjeta se deslice en vez de repintarse en su sitio nuevo.
+- **Barra lateral** con dos grupos —prioridad y vistas inteligentes—, contadores, una sola
+  píldora de selección que se muda de un grupo al otro, y al pie la cuenta conectada con
+  «Sincronizar» y «Cerrar sesión».
+- **Lista de tarjetas** con nombre, siguiente paso destacado, punto de actividad, píldora
+  de prioridad, lenguaje y «hace X días»; **lista compacta y cuadrícula**, con las celdas
+  deslizándose de una disposición a la otra.
+- **Búsqueda en vivo** (Ctrl+F o `/`) sobre nombre, dueño, descripción, lenguaje y
+  siguiente paso, con las filas que sobreviven deslizándose y las que entran apareciendo
+  escalonadas.
+- **Estado vacío propio de cada vista**, con una frase y **una** acción.
+- **Indicador de sincronización en la barra de título**: un punto que late mientras trabaja
+  y el texto de en qué anda o de cuándo fue la última.
+- **Teclado**: ↑/↓ y j/k, ←/→ en cuadrícula, Inicio/Fin, Re Pág/Av Pág, Ctrl+F y `/` para
+  buscar, Esc para quitar el filtro, Ctrl+G para alternar disposición, Ctrl+R para
+  sincronizar y Ctrl+O para abrir en GitHub.
+- **La vista elegida se guarda** en los ajustes: se vuelve a abrir donde se dejó.
+
+**Lo que se arregló, y venía de la fase 2**
+
+La vista principal salía **en blanco**: la barra lateral sin una letra, el título de la
+vista tampoco, los glifos de los botones de ventana tampoco, y en cambio los materiales,
+las píldoras y las tarjetas sí. Lo que quedaba en pantalla era exactamente lo que alguien
+había repintado después del último `Host::Layout`.
+
+`ICompositionDrawingSurfaceInterop::Resize` devuelve un hueco del atlas **vacío**, así que
+`Element::SetFrame` borraba cada superficie del árbol en cada recolocación y nadie pedía
+repintarla: `Element::Relayout` invalida `SurfaceOwner()`, y la raíz no tiene superficie.
+Hasta la fase 3 no se notó porque cada refresco cambiaba también el contenido, y un texto
+distinto sí invalida; un título que dice siempre lo mismo, no. Dos arreglos: `Surface`
+recuerda el tamaño en píxeles y sale sin tocar nada cuando no cambia, y `Element::SetFrame`
+invalida cuando cambian el marco o la escala.
+
+Y el segundo, encontrado al revisar el catálogo de F12: `Element::Close` soltaba su
+referencia al visual pero no lo sacaba del árbol de composición, así que **la vista vieja se
+quedaba dibujada detrás de la nueva** al cambiar de raíz. Se veía poco porque lo que se
+cierra suele llevar la superficie cerrada y deja de pintar. Ahora `Close` y el destructor lo
+desenganchan. De paso, el catálogo lleva ya su propio `Views::Chrome`: los botones de la
+ventana los dibuja el kit desde esta fase, y una raíz sin Chrome dejaba la ventana sin aspa
+a la vista —funcionando, porque el hit-test del marco no depende del dibujo—.
+
+**Medido**
+
+Contra la cuenta real, con la caché llena: 109 repositorios, 2 con push esta semana, 24
+dormidos, 109 sin clasificar.
+
+| | Objetivo | Medido |
+|---|---|---|
+| Warnings con `/W4 /permissive-`, Release y Debug | 0 | 0 |
+| Pruebas | pasan | **187 casos, 1507 aserciones** (eran 186 y 1504) |
+| Auditoría de seguridad | sale 0 | **10 reglas, 0 pendientes** |
+| Arrancar hasta la ventana con la lista | < 200 ms | **103 – 113 ms**, mediana 106, en cinco arranques en caliente; **195 ms el primero**, recién recompilado en limpio |
+| Filtrar mientras se escribe, con 500 repositorios | instantáneo | **0,006 ms por pulsación** — 2.700 veces por debajo de un fotograma |
+| Consultas a SQLite para pintar la primera pantalla | pocas | **2** (`repos` y `local`) |
+
+**Lo que no se ha podido comprobar**
+
+Los 109 repositorios de la cuenta están **todos sin clasificar**, así que la píldora de
+prioridad, el límite de Enfoque y la vista «Necesita decisión» solo se han visto con datos
+hechos a mano en las pruebas. Siguen pendientes de la fase 1 y la 2 el DPI distinto de
+100 %, el IME de verdad y el panel táctil de precisión.
+
+
 ### Fase 3 — GitHub, SQLite y sincronización
 
 Ya hay datos. La cuenta de verdad —109 repositorios personales, 108 privados— entra en la

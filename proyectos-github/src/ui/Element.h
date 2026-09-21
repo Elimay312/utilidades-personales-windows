@@ -175,6 +175,9 @@ private:
     friend class Router;
 
     void Adopt(std::unique_ptr<Element> child);
+    // Saca el visual del árbol de composición. Ver el comentario de la implementación: es
+    // lo que hace que cerrar un elemento se vea, y no solo se cumpla.
+    void Unhook();
     Element* SurfaceOwner();
     void Repaint(float fadeMs);
     void PaintSubtree(Paint& paint, float ox, float oy);
@@ -198,6 +201,11 @@ private:
     std::optional<Gfx::Shadow> m_shadow;
 
     Rect m_frame;
+    // La escala con la que se reservó la textura. Junto con el tamaño del marco es lo que
+    // decide si SetFrame tiene que repintar: al cambiar de monitor el marco no cambia y la
+    // textura sí, así que sin esto la aplicación entera se quedaría en blanco al arrastrar
+    // la ventana a una pantalla con otra escala.
+    float m_reservedScale = 0.0f;
     Theme::Tokens m_tokens;
     bool m_visible = true;
     bool m_enabled = true;

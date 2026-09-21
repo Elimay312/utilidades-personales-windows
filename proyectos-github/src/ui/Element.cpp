@@ -25,10 +25,22 @@ Element::~Element() {
     // liberada, que es el fallo más probable de toda la fase —una fila reciclada y un
     // menú cerrado mueren mientras los dos todavía les apuntan—.
     m_children.clear();
+    Unhook();
     if (m_host) {
         m_host->Paints().Forget(this);
         m_host->Input().Forget(this);
     }
+}
+
+void Element::Unhook() {
+    if (!m_visual) return;
+    // Soltar NUESTRA referencia no basta. El contenedor del padre tiene la suya, así que el
+    // visual se queda en el árbol de composición y se sigue dibujando: al cambiar de raíz,
+    // la vista vieja se quedaba detrás de la nueva. Se ve poco porque casi todo lo que se
+    // cierra tiene además su superficie cerrada y deja de pintar nada, y eso es justo lo
+    // que lo hace difícil de encontrar: un contenedor sin superficie propia no deja rastro
+    // hasta que alguien cuenta los visuales.
+    if (auto parent = m_visual.Parent()) parent.Children().Remove(m_visual);
 }
 
 void Element::Adopt(std::unique_ptr<Element> child) {
@@ -72,6 +84,7 @@ void Element::Close() {
     m_material.reset();
     m_ring.reset();
     m_shadow.reset();
+    Unhook();
     m_childHost = nullptr;
     m_visual = nullptr;
 }
@@ -150,6 +163,13 @@ bool Element::CreateRing(float radiusDip, float outsetDip, float thicknessDip) {
 }
 
 void Element::SetFrame(const Rect& frame) {
+    // Cambiar de tamaño obliga a repintar, y cambiar de sitio no. Reservar la textura la
+    // VACÍA —Composition devuelve un hueco del atlas con los píxeles del inquilino
+    // anterior, ver Surface.h— así que un elemento que se ensancha y no se repinta se queda
+    // en blanco. No puede esperar a que cambie su contenido: un título que dice siempre lo
+    // mismo no cambia nunca, y desaparecería al redimensionar la ventana para no volver.
+    const bool resized = m_frame.width != frame.width || m_frame.height != frame.height ||
+                         (m_host != nullptr && m_host->Scale() != m_reservedScale);
     m_frame = frame;
     if (!m_visual || !m_host) return;
 
@@ -164,7 +184,9 @@ void Element::SetFrame(const Rect& frame) {
         const Rect safe = frame.AtLeast(kMinSide);
         m_layer->Place(0.0f, 0.0f, safe.width, safe.height);
         m_layer->Resize(m_host->Device(), m_host->Scale());
+        if (resized) Invalidate();
     }
+    m_reservedScale = m_host->Scale();
 
     OnArrange();
 }

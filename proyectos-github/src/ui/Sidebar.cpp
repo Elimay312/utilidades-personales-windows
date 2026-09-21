@@ -12,9 +12,11 @@ namespace {
 
 constexpr float kItemHeight = Metrics::kRowHeight;
 constexpr float kItemGap = 2.0f;
-constexpr float kPadding = Metrics::kSpace2;
 constexpr float kGlyphWidth = 22.0f;
 constexpr float kCountWidth = 36.0f;
+// El título de sección y el aire que deja debajo. Es la altura de una mayúscula de 11 DIP
+// más los 8 de la rejilla, no un número a ojo.
+constexpr float kHeaderHeight = 26.0f;
 
 D2D1_RECT_F ToBox(const Rect& rect) {
     return D2D1::RectF(rect.x, rect.y, rect.Right(), rect.Bottom());
@@ -127,13 +129,42 @@ int SidebarGroup::IndexOf(const SidebarItem* item) const {
     return found == m_items.end() ? -1 : static_cast<int>(found - m_items.begin());
 }
 
+void SidebarGroup::SetHeader(std::wstring text) {
+    if (m_header == text) return;
+    m_header = std::move(text);
+    if (Attached()) {
+        OnArrange();
+        Invalidate();
+    }
+}
+
+float SidebarGroup::HeaderHeight() const { return m_header.empty() ? 0.0f : kHeaderHeight; }
+
+float SidebarGroup::PreferredHeight() const {
+    if (m_items.empty()) return HeaderHeight();
+    return HeaderHeight() + static_cast<float>(m_items.size()) * (kItemHeight + kItemGap) -
+           kItemGap;
+}
+
 void SidebarGroup::OnArrange() {
-    float y = 0.0f;
+    float y = HeaderHeight();
     for (SidebarItem* item : m_items) {
         item->SetFrame(Rect{0.0f, y, Frame().width, kItemHeight});
         y += kItemHeight + kItemGap;
     }
     MoveSelection(false);
+}
+
+void SidebarGroup::OnPaint(const Paint& paint, const Rect& box) {
+    if (m_header.empty()) return;
+
+    winrt::com_ptr<ID2D1SolidColorBrush> ink;
+    paint.dc->CreateSolidColorBrush(Gfx::ToD2D(paint.tokens->textSecondary), ink.put());
+    // Alineado con el glifo de las filas, no con el borde: si el título empieza antes que
+    // los iconos, la columna se ve escalonada.
+    paint.text->DrawLine(paint.dc, m_header, Style::Footnote, Weight::Semibold,
+                         ToBox(Rect{box.x + Metrics::kSpace1, box.y, box.width, kHeaderHeight}),
+                         ink.get());
 }
 
 void SidebarGroup::MoveSelection(bool animate) {
@@ -166,6 +197,21 @@ void SidebarGroup::Select(int index, bool animate) {
     MoveSelection(animate);
     Invalidate();
     if (m_select) m_select(m_selected);
+}
+
+void SidebarGroup::Deselect() {
+    if (m_selected < 0) return;
+    m_selected = -1;
+    // Sin animar la píldora: no se va a ningún sitio, se apaga. MoveSelection la esconde
+    // poniéndole opacidad cero, que es lo que hace que la del otro grupo parezca la misma
+    // píldora que se ha mudado.
+    MoveSelection(false);
+    Invalidate();
+}
+
+SidebarItem* SidebarGroup::ItemAt(int index) const {
+    if (index < 0 || index >= static_cast<int>(m_items.size())) return nullptr;
+    return m_items[static_cast<std::size_t>(index)];
 }
 
 void SidebarGroup::OnTheme(const Theme::Tokens& tokens, float crossfadeMs) {

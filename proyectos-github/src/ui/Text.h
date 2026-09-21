@@ -67,6 +67,11 @@ struct Run {
     // Recortar con elipsis si no cabe. Un campo de texto dice que no: ahí lo que no cabe
     // se sale, y el desplazamiento lo lleva el propio campo.
     bool trim = true;
+    // Varias líneas. Va en la MAQUETACIÓN y no en el formato, por lo mismo que la
+    // alineación y los números tabulares: el formato está cacheado y compartido, y
+    // ponerle ajuste de línea aquí se lo pondría a todas las etiquetas de la aplicación
+    // —incluidos los nombres de repositorio de las tarjetas, que tienen que recortarse—.
+    bool wrap = false;
 };
 
 class Text {

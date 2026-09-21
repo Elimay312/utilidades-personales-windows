@@ -118,6 +118,8 @@ private:
     Ui::Field* m_field = nullptr;
     Ui::SidebarGroup* m_sidebar = nullptr;
     Ui::List* m_list = nullptr;
+    // Qué elemento de ejemplo cae en cada posición. Ver el pintor de filas.
+    std::vector<int> m_demoOrder;
 
     // La muestra quieta de lo que flota: es lo que pone el menú y su sombra en claro y en
     // oscuro a la vez.
@@ -183,8 +185,13 @@ bool Catalog::Column::OnAttach() {
     // --- Lista de 500 ------------------------------------------------------------------------
     m_list = Add<Ui::List>();
     m_list->SetRowHeight(Metrics::kRowHeight);
-    m_list->SetRowPainter([](const Ui::Paint& paint, const Rect& box,
-                             const Ui::List::RowState& state) {
+    m_list->SetRowPainter([this](const Ui::Paint& paint, const Rect& box,
+                                 const Ui::List::RowState& state) {
+        // Qué elemento cae en esta posición. Con la lista por claves, la posición y el
+        // elemento dejan de ser el mismo número en cuanto algo se baraja, y pintar por
+        // posición haría que reordenar no se notara: las filas se deslizarían y volverían a
+        // dibujar exactamente lo mismo.
+        const int item = m_demoOrder[static_cast<std::size_t>(state.index)];
         if (state.selected || state.hovered) {
             winrt::com_ptr<ID2D1SolidColorBrush> veil;
             paint.dc->CreateSolidColorBrush(
@@ -196,7 +203,7 @@ bool Catalog::Column::OnAttach() {
                 D2D1::RoundedRect(ToBox(box.Inset(2.0f)), radius, radius), veil.get());
         }
 
-        const Ui::Activity activity = static_cast<Ui::Activity>(state.index % 3);
+        const Ui::Activity activity = static_cast<Ui::Activity>(item % 3);
         winrt::com_ptr<ID2D1SolidColorBrush> dot;
         paint.dc->CreateSolidColorBrush(Gfx::ToD2D(Ui::ColorOf(activity, *paint.tokens)),
                                         dot.put());
@@ -211,17 +218,17 @@ bool Catalog::Column::OnAttach() {
         paint.dc->CreateSolidColorBrush(Gfx::ToD2D(paint.tokens->textSecondary), dim.put());
 
         const float left = box.x + Metrics::kSpace4;
-        paint.text->DrawLine(paint.dc, DemoName(state.index), Ui::Style::Body,
+        paint.text->DrawLine(paint.dc, DemoName(item), Ui::Style::Body,
                              Ui::Weight::Semibold,
                              ToBox(Rect{left, box.y, 110.0f, box.height}), ink.get());
-        paint.text->DrawLine(paint.dc, DemoStep(state.index), Ui::Style::Caption,
+        paint.text->DrawLine(paint.dc, DemoStep(item), Ui::Style::Caption,
                              Ui::Weight::Regular,
                              ToBox(Rect{left + 116.0f, box.y,
                                         std::max(box.width - left - 190.0f, 1.0f), box.height}),
                              dim.get());
 
         Ui::Run days;
-        const std::wstring text = std::to_wstring(state.index % 90) + L" d";
+        const std::wstring text = std::to_wstring(item % 90) + L" d";
         days.text = text;
         days.style = Ui::Style::Caption;
         days.align = Ui::Align::Trailing;
@@ -229,6 +236,8 @@ bool Catalog::Column::OnAttach() {
         paint.text->Draw(paint.dc, days,
                          ToBox(Rect{box.Right() - 52.0f, box.y, 44.0f, box.height}), dim.get());
     });
+    m_demoOrder.resize(kDemoItems);
+    for (int i = 0; i < kDemoItems; ++i) m_demoOrder[static_cast<std::size_t>(i)] = i;
     m_list->SetCount(kDemoItems, true);
     m_list->SetSelected(0);
     if (m_catalog) {
@@ -270,12 +279,17 @@ bool Catalog::Column::OnAttach() {
 
     m_shuffle = Add<Ui::Button>(L"Reordenar", Ui::ButtonKind::Plain);
     m_shuffle->OnActivate([this] {
-        // Baraja invirtiendo las diez primeras: las filas que se ven se deslizan a su
-        // sitio nuevo en vez de saltar, que es lo que pedirá la fase 4 al sincronizar.
-        std::vector<int> order(kDemoItems);
-        for (int i = 0; i < kDemoItems; ++i) order[static_cast<std::size_t>(i)] = i;
-        std::reverse(order.begin(), order.begin() + 10);
-        m_list->Reorder(std::move(order));
+        // Baraja invirtiendo las diez primeras. Con claves, barajar es dar la MISMA lista
+        // en otro orden: cada fila viva busca dónde ha ido a parar su elemento y se desliza
+        // allí en vez de saltar. Es lo mismo que hace la fase 4 después de sincronizar,
+        // donde además entran y salen repositorios.
+        std::reverse(m_demoOrder.begin(), m_demoOrder.begin() + 10);
+        std::vector<std::uint64_t> keys(kDemoItems);
+        for (int i = 0; i < kDemoItems; ++i) {
+            keys[static_cast<std::size_t>(i)] =
+                static_cast<std::uint64_t>(m_demoOrder[static_cast<std::size_t>(i)]) + 1;
+        }
+        m_list->Update(std::move(keys), true);
     });
     return true;
 }
@@ -428,7 +442,16 @@ bool Catalog::OnAttach() {
     if (!CreateLayer()) return false;
     m_light = Add<Column>(Theme::Appearance::Light, this);
     m_dark = Add<Column>(Theme::Appearance::Dark, this);
+    // El último, y por eso el de arriba entre los hijos. El título lo pinta él: si lo
+    // pintaran los dos, se leerían uno encima del otro.
+    m_chrome = Add<Chrome>();
+    m_chrome->SetTitle(L"Catálogo de componentes");
     return true;
+}
+
+void Catalog::SetCaption(const Caption::Layout& layout, Caption::Zone hovered,
+                         Caption::Zone pressed) {
+    if (m_chrome) m_chrome->SetCaption(layout, hovered, pressed);
 }
 
 void Catalog::OnArrange() {
@@ -439,6 +462,7 @@ void Catalog::OnArrange() {
 
     if (m_light) m_light->SetFrame(Rect{kGutter, top, width, height});
     if (m_dark) m_dark->SetFrame(Rect{kGutter * 2.0f + width, top, width, height});
+    if (m_chrome) m_chrome->SetFrame(Rect{0.0f, 0.0f, frame.width, Caption::kBarHeight});
 }
 
 void Catalog::RefreshStats() {
@@ -455,17 +479,10 @@ void Catalog::RefreshStats() {
 }
 
 void Catalog::OnPaint(const Ui::Paint& paint, const Rect& box) {
-    winrt::com_ptr<ID2D1SolidColorBrush> primary;
     winrt::com_ptr<ID2D1SolidColorBrush> secondary;
-    paint.dc->CreateSolidColorBrush(Gfx::ToD2D(paint.tokens->textPrimary), primary.put());
     paint.dc->CreateSolidColorBrush(Gfx::ToD2D(paint.tokens->textSecondary), secondary.put());
 
-    paint.text->DrawLine(paint.dc, L"Catálogo de componentes", Ui::Style::Body,
-                         Ui::Weight::Semibold,
-                         ToBox(Rect{box.x + kGutter, box.y, 320.0f, Caption::kBarHeight}),
-                         primary.get());
-
-    // La medida del criterio, a la vista. Los botones de la ventana ocupan los 138 DIP de
+    // El título lo pinta Views::Chrome, que es quien lleva esa franja. La medida del criterio, a la vista. Los botones de la ventana ocupan los 138 DIP de
     // la derecha, así que el texto se queda a este lado.
     wchar_t stats[96];
     swprintf_s(stats, L"reciclado %.2f ms · %d filas vivas · %d elementos", m_recycleMs,

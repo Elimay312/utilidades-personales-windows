@@ -24,9 +24,22 @@ bool Surface::Resize(Device& device, float widthDip, float heightDip, float scal
     const int widthPx = AtLeastOne(Dpi::SurfaceSide(widthDip, scale));
     const int heightPx = AtLeastOne(Dpi::SurfaceSide(heightDip, scale));
 
+    // Nada que hacer: la textura que ya hay mide lo mismo. Salir aquí no es una
+    // optimización, es lo que conserva lo pintado. Recolocar el árbol vuelve a escribir los
+    // mismos marcos una y otra vez —cada WM_SIZE, cada Relayout— y pedirle a Composition
+    // que redimensione a lo mismo devuelve un hueco del atlas VACÍO: la pantalla entera se
+    // quedaría en blanco hasta que algo cambiara de contenido.
+    if (m_surface && widthPx == m_widthPx && heightPx == m_heightPx && scale == m_scale) {
+        m_widthDip = widthDip;
+        m_heightDip = heightDip;
+        return true;
+    }
+
     m_widthDip = widthDip;
     m_heightDip = heightDip;
     m_scale = scale;
+    m_widthPx = widthPx;
+    m_heightPx = heightPx;
 
     if (m_surface) {
         // Resize sobre la que ya hay, en vez de crear otra: es la diferencia entre
@@ -84,6 +97,10 @@ void Surface::Close() {
         m_surface.Close();
         m_surface = nullptr;
     }
+    // Y se olvida el tamaño reservado, o la siguiente llamada a Resize creería que la
+    // textura que acaba de soltarse sigue valiendo y no pediría ninguna.
+    m_widthPx = 0;
+    m_heightPx = 0;
 }
 
 }  // namespace Gfx

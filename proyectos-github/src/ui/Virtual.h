@@ -8,10 +8,19 @@
 // veinticinco y tira el criterio de los 60 fps sin que nada parpadee.
 //
 // Filas de altura fija. CLAUDE.md pide lista compacta y cuadrícula, y las dos son
-// rejillas regulares; la altura variable de la fase 4, si llega, será otra función y no
-// un parámetro más aquí.
+// rejillas regulares: la cuadrícula es la misma cuenta con varios elementos por fila, y
+// por eso todo lo de aquí sigue hablando de filas y quien llama convierte. La altura
+// variable, si algún día llega, será otra función y no un parámetro más aquí.
 
 namespace Ui {
+
+// Cuántas filas ocupan 'itemCount' elementos repartidos en 'columns' columnas. Con una
+// columna es el propio número, que es la lista compacta.
+//
+// Existe para que el redondeo hacia arriba se escriba UNA vez: con la división entera a
+// pelo, once elementos en tres columnas dan tres filas y el último se queda sin sitio, sin
+// error y sin que nada parpadee.
+int RowsFor(int itemCount, int columns);
 
 // El tramo de índices que hay que tener vivos, y dónde cae el primero.
 struct Slice {

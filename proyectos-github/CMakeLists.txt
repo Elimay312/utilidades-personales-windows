@@ -96,6 +96,10 @@ add_library(brujula_core STATIC
   src/model/Time.cpp
   src/model/Types.cpp
   src/model/Rules.cpp
+  # Fase 4. Misma regla: qué repositorios entran en cada vista, en qué orden salen y qué
+  # significa que dos textos coincidan son tres decisiones que, cuando se equivocan, dejan
+  # una lista más corta —y una lista más corta se parece muchísimo a una lista correcta—.
+  src/app/State.cpp
   src/store/Db.cpp
   src/store/Schema.cpp
   src/store/Repos.cpp
@@ -149,10 +153,16 @@ add_executable(brujula WIN32
   src/github/Auth.cpp
   src/github/Gh.cpp
   src/github/Sync.cpp
-  src/views/Demo.cpp
-  # La raíz provisional de la fase 3 y la hoja de la credencial. La fase 4 tira Status; la
-  # hoja se queda.
-  src/views/Status.cpp
+  # Fase 4. La vista principal, que sustituye a las dos raíces provisionales: Views::Demo de
+  # la fase 1 y Views::Status de la fase 3 ya no existen, y las dos lo decían en su cabecera.
+  # De la demo sobrevive lo que de verdad hacía falta —los botones de la ventana—, ahora en
+  # Views::Chrome y escritos con el kit.
+  src/views/Main.cpp
+  src/views/Chrome.cpp
+  src/views/Sidebar.cpp
+  src/views/RepoList.cpp
+  src/views/Card.cpp
+  # La hoja de la credencial, de la fase 3. Se queda.
   src/views/Welcome.cpp
   # El catálogo solo existe en Debug: es una pantalla de revisión, no una función del
   # producto, y en Release ni se compila ni deja su texto de ejemplo dentro del binario.
@@ -218,6 +228,7 @@ add_executable(brujula_tests
   tests/utf_test.cpp
   tests/time_test.cpp
   tests/rules_test.cpp
+  tests/state_test.cpp
   tests/store_test.cpp
   tests/query_test.cpp
   tests/parse_test.cpp

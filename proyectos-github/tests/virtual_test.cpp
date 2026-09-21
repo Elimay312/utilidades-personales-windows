@@ -213,3 +213,20 @@ TEST_CASE("el escalonado de entrada tiene techo") {
     // Sin techo, el elemento 499 empezaría a aparecer diez segundos después del primero.
     CHECK(Ui::StaggerMs(499) == doctest::Approx(200.0f));
 }
+
+TEST_CASE("la cuadrícula redondea hacia arriba y nunca deja a nadie fuera") {
+    // Con la división entera a pelo, once elementos en tres columnas darían tres filas y
+    // el último se quedaría sin sitio: sin error, sin parpadeo y sin aparecer.
+    CHECK(Ui::RowsFor(11, 3) == 4);
+    CHECK(Ui::RowsFor(12, 3) == 4);
+    CHECK(Ui::RowsFor(13, 3) == 5);
+
+    // Una columna es la lista compacta: tantas filas como elementos.
+    CHECK(Ui::RowsFor(109, 1) == 109);
+
+    // Los bordes que llegan de verdad: una lista vacía y una ventana tan estrecha que el
+    // número de columnas sale a cero.
+    CHECK(Ui::RowsFor(0, 3) == 0);
+    CHECK(Ui::RowsFor(-4, 3) == 0);
+    CHECK(Ui::RowsFor(5, 0) == 5);
+}

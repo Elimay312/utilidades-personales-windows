@@ -52,6 +52,7 @@ private:
 
     int LoadConfig();  // devuelve los atajos del config que no se entendieron
     void SaveConfig();
+    std::wstring StartFolder(const wchar_t* commandLine) const;
 
     void Navigate(std::wstring path);
     void NewTab();

@@ -43,8 +43,13 @@ copia y le pone un acceso directo.
 - **Icono propio** embebido en el `.exe` (Explorador, barra de tareas, alt-tab y barra de
   título) e información de versión.
 - **`install.ps1`**: instalación por usuario en `%LOCALAPPDATA%\Programs\Rayo` con acceso
-  directo en el menú Inicio, y desinstalación con `-Uninstall` (que no borra la
-  configuración). Sin administrador y sin tocar el registro.
+  directo en el menú Inicio y **"Abrir en Rayo"** en el menú contextual de carpetas, del
+  fondo de una carpeta y de las unidades. Desinstala con `-Uninstall`, sin borrar la
+  configuración. Todo en `HKCU`: no pide administrador. En Windows 11 el verbo vive en
+  "Mostrar más opciones" (Shift+F10); el menú corto solo admite apps empaquetadas.
+- **Rayo abre en la carpeta de usuario** (`%USERPROFILE%`), que es donde están Descargas,
+  Escritorio y Documentos. Con `startPath=last` en el config vuelve a abrir donde lo
+  dejaste, y con una ruta fija, ahí. Una ruta en la línea de comandos manda sobre todo.
 - **Medición de arranque** por etapas en `%APPDATA%\Rayo\rayo.log`. En Debug, al mismo
   archivo van el informe de fugas del CRT y el de la capa de depuración de D3D.
 

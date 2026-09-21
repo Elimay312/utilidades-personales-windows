@@ -128,7 +128,13 @@ std::wstring DefaultConfig() {
         swprintf_s(line, L"%s=%06x\r\n", color.name, Theme::ToHex(*color.color));
         text += line;
     }
-    text += L"\r\n[options]\r\nshowHidden=0\r\n\r\n[keys]\r\n";
+    text +=
+        L"\r\n[options]\r\n"
+        L"showHidden=0\r\n"
+        L"; startPath: vacio = la carpeta de usuario, \"last\" = donde lo dejaste la vez\r\n"
+        L"; anterior, o una ruta fija.\r\n"
+        L"startPath=\r\n"
+        L"\r\n[keys]\r\n";
     text += FromUtf8(Keymap::Defaults());
     return text;
 }
@@ -207,8 +213,7 @@ bool App::Init(const wchar_t* startPath) {
     // driver, un hilo de trabajo ya esta listando. El primer frame sale con la carpeta
     // dentro en vez de vacio.
     m_tabs.emplace_back();
-    Navigate(startPath && startPath[0] ? std::wstring(startPath)
-                                       : m_config.Get(L"state", L"lastPath", UserFolder()));
+    Navigate(StartFolder(startPath));
     // Despues de Navigate, que limpia la barra de estado.
     if (badKeys > 0)
         SetStatus("config: " + std::to_string(badKeys) +
@@ -278,6 +283,18 @@ int App::LoadConfig() {
 
     m_showHidden = m_config.GetInt(L"options", L"showHidden", 0) != 0;
     return bad;
+}
+
+// Donde abrir. La carpeta de usuario por defecto y no la ultima de la sesion anterior:
+// ahi estan Descargas, Escritorio y Documentos, que es donde se trabaja, y si hace falta
+// subir a la raiz de la unidad es una tecla. Quien prefiera lo contrario pone
+// `startPath=last` en el config, o una ruta fija.
+std::wstring App::StartFolder(const wchar_t* commandLine) const {
+    if (commandLine && commandLine[0]) return commandLine;  // el menu contextual pasa por aqui
+
+    const std::wstring configured = m_config.Get(L"options", L"startPath");
+    if (configured == L"last") return m_config.Get(L"state", L"lastPath", UserFolder());
+    return configured.empty() ? UserFolder() : configured;
 }
 
 // Al final de Run, con la ventana todavia viva: su posicion es parte de lo que se guarda.

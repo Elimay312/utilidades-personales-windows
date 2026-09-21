@@ -25,8 +25,8 @@ cmake --build build
 build\rayo.exe
 ```
 
-Instalación por usuario (copia a `%LOCALAPPDATA%\Programs\Rayo` y acceso directo en el menú
-Inicio; no pide administrador ni toca el registro):
+Instalación por usuario (copia a `%LOCALAPPDATA%\Programs\Rayo`, acceso directo en el menú
+Inicio y "Abrir en Rayo" en el menú contextual; todo en `HKCU`, sin administrador):
 
 ```
 powershell -ExecutionPolicy Bypass -File install.ps1
@@ -751,6 +751,24 @@ Medido tras la fase 8 (8 arranques en caliente, mediana):
   entera dejaba medio cuadrado vacío y a 16 px no se leía.
 - **`CHANGELOG.md`** resume la versión 1.0.0 por bloques; el porqué de cada decisión se queda
   aquí.
+- **Se abre en la carpeta de usuario, no en la última de la sesión anterior.** Ahí están
+  Descargas, Escritorio y Documentos, que es donde se trabaja; subir a la raíz de la unidad
+  es una tecla (`h`). La última carpeta se sigue guardando y se recupera con
+  `startPath=last` en el config, o se fija una ruta concreta. La línea de comandos (y por
+  tanto el menú contextual) manda sobre las dos.
+- **"Abrir en Rayo" son tres claves del registro, no una.** El Explorador trata como cosas
+  distintas la carpeta seleccionada (`Directory`, ruta en `%1`), el fondo de la carpeta
+  abierta (`Directory\Background`, donde la ruta es `%V`) y la raíz de una unidad (`Drive`,
+  que no entra en `Directory`). Todo bajo `HKCU\Software\Classes`: sin administrador y sin
+  tocar nada de los demás usuarios.
+- **Hay que avisar al shell con `SHChangeNotify(SHCNE_ASSOCCHANGED)`.** Sin eso el verbo no
+  aparece —ni desaparece al desinstalar— hasta reiniciar el Explorador. Se vio en pantalla:
+  antes de añadir el aviso, el menú no lo mostraba.
+- **En el menú corto de Windows 11 no sale, y no es un fallo de caché.** Comprobado tras
+  reiniciar el Explorador: un verbo estático clásico se queda en "Mostrar más opciones"
+  (Shift+F10). Estar en el menú corto exige una app empaquetada (MSIX) con un
+  `IExplorerCommand`, que es otro proyecto. En el clásico aparece con su icono, verificado
+  en pantalla, y la ruta llega bien: `rayo.exe "C:\Users\elima\Downloads"` abre ahí.
 - **Sin verificar**: `ReportLiveDeviceObjects` de verdad (falta `Graphics Tools`; se activa con
   `dism /online /add-capability /capabilityname:Tools.Graphics.DirectX~~~~0.0.1.0`); restaurar la
   ventana en un monitor con otro DPI o desenchufado (solo hay uno en esta máquina; el camino de

@@ -42,6 +42,11 @@ Después de cada cambio: compilar, corregir **todos** los warnings y errores, y 
 
 Si un cambio empeora alguna de estas cifras, avísalo explícitamente.
 
+"Memoria base" hay que leerla como **memoria privada**, no como working set: el working set
+cuenta páginas compartidas de DLL de Windows que no son nuestras y se recortan a voluntad
+(medido en la fase 6: 67 MB de working set bajan a 5,3 sin que la app note nada). La cifra
+privada está hoy en ~54 MB, así que este presupuesto está pendiente de revisar.
+
 ## Arquitectura
 
 ```
@@ -499,16 +504,36 @@ Medido tras la fase 6:
 | `d` a la Papelera y restaurable | sí | verificado en la Papelera, con ruta de origen |
 | Vista actualizada tras cada operación | sí | inmediata en las siete operaciones |
 | CPU en reposo (recién abierto / tras operar) | 0 % | 15,6 ms / 0,0 ms en 15 s |
-| Memoria recién abierto | < 50 MB | 46,3 MB |
+| Memoria recién abierto | < 50 MB | 46,3 MB de working set (53,8 privada) |
 | Warnings con `/W4 /permissive-` | 0 | 0 |
 
-- **El presupuesto de memoria se incumple en cuanto se opera, y es del shell.** La primera
-  operación —**una sola, sobre un archivo**— sube el working set de 46,2 a 67,0 MB y ahí se
-  queda: `IFileOperation` carga el motor de copia del shell dentro de nuestro proceso. No es
-  proporcional al trabajo (10 operaciones más solo suman 2,7 MB, 7 hilos y 30 handles, que es
-  el pool de hilos del shell asentándose) ni es una fuga nuestra, pero son +21 MB fijos sobre
-  un presupuesto de 50. La única salida real sería sacar las operaciones a un proceso
-  auxiliar, que cuesta mucho más de lo que vale. Anotado y aceptado.
+- **La primera operación sube el working set 20 MB, pero de memoria de verdad son 2,6.**
+  `IFileOperation` carga el motor de copia del shell dentro de nuestro proceso y ahí se
+  queda. Medido con una sola operación sobre un archivo: working set 47,7 → 67,2 MB, pero
+  **memoria privada 53,8 → 56,4**. La diferencia son páginas compartidas de DLL del shell,
+  ya residentes para el Explorador. Tampoco es proporcional al trabajo: 10 operaciones más
+  solo suman 2,7 MB de working set, 7 hilos y 30 handles (el pool del shell asentándose).
+- **El presupuesto de 50 MB está medido sobre la cifra equivocada.** `SetProcessWorkingSetSize
+  (GetCurrentProcess(), -1, -1)` deja el working set en **5,3 MB** con la app entera
+  funcionando, y seguir usándola solo lo sube a 6,9; la memoria privada no se mueve. Es
+  decir: el working set aquí es casi todo recortable y no mide lo que el presupuesto quería
+  medir. La cifra honesta es la privada, y esa ya está en **53,8 MB antes de operar** — o sea
+  que el presupuesto habría que revisarlo por su cuenta, no por culpa de esta fase. Si algún
+  día molesta el número, recortar el working set tras cada operación es una línea, pero es
+  maquillaje: baja el número sin liberar RAM y la operación siguiente vuelve a traer las
+  páginas.
+- **Sacar las operaciones a un proceso auxiliar no sale a cuenta por memoria.** Medido con un
+  exe aparte que hace lo mismo (COM en STA + `IFileOperation` + una operación real):
+  **87-93 ms** de arranque a salida, contra los **~5 ms** que cuesta hoy dentro del proceso a
+  partir de la segunda operación. Son ~85 ms de sobrecoste en cada `d`, contra un presupuesto
+  que exige el mismo frame para moverse. Y habría que inventar un formato de serialización en
+  los dos sentidos (la línea de comandos no vale: tope de 32K y comillas dentro de los
+  nombres), no ahorraría ni un hilo (alguien tiene que esperar al proceso) y los diálogos del
+  shell dejarían de ser ventanas de Rayo. Un auxiliar *persistente* es peor: mata los 85 ms
+  pero los 19 MB solo se mudan de proceso.
+  **Lo que sí compraría es aislamiento**: el motor de copia carga extensiones de terceros
+  (nube, antivirus, compresores) dentro de nuestro proceso, y hoy una que se cuelgue se lleva
+  el gestor de archivos. Ese, y no la memoria, sería el motivo para hacerlo.
 - **El exe pasa de 705 a 768 KB.** 63 KB es `imgui_stdlib.cpp` más `FileOps` y `EditField`.
   Sigue sin dependencias nuevas de redistribuibles: `shell32` y `ole32` ya se enlazaban desde
   la fase 3.

@@ -36,6 +36,15 @@ constexpr unsigned long long kPreviewDelayMs = 60;
 // no puede estar rehaciendo la imagen.
 constexpr int kPreviewSizeStep = 256;
 
+// Lo que se agrupan los avisos del vigilante antes de releer. Ventana fija, no deslizante:
+// copiar mil archivos refresca cada ~100 ms en vez de no refrescar hasta que termine.
+//
+// ponytail: agrupar por tiempo y nada mas. El coste sale proporcional al trajin real del
+// disco, y con una carpeta que no para (medido con %TEMP%, 6.091 entradas) son ~250 ms de
+// CPU cada 15 s frente a los ~40 de la fase 4. Si molestara, el paso siguiente es un minimo
+// entre refrescos de la misma carpeta, no subir este numero.
+constexpr unsigned long long kWatchDebounceMs = 100;
+
 constexpr ImGuiWindowFlags kPanelFlags =
     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
@@ -66,6 +75,8 @@ int IndexOfName(const std::vector<DirectoryEntry>& entries, const std::wstring& 
 }  // namespace
 
 App::~App() {
+    // Antes de destruir la ventana: su callback hace PostMessageW con el HWND.
+    m_watcher.Stop();
     if (ImGui::GetCurrentContext()) {
         ImGui_ImplDX11_Shutdown();
         ImGui_ImplWin32_Shutdown();
@@ -106,6 +117,21 @@ bool App::Init(const wchar_t* startPath) {
     };
 
     m_pool.Start(std::thread::hardware_concurrency() / 2);
+
+    // El vigilante avisa desde su propio hilo y en rafagas. Solo se despierta la UI con el
+    // primer aviso de cada tanda: mil archivos copiandose no pueden ser mil repintados.
+    m_watcher.Start([this, hwnd = m_window.Handle()](const std::wstring& path) {
+        bool first = false;
+        {
+            std::lock_guard<std::mutex> lock(m_inboxMutex);
+            if (std::find(m_changed.begin(), m_changed.end(), path) == m_changed.end()) {
+                m_changed.push_back(path);
+                first = true;
+            }
+        }
+        if (first) PostMessageW(hwnd, WM_APP_WAKE, 0, 0);
+    });
+
     Navigate(startPath && startPath[0] ? std::wstring(startPath) : UserFolder());
 
     RenderFrame();  // un frame ya pintado antes de mostrar: sin flash blanco
@@ -116,14 +142,17 @@ bool App::Init(const wchar_t* startPath) {
 
 int App::Run() {
     while (m_running) {
-        // Sin frames pendientes dormimos aqui: 0 % de CPU hasta que llegue algo. El unico
-        // plazo que puede acortar la espera es el de la vista previa; en reposo vuelve a
-        // ser INFINITE. Se prefiere a SetTimer porque no toca Window ni deja nada que matar.
+        // Sin frames pendientes dormimos aqui: 0 % de CPU hasta que llegue algo. Lo unico
+        // que acorta la espera son los dos plazos (vista previa y refresco del vigilante);
+        // en reposo los dos estan a 0 y vuelve a ser INFINITE. Se prefiere a SetTimer
+        // porque no toca Window ni deja nada que matar.
         if (m_pendingFrames == 0) {
+            const ULONGLONG now = GetTickCount64();
             DWORD timeout = INFINITE;
-            if (m_previewDue != 0) {
-                const ULONGLONG now = GetTickCount64();
-                timeout = m_previewDue > now ? static_cast<DWORD>(m_previewDue - now) : 0;
+            for (const unsigned long long due : {m_previewDue, m_refreshDue}) {
+                if (due == 0) continue;
+                const DWORD wait = due > now ? static_cast<DWORD>(due - now) : 0;
+                if (timeout == INFINITE || wait < timeout) timeout = wait;
             }
             MsgWaitForMultipleObjectsEx(0, nullptr, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         }
@@ -145,6 +174,7 @@ int App::Run() {
             RequestFrames();  // una carpeta en cache se sirve en el acto y hay que pintarla
         }
 
+        RefreshDirty();
         DrainResults();
 
         if (m_pendingFrames > 0) {
@@ -177,6 +207,23 @@ void App::Navigate(std::wstring path) {
     const auto remembered = m_cursorMemory.find(path);
     SetPane(m_current, std::move(path),
             remembered == m_cursorMemory.end() ? std::wstring() : remembered->second);
+
+    // Solo las dos columnas navegables: la de la vista previa cambia con cada j/k y abrir y
+    // cerrar un handle por pulsacion no compensa para algo que se mira de pasada.
+    std::vector<std::wstring> watched;
+    if (!m_current.path.empty()) watched.push_back(m_current.path);
+    if (m_parent.active && !m_parent.path.empty()) watched.push_back(m_parent.path);
+    m_watcher.Watch(std::move(watched));
+}
+
+// El refresco del vigilante pasa por Request como cualquier otro, asi que hereda el descarte
+// por ruta y el dedupe de la fase 3. El cursor lo recoloca ApplyListing: por nombre si sigue
+// ahi, y si no, en la misma posicion numerica.
+void App::RefreshDirty() {
+    if (m_refreshDue == 0 || GetTickCount64() < m_refreshDue) return;
+    m_refreshDue = 0;
+    for (const std::wstring& path : m_dirty) Request(path);
+    m_dirty.clear();
 }
 
 void App::GoParent() {
@@ -385,13 +432,24 @@ void App::DrainResults() {
     std::vector<DirectoryListing> ready;
     std::vector<Preview> previews;
     std::vector<std::string> messages;
+    std::vector<std::wstring> changed;
     {
         std::lock_guard<std::mutex> lock(m_inboxMutex);
-        if (m_inbox.empty() && m_previewInbox.empty() && m_messages.empty()) return;
+        if (m_inbox.empty() && m_previewInbox.empty() && m_messages.empty() && m_changed.empty())
+            return;
         ready.swap(m_inbox);
         previews.swap(m_previewInbox);
         messages.swap(m_messages);
+        changed.swap(m_changed);
     }
+
+    for (std::wstring& path : changed) {
+        m_cache.Drop(path);  // lo que hay guardado de esa carpeta ya no vale
+        if (std::find(m_dirty.begin(), m_dirty.end(), path) == m_dirty.end())
+            m_dirty.push_back(std::move(path));
+    }
+    if (!m_dirty.empty() && m_refreshDue == 0)
+        m_refreshDue = GetTickCount64() + kWatchDebounceMs;
 
     for (DirectoryListing& listing : ready) {
         std::erase(m_inFlight, listing.path);

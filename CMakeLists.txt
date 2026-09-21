@@ -47,6 +47,7 @@ add_executable(rayo WIN32
   src/app/App.cpp
   src/core/TaskPool.cpp
   src/fs/DirectoryReader.cpp
+  src/fs/DirectoryWatcher.cpp
   src/fs/ListingCache.cpp
   src/platform/Window.cpp
   src/platform/GraphicsDevice.cpp
@@ -73,6 +74,14 @@ target_compile_options(rayo_path_check PRIVATE /W4 /permissive- /utf-8 /EHsc)
 target_compile_definitions(rayo_path_check PRIVATE
   UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 target_link_libraries(rayo_path_check PRIVATE shlwapi)
+
+add_executable(rayo_watch_check tests/watch_check.cpp
+  src/fs/DirectoryWatcher.cpp src/fs/DirectoryReader.cpp)
+target_include_directories(rayo_watch_check PRIVATE src)
+target_compile_options(rayo_watch_check PRIVATE /W4 /permissive- /utf-8 /EHsc)
+target_compile_definitions(rayo_watch_check PRIVATE
+  UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX WINVER=0x0A00 _WIN32_WINNT=0x0A00)
+target_link_libraries(rayo_watch_check PRIVATE shlwapi)
 
 add_executable(rayo_preview_check tests/preview_check.cpp
   src/preview/Preview.cpp src/fs/DirectoryReader.cpp)

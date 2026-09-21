@@ -125,7 +125,7 @@ El plan completo está en `PROMPTS.md`. Estado actual:
 - [x] Fase 2 — Lector de carpetas asíncrono y columna central
 - [x] Fase 3 — Columnas Miller y navegación
 - [x] Fase 4 — Vista previa (imágenes, texto, carpetas)
-- [ ] Fase 5 — Vigilancia de cambios en disco
+- [x] Fase 5 — Vigilancia de cambios en disco
 - [ ] Fase 6 — Operaciones de archivos
 - [ ] Fase 7 — Filtro, ir a ruta, archivos ocultos, barra de estado
 - [ ] Fase 8 — Pulido: configuración, pestañas, marcadores, medición de arranque
@@ -368,3 +368,69 @@ Medido tras la fase 4, sobre una carpeta de 300 fotos de 2400x1600:
 - **Sin verificar**: HEIC/AVIF (no hay códec instalado en esta máquina), orientaciones EXIF 5 y 7
   (las transpuestas raras; la 6 sí, en pantalla), unidades extraíbles y de red. exe 705 KB, sin
   dependencias nuevas de redistribuibles.
+
+### 2026-09-21 — Fase 5
+
+- **El vigilante no dice *qué* cambió, solo *qué carpeta*.** La respuesta a cualquier aviso es
+  releer la carpeta entera, así que descodificar `FILE_NOTIFY_INFORMATION` no aportaba nada: el
+  buffer no se lee nunca. Como efecto, que se desborde deja de ser un caso especial (llega con 0
+  bytes, y eso también significa "algo cambió"), y 1 KB de buffer sobra.
+- **Un solo hilo para todas las carpetas, con APCs en vez de cerrojos.** El hilo duerme en
+  `SleepEx(INFINITE, TRUE)` y despierta solo para las APCs con las que la UI le pasa trabajo y
+  para las rutinas de terminación de `ReadDirectoryChangesW`. Todo el estado del vigilante (la
+  lista de carpetas, los handles) lo tocan únicamente cosas que corren en ese hilo y de una en
+  una: cero mutex, cero eventos que administrar. Un hilo por carpeta habría obligado a hacer join
+  desde el hilo de UI en cada navegación.
+- **El handle solo se cierra en la rutina de terminación.** `CancelIoEx` no espera: hasta que
+  llega la terminación la E/S sigue viva y el kernel puede estar escribiendo en el `OVERLAPPED`.
+  Al cancelar, el `Entry` sale de la lista y pasa a ser propiedad de la E/S pendiente; muere en
+  `Completion`. `Stop` no sale mientras quede uno vivo, y por eso hace falta la marca `abandoned`
+  y no basta con mirar `ERROR_OPERATION_ABORTED`: si la lectura ya había terminado, `CancelIoEx`
+  falla con `ERROR_NOT_FOUND` y la terminación llega con éxito, no cancelada.
+- **El criterio del cursor ya estaba escrito en la fase 3.** `ApplyListing` busca el nombre
+  guardado y, si no está, deja el cursor en la misma posición numérica. El refresco del vigilante
+  pasa por `Request` como cualquier otro, así que hereda eso, el descarte por ruta y el dedupe de
+  peticiones en vuelo. La fase 5 no añadió ni una línea de lógica de cursor.
+- **El plazo de 100 ms es el mismo mecanismo que el de la vista previa**: un `m_refreshDue` más
+  en el `timeout` de `MsgWaitForMultipleObjectsEx`. Ventana fija, no deslizante: copiar mil
+  archivos refresca cada ~100 ms en vez de no refrescar hasta que la copia termine.
+- **Se despierta la UI con el primer aviso de cada tanda, no con todos.** El `PostMessageW` solo
+  sale si la ruta no estaba ya en el buzón. Sin eso, copiar mil archivos serían mil despertares y
+  tres mil frames.
+- **Solo se vigilan las dos columnas navegables.** La de la vista previa cambia con cada `j`/`k`
+  y abrir y cerrar un handle por pulsación no compensa para algo que se mira de pasada. En la
+  raíz virtual (lista de unidades) no se vigila nada: meter y sacar un USB no se ve solo.
+- **`LongPath` sale de `DirectoryReader.cpp` a la cabecera.** Era el prefijo `\\?\` privado de
+  `MakeSearchPattern`; ahora `CreateFileW` del vigilante usa el mismo y las rutas largas siguen
+  funcionando en los dos sitios.
+- **`tests/watch_check.cpp`**: crea una carpeta temporal y comprueba lo único que no se ve en
+  pantalla: que avisa con la ruta de la carpeta, que dejar de vigilar corta los avisos de verdad
+  (no un flag que los ignore) y que 200 ciclos de vigilar/desvigilar no suben el recuento de
+  handles del proceso. El propio destructor es parte de la prueba: si dejara una E/S viva, se
+  colgaría ahí.
+
+Medido tras la fase 5:
+
+| Métrica | Objetivo | Medido |
+|---|---|---|
+| Crear, borrar y renombrar desde fuera, hasta verse | < 500 ms | visible a los 400 ms (las tres a la vez) |
+| CPU en reposo, dos carpetas tranquilas vigiladas | 0 % | 0-15,6 ms en 15 s — igual que la fase 4 |
+| 60 idas y venidas `h`/`l` seguidas | sin fugas | handles 573 → 575, hilos 67 → 67 |
+| Warnings con `/W4 /permissive-` | 0 | 0 |
+
+- **El suelo de CPU en reposo (~15,6 ms cada 15 s, un tick del reloj) ya estaba en la fase 4.**
+  Medido con las dos versiones a la vez sobre la misma carpeta: idénticas. El vigilante dormido
+  en `SleepEx` no cuesta nada.
+- **Con una carpeta que no para, sí se nota: ~250 ms de CPU cada 15 s frente a ~40.** Medido con
+  `%TEMP%` (6.091 entradas) como columna padre, que recibe escrituras todo el rato. Es
+  proporcional al trajín real del disco, no un bucle: cada aviso agrupado cuesta una relectura
+  con su `std::sort`. Si molestara, la salida es un mínimo entre refrescos de la misma carpeta,
+  no subir `kWatchDebounceMs`. Anotado en `App.cpp`.
+- **Borrar la carpeta en la que estás no cierra la columna**: el listado viejo se queda en
+  pantalla y el error va a la barra de estado. La columna padre sí se entera y la quita de su
+  lista. No se ha hecho nada más porque "a dónde ir" es una decisión de la fase 7 (`:` para ir a
+  una ruta).
+- **Sin verificar**: unidades de red y recursos UNC (no hay ninguno en esta máquina).
+  `ReadDirectoryChangesW` no funciona sobre algunos sistemas de archivos remotos; el código lo
+  trata como "sin vigilancia" y la app se comporta como en la fase 4, pero no se ha podido
+  probar. Tampoco los volúmenes extraíbles.

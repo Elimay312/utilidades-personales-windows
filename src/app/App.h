@@ -10,6 +10,7 @@
 
 #include "core/TaskPool.h"
 #include "fs/DirectoryReader.h"
+#include "fs/DirectoryWatcher.h"
 #include "fs/ListingCache.h"
 #include "platform/GraphicsDevice.h"
 #include "platform/Window.h"
@@ -52,6 +53,7 @@ private:
     void SetPane(Pane& pane, std::wstring path, std::wstring select);
     void ApplyListing(Pane& pane, const EntryList& entries);
     void Request(const std::wstring& path);
+    void RefreshDirty();
 
     int PreviewTargetPx() const;
     void UpdatePreview();
@@ -85,6 +87,11 @@ private:
     // lectura veinte veces por delante de la carpeta a la que el usuario acaba de llegar.
     std::vector<std::wstring> m_inFlight;
 
+    // Carpetas que el vigilante ha visto cambiar y aun no se han releido. El plazo agrupa en
+    // una sola lectura la rafaga de avisos que suelta copiar o borrar muchos archivos.
+    std::vector<std::wstring> m_dirty;
+    unsigned long long m_refreshDue = 0;  // GetTickCount64 del disparo; 0 = nada pendiente
+
     // Vista previa del archivo bajo el cursor. Nada se lanza hasta que el cursor lleva
     // quieto kPreviewDelayMs: pasar de largo con j/k no decodifica nada.
     PreviewPtr m_previewFile;
@@ -100,8 +107,10 @@ private:
     std::vector<DirectoryListing> m_inbox;
     std::vector<Preview> m_previewInbox;
     std::vector<std::string> m_messages;
+    std::vector<std::wstring> m_changed;  // lo llena el hilo del vigilante
 
-    // El ultimo a proposito: al destruirse hace join antes de que mueran el mutex y el
-    // inbox que sus tareas usan (los miembros se destruyen en orden inverso).
+    // Los dos ultimos a proposito: al destruirse hacen join antes de que mueran el mutex y
+    // el inbox que su trabajo usa (los miembros se destruyen en orden inverso).
+    DirectoryWatcher m_watcher;
     TaskPool m_pool;
 };

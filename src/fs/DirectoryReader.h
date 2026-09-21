@@ -31,6 +31,10 @@ struct DirectoryListing {
 // La ruta vacia es la raiz virtual (lista de unidades) y se devuelve tal cual.
 std::wstring NormalizePath(const std::wstring& path);
 
+// Ruta lista para las APIs de disco: prefijo \\?\ (o \\?\UNC\) para saltarse MAX_PATH.
+// Exige una ruta ya pasada por NormalizePath: el prefijo desactiva la normalizacion.
+std::wstring LongPath(const std::wstring& path);
+
 // nullopt = no hay donde subir. "" = raiz virtual con la lista de unidades.
 std::optional<std::wstring> ParentPath(const std::wstring& path);
 

@@ -21,6 +21,9 @@ class ListingCache {
 public:
     EntryList Get(const std::wstring& path);  // nulo si no esta; lo encontrado pasa al frente
     void Put(const std::wstring& path, EntryList listing);
+    // El vigilante de disco dice que ese listado ya no vale. Las columnas que lo esten
+    // usando no se enteran: tienen su propio shared_ptr y siguen pintando hasta el refresco.
+    void Drop(const std::wstring& path);
 
 private:
     void Evict();

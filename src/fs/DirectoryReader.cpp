@@ -7,17 +7,8 @@
 
 namespace {
 
-// El prefijo \\?\ quita el limite de MAX_PATH, pero a cambio desactiva toda la
-// normalizacion: la ruta ya tiene que venir por NormalizePath.
 std::wstring MakeSearchPattern(const std::wstring& path) {
-    std::wstring pattern;
-    if (path.compare(0, 4, L"\\\\?\\") == 0)
-        pattern = path;
-    else if (path.compare(0, 2, L"\\\\") == 0)
-        pattern = L"\\\\?\\UNC\\" + path.substr(2);
-    else
-        pattern = L"\\\\?\\" + path;
-
+    std::wstring pattern = LongPath(path);
     if (!pattern.empty() && pattern.back() != L'\\') pattern.push_back(L'\\');
     pattern.push_back(L'*');
     return pattern;
@@ -101,6 +92,14 @@ std::wstring NormalizePath(const std::wstring& path) {
     if (length == 0 || length >= large.size()) return path;
     large.resize(length);
     return large;
+}
+
+// El prefijo \\?\ quita el limite de MAX_PATH, pero a cambio desactiva toda la
+// normalizacion (incluido convertir / en \): la ruta ya tiene que venir por NormalizePath.
+std::wstring LongPath(const std::wstring& path) {
+    if (path.compare(0, 4, L"\\\\?\\") == 0) return path;
+    if (path.compare(0, 2, L"\\\\") == 0) return L"\\\\?\\UNC\\" + path.substr(2);
+    return L"\\\\?\\" + path;
 }
 
 std::optional<std::wstring> ParentPath(const std::wstring& path) {

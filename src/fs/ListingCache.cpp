@@ -39,6 +39,15 @@ void ListingCache::Put(const std::wstring& path, EntryList listing) {
     Evict();
 }
 
+void ListingCache::Drop(const std::wstring& path) {
+    for (auto it = m_items.begin(); it != m_items.end(); ++it) {
+        if (it->first != path) continue;
+        m_rows -= it->second->size();
+        m_items.erase(it);
+        return;
+    }
+}
+
 void ListingCache::Evict() {
     // El frente nunca se tira: es lo que se acaba de pedir.
     while (m_items.size() > kMaxFolders || (m_items.size() > 1 && m_rows > kMaxRows)) {

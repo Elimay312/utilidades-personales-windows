@@ -1,0 +1,221 @@
+// Lista auditable de P/Invokes (Fase 2). Todas son APIs publicas documentadas y
+// actuan sobre el propio proceso o el propio HWND.
+
+// --- Ventana propia ---
+RegisterClassExW
+CreateWindowExW
+DefWindowProcW
+DestroyWindow
+PostQuitMessage
+ShowWindow
+SetWindowPos
+LoadCursorW
+
+// --- Bucle de mensajes propio ---
+GetMessageW
+TranslateMessage
+DispatchMessageW
+
+// --- Geometria de pantalla (solo lectura) ---
+MonitorFromPoint
+MonitorFromWindow
+GetMonitorInfoW
+MONITORINFOEXW
+GetDpiForWindow
+GetDpiForMonitor
+
+// --- AppBar: el dock se declara barra de herramientas de escritorio ---
+// Actua sobre nuestro propio HWND y no necesita elevacion. ABM_SETSTATE queda
+// prohibido por la enmienda 3: escribe un ajuste global del usuario sin rollback.
+SHAppBarMessage
+APPBARDATA
+ABE_BOTTOM
+
+// --- Avisos de ventanas del shell. NO es un hook ---
+// La doc lo contrasta ella misma con SetWindowsHookEx: "the messages are received
+// through the specified window's WindowProc and not through a call back procedure".
+// No carga ninguna DLL en otro proceso. Ver la enmienda 3 de SEGURIDAD.md.
+RegisterShellHookWindow
+DeregisterShellHookWindow
+RegisterWindowMessageW
+
+// --- Atajo de teclado para rotar de perfil ---
+// NO es un hook: no se observa el teclado, se le pide a Windows que mande WM_HOTKEY a
+// NUESTRA ventana cuando se pulse UNA combinacion. Sin DLL en otros procesos y sin ver
+// ninguna otra tecla. Es como registra su atajo cualquier app.
+RegisterHotKey
+UnregisterHotKey
+
+// --- Raton, solo en la ventana propia (no es un hook) ---
+TrackMouseEvent
+SetCapture
+ReleaseCapture
+
+// --- Composicion de escritorio, sobre el HWND propio ---
+
+// --- Recursos GDI de los iconos (M1) ---
+DeleteObject
+
+// --- Modulo propio (para hInstance) ---
+GetModuleHandleW
+
+// --- Area cliente para el pintado ---
+GetClientRect
+
+// --- Composition interop (M1) ---
+ICompositorDesktopInterop
+ICompositionDrawingSurfaceInterop
+ICompositorInterop
+CreateDispatcherQueueController
+DispatcherQueueOptions
+
+// --- Iconos (M1) ---
+SHCreateItemFromParsingName
+IShellItemImageFactory
+SIIGBF
+GetObject
+GetDIBits
+BITMAPINFO
+DIB_USAGE
+
+// --- Superficie de Composition para los iconos (M1) ---
+D3D11CreateDevice
+D2D1CreateDevice
+ID2D1Device
+ID2D1DeviceContext
+ID2D1Bitmap1
+IDXGIDevice
+GetDC
+ReleaseDC
+BITMAP
+BI_COMPRESSION
+D3D_DRIVER_TYPE
+D3D11_CREATE_DEVICE_FLAG
+ID3D11Device
+IDXGIDevice
+ID2D1Bitmap1
+D2D1_BITMAP_PROPERTIES1
+D2D1_ALPHA_MODE
+DXGI_FORMAT
+D2D1_BITMAP_INTERPOLATION_MODE
+PostMessageW
+IsWindow
+GetWindowLongPtrW
+WINDOWPOS
+SetTimer
+KillTimer
+
+// --- Autoocultar y pantalla completa (M4) ---
+SHQueryUserNotificationState
+GetForegroundWindow
+GetWindowRect
+EnumDisplayMonitors
+
+// --- Consola para --check estando compilado como WinExe (M5) ---
+AttachConsole
+
+// --- Deteccion de apps abiertas (fase 1 de extras) ---
+OpenProcess
+GetPackageFamilyName
+
+// La ruta del ejecutable de un proceso que tiene ventana: es lo que da icono y nombre
+// a las apps abiertas que no estan ancladas. Solo lectura, y con
+// PROCESS_QUERY_LIMITED_INFORMATION, que no necesita elevacion.
+QueryFullProcessImageNameW
+
+// --- Localizar y gobernar la ventana de la app clicada (enmienda 1 de SEGURIDAD.md) ---
+// Solo se usan tras un clic del usuario sobre un icono del dock. Nunca en segundo plano.
+EnumWindows
+GetShellWindow
+GetCurrentProcessId
+
+// Que app abre un protocolo. Solo LECTURA de asociaciones del shell: sirve para
+// ponerle al icono de una URL la cara del navegador que la va a abrir.
+AssocQueryStringW
+
+// Listas de saltos: los documentos recientes de una app. API publica, implementada
+// por el sistema. Es LECTURA de datos del usuario, asi que va con los tres
+// cortafuegos de la enmienda 3: solo apps de dock.json, solo tras un gesto, nunca
+// en un temporizador.
+IApplicationDocumentLists
+ApplicationDocumentLists
+IObjectArray
+
+// El AppUserModelID que declara una ventana. Es la unica forma de preguntar por la
+// lista de saltos de una app de siempre: la ruta del .exe NO vale como AppID, medido.
+SHGetPropertyStoreForWindow
+IPropertyStore
+PropVariantToStringAlloc
+GetWindowThreadProcessId
+IsWindowVisible
+IsIconic
+GetWindow
+GetWindowTextLengthW
+GetWindowTextW
+FindWindowExW
+GetClassNameW
+DwmGetWindowAttribute
+DwmSetWindowAttribute
+SetForegroundWindow
+AttachThreadInput
+GetCurrentThreadId
+
+// --- Captura de la ventana para el efecto genio (G2) ---
+// Se midio que PrintWindow con PW_RENDERFULLCONTENT basta para las apps reales
+// (Explorador, Paint y Bloc de notas capturan integras), asi que no hace falta
+// Windows.Graphics.Capture ni su borde amarillo.
+PrintWindow
+CreateCompatibleDC
+CreateDIBSection
+SelectObject
+DeleteDC
+GetDC
+ReleaseDC
+
+// --- Arrastrar y soltar (Fase 3, enmienda 2 de SEGURIDAD.md) ---
+// Receptivo: solo recibe lo que el usuario suelta sobre nuestra ventana. El
+// portapapeles sigue prohibido, y no aparece aqui OleGetClipboard ni nada parecido.
+CreateRectRgn
+CombineRgn
+SetWindowRgn
+OleInitialize
+OleUninitialize
+RegisterDragDrop
+RevokeDragDrop
+IDropTarget
+DROPEFFECT
+IDropTargetHelper
+CLSID_DragDropHelper
+CoCreateInstance
+IShellItem
+SIGDN
+SHCreateShellItemArrayFromDataObject
+SHCreateShellItemArrayFromShellItem
+IShellItemArray
+IApplicationActivationManager
+ApplicationActivationManager
+ShellExecuteExW
+IShellItem2
+PKEY_AppUserModel_ID
+IShellLinkW
+ShellLink
+IPersistFile
+
+// --- Texto de las etiquetas, sobre nuestra propia superficie de dibujo ---
+DWriteCreateFactory
+IDWriteFactory
+IDWriteTextFormat
+IDWriteTextLayout
+DWRITE_FACTORY_TYPE
+DWRITE_TEXT_ALIGNMENT
+DWRITE_PARAGRAPH_ALIGNMENT
+DWRITE_TEXT_METRICS
+DWRITE_FONT_WEIGHT
+DWRITE_FONT_STYLE
+DWRITE_FONT_STRETCH
+D2D1_ROUNDED_RECT
+D2D1_DRAW_TEXT_OPTIONS
+
+// --- Contenido de una carpeta del dock, para desplegarla ---
+IEnumShellItems
+BHID_EnumItems

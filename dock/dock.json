@@ -1,0 +1,88 @@
+// Config del dock. Se admiten comentarios y comas finales.
+//
+// "target" puede ser:
+//   - la ruta de un ejecutable            -> "C:/Windows/System32/notepad.exe"
+//   - una carpeta                         -> "C:/Users/tu/Escritorio/renpy"
+//   - un script o un documento            -> "C:/scripts/backup.ps1"
+//   - un elemento del shell (apps Store)  -> "shell:AppsFolder/<AppUserModelID>"
+//   - una direccion o un protocolo        -> "https://claude.ai", "ms-settings:display"
+//
+// Y con "arguments" se le pasan parametros. El icono de una direccion es el de la
+// app que la va a abrir, que es lo que ensena el propio Windows.
+//
+//   { "name": "Copia", "target": "C:/Windows/System32/cmd.exe",
+//     "arguments": "/c C:\\scripts\\backup.cmd" }
+//
+// Usa siempre barras normales: el dock las convierte solo, así no hay que
+// escapar barras invertidas en JSON.
+{
+  "iconSize": 48,
+  "iconSpacing": 16,
+
+  // Cuanto crece el icono bajo el cursor. 1.0 la apaga del todo, que es como
+  // viene macOS de fabrica. A 2.0 el bulto empuja tanto a los vecinos que cuesta
+  // acertarle a un icono.
+  "magnification": 1.3,
+
+  // Tambien las apps abiertas que no has anclado, detras de un separador, como
+  // hace la barra de tareas. Se van solas al cerrarlas; para que una se quede,
+  // clic derecho sobre ella -> Anclar al dock.
+  "showRunning": true,
+
+  // Si el dock se esconde solo y asoma al llevar el ratón al borde inferior.
+  "autoHide": true,
+
+  // Arrancar al iniciar sesión. Escribe en
+  // HKCU\Software\Microsoft\Windows\CurrentVersion\Run, que sale listado en la
+  // pestaña Inicio del Administrador de tareas. A false, la entrada se borra sola.
+  "autoStart": true,
+
+  "apps": [
+    { "name": "Explorador",    "target": "C:/Windows/explorer.exe" },
+    { "name": "Bloc de notas", "target": "C:/Windows/System32/notepad.exe" },
+
+    // Un separador: ocupa mucho menos que un icono y solo pinta una raya.
+    { "separator": true },
+
+    { "name": "Paint",         "target": "shell:AppsFolder/Microsoft.Paint_8wekyb3d8bbwe!App" },
+    { "name": "Calculadora",   "target": "shell:AppsFolder/Microsoft.WindowsCalculator_8wekyb3d8bbwe!App" }
+  ]
+
+  // Cada pantalla puede tener su propia lista. La que no tenga bloque aquí ve la
+  // de arriba. La clave es el nombre de dispositivo del monitor, que sale en la
+  // consola al arrancar: [dock] \\.\DISPLAY2 al 100%.
+  //
+  // No hace falta escribirlo a mano para tener docks distintos: arrastrar un
+  // icono a una pantalla, o sacarlo de ella, ya afecta solo a esa. Esto es para
+  // partir de una lista base distinta.
+  //
+  // "pantallas": {
+  //   "\\\\.\\DISPLAY2": {
+  //     "apps": [
+  //       { "name": "Explorador", "target": "C:/Windows/explorer.exe" }
+  //     ]
+  //   }
+  // }
+
+  // Juegos de iconos entre los que rotar con un atajo. Cada perfil sustituye a
+  // "apps", y puede llevar dentro su propio bloque "pantallas". El atajo rota
+  // entre el dock de siempre y cada perfil, en este orden, y vuelve a empezar.
+  //
+  // Cada perfil recuerda SU orden y SUS anadidos por separado: mover un icono
+  // en "juegos" no toca "trabajo". Un perfil tampoco hereda lo que arrastraste
+  // estando en otro.
+  //
+  // "atajoPerfil": "Ctrl+Alt+D",
+  // "perfiles": {
+  //   "trabajo": {
+  //     "apps": [
+  //       { "name": "Explorador", "target": "C:/Windows/explorer.exe" }
+  //     ]
+  //   },
+  //   "juegos": {
+  //     "apps": [
+  //       { "name": "Steam", "target": "C:/Program Files (x86)/Steam/steam.exe" }
+  //     ]
+  //   }
+  // }
+}

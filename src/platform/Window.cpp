@@ -43,6 +43,14 @@ bool Window::Create(const wchar_t* title, int widthDip, int heightDip, COLORREF 
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.hbrBackground = nullptr;  // sin borrado GDI: pinta D3D, asi no parpadea
     wc.lpszClassName = kClassName;
+    // El icono 1 del .rc. El pequeno se pide aparte y al tamano exacto: si se deja nulo,
+    // Windows encoge el grande y la barra de titulo se ve emborronada. LR_SHARED los hace
+    // propiedad del sistema, asi que no hay nada que destruir.
+    wc.hIcon = static_cast<HICON>(
+        LoadImageW(wc.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED));
+    wc.hIconSm = static_cast<HICON>(
+        LoadImageW(wc.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                   GetSystemMetrics(SM_CYSMICON), LR_SHARED));
     if (!RegisterClassExW(&wc)) return false;
 
     m_brush = CreateSolidBrush(background);

@@ -728,6 +728,21 @@ Medido tras la fase 8 (8 arranques en caliente, mediana):
 
 - **El exe pasa de 788 a 830 KB**, sin dependencias nuevas: el config es kernel32 y el log
   también.
+- **Icono y versión: `src/rayo.rc`, y el manifiesto sigue yendo suelto.** La nota de la fase 1
+  avisaba de que un `.rc` propio podía duplicar el manifiesto; no pasa mientras el `.rc` no
+  lleve un `RT_MANIFEST`, y así link.exe lo sigue fundiendo con el `trustInfo` que genera él.
+  Comprobado tras añadirlo con `mt.exe -inputresource:rayo.exe;#1`: sigue habiendo uno solo,
+  con PerMonitorV2, longPathAware y UTF-8.
+- **El icono pequeño se carga aparte y al tamaño exacto** (`LoadImageW` con `SM_CXSMICON`). Si
+  `hIconSm` se deja nulo, Windows encoge el de 32 y la barra de título se ve emborronada.
+  `LR_SHARED` los deja en manos del sistema: nada que destruir.
+- **`src/rayo.ico` está generado, no dibujado**: rayo del acento (`#4fc1ff`) sobre cuadrado
+  redondeado oscuro, en 16/24/32/48/64/128/256, con las imágenes guardadas como PNG dentro del
+  `.ico` (Windows 10 los lee a cualquier tamaño, así que no hay que armar DIB a mano). El
+  polígono del rayo se ajusta por su propia caja y no por la del dibujo: escalarlo por la caja
+  entera dejaba medio cuadrado vacío y a 16 px no se leía.
+- **`CHANGELOG.md`** resume la versión 1.0.0 por bloques; el porqué de cada decisión se queda
+  aquí.
 - **Sin verificar**: `ReportLiveDeviceObjects` de verdad (falta `Graphics Tools`; se activa con
   `dism /online /add-capability /capabilityname:Tools.Graphics.DirectX~~~~0.0.1.0`); restaurar la
   ventana en un monitor con otro DPI o desenchufado (solo hay uno en esta máquina; el camino de

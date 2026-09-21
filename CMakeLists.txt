@@ -64,6 +64,10 @@ add_executable(rayo WIN32
   src/ui/MillerView.cpp
   src/ui/PreviewPane.cpp
   src/ui/Theme.cpp
+  # El .rc solo trae icono y version: el manifiesto sigue yendo como archivo suelto para
+  # que link.exe lo funda con el trustInfo que genera el. Si algun dia el .rc llevara
+  # tambien un RT_MANIFEST habria dos, y haria falta /MANIFEST:NO.
+  src/rayo.rc
   src/rayo.manifest)
 target_include_directories(rayo PRIVATE src)
 target_compile_options(rayo PRIVATE /W4 /permissive- /utf-8 /EHsc)

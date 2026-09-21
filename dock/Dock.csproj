@@ -22,6 +22,12 @@
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <PublishSingleFile>false</PublishSingleFile>
     <PublishTrimmed>false</PublishTrimmed>
+    <!-- Precompilado a nativo: no recorta, no comprime y mantiene los ensamblados y el
+         PDB legibles, asi que no toca la regla 8 de SEGURIDAD.md. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <PublishReadyToRun>true</PublishReadyToRun>
+
   </PropertyGroup>
 
   <ItemGroup>

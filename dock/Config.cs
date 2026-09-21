@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Shell;
+using Windows.Win32.UI.Shell.Common;
 using Windows.Win32.UI.WindowsAndMessaging;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -179,18 +180,38 @@ internal sealed class DockApp
 
         string aumid = Target[(slash + 1)..];
 
-        // ponytail: solo el primero. Montar un IShellItemArray de varios pide
-        // SHCreateShellItemArrayFromIDLists y andar con PIDLs; si algún día hace falta
-        // soltar varios sobre una app de la Store, es aquí.
-        Guid itemId = typeof(IShellItem).GUID;
-        object item;
-        fixed (char* path = paths[0])
-        {
-            if (PInvoke.SHCreateItemFromParsingName(new PCWSTR(path), null, &itemId, out item).Failed) return;
-        }
+        // Todos los ficheros, no solo el primero. Juntar varios elementos sueltos en un
+        // IShellItemArray solo se puede desde PIDLs: SHCreateShellItemArrayFromShellItem
+        // acepta uno, y el que parte de un IDataObject necesita el objeto del arrastre,
+        // que aquí ya no existe -a OpenWith llegan rutas, y también desde el menú.
+        nint[] pidls = new nint[paths.Count];
+        int count = 0;
 
-        Guid arrayId = typeof(IShellItemArray).GUID;
-        if (PInvoke.SHCreateShellItemArrayFromShellItem((IShellItem)item, &arrayId, out object array).Failed) return;
+        IShellItemArray array;
+        try
+        {
+            foreach (string path in paths)
+            {
+                // Uno que no se pueda resolver no tumba a los demás.
+                if (PInvoke.SHParseDisplayName(path, null, out ITEMIDLIST* pidl, 0, out _).Succeeded)
+                {
+                    pidls[count++] = (nint)pidl;
+                }
+            }
+
+            if (count == 0) return;
+
+            fixed (nint* first = pidls)
+            {
+                if (PInvoke.SHCreateShellItemArrayFromIDLists((uint)count, (ITEMIDLIST**)first, out array).Failed) return;
+            }
+        }
+        finally
+        {
+            // Los PIDLs son del que llama: SHParseDisplayName los reserva con CoTaskMemAlloc
+            // y el array se queda con su propia copia.
+            for (int i = 0; i < count; i++) PInvoke.CoTaskMemFree((void*)pidls[i]);
+        }
 
         // Objeto in-proc a propósito: la nota de la propia interfaz dice que
         // CLSCTX_LOCAL_SERVER es para procesos que nacen solo para lanzar algo. Un dock
@@ -202,7 +223,7 @@ internal sealed class DockApp
         {
             try
             {
-                manager.ActivateForFile(new PCWSTR(id), (IShellItemArray)array, new PCWSTR(verb), out _);
+                manager.ActivateForFile(new PCWSTR(id), array, new PCWSTR(verb), out _);
                 return;
             }
             catch (Exception ex)
@@ -217,8 +238,9 @@ internal sealed class DockApp
             }
         }
 
+        // Y por argumentos, igual: todas las rutas entre comillas, como hace ShellExecute.
         fixed (char* id = aumid)
-        fixed (char* args = $"\"{paths[0]}\"")
+        fixed (char* args = string.Join(' ', paths.Select(p => $"\"{p}\"")))
         {
             try
             {
@@ -228,7 +250,7 @@ internal sealed class DockApp
             {
                 // Que la app diga que no sabe abrir eso es un no aceptable, no un fallo
                 // del dock: se anota y se sigue.
-                Console.WriteLine($"[dock] '{Name}' no pudo abrir {paths[0]}: {ex.Message.Trim()}");
+                Console.WriteLine($"[dock] '{Name}' no pudo abrir {string.Join(", ", paths)}: {ex.Message.Trim()}");
             }
         }
     }

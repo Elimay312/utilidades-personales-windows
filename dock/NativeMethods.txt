@@ -191,6 +191,11 @@ IShellItem
 SIGDN
 SHCreateShellItemArrayFromDataObject
 SHCreateShellItemArrayFromShellItem
+// Para soltar VARIOS ficheros sobre una app de la Store: un IShellItemArray de mas de
+// un elemento solo se monta desde PIDLs, y estos son para conseguirlos y soltarlos.
+SHParseDisplayName
+SHCreateShellItemArrayFromIDLists
+CoTaskMemFree
 IShellItemArray
 IApplicationActivationManager
 ApplicationActivationManager

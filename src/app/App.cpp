@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "ui/MillerView.h"
+#include "ui/PreviewPane.h"
 #include "ui/Theme.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
@@ -21,6 +22,19 @@ namespace {
 // Tras cada evento renderizamos unos frames de mas: ImGui necesita un par de
 // pasadas para asentar tamanos y animaciones antes de volver a dormir.
 constexpr int kFramesPerEvent = 3;
+
+// Anchos de las tres columnas. El de la preview es lo que sobra.
+constexpr float kParentFraction = 0.20f;
+constexpr float kCurrentFraction = 0.40f;
+
+// Lo que el cursor tiene que estar quieto antes de tocar el disco por la vista previa. Con
+// j pulsado no se decodifica ni una imagen de las que se pasan de largo. La resolucion de
+// GetTickCount64 (~15,6 ms) deja el retardo real en 60-76 ms.
+constexpr unsigned long long kPreviewDelayMs = 60;
+
+// El objetivo de decodificacion se redondea a esto: redimensionar la ventana pixel a pixel
+// no puede estar rehaciendo la imagen.
+constexpr int kPreviewSizeStep = 256;
 
 constexpr ImGuiWindowFlags kPanelFlags =
     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
@@ -102,9 +116,17 @@ bool App::Init(const wchar_t* startPath) {
 
 int App::Run() {
     while (m_running) {
-        // Sin frames pendientes dormimos aqui: 0 % de CPU hasta que llegue algo.
-        if (m_pendingFrames == 0)
-            MsgWaitForMultipleObjectsEx(0, nullptr, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        // Sin frames pendientes dormimos aqui: 0 % de CPU hasta que llegue algo. El unico
+        // plazo que puede acortar la espera es el de la vista previa; en reposo vuelve a
+        // ser INFINITE. Se prefiere a SetTimer porque no toca Window ni deja nada que matar.
+        if (m_pendingFrames == 0) {
+            DWORD timeout = INFINITE;
+            if (m_previewDue != 0) {
+                const ULONGLONG now = GetTickCount64();
+                timeout = m_previewDue > now ? static_cast<DWORD>(m_previewDue - now) : 0;
+            }
+            MsgWaitForMultipleObjectsEx(0, nullptr, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
 
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -116,6 +138,12 @@ int App::Run() {
             DispatchMessageW(&msg);
         }
         if (!m_running) break;
+
+        if (m_previewDue != 0 && GetTickCount64() >= m_previewDue) {
+            m_previewDue = 0;
+            StartPreview();
+            RequestFrames();  // una carpeta en cache se sirve en el acto y hay que pintarla
+        }
 
         DrainResults();
 
@@ -236,6 +264,115 @@ void App::Request(const std::wstring& path) {
     });
 }
 
+// Las unidades de ImGui aqui son pixeles fisicos (imgui_impl_win32 pone io.DisplaySize en
+// pixeles y el DPI va por style.FontScaleDpi), asi que no hay conversion que hacer.
+int App::PreviewTargetPx() const {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const float width = vp->WorkSize.x * (1.0f - kParentFraction - kCurrentFraction);
+    const int longest = static_cast<int>(std::max(width, vp->WorkSize.y));
+    return ((longest + kPreviewSizeStep - 1) / kPreviewSizeStep) * kPreviewSizeStep;
+}
+
+void App::ArmPreview() {
+    // Subir la generacion invalida de paso lo que haya en vuelo: el hilo lo comprueba antes
+    // de empezar y DrainResults antes de mostrarlo.
+    m_previewGen.fetch_add(1);
+    m_previewDue = GetTickCount64() + kPreviewDelayMs;
+}
+
+// Se llama una vez por frame, que es lo que cubre los tres motivos por los que cambia lo que
+// hay bajo el cursor: moverlo, navegar, y un listado que llega por detras.
+void App::UpdatePreview() {
+    const int targetPx = PreviewTargetPx();
+    const DirectoryEntry* entry = Selected();
+    std::wstring target = entry ? JoinPath(m_current.path, entry->name) : std::wstring();
+
+    if (target != m_previewTarget) {
+        m_previewTarget = std::move(target);
+        m_previewTargetPx = targetPx;
+        m_previewDue = 0;
+        m_preview = Pane{};
+        m_previewFile.reset();
+        if (!entry) return;
+
+        // Un acierto de cache se sirve en el acto: es lo que hace fluido volver sobre las
+        // mismas fotos. Lo que cuesta un hilo (decodificar, listar) si espera al plazo.
+        if (!entry->IsDirectory())
+            m_previewFile = m_previewCache.Get(m_previewTarget, entry->modified);
+        if (!m_previewFile) ArmPreview();
+        return;
+    }
+
+    // La ventana crecio por encima de lo que se decodifico: rehacerla para que no se vea
+    // borrosa. Solo si el original daba para mas.
+    if (m_previewDue == 0 && m_previewFile && m_previewFile->kind == Preview::Kind::Image &&
+        m_previewFile->downscaled && targetPx > m_previewFile->targetPx) {
+        m_previewTargetPx = targetPx;
+        ArmPreview();
+    }
+}
+
+void App::StartPreview() {
+    const DirectoryEntry* entry = Selected();
+    if (!entry) return;
+
+    // Una carpeta se previsualiza como cualquier otra columna: misma lectura, misma cache,
+    // mismo descarte por ruta.
+    if (entry->IsDirectory()) {
+        SetPane(m_preview, m_previewTarget, std::wstring());
+        return;
+    }
+
+    const unsigned long long gen = m_previewGen.load();
+    const HWND hwnd = m_window.Handle();
+    m_pool.Submit([this, path = m_previewTarget, modified = entry->modified,
+                   targetPx = m_previewTargetPx, gen, hwnd] {
+        // Cancelar antes de empezar es la unica cancelacion que hay: ni WIC ni ReadFile se
+        // abortan a medias.
+        if (m_previewGen.load() != gen) return;
+
+        // WIC y el shell son COM, y en STA como en Open: hay proveedores que no admiten otra
+        // cosa. No hace falta bombear mensajes para lo que se hace aqui.
+        const HRESULT com =
+            CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        Preview preview = LoadPreview(path, modified, targetPx);
+        if (SUCCEEDED(com)) CoUninitialize();
+
+        preview.gen = gen;
+        {
+            std::lock_guard<std::mutex> lock(m_inboxMutex);
+            m_previewInbox.push_back(std::move(preview));
+        }
+        PostMessageW(hwnd, WM_APP_WAKE, 0, 0);
+    });
+}
+
+// La textura se crea en el hilo de UI y los pixeles se sueltan aqui mismo: en la cache solo
+// queda la textura, que es lo unico que se cuenta contra el tope de memoria.
+bool App::CreatePreviewTexture(Preview& preview) {
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = static_cast<UINT>(preview.width);
+    desc.Height = static_cast<UINT>(preview.height);
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA data{};
+    data.pSysMem = preview.pixels.data();
+    data.SysMemPitch = static_cast<UINT>(preview.width) * 4;
+
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    if (FAILED(m_gfx.Device()->CreateTexture2D(&desc, &data, &texture))) return false;
+    if (FAILED(m_gfx.Device()->CreateShaderResourceView(texture.Get(), nullptr, &preview.texture)))
+        return false;
+
+    preview.pixels = std::vector<unsigned char>();  // asignar un vacio libera el buffer
+    return true;
+}
+
 void App::Report(std::string message, HWND hwnd) {
     {
         std::lock_guard<std::mutex> lock(m_inboxMutex);
@@ -246,11 +383,13 @@ void App::Report(std::string message, HWND hwnd) {
 
 void App::DrainResults() {
     std::vector<DirectoryListing> ready;
+    std::vector<Preview> previews;
     std::vector<std::string> messages;
     {
         std::lock_guard<std::mutex> lock(m_inboxMutex);
-        if (m_inbox.empty() && m_messages.empty()) return;
+        if (m_inbox.empty() && m_previewInbox.empty() && m_messages.empty()) return;
         ready.swap(m_inbox);
+        previews.swap(m_previewInbox);
         messages.swap(m_messages);
     }
 
@@ -269,8 +408,18 @@ void App::DrainResults() {
 
         // La ruta identifica el resultado. Si el usuario ya se fue a otro sitio ninguna
         // columna esta en esa ruta y el listado solo engorda la cache.
-        for (Pane* pane : {&m_current, &m_parent})
+        for (Pane* pane : {&m_current, &m_parent, &m_preview})
             if (pane->active && pane->path == listing.path) ApplyListing(*pane, entries);
+    }
+
+    for (Preview& preview : previews) {
+        if (preview.kind == Preview::Kind::Image && !CreatePreviewTexture(preview)) continue;
+
+        // Se guarda siempre, aunque ya no sea lo que hay bajo el cursor: un decode pagado no
+        // se tira. Lo que decide la generacion es si ademas se muestra.
+        PreviewPtr ptr = std::make_shared<const Preview>(std::move(preview));
+        m_previewCache.Put(ptr);
+        if (ptr->gen == m_previewGen.load()) m_previewFile = std::move(ptr);
     }
 
     for (std::string& message : messages) m_status = std::move(message);
@@ -343,6 +492,7 @@ void App::RenderFrame() {
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
     ProcessInput();  // los comandos se aplican antes de dibujar: BuildUi solo lee
+    UpdatePreview();
     BuildUi();
     ImGui::Render();
 
@@ -356,8 +506,8 @@ void App::BuildUi() {
     // Una linea exacta: alto del texto mas el padding de la ventana.
     const float statusHeight = ImGui::GetTextLineHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
     const float bodyHeight = vp->WorkSize.y - statusHeight;
-    const float parentWidth = vp->WorkSize.x * 0.20f;
-    const float currentWidth = vp->WorkSize.x * 0.40f;
+    const float parentWidth = vp->WorkSize.x * kParentFraction;
+    const float currentWidth = vp->WorkSize.x * kCurrentFraction;
     const float previewWidth = vp->WorkSize.x - parentWidth - currentWidth;
     const float top = vp->WorkPos.y;
     float x = vp->WorkPos.x;
@@ -375,9 +525,7 @@ void App::BuildUi() {
     x += currentWidth;
 
     BeginPanel("##preview", ImVec2(x, top), ImVec2(previewWidth, bodyHeight));
-    ImGui::TextColored(Theme::kTextDim, "Vista previa");
-    ImGui::Separator();
-    ImGui::TextColored(Theme::kTextDim, "Fase 4");
+    PreviewPane::Draw(Selected(), m_preview.entries, m_previewFile);
     ImGui::End();
 
     BeginPanel("##status", ImVec2(vp->WorkPos.x, top + bodyHeight),

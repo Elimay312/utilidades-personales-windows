@@ -172,16 +172,24 @@ DirectoryListing ReadDirectory(std::wstring path) {
     DirectoryListing listing;
     listing.path = std::move(path);
 
+    // Igual que en ReadDrives: sin esto, abrir una unidad extraible sin disco saca el
+    // dialogo "Inserte un disco" desde un hilo de trabajo. Desde la fase 4 basta con pasar
+    // el cursor por encima para llegar aqui, no hace falta ni entrar.
+    DWORD previousErrorMode = 0;
+    SetThreadErrorMode(SEM_FAILCRITICALERRORS, &previousErrorMode);
+
     WIN32_FIND_DATAW data;
     const HANDLE find =
         FindFirstFileExW(MakeSearchPattern(listing.path).c_str(), FindExInfoBasic, &data,
                          FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
     if (find == INVALID_HANDLE_VALUE) {
         const DWORD error = GetLastError();
+        SetThreadErrorMode(previousErrorMode, nullptr);
         // Carpeta vacia: no es un error, solo una lista sin nada.
         if (error != ERROR_FILE_NOT_FOUND && error != ERROR_NO_MORE_FILES) listing.error = error;
         return listing;
     }
+    SetThreadErrorMode(previousErrorMode, nullptr);
 
     listing.entries.reserve(512);
     do {

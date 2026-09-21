@@ -124,7 +124,7 @@ El plan completo está en `PROMPTS.md`. Estado actual:
 - [x] Fase 1 — Ventana, DirectX 11, ImGui y bucle por eventos
 - [x] Fase 2 — Lector de carpetas asíncrono y columna central
 - [x] Fase 3 — Columnas Miller y navegación
-- [ ] Fase 4 — Vista previa (imágenes, texto, carpetas)
+- [x] Fase 4 — Vista previa (imágenes, texto, carpetas)
 - [ ] Fase 5 — Vigilancia de cambios en disco
 - [ ] Fase 6 — Operaciones de archivos
 - [ ] Fase 7 — Filtro, ir a ruta, archivos ocultos, barra de estado
@@ -283,3 +283,88 @@ la fase 8.
   (vigilante de disco) sustituye este refresco por completo. Anotado en `App::Request`.
 - **Sin verificar**: unidades de red y recursos UNC (no hay ninguno en esta máquina); el camino de
   `ParentPath` para `\\servidor\recurso` solo está cubierto por los asserts.
+
+### 2026-09-21 — Fase 4
+
+- **La preview de una carpeta es una tercera `Pane`, no código nuevo.** `SetPane(m_preview, ...)`
+  la sirve de `ListingCache` al instante, la relee por detrás y `DrainResults` la aplica por el
+  mismo bucle que las otras dos columnas (`for (Pane* pane : {&m_current, &m_parent,
+  &m_preview})`). El descarte por ruta de la fase 3 vale igual. Se dibuja con
+  `MillerView::DrawEntries(rows, -1, dummy)`: cursor −1 = ninguna fila resaltada, porque es una
+  vista y no una columna navegable.
+- **Sin tablas de extensiones.** `LoadPreview` prueba WIC (`CreateDecoderFromFilename` devuelve
+  `COMPONENTNOTFOUND` rápido y sin leer más que la cabecera), luego mira el contenido, y si no,
+  metadatos. Cubre png/jpg/gif/bmp/tiff/webp **y heic/avif/jxl en cuanto el códec esté
+  instalado**, sin lista que se desincronice, y acierta con un `.jpg` mal nombrado. A cambio se
+  sondea con WIC todo archivo que no es imagen; es leer su cabecera en un hilo de trabajo.
+- **El retardo de 60 ms es el timeout de `MsgWaitForMultipleObjectsEx`, no un `SetTimer`.** Seis
+  líneas en `App::Run`, sin tocar `Window`, sin otro caso en `NeedsRedraw` y sin `KillTimer` que
+  olvidar. En reposo `m_previewDue` es 0 y la espera vuelve a `INFINITE`: el 0 % de CPU se
+  conserva (medido: 0 ms en 12 s con una foto en pantalla). La resolución de `GetTickCount64`
+  (~15,6 ms) deja el retardo real entre ~45 y ~76 ms.
+- **`UpdatePreview()` se llama una vez por frame y ya está.** Cubre los tres motivos por los que
+  cambia lo que hay bajo el cursor (moverlo, navegar, y un listado que llega por detrás) sin
+  ganchos repartidos, porque `WM_APP_WAKE` ya provoca frame.
+- **Lo que hace fluido recorrer fotos no es el retardo, es servir la caché sin él.** Un acierto de
+  `PreviewCache` se pinta en el mismo frame; solo espera lo que cuesta un hilo. Ir y volver sobre
+  las mismas veinte fotos no vuelve a decodificar ni una.
+- **Generación para archivos, ruta para carpetas.** `m_previewGen` (atómica) sube en cada cambio
+  de selección: el hilo la mira *antes* de abrir nada (la única cancelación posible, ni WIC ni
+  `ReadFile` se abortan a medias) y `DrainResults` antes de mostrar. Un resultado tardío se
+  guarda igual en la caché — un decode pagado no se tira — pero no se pinta. Las carpetas siguen
+  con la coincidencia de ruta de la fase 3; duplicar el mecanismo no aportaba nada.
+- **`32bppBGRA`, alfa recto y no premultiplicado.** El blend del backend DX11 es
+  `SRC_ALPHA/INV_SRC_ALPHA` (`imgui_impl_dx11.cpp:541`); con `PBGRA` los PNG transparentes salen
+  con halo. Verificado en pantalla con un círculo sobre fondo oscuro.
+- **La orientación EXIF se lee antes de escalar.** Si transpone (5..8), el tamaño de destino del
+  scaler lleva ancho y alto intercambiados. Escalar primero y rotar después evita rotar la imagen
+  a resolución completa. Con JPEG el scaler tira por debajo del escalado por DCT del
+  decodificador, así que ni siquiera se decodifica entera.
+- **El texto se recorta a 200 líneas de 2000 caracteres, y no es cosmético.** `ImGui::TextEx` sí
+  se salta las líneas por encima del clip rect, pero llama a `CalcTextSize` sobre ellas para
+  calcular el ancho (`imgui_widgets.cpp:219`): O(texto) por frame. 200 líneas son ~12 KB y no se
+  notan; 64 KB en crudo costarían 1-2 ms cada frame, todos los frames.
+- **`targetPx` se redondea a múltiplos de 256** para que redimensionar la ventana pixel a pixel no
+  esté rehaciendo la imagen. Si el panel crece por encima de lo decodificado y el original daba
+  para más (`downscaled`), se rearma el plazo y se vuelve a decodificar. Verificado maximizando
+  sobre una foto de 2400x1600: se rehace y se ve nítida.
+- **`ImTextureRef(void*)` vive tras `IMGUI_DISABLE_OBSOLETE_FUNCTIONS`**, que está puesto desde la
+  fase 1, así que el cast a `ImTextureID` (un `ImU64`) va a mano en `PreviewPane`.
+- **`SetThreadErrorMode(SEM_FAILCRITICALERRORS)` ahora también en `ReadDirectory`.** Estaba solo
+  en `ReadDrives`: desde esta fase basta pasar el cursor por encima de una unidad extraíble vacía
+  para leerla, sin entrar, y el diálogo "Inserte un disco" saldría desde un hilo de trabajo.
+- **Los errores de preview no van a la barra de estado.** Un archivo que no se puede leer cae en
+  la vista de metadatos, que sí funciona (`GetFileAttributesExW` no necesita permiso de lectura).
+  Es menos código y menos ruido que un mensaje por cada fila por la que pasas.
+- **`tests/preview_check.cpp`**: asserts sobre `DecodeTextPreview`, que es lo único de la fase que
+  no se ve en pantalla hasta que ya ha decidido mal. Cubre los tres BOM, NUL → binario, UTF-8
+  inválido, la secuencia partida por el corte de 64 KB, y los dos topes de recorte.
+
+Medido tras la fase 4, sobre una carpeta de 300 fotos de 2400x1600:
+
+| Métrica | Objetivo | Medido |
+|---|---|---|
+| Memoria recorriendo 290 fotos, 3 pasadas | acotada | 50,1 / 49,7 / 50,0 MB de working set — plana |
+| CPU en reposo con una imagen en pantalla | 0 % | 0 ms en 12 s |
+| Latencia de la vista previa (tecla → imagen) | — | 50-66 ms, un pico de 130 |
+| Arranque hasta ventana visible | < 100 ms | 211 ms mejor, 231 mediana (sin cambio) |
+| Warnings con `/W4 /permissive-` | 0 | 0 |
+
+- **El working set no se mueve, pero el *commit* sube a ~150-160 MB** desde los ~60 del arranque,
+  y ahí se queda pasada la décima foto (comprobado hasta 131 seguidas y con tres pasadas enteras
+  de 290). El tope de la caché cuenta 64 MB de texturas; el resto es que D3D mantiene su propia
+  copia y que el asignador no devuelve páginas. Acotado y estable, que es el criterio, pero
+  conviene saberlo: `kMaxBytes` en `PreviewCache.cpp` es la palanca.
+- **La primera decodificación de la sesión puede tardar bastante más** (se vio medio segundo la
+  primera vez): `windowscodecs.dll` no está en las importaciones del exe —`dumpbin /dependents`
+  lo confirma—, lo carga COM en el primer `CoCreateInstance`. No se ha optimizado: pagarlo al
+  arrancar iría contra el presupuesto de arranque, que ya está incumplido.
+- **Las líneas largas se cortan, no se envuelven.** Un JSON minificado enseña los primeros ~80
+  caracteres y nada más. Es lo que hace Yazi y lo que pide el enunciado ("las primeras líneas"),
+  pero es la limitación más visible de la fase.
+- **Los textos heredados en Latin-1 sin BOM caen en la vista de metadatos**: sin BOM solo se
+  acepta UTF-8 válido. Anotado en `DecodeTextPreview`; la salida es probar `CP_ACP` antes de
+  rendirse.
+- **Sin verificar**: HEIC/AVIF (no hay códec instalado en esta máquina), orientaciones EXIF 5 y 7
+  (las transpuestas raras; la 6 sí, en pantalla), unidades extraíbles y de red. exe 705 KB, sin
+  dependencias nuevas de redistribuibles.

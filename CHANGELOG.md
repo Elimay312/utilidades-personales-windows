@@ -24,10 +24,14 @@ Lo que hay ahora en `main`. Se está probando en varios equipos antes de darlo p
 
 ### Cambiado
 
-- **El clic esconde la ventana si está a la vista**, tenga el foco o no. Antes hacía falta
-  que además estuviera al frente, como la barra de tareas; pero el dock nunca roba el foco,
-  así que la app que veías en pantalla no lo tenía y el primer clic solo se lo daba. Desde
-  fuera se leía como *"el primer clic no hace nada"*.
+- **El clic solo esconde la ventana que tienes delante**, la del primer plano. Cualquier
+  otra la muestra saliendo del icono con el genio: minimizada, tapada por otra o en la
+  pantalla que no estás mirando, da igual. Antes escondía cualquier ventana no minimizada,
+  y eso obligaba a dar dos clics para ver una ventana que ya estaba tapada: el primero la
+  minimizaba —escondía algo que no se veía— y el segundo la traía. Para sacar una ventana
+  que el dock no minimizó no hay fotograma guardado, así que se captura en ese momento con
+  `PrintWindow`, que le pide a la app que se dibuje en vez de leer la pantalla y por eso la
+  saca entera aunque esté detrás de otras.
 
 ### Arreglado
 

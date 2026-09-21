@@ -32,7 +32,7 @@ las convenciones están en [CLAUDE.md](CLAUDE.md).
 | Gesto | Qué pasa |
 |---|---|
 | Pasar por encima | El icono crece y sale su nombre. La curva empuja a los vecinos. |
-| Clic | Si no está abierta, la lanza. Si está a la vista, la minimiza con efecto genio. Si está minimizada, la saca. |
+| Clic | Si no está abierta, la lanza. Si su ventana es la que tienes delante, la esconde con efecto genio. Si no —minimizada, tapada, o en otra pantalla—, la saca del icono con el mismo genio al revés. |
 | Clic en una carpeta | Se despliega en rejilla, 5 por fila. Se puede entrar en subcarpetas y volver. |
 | Clic derecho | Menú: los documentos recientes de esa app, quitarla del dock —o anclarla, si solo estaba abierta—, y salir. |
 | Clic central | Una instancia nueva, aunque ya haya ventana. |

@@ -2319,30 +2319,45 @@ internal sealed unsafe class DockWindow : IDisposable
     /// </summary>
     private bool PlayGenie(int index, HWND window)
     {
-        if (!PInvoke.GetWindowRect(window, out RECT rect)) return false;
-        if (rect.right <= rect.left || rect.bottom <= rect.top) return false;
-
-        IconBitmap? shot = WindowCapture.Capture(window);
-        if (shot is null) return false;
-
-        Box source = new(rect.left, rect.top, rect.right, rect.bottom);
+        if (Snapshot(window) is not { } frame) return false;
 
         // Guardado para el camino de vuelta: una ventana minimizada ya no se puede
         // capturar, así que el único fotograma que habrá nunca es este.
-        _shots[(nint)window.Value] = (shot, source);
+        _shots[(nint)window.Value] = frame;
 
-        return Genie(index, source, shot, reverse: false, onFinished: null);
+        return Genie(index, frame.Source, frame.Shot, reverse: false, onFinished: null);
+    }
+
+    /// <summary>Un fotograma de la ventana, con el rectángulo donde está ahora mismo.</summary>
+    private static (IconBitmap Shot, Box Source)? Snapshot(HWND window)
+    {
+        if (!PInvoke.GetWindowRect(window, out RECT rect)) return null;
+        if (rect.right <= rect.left || rect.bottom <= rect.top) return null;
+
+        IconBitmap? shot = WindowCapture.Capture(window);
+        if (shot is null) return null;
+
+        return (shot, new Box(rect.left, rect.top, rect.right, rect.bottom));
     }
 
     /// <summary>
-    /// La saca del icono. Solo funciona si la minimizó el propio dock, porque es de ahí
-    /// de donde sale el fotograma.
+    /// La saca del icono. Si la minimizó el dock, el fotograma es el que se guardó al
+    /// tragarla; si solo estaba tapada o en otra pantalla, se captura ahora: PrintWindow
+    /// le pide a la app que se dibuje y no lee la pantalla, así que una ventana que está
+    /// detrás de otras sale entera igual.
     /// </summary>
     private bool PlayGenieBack(int index, HWND window)
     {
-        if (!_shots.Remove((nint)window.Value, out (IconBitmap Shot, Box Source) saved)) return false;
+        if (!_shots.Remove((nint)window.Value, out (IconBitmap Shot, Box Source) frame))
+        {
+            // Minimizada y sin fotograma: la minimizó otro, o el dock de una sesión
+            // anterior. No hay nada que capturar, así que vuelve sin animación.
+            if (WindowActions.IsMinimized(window)) return false;
+            if (Snapshot(window) is not { } fresh) return false;
+            frame = fresh;
+        }
 
-        return Genie(index, saved.Source, saved.Shot, reverse: true,
+        return Genie(index, frame.Source, frame.Shot, reverse: true,
             onFinished: () => WindowActions.BringToFront(window, instant: true));
     }
 
@@ -2602,15 +2617,31 @@ internal sealed unsafe class DockWindow : IDisposable
         // respuesta directa a un clic sobre su icono, y nunca desde ningún otro sitio.
         AppState state = index < _state.Length ? _state[index] : default;
 
-        // Si la ventana está A LA VISTA, el clic la esconde — tenga el foco o no.
+        // Lo que el dock ve al decidir, que es lo único que explica por qué el clic hizo
+        // lo que hizo. Desde fuera no se puede reconstruir: qué ventana tiene por suya y
+        // cuál es la del primer plano no se ven en ninguna captura.
+        if (Environment.GetEnvironmentVariable("DOCK_HOVER_LOG") is not null)
+        {
+            Console.WriteLine($"[clic] '{app.Name}' ventana=0x{(nint)state.MainWindow.Value:X} " +
+                $"ventanas={state.All.Length} primerPlano=0x{(nint)PInvoke.GetForegroundWindow().Value:X} " +
+                $"minimizada={WindowActions.IsMinimized(state.MainWindow)}");
+        }
+
+        // Solo esconde la ventana que tienes DELANTE, la del primer plano. Cualquier
+        // otra el clic la muestra: minimizada, tapada por otras o en la pantalla que no
+        // estás mirando, da igual.
         //
-        // Antes hacía falta que además estuviera al frente, que es lo que hace la barra
-        // de tareas. Pero el dock NUNCA roba el foco, así que si estabas escribiendo en
-        // otra ventana, la app que veías en pantalla no tenía el foco: el primer clic
-        // se lo daba y el segundo minimizaba. Desde fuera eso se lee como "el primer
-        // clic no hace nada", y con la ventana en otra pantalla ni siquiera se ve el
-        // cambio de foco.
-        if (state.HasWindow && !WindowActions.IsMinimized(state.MainWindow))
+        // Hubo una versión intermedia que escondía cualquier ventana no minimizada.
+        // Estaba pensada para el caso "la veo y quiero quitarla de en medio", pero el
+        // caso de verdad frecuente es el contrario: la ventana está abierta y no la ves
+        // porque hay otra encima, y aquel clic la minimizaba, así que hacían falta dos
+        // clics para verla — el primero para esconder algo que ya estaba escondido.
+        //
+        // La pega conocida de este reparto: como el dock nunca roba el foco, sobre una
+        // ventana visible pero sin foco el clic solo se lo da y el cambio se nota poco.
+        // Es un clic flojo de vez en cuando, a cambio de no esconder nunca lo que
+        // querías ver.
+        if (state.HasWindow && WindowActions.IsForeground(state.MainWindow))
         {
             // El genio se monta ANTES de minimizar, porque para capturarla tiene que
             // estar todavía ahí. Si la captura falla, se minimiza a secas: degradar es
@@ -2627,9 +2658,9 @@ internal sealed unsafe class DockWindow : IDisposable
 
         if (state.HasWindow)
         {
-            // Si la minimizó el dock, vuelve saliendo del icono. El genio restaura la
-            // ventana él mismo al acabar, por eso aquí no se hace nada más.
-            bool genie = WindowActions.IsMinimized(state.MainWindow) && PlayGenieBack(index, state.MainWindow);
+            // Sale del icono esté minimizada o solo tapada. El genio la trae al frente
+            // él mismo al acabar, por eso aquí no se hace nada más.
+            bool genie = PlayGenieBack(index, state.MainWindow);
             if (!genie) WindowActions.BringToFront(state.MainWindow);
 
             Console.WriteLine($"[dock] al frente '{app.Name}'{(genie ? " con genio" : "")}");

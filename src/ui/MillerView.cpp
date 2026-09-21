@@ -27,7 +27,9 @@ void DrawText(const char* text, const ImVec4& color) {
 
 }  // namespace
 
-int DrawEntries(const std::vector<DirectoryEntry>& entries, int cursor, bool& scrollToCursor) {
+int DrawEntries(const std::vector<DirectoryEntry>& entries, int cursor, bool& scrollToCursor,
+                const std::wstring& dir, const std::set<std::wstring>* marked,
+                EditField::State* edit) {
     const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
     const float viewHeight = ImGui::GetContentRegionAvail().y;
     const float rowWidth = ImGui::GetContentRegionAvail().x;
@@ -57,7 +59,22 @@ int DrawEntries(const std::vector<DirectoryEntry>& entries, int cursor, bool& sc
             ImGui::Selectable("##row", i == cursor, 0, ImVec2(rowWidth, 0.0f));
             ImGui::PopID();
 
+            // Despues del Selectable y translucido: una fila marcada que ademas esta bajo el
+            // cursor tiene que ensenar las dos cosas.
+            //
+            // ponytail: una ruta construida por fila dibujada. El clipper pinta unas
+            // cincuenta, asi que son cincuenta concatenaciones cortas por frame. Si algun dia
+            // pesara, un vector<bool> paralelo al listado.
+            if (marked && !marked->empty() && marked->count(JoinPath(dir, entry.name)) != 0)
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    rowStart, ImVec2(rowStart.x + rowWidth, rowStart.y + rowHeight),
+                    ImGui::GetColorU32(Theme::kMarked));
+
             ImGui::SetCursorScreenPos(rowStart);
+            if (edit && edit->row == i) {
+                EditField::Draw(*edit, rowWidth, "##renombrar");
+                continue;
+            }
             DrawText(entry.nameUtf8.c_str(), RowColor(entry));
             const float nameEnd = ImGui::GetItemRectMax().x;
 

@@ -16,6 +16,8 @@ inline constexpr ImVec4 kSelection  = Rgb(0x264f78);
 inline constexpr ImVec4 kText       = Rgb(0xd4d4d4);
 inline constexpr ImVec4 kTextDim    = Rgb(0x808080);
 inline constexpr ImVec4 kAccent     = Rgb(0x4fc1ff);
+// Fila marcada: el acento translucido, que se pinta encima de la seleccion.
+inline constexpr ImVec4 kMarked = ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f);
 
 // Colores y metricas del estilo, escaladas al DPI del monitor.
 void Apply(float dpiScale);

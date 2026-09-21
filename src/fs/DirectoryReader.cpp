@@ -147,6 +147,17 @@ std::string ToUtf8(const std::wstring& text) {
     return out;
 }
 
+std::wstring FromUtf8(const std::string& text) {
+    if (text.empty()) return {};
+    const int length = static_cast<int>(text.size());
+    const int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), length, nullptr, 0);
+    if (size <= 0) return {};
+
+    std::wstring out(static_cast<size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), length, out.data(), size);
+    return out;
+}
+
 std::string FormatWin32Error(DWORD error) {
     wchar_t* buffer = nullptr;
     const DWORD length =

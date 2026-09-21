@@ -28,6 +28,16 @@ constexpr Binding kBindings[] = {
     {ImGuiKey_H, ImGuiMod_None, false, Command::GoParent},
     {ImGuiKey_LeftArrow, ImGuiMod_None, false, Command::GoParent},
     {ImGuiKey_Q, ImGuiMod_None, false, Command::Quit},
+    // Mantener Espacio marca una tirada seguida; el resto no se repite.
+    {ImGuiKey_Space, ImGuiMod_None, true, Command::ToggleMark},
+    {ImGuiKey_Y, ImGuiMod_None, false, Command::Copy},
+    {ImGuiKey_X, ImGuiMod_None, false, Command::Cut},
+    {ImGuiKey_P, ImGuiMod_None, false, Command::Paste},
+    // 'd' a secas no choca con Ctrl+d: los modificadores se comparan exactos.
+    {ImGuiKey_D, ImGuiMod_None, false, Command::Recycle},
+    {ImGuiKey_D, ImGuiMod_Shift, false, Command::DeleteForever},
+    {ImGuiKey_R, ImGuiMod_None, false, Command::Rename},
+    {ImGuiKey_A, ImGuiMod_None, false, Command::Create},
 };
 
 // Atajos que son un caracter y no una tecla fisica: '~' es Shift+` en un teclado de EE.UU.
@@ -44,7 +54,8 @@ constexpr struct {
 
 Command Poll(State& state) {
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.WantTextInput) return Command::None;  // fase 7: filtro, renombrar, ir a ruta
+    // Con el campo de renombrar o el de crear abierto, el teclado es suyo.
+    if (io.WantTextInput) return Command::None;
 
     for (const ImWchar character : io.InputQueueCharacters) {
         for (const auto& binding : kCharBindings) {

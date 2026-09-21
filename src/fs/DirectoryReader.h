@@ -51,4 +51,6 @@ std::wstring LastComponent(const std::wstring& path);
 DirectoryListing ReadDirectory(std::wstring path);
 
 std::string ToUtf8(const std::wstring& text);
+// La vuelta: lo que se escribe en un campo de ImGui llega en UTF-8 y el disco quiere wide.
+std::wstring FromUtf8(const std::string& text);
 std::string FormatWin32Error(DWORD error);

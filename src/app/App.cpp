@@ -420,10 +420,16 @@ bool App::CreatePreviewTexture(Preview& preview) {
     return true;
 }
 
-void App::Report(std::string message, HWND hwnd) {
+void App::Report(std::string message, HWND hwnd, std::wstring dirty) {
     {
         std::lock_guard<std::mutex> lock(m_inboxMutex);
         m_messages.push_back(std::move(message));
+        // Por el buzon del vigilante: DrainResults ya sabe tirar la cache y agrupar el
+        // refresco. Marcarla a mano ademas del vigilante es lo que hace que la vista se
+        // actualice aunque ReadDirectoryChangesW no funcione (unidades de red).
+        if (!dirty.empty() &&
+            std::find(m_changed.begin(), m_changed.end(), dirty) == m_changed.end())
+            m_changed.push_back(std::move(dirty));
     }
     PostMessageW(hwnd, WM_APP_WAKE, 0, 0);
 }
@@ -502,6 +508,155 @@ const DirectoryEntry* App::Selected() const {
     return &rows[static_cast<size_t>(cursor)];
 }
 
+// En la raiz virtual las filas son unidades: ni se marcan ni se opera sobre ellas.
+bool App::CanEdit() {
+    if (!m_current.path.empty()) return true;
+    m_status = "Aqui no: elige una carpeta";
+    return false;
+}
+
+std::vector<std::wstring> App::Targets() const {
+    if (!m_marked.empty()) return {m_marked.begin(), m_marked.end()};
+    if (const DirectoryEntry* entry = Selected())
+        return {JoinPath(m_current.path, entry->name)};
+    return {};
+}
+
+// Unico sitio que habla con FileOps. El hilo del pool es "hilo propio" en lo que importa:
+// no es el de UI. Una operacion larga ocupa uno de los 2-4 hilos y quedan libres para los
+// listados.
+//
+// ponytail: sin hilo dedicado por operacion. Si algun dia varias copias a la vez dejaran sin
+// hilos a los listados, la salida es un TaskPool aparte para el disco, no hilos sueltos que
+// haya que hacer join al cerrar.
+void App::Submit(FileOp op, std::vector<std::wstring> sources, std::wstring name) {
+    const HWND hwnd = m_window.Handle();
+    m_pool.Submit([this, op, sources = std::move(sources), dest = m_current.path,
+                   name = std::move(name), hwnd] {
+        // IFileOperation y sus dialogos son COM, y en STA como en Open: hay proveedores del
+        // shell que no admiten otra cosa.
+        const HRESULT com =
+            CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        std::string message = RunFileOp(op, sources, dest, name);
+        if (SUCCEEDED(com)) CoUninitialize();
+
+        Report(std::move(message), hwnd, dest);
+    });
+
+    // Las marcas ya han hecho su trabajo: copiar y cortar se llevaron las rutas, y borrar o
+    // renombrar las dejarian apuntando a lo que ya no existe.
+    m_marked.clear();
+}
+
+// El cursor sigue al nombre (fase 3): anotarlo antes de lanzar la operacion hace que el
+// refresco caiga justo encima de lo que se acaba de crear o renombrar, en vez de dejar el
+// cursor en la posicion numerica de antes.
+void App::Follow(std::wstring name) {
+    m_cursorMemory[m_current.path] = name;
+    m_current.select = std::move(name);
+}
+
+void App::ToggleMark() {
+    if (!CanEdit()) return;
+    const DirectoryEntry* entry = Selected();
+    if (!entry) return;
+
+    const std::wstring path = JoinPath(m_current.path, entry->name);
+    if (!m_marked.insert(path).second) m_marked.erase(path);
+    SetCursor(m_current.cursor + 1);
+}
+
+void App::Yank(bool cut) {
+    if (!CanEdit()) return;
+    std::vector<std::wstring> targets = Targets();
+    if (targets.empty()) return;
+
+    m_clipboard = std::move(targets);
+    m_clipboardCut = cut;
+    m_marked.clear();
+}
+
+void App::Paste() {
+    if (!CanEdit() || m_clipboard.empty()) return;
+    Submit(m_clipboardCut ? FileOp::Move : FileOp::Copy, m_clipboard, {});
+    // Mover dos veces lo mismo no significa nada; copiar otra vez si.
+    if (m_clipboardCut) m_clipboard.clear();
+}
+
+void App::Remove(bool permanent) {
+    if (!CanEdit()) return;
+    std::vector<std::wstring> targets = Targets();
+    if (targets.empty()) return;
+
+    if (!permanent) {
+        Submit(FileOp::Recycle, std::move(targets), {});
+        return;
+    }
+
+    // D pregunta antes: el popup es la unica confirmacion que hay, porque a IFileOperation
+    // se le pasa FOF_NOCONFIRMATION para que no vuelva a preguntar.
+    m_pendingDelete = std::move(targets);
+    m_confirmText =
+        m_pendingDelete.size() == 1
+            ? "Borrar definitivamente " + ToUtf8(LastComponent(m_pendingDelete.front())) + "?"
+            : "Borrar definitivamente " + std::to_string(m_pendingDelete.size()) + " elementos?";
+}
+
+void App::BeginRename() {
+    if (!CanEdit()) return;
+    const DirectoryEntry* entry = Selected();
+    if (!entry) return;
+
+    m_editKind = EditKind::Rename;
+    m_editTarget = JoinPath(m_current.path, entry->name);
+    m_edit = EditField::State{};
+    m_edit.row = m_current.cursor;
+    m_edit.text = entry->nameUtf8;
+    m_edit.focus = true;
+    m_edit.selectStem = true;  // "foto.jpg" entra con "foto" preseleccionado
+}
+
+void App::BeginCreate() {
+    if (!CanEdit()) return;
+    m_editKind = EditKind::Create;
+    m_edit = EditField::State{};
+    m_edit.focus = true;
+}
+
+// Lo que decidieron el campo de texto y el popup, fuera de las llamadas a ImGui: BuildUi solo
+// marca la decision y aqui se ejecuta.
+void App::CommitEdits() {
+    if (m_answer != Answer::None) {
+        if (m_answer == Answer::Yes) Submit(FileOp::Delete, std::move(m_pendingDelete), {});
+        m_pendingDelete.clear();
+        m_confirmText.clear();
+        m_confirmOpen = false;
+        m_answer = Answer::None;
+        RequestFrames();
+    }
+
+    const EditField::Result result = m_edit.result;
+    if (result == EditField::Result::None) return;
+
+    const EditKind kind = m_editKind;
+    const std::string text = std::move(m_edit.text);
+    m_editKind = EditKind::None;
+    m_edit = EditField::State{};
+    RequestFrames();
+    if (result == EditField::Result::Cancel || text.empty()) return;
+
+    std::wstring name = FromUtf8(text);
+    if (kind != EditKind::Rename) {
+        std::wstring created = name;
+        SplitNewName(created);  // lo que se llama en disco no lleva la barra final
+        Follow(std::move(created));
+        Submit(FileOp::Create, {}, std::move(name));
+    } else if (name != LastComponent(m_editTarget)) {
+        Follow(name);
+        Submit(FileOp::Rename, {m_editTarget}, std::move(name));
+    }
+}
+
 void App::Execute(Command command) {
     const int halfPage = std::max(1, m_visibleRows / 2);
 
@@ -538,10 +693,37 @@ void App::Execute(Command command) {
     case Command::HalfPageUp:
         SetCursor(m_current.cursor - halfPage);
         return;
+    case Command::ToggleMark:
+        ToggleMark();
+        return;
+    case Command::Copy:
+        Yank(false);
+        return;
+    case Command::Cut:
+        Yank(true);
+        return;
+    case Command::Paste:
+        Paste();
+        return;
+    case Command::Recycle:
+        Remove(false);
+        return;
+    case Command::DeleteForever:
+        Remove(true);
+        return;
+    case Command::Rename:
+        BeginRename();
+        return;
+    case Command::Create:
+        BeginCreate();
+        return;
     }
 }
 
 void App::ProcessInput() {
+    // Con el popup de confirmacion abierto el teclado es suyo; el campo de texto ya lo cubre
+    // io.WantTextInput dentro de Poll.
+    if (!m_confirmText.empty()) return;
     Execute(Keymap::Poll(m_keys));
 }
 
@@ -552,6 +734,7 @@ void App::RenderFrame() {
     ProcessInput();  // los comandos se aplican antes de dibujar: BuildUi solo lee
     UpdatePreview();
     BuildUi();
+    CommitEdits();  // y lo que BuildUi haya marcado se ejecuta aqui, no dentro de ImGui
     ImGui::Render();
 
     m_gfx.Clear(&Theme::kBackground.x);
@@ -571,14 +754,17 @@ void App::BuildUi() {
     float x = vp->WorkPos.x;
 
     BeginPanel("##parent", ImVec2(x, top), ImVec2(parentWidth, bodyHeight));
+    // Las marcas son globales, asi que ensenarlas tambien en la columna padre sale gratis.
     if (m_parent.active)
-        MillerView::DrawEntries(Rows(m_parent.entries), m_parent.cursor, m_parent.scrollToCursor);
+        MillerView::DrawEntries(Rows(m_parent.entries), m_parent.cursor, m_parent.scrollToCursor,
+                                m_parent.path, &m_marked);
     ImGui::End();
     x += parentWidth;
 
     BeginPanel("##current", ImVec2(x, top), ImVec2(currentWidth, bodyHeight));
-    m_visibleRows =
-        MillerView::DrawEntries(Rows(m_current.entries), m_current.cursor, m_current.scrollToCursor);
+    m_visibleRows = MillerView::DrawEntries(
+        Rows(m_current.entries), m_current.cursor, m_current.scrollToCursor, m_current.path,
+        &m_marked, m_editKind == EditKind::Rename ? &m_edit : nullptr);
     ImGui::End();
     x += currentWidth;
 
@@ -595,6 +781,25 @@ void App::BuildUi() {
     ImGui::SameLine();
     const int count = static_cast<int>(Rows(m_current.entries).size());
     ImGui::TextColored(Theme::kTextDim, "%d/%d", count == 0 ? 0 : m_current.cursor + 1, count);
+
+    if (!m_marked.empty()) {
+        ImGui::SameLine();
+        ImGui::TextColored(Theme::kAccent, "%zu marcados", m_marked.size());
+    }
+    if (!m_clipboard.empty()) {
+        // "copiado: 3" y no "3 copiados": el resultado de la ultima operacion se pinta al
+        // lado y con la misma forma se leerian como el mismo dato.
+        ImGui::SameLine();
+        ImGui::TextColored(Theme::kTextDim, "%s: %zu", m_clipboardCut ? "cortado" : "copiado",
+                           m_clipboard.size());
+    }
+    if (m_editKind == EditKind::Create) {
+        ImGui::SameLine();
+        ImGui::TextColored(Theme::kAccent, "nuevo:");
+        ImGui::SameLine();
+        // Acabar el nombre en barra invertida crea una carpeta; lo decide SplitNewName.
+        EditField::Draw(m_edit, ImGui::GetContentRegionAvail().x, "##crear");
+    }
     if (!m_status.empty()) {
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text, Theme::kAccent);
@@ -602,4 +807,26 @@ void App::BuildUi() {
         ImGui::PopStyleColor();
     }
     ImGui::End();
+
+    if (m_confirmText.empty()) return;
+
+    if (!m_confirmOpen) {
+        ImGui::OpenPopup("##borrar");
+        m_confirmOpen = true;
+    }
+    if (ImGui::BeginPopupModal("##borrar", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
+                                   ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::TextUnformatted(m_confirmText.c_str());
+        ImGui::Spacing();
+        if (ImGui::Button("Borrar") || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+            ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))
+            m_answer = Answer::Yes;
+        ImGui::SameLine();
+        if (ImGui::Button("Cancelar") || ImGui::IsKeyPressed(ImGuiKey_Escape)) m_answer = Answer::No;
+        if (m_answer != Answer::None) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    } else {
+        m_answer = Answer::No;  // ImGui lo cerro por su cuenta (Escape)
+    }
 }

@@ -126,7 +126,7 @@ El plan completo está en `PROMPTS.md`. Estado actual:
 - [x] Fase 3 — Columnas Miller y navegación
 - [x] Fase 4 — Vista previa (imágenes, texto, carpetas)
 - [x] Fase 5 — Vigilancia de cambios en disco
-- [ ] Fase 6 — Operaciones de archivos
+- [x] Fase 6 — Operaciones de archivos
 - [ ] Fase 7 — Filtro, ir a ruta, archivos ocultos, barra de estado
 - [ ] Fase 8 — Pulido: configuración, pestañas, marcadores, medición de arranque
 
@@ -434,3 +434,85 @@ Medido tras la fase 5:
   `ReadDirectoryChangesW` no funciona sobre algunos sistemas de archivos remotos; el código lo
   trata como "sin vigilancia" y la app se comporta como en la fase 4, pero no se ha podido
   probar. Tampoco los volúmenes extraíbles.
+
+### 2026-09-21 — Fase 6
+
+- **`fs/FileOps` es una sola función.** `RunFileOp(op, sources, dest, name)` cubre copiar,
+  mover, Papelera, borrar, renombrar y crear, porque `IFileOperation` es la misma secuencia
+  en los seis casos: `SetOperationFlags`, encolar y `PerformOperations`. Se encola **elemento
+  a elemento** (`CopyItem` y no `CopyItems`): los diálogos son idénticos y ahorra construir
+  un `IShellItemArray`.
+- **La Papelera es un flag, y el borrado definitivo son dos.** `FOF_ALLOWUNDO |
+  FOFX_RECYCLEONDELETE` para `d`; para `D`, quitar `FOF_ALLOWUNDO` (eso lo hace definitivo) y
+  añadir `FOF_NOCONFIRMATION`, porque el popup de ImGui ya ha preguntado y el shell
+  preguntaría otra vez. Verificado en pantalla: `d` deja el archivo restaurable desde la
+  Papelera con su ruta de origen; `D` lo borra y no aparece por ninguna parte.
+- **`FOF_*` está en `shellapi.h`, no en `shobjidl`.** `WIN32_LEAN_AND_MEAN` lo deja fuera de
+  `Windows.h` y el error es un `C2065` que no sugiere el include. Los `FOFX_*` sí entran por
+  `shlobj.h`.
+- **Sin `SetOwnerWindow`, por lo mismo que `ShellExecuteExW` en la fase 3.** Comprobado con
+  el diálogo de conflicto ("Reemplazar u omitir archivos") delante:
+  `IsWindowEnabled(ventana principal)` sigue devolviendo `TRUE`. Con ventana padre el shell
+  la deshabilitaría desde otro hilo, que es justo lo que rompería "la UI sigue respondiendo".
+  El precio es que el diálogo sale como ventana independiente, no centrado sobre Rayo.
+- **Las rutas van sin el prefijo `\\?\`**: las APIs del shell no lo aceptan. Lo que cubre las
+  rutas largas aquí es el `longPathAware` del manifiesto, no `LongPath()`.
+- **Las marcas son rutas completas y globales.** Se puede marcar en tres carpetas y pegar en
+  la cuarta. Se pintan en la columna actual **y** en la padre sin código extra, porque
+  `DrawEntries` ya recibe la carpeta de cada columna. Se vacían al lanzar cualquier
+  operación: `y`/`x` ya se llevaron las rutas al portapapeles, y `d`/`D`/`r` las dejarían
+  apuntando a lo que ya no existe.
+- **La marca se pinta *después* del `Selectable` y translúcida** (`Theme::kMarked`, el acento
+  al 22 %). Al revés, la selección opaca taparía la marca de la fila bajo el cursor y no se
+  vería que está marcada.
+- **`SetKeyboardFocusHere` no activa el widget en ese frame.** La petición de navegación se
+  resuelve al final del frame y el `InputText` se activa en el siguiente, así que armar
+  `CallbackAlways` solo en el frame del foco no preselecciona nada: **se vio en pantalla**,
+  con el cursor al final y sin selección. La preselección sigue armada hasta que el callback
+  corre de verdad (solo corre con el campo activo) y se desarma a sí misma desde dentro.
+- **El campo lleva `FramePadding` a cero.** Con el padding normal el `InputText` es más alto
+  que una fila y el resto de la lista se desplaza al renombrar.
+- **Renombrar y crear dejan el cursor donde estaba el archivo, no donde estaba el cursor.**
+  `Follow()` anota el nombre nuevo en `m_current.select` y en la memoria de cursor *antes* de
+  lanzar la operación, así que el refresco lo encuentra por el mecanismo de la fase 3. Sin
+  eso, renombrar `archivo1.txt` a `zzz.txt` dejaba el cursor en la posición 2 y el siguiente
+  `x` cortaba el archivo equivocado — pasó durante las pruebas.
+- **El refresco no depende solo del vigilante.** `Report` admite una carpeta "sucia" que
+  entra por el mismo buzón que los avisos de `ReadDirectoryChangesW`, así que hereda el
+  descarte de caché y el agrupado de 100 ms. Son tres líneas y garantizan el criterio
+  "tras cada operación la vista se actualiza" también donde el vigilante no funciona.
+- **`BuildUi` no ejecuta nada.** El popup y el campo de texto solo marcan la decisión
+  (`m_answer`, `m_edit.result`) y `CommitEdits()`, que se llama justo después de `BuildUi`,
+  es quien opera. Mantiene la regla de "nada de lógica de negocio dentro de las llamadas a
+  ImGui" sin inventar comandos que ninguna tecla emite.
+- **El portapapeles se lee "copiado: 2", no "2 copiados".** El resultado de la última
+  operación se pinta al lado y con la misma forma la barra decía "1 copiados 1 copiado".
+- **`tests/fileops_check.cpp`**: `StemLength` (lo que se preselecciona al renombrar) y
+  `SplitNewName` (la barra final que convierte `a` en "crear carpeta"). Son las dos únicas
+  reglas de la fase que no se ven en pantalla hasta que ya han decidido mal.
+
+Medido tras la fase 6:
+
+| Métrica | Objetivo | Medido |
+|---|---|---|
+| Copiar 600 MB (40 archivos) sin congelar | UI viva | `Responding=True`, `j`/`k` responden durante la copia |
+| `d` a la Papelera y restaurable | sí | verificado en la Papelera, con ruta de origen |
+| Vista actualizada tras cada operación | sí | inmediata en las siete operaciones |
+| CPU en reposo (recién abierto / tras operar) | 0 % | 15,6 ms / 0,0 ms en 15 s |
+| Memoria recién abierto | < 50 MB | 46,3 MB |
+| Warnings con `/W4 /permissive-` | 0 | 0 |
+
+- **El presupuesto de memoria se incumple en cuanto se opera, y es del shell.** La primera
+  operación —**una sola, sobre un archivo**— sube el working set de 46,2 a 67,0 MB y ahí se
+  queda: `IFileOperation` carga el motor de copia del shell dentro de nuestro proceso. No es
+  proporcional al trabajo (10 operaciones más solo suman 2,7 MB, 7 hilos y 30 handles, que es
+  el pool de hilos del shell asentándose) ni es una fuga nuestra, pero son +21 MB fijos sobre
+  un presupuesto de 50. La única salida real sería sacar las operaciones a un proceso
+  auxiliar, que cuesta mucho más de lo que vale. Anotado y aceptado.
+- **El exe pasa de 705 a 768 KB.** 63 KB es `imgui_stdlib.cpp` más `FileOps` y `EditField`.
+  Sigue sin dependencias nuevas de redistribuibles: `shell32` y `ole32` ya se enlazaban desde
+  la fase 3.
+- **Sin verificar**: unidades de red y recursos UNC; rutas de más de `MAX_PATH` a través del
+  shell; el deshacer del shell (Ctrl+Z en el Explorador tras una operación hecha desde Rayo);
+  y qué pasa si se cierra Rayo con una copia grande a medias — el pool hace join, así que el
+  cierre esperaría a que termine.

@@ -28,7 +28,10 @@ add_library(imgui STATIC
   ${imgui_SOURCE_DIR}/imgui_tables.cpp
   ${imgui_SOURCE_DIR}/imgui_widgets.cpp
   ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
-  ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
+  # InputText sobre std::string: viene en el propio repo de ImGui, asi que no hay que elegir
+  # un tamano de buffer fijo para renombrar ni crear.
+  ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp)
 target_include_directories(imgui PUBLIC
   ${imgui_SOURCE_DIR}
   ${imgui_SOURCE_DIR}/backends)
@@ -48,11 +51,13 @@ add_executable(rayo WIN32
   src/core/TaskPool.cpp
   src/fs/DirectoryReader.cpp
   src/fs/DirectoryWatcher.cpp
+  src/fs/FileOps.cpp
   src/fs/ListingCache.cpp
   src/platform/Window.cpp
   src/platform/GraphicsDevice.cpp
   src/preview/Preview.cpp
   src/preview/PreviewCache.cpp
+  src/ui/EditField.cpp
   src/ui/Keymap.cpp
   src/ui/MillerView.cpp
   src/ui/PreviewPane.cpp
@@ -90,3 +95,11 @@ target_compile_options(rayo_preview_check PRIVATE /W4 /permissive- /utf-8 /EHsc)
 target_compile_definitions(rayo_preview_check PRIVATE
   UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 target_link_libraries(rayo_preview_check PRIVATE shlwapi shell32 ole32 windowscodecs)
+
+add_executable(rayo_fileops_check tests/fileops_check.cpp
+  src/fs/FileOps.cpp src/fs/DirectoryReader.cpp)
+target_include_directories(rayo_fileops_check PRIVATE src)
+target_compile_options(rayo_fileops_check PRIVATE /W4 /permissive- /utf-8 /EHsc)
+target_compile_definitions(rayo_fileops_check PRIVATE
+  UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX WINVER=0x0A00 _WIN32_WINNT=0x0A00)
+target_link_libraries(rayo_fileops_check PRIVATE shlwapi shell32 ole32)

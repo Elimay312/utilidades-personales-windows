@@ -17,7 +17,7 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 include(FetchContent)
 FetchContent_Declare(imgui
   GIT_REPOSITORY https://github.com/ocornut/imgui.git
-  GIT_TAG        v1.91.9b
+  GIT_TAG        v1.92.9b
   GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(imgui)
 
@@ -35,18 +35,26 @@ target_include_directories(imgui PUBLIC
 target_compile_definitions(imgui PUBLIC
   UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
   WINVER=0x0A00 _WIN32_WINNT=0x0A00
-  IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
+  IMGUI_DISABLE_OBSOLETE_FUNCTIONS
+  # Sin esto ImWchar es de 16 bits y todo lo que pase de U+FFFF (los emoji) se
+  # sustituye por U+FFFD antes de llegar a la fuente.
+  IMGUI_USE_WCHAR32)
 target_compile_options(imgui PRIVATE /utf-8 /EHsc)
 target_link_libraries(imgui PUBLIC d3d11 dxgi)
 
 add_executable(rayo WIN32
   src/main.cpp
   src/app/App.cpp
+  src/core/TaskPool.cpp
+  src/fs/DirectoryReader.cpp
   src/platform/Window.cpp
   src/platform/GraphicsDevice.cpp
+  src/ui/Keymap.cpp
+  src/ui/MillerView.cpp
   src/ui/Theme.cpp
   src/rayo.manifest)
 target_include_directories(rayo PRIVATE src)
 target_compile_options(rayo PRIVATE /W4 /permissive- /utf-8 /EHsc)
-target_link_libraries(rayo PRIVATE imgui dwmapi)
+# shlwapi: StrCmpLogicalW (orden natural) y StrFormatByteSizeW.
+target_link_libraries(rayo PRIVATE imgui dwmapi shlwapi)
 target_link_options(rayo PRIVATE /ENTRY:wWinMainCRTStartup)

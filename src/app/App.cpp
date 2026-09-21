@@ -4,6 +4,11 @@
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
 
+#include <algorithm>
+#include <thread>
+#include <utility>
+
+#include "ui/MillerView.h"
 #include "ui/Theme.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
@@ -25,6 +30,16 @@ void BeginPanel(const char* id, ImVec2 pos, ImVec2 size) {
     ImGui::Begin(id, nullptr, kPanelFlags);
 }
 
+// ponytail: USERPROFILE en vez de SHGetKnownFolderPath: tres lineas y cero librerias
+// nuevas. Si hiciera falta el perfil real de una cuenta redirigida, subir a
+// SHGetKnownFolderPath(FOLDERID_Profile) + ole32.
+std::wstring UserFolder() {
+    wchar_t buffer[MAX_PATH];
+    const DWORD length = GetEnvironmentVariableW(L"USERPROFILE", buffer, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return L"C:\\";
+    return std::wstring(buffer, length);
+}
+
 }  // namespace
 
 App::~App() {
@@ -37,7 +52,7 @@ App::~App() {
     m_window.Destroy();
 }
 
-bool App::Init() {
+bool App::Init(const wchar_t* startPath) {
     if (!m_window.Create(L"Rayo", 1280, 800)) return false;
     if (!m_gfx.Create(m_window.Handle())) return false;
 
@@ -49,7 +64,7 @@ bool App::Init() {
     if (!ImGui_ImplDX11_Init(m_gfx.Device(), m_gfx.Context())) return false;
 
     Theme::Apply(m_window.DpiScale());
-    Theme::LoadFont(m_window.DpiScale());
+    Theme::LoadFont();
 
     m_window.onMessage = [](HWND h, UINT m, WPARAM w, LPARAM l) {
         return ImGui_ImplWin32_WndProcHandler(h, m, w, l) != 0;
@@ -63,11 +78,12 @@ bool App::Init() {
         RequestFrames();
     };
     m_window.onDpiChanged = [this](float scale) {
-        Theme::Apply(scale);
-        Theme::LoadFont(scale);
-        ImGui_ImplDX11_InvalidateDeviceObjects();  // el atlas se recrea en el siguiente frame
+        Theme::Apply(scale);  // atlas dinamico: no hay nada que reconstruir
         RequestFrames();
     };
+
+    m_pool.Start(std::thread::hardware_concurrency() / 2);
+    Navigate(startPath && startPath[0] ? std::wstring(startPath) : UserFolder());
 
     RenderFrame();  // un frame ya pintado antes de mostrar: sin flash blanco
     m_window.Show();
@@ -92,6 +108,8 @@ int App::Run() {
         }
         if (!m_running) break;
 
+        DrainResults();
+
         if (m_pendingFrames > 0) {
             RenderFrame();
             --m_pendingFrames;
@@ -104,10 +122,96 @@ void App::RequestFrames() {
     m_pendingFrames = kFramesPerEvent;
 }
 
+void App::Navigate(std::wstring path) {
+    path = NormalizePath(path);
+    m_path = path;
+    m_pathUtf8 = ToUtf8(m_path);
+    m_status.clear();
+
+    const unsigned long long generation = ++m_generation;
+    // El HWND se copia por valor: la UI lo pone a null en WM_DESTROY y un hilo de
+    // trabajo no debe leer ese miembro mientras tanto.
+    const HWND hwnd = m_window.Handle();
+    m_pool.Submit([this, path = std::move(path), generation, hwnd] {
+        DirectoryListing listing = ReadDirectory(path, generation);
+        {
+            std::lock_guard<std::mutex> lock(m_inboxMutex);
+            m_inbox.push_back(std::move(listing));
+        }
+        PostMessageW(hwnd, WM_APP_WAKE, 0, 0);
+    });
+}
+
+void App::DrainResults() {
+    std::vector<DirectoryListing> ready;
+    {
+        std::lock_guard<std::mutex> lock(m_inboxMutex);
+        if (m_inbox.empty()) return;
+        ready.swap(m_inbox);
+    }
+
+    for (DirectoryListing& listing : ready) {
+        if (listing.generation != m_generation) continue;  // el usuario ya se fue a otro sitio
+
+        if (listing.error != ERROR_SUCCESS) {
+            // Se queda el listado anterior en pantalla: el error va a la barra de estado.
+            m_status = FormatWin32Error(listing.error);
+            continue;
+        }
+        m_entries = std::move(listing.entries);
+        m_cursor = 0;
+        m_scrollToCursor = true;
+        m_status.clear();
+    }
+}
+
+void App::Execute(Command command) {
+    const int count = static_cast<int>(m_entries.size());
+    const int halfPage = std::max(1, m_visibleRows / 2);
+    int cursor = m_cursor;
+
+    switch (command) {
+    case Command::None:
+        return;
+    case Command::Quit:
+        m_running = false;
+        return;
+    case Command::MoveDown:
+        cursor += 1;
+        break;
+    case Command::MoveUp:
+        cursor -= 1;
+        break;
+    case Command::MoveTop:
+        cursor = 0;
+        break;
+    case Command::MoveBottom:
+        cursor = count - 1;
+        break;
+    case Command::HalfPageDown:
+        cursor += halfPage;
+        break;
+    case Command::HalfPageUp:
+        cursor -= halfPage;
+        break;
+    }
+
+    cursor = std::clamp(cursor, 0, std::max(0, count - 1));
+    if (cursor != m_cursor) {
+        m_cursor = cursor;
+        m_scrollToCursor = true;
+    }
+}
+
+void App::ProcessInput() {
+    Execute(Keymap::Poll(m_keys));
+}
+
 void App::RenderFrame() {
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
+    ProcessInput();  // los comandos se aplican antes de dibujar: BuildUi solo lee
     BuildUi();
     ImGui::Render();
 
@@ -117,10 +221,6 @@ void App::RenderFrame() {
 }
 
 void App::BuildUi() {
-    ImGuiIO& io = ImGui::GetIO();
-    if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Q, false))
-        m_running = false;
-
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     // Una linea exacta: alto del texto mas el padding de la ventana.
     const float statusHeight = ImGui::GetTextLineHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
@@ -132,28 +232,35 @@ void App::BuildUi() {
     float x = vp->WorkPos.x;
 
     BeginPanel("##parent", ImVec2(x, top), ImVec2(parentWidth, bodyHeight));
-    ImGui::TextColored(Theme::kTextDim, "Users");
-    ImGui::TextColored(Theme::kAccent, "elima");
-    ImGui::TextColored(Theme::kTextDim, "Public");
+    ImGui::TextColored(Theme::kTextDim, "Fase 3");
     ImGui::End();
     x += parentWidth;
 
     BeginPanel("##current", ImVec2(x, top), ImVec2(currentWidth, bodyHeight));
-    static const char* kSample[] = {"Desktop", "Documents", "Downloads", "Pictures", "notas.txt"};
-    for (int i = 0; i < IM_ARRAYSIZE(kSample); ++i)
-        ImGui::Selectable(kSample[i], i == 2);
+    MillerView::DrawEntries(m_entries, m_cursor, m_scrollToCursor, m_visibleRows);
     ImGui::End();
     x += currentWidth;
 
     BeginPanel("##preview", ImVec2(x, top), ImVec2(previewWidth, bodyHeight));
     ImGui::TextColored(Theme::kTextDim, "Vista previa");
     ImGui::Separator();
-    ImGui::TextUnformatted("Fase 1: ventana, D3D11, ImGui y bucle por eventos.");
+    ImGui::TextColored(Theme::kTextDim, "Fase 4");
     ImGui::End();
 
     BeginPanel("##status", ImVec2(vp->WorkPos.x, top + bodyHeight),
                ImVec2(vp->WorkSize.x, statusHeight));
-    ImGui::TextColored(Theme::kTextDim, R"(C:\Users\elima   3/5   DPI %.0f%%   q = salir)",
-                       m_window.DpiScale() * 100.0f);
+    // TextUnformatted y no Text: una ruta o un nombre pueden llevar un % dentro.
+    ImGui::PushStyleColor(ImGuiCol_Text, Theme::kTextDim);
+    ImGui::TextUnformatted(m_pathUtf8.c_str());
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    ImGui::TextColored(Theme::kTextDim, "%d/%d", m_entries.empty() ? 0 : m_cursor + 1,
+                       static_cast<int>(m_entries.size()));
+    if (!m_status.empty()) {
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, Theme::kAccent);
+        ImGui::TextUnformatted(m_status.c_str());
+        ImGui::PopStyleColor();
+    }
     ImGui::End();
 }

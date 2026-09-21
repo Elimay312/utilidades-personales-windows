@@ -20,8 +20,9 @@ inline constexpr ImVec4 kAccent     = Rgb(0x4fc1ff);
 // Colores y metricas del estilo, escaladas al DPI del monitor.
 void Apply(float dpiScale);
 
-// Segoe UI al tamano que toque. Reconstruye el atlas: tras llamarla hay que
-// invalidar los objetos del backend D3D.
-void LoadFont(float dpiScale);
+// Segoe UI mas las fuentes de respaldo para CJK, hangul y simbolos. Se llama una sola
+// vez: desde ImGui 1.92 el atlas es dinamico y los glifos se rasterizan bajo demanda,
+// asi que un cambio de DPI no obliga a reconstruir nada.
+void LoadFont();
 
 }  // namespace Theme

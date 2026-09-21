@@ -111,7 +111,10 @@ El mapa de teclas vive en `ui/Keymap` como tabla de datos, no como `if` repartid
 ## Tema visual
 
 - Fondo `#1e1e1e`, paneles `#252526`, selección `#264f78`, texto `#d4d4d4`, texto atenuado `#808080`, acento `#4fc1ff`.
-- Fuente: Segoe UI desde `C:\Windows\Fonts\segoeui.ttf`, escalada según el DPI del monitor.
+- Fuente: Segoe UI desde `%WINDIR%\Fonts\segoeui.ttf`, escalada según el DPI del monitor con
+  `style.FontScaleDpi`. Encima se fusionan `seguisym.ttf`, `seguiemj.ttf`, `msyh.ttc` (CJK) y
+  `malgun.ttf` (hangul) para que cualquier nombre de archivo se vea; el atlas dinámico de ImGui
+  1.92 solo rasteriza los glifos que aparecen en pantalla.
 - Layout: 3 columnas, 20 % padre / 40 % actual / 40 % vista previa, más una barra de estado inferior de una línea.
 
 ## Fases del proyecto
@@ -119,7 +122,7 @@ El mapa de teclas vive en `ui/Keymap` como tabla de datos, no como `if` repartid
 El plan completo está en `PROMPTS.md`. Estado actual:
 
 - [x] Fase 1 — Ventana, DirectX 11, ImGui y bucle por eventos
-- [ ] Fase 2 — Lector de carpetas asíncrono y columna central
+- [x] Fase 2 — Lector de carpetas asíncrono y columna central
 - [ ] Fase 3 — Columnas Miller y navegación
 - [ ] Fase 4 — Vista previa (imágenes, texto, carpetas)
 - [ ] Fase 5 — Vigilancia de cambios en disco
@@ -136,6 +139,7 @@ Al terminar una fase: marcarla aquí, anotar decisiones importantes en la secci�
 - **Dear ImGui fijado a `v1.91.9b`** por `FetchContent`, compilado como librería estática
   aparte (`imgui`). Motivo: `/W4` solo se aplica a `rayo`; ImGui no compila limpio con `/W4`
   y no queremos parchearlo ni silenciar warnings en nuestro código.
+  *(Subido a `v1.92.9b` en la fase 2; el porqué está en las notas de esa fase.)*
 - **Manifiesto como fuente de CMake** (`src/rayo.manifest` en las fuentes de `rayo`).
   link.exe lo fusiona con el `trustInfo` que genera por defecto. Comprobado con
   `mt.exe -inputresource:rayo.exe;#1`: PerMonitorV2, longPathAware y UTF-8 quedan embebidos.
@@ -159,3 +163,61 @@ Al terminar una fase: marcarla aquí, anotar decisiones importantes en la secci�
 
 Medido tras la fase 1: CPU en reposo 0 ms en 20 s, memoria ~48 MB, exe 518 KB sin
 dependencias de redistribuibles (`/MT` confirmado con `dumpbin /dependents`).
+
+### 2026-09-21 — Fase 2
+
+- **Dear ImGui subido a `v1.92.9b`.** Desde 1.92 el atlas de fuentes es dinámico: los glifos se
+  rasterizan bajo demanda y ya no hay que declarar rangos por adelantado. Era la única forma de
+  cumplir "los nombres con tildes, CJK y emoji se ven bien" sin hinchar el atlas ni el arranque.
+  `IMGUI_DISABLE_OBSOLETE_FUNCTIONS` ya estaba puesto, así que los `GetGlyphRanges*` ni existen.
+  Efectos colaterales: `ImGuiSelectableFlags_SpanAvailWidth` y `GetContentRegionMax()` ya no
+  están (se usan un tamaño explícito en el `Selectable` y `GetCursorScreenPos()`), y
+  `Theme::LoadFont` se llama **una sola vez**: un cambio de DPI ahora solo toca
+  `style.FontScaleDpi`, sin reconstruir el atlas ni invalidar los objetos de D3D.
+- **`IMGUI_USE_WCHAR32` es obligatorio para los emoji.** Con `ImWchar` de 16 bits, ImGui sustituye
+  todo lo que pase de U+FFFF por U+FFFD *antes* de buscarlo en la fuente: da igual qué fuente
+  cargues, el emoji sale como caja. Se vio en pantalla, no en la teoría.
+- **Las fuentes se mapean en memoria, no se leen.** Se fusionan `segoeui.ttf` + `seguisym.ttf` +
+  `seguiemj.ttf` + `msyh.ttc` (CJK) + `malgun.ttf` (hangul). Leerlas con `AddFontFromFileTTF`
+  serían ~35 MB de heap y se cargaría el presupuesto de memoria. Con `CreateFileMappingW` +
+  `MapViewOfFile` y `FontDataOwnedByAtlas = false` solo entran en el working set las páginas de
+  los glifos que se usan. Medido: añadir las cuatro fuentes de respaldo cuesta **0 ms** de
+  arranque (mejor marca con una sola fuente 253 ms, con las cinco 251 ms). Una fuente que no
+  esté se salta en silencio. Emoji en monocromo; en color haría falta el loader de FreeType.
+- **El camino de despertar el bucle ya estaba hecho en la fase 1** y no hizo falta tocarlo:
+  `Window.cpp` ya trataba `WM_APP..WM_APP+0xFF` como evento que merece frame. El hilo de trabajo
+  solo hace `PostMessageW(hwnd, WM_APP_WAKE, 0, 0)` con el HWND **copiado por valor**, porque la
+  UI pone `m_hwnd` a null en `WM_DESTROY`.
+- **`TaskPool` se declara el último miembro de `App`.** Los miembros se destruyen en orden
+  inverso, así que el pool hace join antes de que mueran el mutex y el inbox que sus tareas usan.
+- **El prefijo `\?\` desactiva la normalización de rutas**, incluido convertir `/` en `\`.
+  Cualquier ruta pasa antes por `NormalizePath` (`GetFullPathNameW`), que además resuelve `.`,
+  `..` y las rutas relativas. Sin eso, `rayo.exe C:/Windows/System32` fallaba con
+  `ERROR_PATH_NOT_FOUND`.
+- **El nombre nunca va como etiqueta de `Selectable`** ni por `ImGui::Text`: un fichero llamado
+  `a##b.txt` se cortaría y un `%` se interpretaría como formato. Se pinta con `TextUnformatted`
+  encima de un `Selectable` vacío. Igual para la ruta de la barra de estado.
+- **Ruta inicial por línea de comandos** (`rayo.exe <ruta>`). Va un poco más allá del enunciado,
+  pero sin `h`/`l`/`Enter` (fase 3) no había forma de probar el criterio de las 10.000 entradas.
+
+Medido tras la fase 2, con 12.000 entradas cargadas: memoria 48,4 MB, CPU en reposo 0 ms en 10 s,
+exe 663 KB, 0 warnings con `/W4 /permissive-`.
+
+| Métrica | Objetivo | Medido |
+|---|---|---|
+| Listar 12.000 entradas | < 50 ms para 10.000 | 49 ms (≈41 ms extrapolado a 10.000) |
+| Memoria con 12.000 entradas | < 50 MB | 48,4 MB |
+| CPU en reposo | 0 % | 0 ms en 10 s |
+| Arranque hasta ventana visible | < 100 ms | 251 ms (mejor marca), sin cambio respecto a la fase 1 |
+
+- **El orden natural es el que cuesta, no enumerar.** De esos 49 ms, **45 son el `std::sort` con
+  `StrCmpLogicalW`** y solo 4 son `FindFirstFileExW`. Un `std::sort` ordinal normal tarda 5 ms:
+  `StrCmpLogicalW` es ~9 veces más lento. Por encima de unas 14.000 entradas se sale del
+  presupuesto. Como el orden vive en un hilo de trabajo, la UI nunca se bloquea y no compensa
+  escribir un comparador natural propio todavía; queda anotado en `fs/DirectoryReader.cpp`.
+- **El presupuesto de arranque sigue incumplido y sigue sin ser culpa nuestra**: los ~210 ms de
+  `D3D11CreateDevice` de la fase 1 no han cambiado. La fase 2 no lo empeora de forma medible,
+  aunque la dispersión entre ejecuciones en esta máquina (250-410 ms) es demasiado ancha para
+  afinar más. Sigue pendiente para la fase 8.
+- **Sin verificar**: el cambio de DPI al arrastrar entre monitores con escalados distintos (no hay
+  segundo monitor en esta máquina). El camino inicial sí se ve bien.

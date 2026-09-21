@@ -27,27 +27,48 @@ internal static class Steam
     private const string Prefix = "steam://rungameid/";
 
     /// <summary>
-    /// Target -> carpeta, resuelto una vez por sesión.
+    /// Target -> carpeta, con cuándo se resolvió.
     ///
-    /// La caché no sobra: el barrido de apps abiertas corre tres veces por segundo y
-    /// esto son dos lecturas de disco. Se guardan también los fallos, que si no un juego
-    /// desinstalado costaría dos lecturas por barrido para volver a decir que no está.
+    /// La caché no sobra: resolver son dos lecturas de disco y una del registro, y el
+    /// barrido de apps abiertas pregunta por cada entrada de Steam cada vez que el shell
+    /// avisa de algo, más el de seguridad cada 10 s.
     ///
     /// Concurrente porque con varias pantallas hay un dock por monitor y cada uno
-    /// refresca su estado en una tarea del pool.
-    ///
-    /// ponytail: instalar un juego con el dock abierto no se nota hasta reiniciarlo. El
-    /// día que moleste, se invalida al ver que la carpeta apareció.
+    /// refresca su estado en una tarea del pool. Dos que resuelvan a la vez escriben lo
+    /// mismo, así que no hace falta candado.
     /// </summary>
-    private static readonly ConcurrentDictionary<string, string?> Cache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, (string? Folder, long When)> Cache = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Lo que vale un "no está instalado" antes de volver a mirar.</summary>
+    internal const long MissMs = 30_000;
 
     /// <summary>
     /// La carpeta donde está instalado el juego al que apunta esa entrada del dock, o
     /// null si no es de Steam o no está instalado.
     /// </summary>
-    public static string? FolderOf(string target) => AppIdOf(target) is uint id
-        ? Cache.GetOrAdd(target, _ => Resolve(id))
-        : null;
+    public static string? FolderOf(string target)
+    {
+        if (AppIdOf(target) is not uint id) return null;
+
+        if (Cache.TryGetValue(target, out (string? Folder, long When) hit)
+            && !Expired(hit.Folder, hit.When, Environment.TickCount64))
+        {
+            return hit.Folder;
+        }
+
+        string? folder = Resolve(id);
+        Cache[target] = (folder, Environment.TickCount64);
+        return folder;
+    }
+
+    /// <summary>
+    /// Si hay que volver a mirar. Un acierto vale para toda la sesión -si el juego se
+    /// desinstala, el dock deja de encontrarlo al lanzarlo y se ve-, pero un fallo
+    /// caduca: sin esto, instalar un juego con el dock abierto no se notaba hasta
+    /// reiniciarlo, porque el "no está" se guardaba para siempre.
+    /// </summary>
+    internal static bool Expired(string? folder, long when, long now)
+        => folder is null && now - when >= MissMs;
 
     /// <summary>
     /// El identificador del juego, tanto si la entrada guarda ya la URL como si guarda
@@ -218,6 +239,13 @@ internal static class SteamSelfCheck
 
         Assert(Steam.Value(acf, "installdir") == "Alice Madness Returns", "no saco la carpeta del manifiesto");
         Assert(Steam.Value(acf, "SizeOnDisk") is null, "una clave que no esta no puede inventarse");
+
+        // La caducidad de la cache. Un acierto vale para siempre; un fallo no, o instalar
+        // un juego con el dock abierto no se nota hasta reiniciarlo.
+        Assert(!Steam.Expired(@"C:\juegos\X", 0, long.MaxValue), "un acierto no puede caducar");
+        Assert(!Steam.Expired(null, 1000, 1000), "un fallo recien visto no se vuelve a mirar");
+        Assert(!Steam.Expired(null, 1000, 1000 + Steam.MissMs - 1), "todavia no toca");
+        Assert(Steam.Expired(null, 1000, 1000 + Steam.MissMs), "un fallo viejo tiene que reintentarse");
 
         Console.WriteLine("[check] juegos de Steam: OK");
     }

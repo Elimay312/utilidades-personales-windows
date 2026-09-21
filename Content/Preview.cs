@@ -20,10 +20,33 @@ namespace QuickLook;
 /// true si ademas de sonar hay algo que ver. Un audio no tiene superficie de video: se queda
 /// con su caratula, que es la miniatura que el shell ya sabe sacar de las etiquetas.
 /// </param>
+/// <param name="SelIndex">Por cual de los seleccionados va, desde cero.</param>
+/// <param name="SelCount">Cuantos hay marcados. Uno en el caso normal.</param>
 internal sealed record Preview(
     Pixels? Image, bool IsThumbnail, string Title, string Detail, string? Text = null,
-    int PdfPages = 0, int PdfPage = 0, string? Media = null, bool IsVideo = false)
+    int PdfPages = 0, int PdfPage = 0, string? Media = null, bool IsVideo = false,
+    int SelIndex = 0, int SelCount = 1)
 {
+    /// <summary>
+    /// El mismo contenido, pero sabiendo que es el numero <paramref name="index"/> de
+    /// <paramref name="count"/> marcados.
+    ///
+    /// <para>
+    /// <b>No toca <c>Detail</c>.</b> La primera version pegaba ahi el contador, y
+    /// <c>--check</c> cazo lo que eso era: llamarla dos veces dejaba un pie con
+    /// "2 de 4 · 3 de 4". El flujo de hoy no encadena dos llamadas, asi que el fallo no se
+    /// veia — estaba puesto a esperar. El contador se compone al dibujar, en
+    /// <see cref="Caption"/>, y asi da igual cuantas veces se llame.
+    /// </para>
+    /// </summary>
+    public Preview WithSelection(int index, int count) =>
+        count > 1
+            ? this with { SelIndex = index, SelCount = count }
+            : this with { SelIndex = 0, SelCount = count };
+
+    /// <summary>El pie tal y como se dibuja: los datos del archivo y, si hay varios marcados, por cual va.</summary>
+    public string Caption => SelCount > 1 ? $"{Detail}  ·  {SelIndex + 1} de {SelCount}" : Detail;
+
     /// <summary>A que tamanio se pide la miniatura. Ver la nota de ponytail en Kind.</summary>
     private const int ThumbnailSize = 1600;
 

@@ -191,6 +191,12 @@ internal sealed unsafe class Panel : IDisposable
     /// <summary>Que archivo se esta ensenando. Lo compara el temporizador de la host.</summary>
     public string Path { get; private set; } = "";
 
+    /// <summary>Por cual de los marcados va, desde cero. Lo lleva la ventana-host.</summary>
+    public int SelIndex { get; private set; }
+
+    /// <summary>Cuantos hay marcados. Uno en el caso normal.</summary>
+    public int SelCount { get; private set; } = 1;
+
     /// <summary>
     /// Abre el panel en el monitor de <paramref name="near"/>, que es la ventana del
     /// Explorador desde la que se pulso el espacio. Devuelve null si algo falla: un fallo
@@ -203,7 +209,12 @@ internal sealed unsafe class Panel : IDisposable
         try
         {
             (int x, int y, int w, int h, float scale, int aw, int ah) = Layout(near);
-            panel = new Panel(x, y, w, h, scale, aw, ah) { Path = path };
+            panel = new Panel(x, y, w, h, scale, aw, ah)
+            {
+                Path = path,
+                SelIndex = preview.SelIndex,
+                SelCount = preview.SelCount,
+            };
             panel.Build(preview);
 
             // El estado de partida se deja puesto ANTES de ensenar la ventana. Si se
@@ -243,6 +254,8 @@ internal sealed unsafe class Panel : IDisposable
         try
         {
             Path = path;
+            SelIndex = preview.SelIndex;
+            SelCount = preview.SelCount;
 
             ContainerVisual old = _content;
             Vector2 size = CardSize(preview);
@@ -482,7 +495,7 @@ internal sealed unsafe class Panel : IDisposable
         SpriteVisual pie = _compositor.CreateSpriteVisual();
         pie.Size = captionSize;
         pie.Offset = new Vector3(pad, size.Y - caption - pad * 0.4f, 0f);
-        pie.Brush = Visuals.CreateCaptionBrush(preview.Title, preview.Detail, captionSize, _scale);
+        pie.Brush = Visuals.CreateCaptionBrush(preview.Title, preview.Caption, captionSize, _scale);
         content.Children.InsertAtTop(pie);
 
         content.Children.InsertAtTop(BuildClose());
@@ -595,8 +608,17 @@ internal sealed unsafe class Panel : IDisposable
     /// desde aqui sin robar el foco, que es justo lo que no se puede hacer.
     /// </para>
     /// </summary>
-    private void Scroll(short delta)
+    private void Scroll(short delta, bool shift)
     {
+        // Shift + rueda hojea los archivos marcados. Se le pide a la ventana-host en vez de
+        // preguntarlo aqui: la seleccion del Explorador se consulta desde un solo sitio, y
+        // ese es el cortafuegos del §3.2.
+        if (shift && SelCount > 1)
+        {
+            PInvoke.PostMessage(Host, HostWindow.WM_APP_SIBLING, (WPARAM)(nuint)(nint)(delta < 0 ? 1 : -1), default);
+            return;
+        }
+
         // En un PDF la rueda pasa pagina. Es lo que espera cualquiera que haya usado un
         // visor de PDF, y desplazar una sola pagina rasterizada no lleva a ningun sitio.
         if (_pages > 1)
@@ -785,7 +807,10 @@ internal sealed unsafe class Panel : IDisposable
                 return new LRESULT(0);
 
             case WM_MOUSEWHEEL:
-                panel?.Scroll((short)(wParam.Value >> 16));
+                // MK_SHIFT viene en la palabra baja del wParam: no hace falta preguntarle al
+                // teclado por su cuenta, que es lo que el §3.1 deja cerrado fuera del
+                // callback del hook.
+                panel?.Scroll((short)(wParam.Value >> 16), (wParam.Value & 0x0004) != 0);
                 return new LRESULT(0);
         }
 

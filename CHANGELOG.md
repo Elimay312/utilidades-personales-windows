@@ -700,3 +700,65 @@ comprueba con un clic derecho.
 
 **Ficheros:** `Config.cs`, `AutoStart.cs`, `Panel.cs`, `Visuals.cs`, `HostWindow.cs`,
 `Program.cs`, `SelfCheck.cs`, `SEGURIDAD.md`, `quicklook.json`.
+
+---
+
+## M8.1 — Selección múltiple
+
+Con varios archivos marcados el panel abre en el primero, el pie dice **`2 de 5`**, y
+**Shift + rueda** hojea entre ellos. La rejilla con todas las miniaturas a la vez sigue
+fuera: eso es otra función, no esta.
+
+**Hojear no toca lo que el Explorador tiene marcado.** El usuario marcó cinco cosas y las
+está mirando, no reordenándolas — cambiarle la selección por girar una rueda sería meterse
+donde no nos llaman, y además la regla 13 dice que no se gobiernan ventanas ajenas. Lo único
+que cambia es por cuál de ellas va el panel.
+
+### El cortafuegos del §3.2 decidió el diseño
+
+Lo natural habría sido que `Panel` preguntara por el hermano siguiente. No puede: la
+selección del Explorador se consulta **desde un solo sitio**, y `auditar.ps1` lo comprueba.
+Así que el panel manda un `WM_APP_SIBLING` con +1 o −1 y es `HostWindow` quien pregunta.
+
+Salió mejor código por la restricción: el panel no sabe nada del shell, y toda la
+conversación con el Explorador vive en un fichero. La auditoría sigue diciendo **3 llamadas,
+todas en `HostWindow.cs`**.
+
+Y para saber si está pulsado Shift **no se pregunta al teclado**: `MK_SHIFT` viene en la
+palabra baja del `wParam` de `WM_MOUSEWHEEL`. Preguntar por `GetKeyState` fuera del callback
+del hook contradiría el §3.1, que lo abre *solo ahí*.
+
+### `--check` encontró un fallo de verdad, no uno inyectado
+
+La primera versión de `WithSelection` pegaba el contador dentro de `Detail`. La comprobación
+nueva la llamó dos veces y salió:
+
+```
+self-check: el pie acumulo dos contadores:   ·  2 de 4  ·  3 de 4
+```
+
+El flujo de hoy no encadena dos llamadas —cada paso parte de un `Preview.For` limpio— así que
+**el fallo no se veía: estaba puesto a esperar** a que alguien añadiera un camino que
+reutilizara el preview anterior.
+
+Arreglado de raíz en vez de con cuidado: `WithSelection` ya no toca `Detail`, solo guarda el
+índice y el total, y el contador se compone al dibujar en `Preview.Caption`. Ahora da igual
+cuántas veces se llame.
+
+Es la primera vez en este proyecto que una comprobación caza algo por su cuenta en lugar de
+confirmar un fallo ya conocido. Vale más que las inyecciones deliberadas.
+
+### Lo que no se pudo medir
+
+`sonda-multiple.ps1` está escrita y comprueba las cinco cosas —abre en el primero, hojea
+hasta el último y se para, vuelve y se para, la rueda sin Shift no hojea, y la selección del
+Explorador queda intacta—. Marca los tres archivos por COM y manda la rueda con `PostMessage`
+y su `MK_SHIFT`, sin tocarle el ratón a nadie.
+
+Pero necesita el Explorador en primer plano cuando llega el gesto, y **Chrome se lo quedó en
+todos los intentos**: el usuario estaba trabajando. Llegó a marcar los tres correctamente y
+ahí se quedó. Se paró en vez de insistir; seguir era pelearse con el usuario por el foco para
+medir algo que él comprueba marcando tres archivos y girando la rueda con Shift.
+
+**Ficheros:** `Selection.cs`, `Content/Preview.cs`, `HostWindow.cs`, `Panel.cs`,
+`SelfCheck.cs`, `scratchpad/sonda-multiple.ps1`.

@@ -49,6 +49,17 @@ internal sealed unsafe class HostWindow : IDisposable
     /// <summary>Salir del programa. Lo manda el menu del clic derecho sobre el panel.</summary>
     internal const uint WM_APP_EXIT = 0x8003;
 
+    /// <summary>
+    /// Pasar al siguiente o al anterior de los archivos marcados. wParam trae 1 o -1.
+    /// Lo manda el panel al girar la rueda con Shift.
+    ///
+    /// <para>
+    /// El panel no pregunta por la seleccion el mismo: eso lo hace esta ventana y solo
+    /// esta ventana, que es el cortafuegos del §3.2 y lo que comprueba <c>auditar.ps1</c>.
+    /// </para>
+    /// </summary>
+    internal const uint WM_APP_SIBLING = 0x8004;
+
     // El delegado se guarda en un campo estatico a proposito: si se pasara directamente
     // a WNDCLASSEXW, el GC podria recogerlo mientras Windows todavia tiene el puntero, y
     // el fallo aparece mucho despues y en otro sitio.
@@ -121,6 +132,10 @@ internal sealed unsafe class HostWindow : IDisposable
                 _instance?.Close();
                 return new LRESULT(0);
 
+            case WM_APP_SIBLING:
+                _instance?.Sibling((int)(nint)wParam.Value);
+                return new LRESULT(0);
+
             case WM_APP_EXIT:
                 Console.WriteLine("[quicklook] salir, pedido desde el menu");
                 PInvoke.DestroyWindow(hwnd);
@@ -157,7 +172,7 @@ internal sealed unsafe class HostWindow : IDisposable
         // que monitor y a que escala se dibuja el panel.
         HWND front = PInvoke.GetForegroundWindow();
 
-        string? path = Selection.Path(front);
+        string? path = Selection.Path(front, 0, out int total);
         if (path is null)
         {
             // Sin nada seleccionado no hay nada que ensenar. El espacio ya se lo comio el
@@ -166,8 +181,10 @@ internal sealed unsafe class HostWindow : IDisposable
             return;
         }
 
-        Console.WriteLine($"[seleccion] {path}");
-        _panel = Panel.Open(front, path, Preview.For(path));
+        // Con varios marcados se empieza por el primero y el pie lo dice. Se hojean con
+        // Shift y la rueda; la rejilla de todos a la vez queda fuera.
+        Console.WriteLine($"[seleccion] {path}" + (total > 1 ? $"  (1 de {total})" : ""));
+        _panel = Panel.Open(front, path, Preview.For(path).WithSelection(0, total));
 
         if (_panel is not null)
         {
@@ -230,15 +247,46 @@ internal sealed unsafe class HostWindow : IDisposable
             return;
         }
 
-        string? path = Selection.Path(front);
-        See($"delante 0x{(nint)front.Value:X}, seleccion: {path ?? "(nada)"}");
+        string? path = Selection.Path(front, _panel.SelIndex, out int total);
+        See($"delante 0x{(nint)front.Value:X}, seleccion: {path ?? "(nada)"} de {total}");
 
         // Sin seleccion no se cierra: has podido deseleccionar sin querer al clicar el
         // fondo de la carpeta, y hacer desaparecer el panel por eso seria molesto.
-        if (path is null || path == _panel.Path) return;
+        if (path is null) return;
 
-        Console.WriteLine($"[seleccion] {path}");
-        _panel.Morph(path, Preview.For(path));
+        // Se refresca tambien cuando sigue siendo el mismo archivo pero ha cambiado
+        // cuantos hay marcados: el contador del pie tiene que decir la verdad.
+        if (path == _panel.Path && total == _panel.SelCount) return;
+
+        Console.WriteLine($"[seleccion] {path}" + (total > 1 ? $"  ({_panel.SelIndex + 1} de {total})" : ""));
+        _panel.Morph(path, Preview.For(path).WithSelection(_panel.SelIndex, total));
+    }
+
+    /// <summary>
+    /// Pasa al siguiente o al anterior de los archivos marcados.
+    ///
+    /// <para>
+    /// <b>No toca la seleccion del Explorador.</b> El usuario marco cinco cosas y las esta
+    /// hojeando, no reordenandolas: cambiarle lo que tiene marcado por girar una rueda seria
+    /// meterse donde no nos llaman, y ademas la regla 13 dice que no se gobiernan ventanas
+    /// ajenas. Solo cambia por cual de ellas va el panel.
+    /// </para>
+    /// </summary>
+    private void Sibling(int step)
+    {
+        if (_panel is null || _panel.SelCount <= 1) return;
+
+        HWND front = PInvoke.GetForegroundWindow();
+        if (!Foreground.IsExplorer(front)) return;
+
+        int next = Math.Clamp(_panel.SelIndex + step, 0, _panel.SelCount - 1);
+        if (next == _panel.SelIndex) return;
+
+        string? path = Selection.Path(front, next, out int total);
+        if (path is null) return;
+
+        Console.WriteLine($"[seleccion] {path}  ({next + 1} de {total})");
+        _panel.Morph(path, Preview.For(path).WithSelection(next, total));
     }
 
     /// <summary>Traza lo que ve el temporizador, pero solo cuando cambia respecto al tick anterior.</summary>

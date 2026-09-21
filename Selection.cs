@@ -50,8 +50,21 @@ internal static unsafe class Selection
     /// Devolver null nunca puede tirar el programa: el hook seguiria comiendose la barra
     /// espaciadora del usuario.
     /// </summary>
-    public static string? Path(HWND front)
+    public static string? Path(HWND front) => Path(front, 0, out _);
+
+    /// <summary>
+    /// La ruta del elemento <paramref name="index"/> de la seleccion, y cuantos hay en
+    /// total.
+    ///
+    /// <para>
+    /// El indice se recorta a la seleccion real: si estabas en el tercero de cinco y el
+    /// usuario deja marcados dos, el panel se queda en el ultimo en vez de quedarse sin
+    /// nada que ensenar.
+    /// </para>
+    /// </summary>
+    public static string? Path(HWND front, int index, out int total)
     {
+        total = 0;
         try
         {
             IShellView? view = View(front);
@@ -80,9 +93,8 @@ internal static unsafe class Selection
                 return null;
             }
 
-            // Uno cada vez. Con varios seleccionados se mira el primero; la lista entera
-            // es cosa del M8, no de aqui.
-            items.GetItemAt(0, out IShellItem item);
+            total = (int)count;
+            items.GetItemAt((uint)Math.Clamp(index, 0, total - 1), out IShellItem item);
 
             PWSTR name;
             item.GetDisplayName(SIGDN.SIGDN_FILESYSPATH, &name);

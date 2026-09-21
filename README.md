@@ -29,6 +29,9 @@ con DirectWrite, en una tarjeta con forma de página y con la rueda para desplaz
 **M7 — vídeo y audio.** Con `MediaPlayer` y su superficie de Composition: el vídeo es un
 visual más dentro del panel, en bucle y mudo; el audio suena y enseña su carátula.
 
+**M8.1 — selección múltiple.** Con varios archivos marcados el pie dice `2 de 5` y
+**Shift + rueda** hojea entre ellos, sin tocar lo que el Explorador tiene marcado.
+
 **M8 — config y salida.** `quicklook.json` para el tamaño del panel, el sonido y el
 autoarranque, y clic derecho sobre el panel para salir. El programa **no escribe ningún
 archivo**: lo único que guarda entre sesiones es la clave de autoarranque del registro.
@@ -41,7 +44,8 @@ de 1× en píxeles físicos y ahora es la escala de la pantalla.
 espacio abre, `Esc` cierra, `F2` renombra con espacios, y con otra app delante el espacio
 pasa de largo.
 
-Falta la selección múltiple: hoy con varios archivos marcados se previsualiza el primero.
+El plan está completo. Lo que queda fuera a propósito: la rejilla con todas las miniaturas a
+la vez, el resaltado de sintaxis, y previsualizar dentro de un `.zip`.
 
 ---
 

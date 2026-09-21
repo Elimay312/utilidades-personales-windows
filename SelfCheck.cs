@@ -19,6 +19,7 @@ internal static class SelfCheck
         Clasificador();
         Tamanos();
         Texto();
+        Multiple();
 
         Console.WriteLine();
         Console.WriteLine("[check] todo bien");
@@ -171,6 +172,39 @@ internal static class SelfCheck
         Assert(!Preview.IsCode("leeme.txt"), "un .txt es prosa, proporcional");
 
         Console.WriteLine("[check] texto: OK");
+    }
+
+    /// <summary>
+    /// El contador de seleccion multiple. Es donde mas facil es equivocarse de uno: el
+    /// indice va desde cero y lo que se ensena empieza en uno, y un "0 de 3" en el pie
+    /// canta muchisimo.
+    /// </summary>
+    private static void Multiple()
+    {
+        Preview basico = new(null, false, "foto.png", "PNG  ·  1 KB");
+
+        // Uno solo marcado: el pie se queda como estaba, sin contador.
+        Preview solo = basico.WithSelection(0, 1);
+        Assert(solo.Caption == basico.Detail, $"con uno marcado el pie cambio: {solo.Caption}");
+        Assert(solo.SelCount == 1 && solo.SelIndex == 0, "con uno marcado, indice 0 de 1");
+
+        // Tres marcados: el contador empieza en uno, no en cero.
+        Preview primero = basico.WithSelection(0, 3);
+        Assert(primero.Caption.EndsWith("1 de 3"), $"el primero de tres dice: {primero.Caption}");
+        Assert(primero.Caption.StartsWith(basico.Detail), "el contador se pega detras, no sustituye");
+        Assert(primero.SelIndex == 0 && primero.SelCount == 3, "indice y total mal");
+
+        Preview ultimo = basico.WithSelection(2, 3);
+        Assert(ultimo.Caption.EndsWith("3 de 3"), $"el ultimo de tres dice: {ultimo.Caption}");
+
+        // Y hojear no acumula contadores. Esta es la que encontro el fallo: la primera
+        // version pegaba el contador dentro de Detail y dos llamadas dejaban
+        // "2 de 4 · 3 de 4". El flujo de hoy no encadena dos, asi que no se veia.
+        Preview hojeado = basico.WithSelection(1, 4).WithSelection(2, 4);
+        Assert(hojeado.Caption.EndsWith("3 de 4") && !hojeado.Caption.Contains("2 de 4"),
+            $"el pie acumulo contadores: {hojeado.Caption}");
+
+        Console.WriteLine("[check] seleccion multiple: OK");
     }
 
     private static Preview Thumb(int width, int height) =>

@@ -1,0 +1,133 @@
+// Lista auditable de P/Invokes (M1). Todas son APIs publicas documentadas y actuan
+// sobre el propio proceso o el propio HWND. Cada grupo lleva encima para que es:
+// ahi es donde mira un auditor, y cada entrada tiene que poder senalarse a una
+// seccion de SEGURIDAD.md §3.
+
+// --- Ventana propia ---
+RegisterClassExW
+CreateWindowExW
+DefWindowProcW
+DestroyWindow
+PostQuitMessage
+ShowWindow
+SetWindowPos
+GetWindowLongPtr
+SetWindowLongPtr
+LoadCursorW
+IDC_ARROW
+WINDOWPOS
+
+// --- Bucle de mensajes propio ---
+GetMessageW
+TranslateMessage
+DispatchMessageW
+
+// --- Modulo propio (para hInstance) ---
+GetModuleHandleW
+
+// --- Geometria de pantalla (solo lectura) ---
+// No se enumera ninguna ventana ni ningun proceso: solo se pregunta donde esta el
+// monitor y a que escala, para colocarnos encima.
+MonitorFromPoint
+GetMonitorInfoW
+GetDpiForMonitor
+
+// --- Zona caliente: donde esta el cursor, y nada mas ---
+// Recogida, la region de la ventana son los 140x5 px que se dibujan, asi que el hover
+// sobre la franja no se puede detectar con WM_MOUSEMOVE: no llega. GetCursorPos
+// devuelve un punto; no observa botones, no observa teclas, y no es un hook.
+GetCursorPos
+SetTimer
+KillTimer
+
+// --- Atajo de teclado (SEGURIDAD.md §3.4) ---
+// NO es un hook: no se observa el teclado, se le pide a Windows que mande WM_HOTKEY a
+// NUESTRA ventana cuando se pulse UNA combinacion. Sin DLL en otros procesos y sin ver
+// ninguna otra tecla. Es como registra su atajo cualquier app.
+RegisterHotKey
+UnregisterHotKey
+
+// --- Composition interop, sobre el HWND propio ---
+// El puente Win32 -> Windows.UI.Composition. Toda la animacion vive aqui y no en el
+// hilo de UI.
+ICompositorDesktopInterop
+CreateDispatcherQueueController
+DispatcherQueueOptions
+
+// --- Consola estando compilado como WinExe ---
+AttachConsole
+
+// --- Superficie de dibujo propia: D3D11 -> D2D -> Composition ---
+// Fuera de XAML no existe LoadedImageSurface, asi que para pintar cualquier cosa que
+// no sea un color plano hay que montar esta cadena. Actua solo sobre nuestras
+// superficies; no lee la pantalla ni la ventana de nadie.
+D3D11CreateDevice
+D2D1CreateDevice
+ID3D11Device
+ID2D1Device
+ID2D1DeviceContext
+IDXGIDevice
+D3D_DRIVER_TYPE
+D3D11_CREATE_DEVICE_FLAG
+D2D1_ALPHA_MODE
+DXGI_FORMAT
+ICompositorInterop
+ICompositionDrawingSurfaceInterop
+
+// --- Texto, sobre nuestra propia superficie de dibujo ---
+DWriteCreateFactory
+IDWriteFactory
+IDWriteTextFormat
+IDWriteTextLayout
+DWRITE_FACTORY_TYPE
+DWRITE_TEXT_METRICS
+DWRITE_FONT_WEIGHT
+DWRITE_FONT_STYLE
+DWRITE_FONT_STRETCH
+DWRITE_WORD_WRAPPING
+D2D1_DRAW_TEXT_OPTIONS
+
+// --- Mapas de bits: la caratula, sobre nuestra propia superficie ---
+ID2D1Bitmap1
+D2D1_BITMAP_PROPERTIES1
+D2D1_BITMAP_INTERPOLATION_MODE
+
+// --- Cruzar del pool de hilos al hilo de UI (SEGURIDAD.md �3.1) ---
+// Sobre NUESTRA propia ventana y con un mensaje propio. No se manda nada a nadie.
+PostMessageW
+
+// --- Raton dentro de la ventana propia y region de la misma ---
+// SetCapture es para no perder el arrastre de la barra al salirse el cursor; no es
+// un hook y solo afecta a nuestra ventana. La region recorta NUESTRA ventana para
+// que el margen que no se pinta no se trague los clics de nadie.
+SetCapture
+ReleaseCapture
+CreateRectRgn
+SetWindowRgn
+
+// --- Medidor de pico de la SALIDA de audio (SEGURIDAD.md �3.3) ---
+// GetPeakValue devuelve UN float. No hay ningun IAudioCaptureClient aqui, ni
+// AUDCLNT_STREAMFLAGS_LOOPBACK, ni eCapture, y no los va a haber: eso seria grabar.
+IMMDeviceEnumerator
+MMDeviceEnumerator
+IMMDevice
+IAudioMeterInformation
+EDataFlow
+ERole
+CLSCTX
+
+// --- Bateria y volumen, solo lectura ---
+// GetSystemPowerStatus no sondea: se llama al recibir WM_POWERBROADCAST.
+// IAudioEndpointVolume se usa SOLO para leer el nivel; la isla no toca el volumen.
+GetSystemPowerStatus
+SYSTEM_POWER_STATUS
+IAudioEndpointVolume
+
+// --- Pantallas y pantalla completa (solo lectura) ---
+// De la ventana en primer plano se lee SU GEOMETRIA y nada mas: ni se enumera nada
+// ni se la toca (SEGURIDAD.md �3.5).
+EnumDisplayMonitors
+MONITORINFOEXW
+GetForegroundWindow
+MonitorFromWindow
+GetWindowRect

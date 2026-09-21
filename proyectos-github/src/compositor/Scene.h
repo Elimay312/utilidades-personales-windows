@@ -24,6 +24,13 @@ public:
     const winrt::Windows::UI::Composition::ContainerVisual& Content() const { return m_content; }
     bool Ready() const { return m_target != nullptr; }
 
+    // La cola de este hilo. La crea Scene porque el compositor la necesita, y de paso es
+    // la forma de programar algo «dentro de un rato» sin un WM_TIMER: la usa el aviso
+    // discreto para irse solo.
+    winrt::Windows::System::DispatcherQueue Queue() const {
+        return m_queue ? m_queue.DispatcherQueue() : nullptr;
+    }
+
     // widthDip/heightDip es el cliente ya en unidades lógicas.
     void Layout(float widthDip, float heightDip, float scale);
 

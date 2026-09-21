@@ -17,6 +17,7 @@
 #include <winrt/Windows.Graphics.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Composition.Desktop.h>
+#include <winrt/Windows.UI.Composition.Interactions.h>
 #include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.UI.ViewManagement.h>
 #include <winrt/Windows.UI.h>

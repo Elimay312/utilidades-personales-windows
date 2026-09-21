@@ -309,6 +309,15 @@ void Demo::PaintButtons(float crossfadeMs) {
     }
 }
 
+void Demo::ShowContent(bool visible) {
+    if (!m_root) return;
+    m_sidebar.IsVisible(visible);
+    m_separator.IsVisible(visible);
+    m_sidebarText.Visual().IsVisible(visible);
+    m_title.Visual().IsVisible(visible);
+    m_morph.Visual().IsVisible(visible);
+}
+
 void Demo::SetCaptionState(Caption::Zone hovered, Caption::Zone pressed) {
     if (!m_animator) return;
     const bool hoverChanged = m_hovered != hovered;

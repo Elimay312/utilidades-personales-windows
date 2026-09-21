@@ -44,6 +44,11 @@ public:
     // con duración, cruza (cambio de tema).
     void Repaint(const Theme::Tokens& tokens, float crossfadeMs);
 
+    // Esconde el contenido —barra lateral, título y tarjeta— dejando los botones de la
+    // ventana, que son de la ventana y no de esta vista. Lo usa el catálogo de la fase 2
+    // al superponerse: sin esto se leen los dos títulos encima del mismo sitio.
+    void ShowContent(bool visible);
+
     void SetCaptionState(Caption::Zone hovered, Caption::Zone pressed);
     void PointerDown(float xDip, float yDip);
     void PointerUp(float xDip, float yDip);

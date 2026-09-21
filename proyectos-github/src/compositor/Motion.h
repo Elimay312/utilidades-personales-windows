@@ -19,6 +19,12 @@
 
 namespace Motion {
 
+// Los nombres largos de C++/WinRT una sola vez. Las animaciones se escriben en muchos
+// sitios y `winrt::Windows::Foundation::Numerics::float3` en cada llamada tapa lo que la
+// llamada hace.
+using Vec2 = winrt::Windows::Foundation::Numerics::float2;
+using Vec3 = winrt::Windows::Foundation::Numerics::float3;
+
 class Animator {
 public:
     void Attach(const winrt::Windows::UI::Composition::Compositor& compositor);
@@ -59,6 +65,41 @@ public:
     // Fija el centro de escalado al centro del visual y lo deja atado: una expresión es
     // dueña de la propiedad entera, y aquí eso es lo que queremos, porque nadie más
     // escribe CenterPoint y así sigue siendo correcto aunque el tamaño esté animándose.
+    // Tamaño de un visual suelto, sin geometría que llevar a la par.
+    void Size(const winrt::Windows::UI::Composition::Visual& visual,
+              const winrt::Windows::Foundation::Numerics::float2& value, Kind kind) const;
+
+    // Tamaño de una geometría sola. Lo usa Gfx::Material cuando su visual se dimensiona
+    // solo con el padre y lo único que hay que animar es la forma.
+    void GeometrySize(
+        const winrt::Windows::UI::Composition::CompositionRoundedRectangleGeometry& geometry,
+        const winrt::Windows::Foundation::Numerics::float2& value, Kind kind) const;
+
+    // Con retardo, para escalonar. El muelle admite DelayTime sin dejar de ser
+    // interrumpible: lo que no admite son fotogramas clave.
+    void OffsetDelayed(const winrt::Windows::UI::Composition::Visual& visual,
+                       const winrt::Windows::Foundation::Numerics::float3& value, Kind kind,
+                       float delayMs) const;
+
+    void OpacityDelayed(const winrt::Windows::UI::Composition::Visual& visual, float value,
+                        float durationMs, float delayMs) const;
+
+    // El cursor del campo de texto, parpadeando en bucle en la GPU. Sin temporizador en el
+    // hilo de UI: el bucle de mensajes se queda dormido en GetMessageW y así sigue.
+    void Blink(const winrt::Windows::UI::Composition::Visual& caret, float periodMs) const;
+    // Lo para y lo deja encendido. Se llama en cada pulsación: un cursor que parpadea
+    // mientras se escribe se lee como un fallo de dibujo.
+    void Solid(const winrt::Windows::UI::Composition::Visual& caret) const;
+
+    // Ata el desplazamiento del contenido al InteractionTracker. La posición del tracker
+    // crece hacia abajo y el contenido se mueve hacia arriba, de ahí el signo.
+    void BindScroll(
+        const winrt::Windows::UI::Composition::Visual& content,
+        const winrt::Windows::UI::Composition::Interactions::InteractionTracker& tracker) const;
+
+    void ShadowColor(const winrt::Windows::UI::Composition::DropShadow& shadow,
+                     const winrt::Windows::UI::Color& value, float durationMs) const;
+
     void BindCenterPoint(const winrt::Windows::UI::Composition::Visual& visual) const;
 
     const winrt::Windows::UI::Composition::Compositor& Compositor() const { return m_compositor; }

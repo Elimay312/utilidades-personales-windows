@@ -1,10 +1,13 @@
 #include "shell/Window.h"
 
+#include <imm.h>
 #include <windowsx.h>
 
 #include <algorithm>
 
 #include "shell/Backdrop.h"
+#include <cstdint>
+
 #include "shell/Dpi.h"
 
 namespace Shell {
@@ -201,6 +204,85 @@ void Window::SetCaptionState(Caption::Zone hovered, Caption::Zone pressed) {
     if (callbacks.onCaptionState) callbacks.onCaptionState();
 }
 
+void Window::TrackClientLeave() {
+    if (m_trackingClient) return;
+    // Solo TME_LEAVE esta vez: el seguimiento de la barra de título lo lleva
+    // OnNcMouseMove con su propia bandera y con TME_NONCLIENT.
+    TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, m_hwnd, 0};
+    TrackMouseEvent(&track);
+    m_trackingClient = true;
+}
+
+Input::Modifiers Window::CurrentModifiers() const {
+    Input::Modifiers modifiers = Input::Modifiers::None;
+    if (GetKeyState(VK_SHIFT) & 0x8000) modifiers |= Input::Modifiers::Shift;
+    if (GetKeyState(VK_CONTROL) & 0x8000) modifiers |= Input::Modifiers::Control;
+    if (GetKeyState(VK_MENU) & 0x8000) modifiers |= Input::Modifiers::Alt;
+    return modifiers;
+}
+
+void Window::Emit(Input::Action action, Input::Button button, LPARAM lparam, int clicks) {
+    if (!callbacks.onPointer) return;
+    Input::Pointer pointer;
+    pointer.action = action;
+    pointer.button = button;
+    pointer.x = Dpi::ToDip(static_cast<float>(GET_X_LPARAM(lparam)), m_scale);
+    pointer.y = Dpi::ToDip(static_cast<float>(GET_Y_LPARAM(lparam)), m_scale);
+    pointer.clicks = clicks;
+    pointer.modifiers = CurrentModifiers();
+    callbacks.onPointer(pointer);
+}
+
+void Window::EmitWheel(bool horizontal, int delta, POINT clientPx) {
+    if (!callbacks.onPointer) return;
+    Input::Pointer pointer;
+    pointer.action = Input::Action::Wheel;
+    pointer.x = Dpi::ToDip(static_cast<float>(clientPx.x), m_scale);
+    pointer.y = Dpi::ToDip(static_cast<float>(clientPx.y), m_scale);
+    // Las unidades crudas de Windows, sin tocar: las 120 por muesca y las líneas por
+    // muesca las traduce Ui::Wheel, que está probado y sabe guardar el resto que manda un
+    // panel táctil de precisión.
+    if (horizontal) {
+        pointer.wheelX = static_cast<float>(delta);
+    } else {
+        pointer.wheelY = static_cast<float>(delta);
+    }
+    pointer.modifiers = CurrentModifiers();
+    callbacks.onPointer(pointer);
+}
+
+void Window::PlaceImeWindow() {
+    if (!callbacks.onCaretRect) return;
+
+    float x = 0.0f;
+    float y = 0.0f;
+    float height = 0.0f;
+    if (!callbacks.onCaretRect(x, y, height)) return;
+
+    const HIMC context = ImmGetContext(m_hwnd);
+    if (!context) return;
+
+    // La ventana de composición justo en el cursor, y la de candidatos debajo sin tapar
+    // la línea que se está escribiendo.
+    COMPOSITIONFORM form{};
+    form.dwStyle = CFS_POINT;
+    form.ptCurrentPos.x = Dpi::ToPixels(x, m_scale);
+    form.ptCurrentPos.y = Dpi::ToPixels(y, m_scale);
+    ImmSetCompositionWindow(context, &form);
+
+    CANDIDATEFORM candidate{};
+    candidate.dwIndex = 0;
+    candidate.dwStyle = CFS_EXCLUDE;
+    candidate.ptCurrentPos = form.ptCurrentPos;
+    candidate.rcArea.left = form.ptCurrentPos.x;
+    candidate.rcArea.top = form.ptCurrentPos.y;
+    candidate.rcArea.right = form.ptCurrentPos.x + 1;
+    candidate.rcArea.bottom = form.ptCurrentPos.y + Dpi::ToPixels(height, m_scale);
+    ImmSetCandidateWindow(context, &candidate);
+
+    ImmReleaseContext(m_hwnd, context);
+}
+
 void Window::UpdateLayout() {
     RECT client{};
     if (!GetClientRect(m_hwnd, &client)) return;
@@ -257,29 +339,157 @@ LRESULT Window::Proc(UINT message, WPARAM wparam, LPARAM lparam) {
     case WM_MOUSEMOVE:
         // Entrar al cliente apaga cualquier resalte de la barra de título.
         SetCaptionState(Caption::Zone::Client, Caption::Zone::Client);
+        TrackClientLeave();
+        Emit(Input::Action::Move, Input::Button::None, lparam);
+        return 0;
+
+    case WM_MOUSELEAVE:
+        m_trackingClient = false;
+        if (callbacks.onPointer) {
+            Input::Pointer pointer;
+            pointer.action = Input::Action::Leave;
+            callbacks.onPointer(pointer);
+        }
         return 0;
 
     // WM_LBUTTONDBLCLK junto al DOWN, y salió probando: la clase lleva CS_DBLCLKS para
     // que el doble clic en la barra de título maximice, pero eso hace que el SEGUNDO
     // clic rápido en el contenido llegue como DBLCLK y no como DOWN. Sin esta línea,
     // pulsar dos veces seguidas en una tarjeta cuenta una sola vez.
+    //
+    // Los dos emiten un Down normal; lo que los distingue es el contador de clics, que
+    // llevamos nosotros porque Windows solo sabe contar hasta dos y el campo de texto
+    // necesita el triple para seleccionar la línea entera.
     case WM_LBUTTONDBLCLK:
-    case WM_LBUTTONDOWN:
-        if (callbacks.onPointerDown) {
-            callbacks.onPointerDown(Dpi::ToDip(static_cast<float>(GET_X_LPARAM(lparam)), m_scale),
-                                    Dpi::ToDip(static_cast<float>(GET_Y_LPARAM(lparam)), m_scale));
-        }
+    case WM_LBUTTONDOWN: {
+        SetFocus(m_hwnd);
+        // Arrastrar fuera del control tiene que seguir llegando: sin captura, seleccionar
+        // texto se corta en cuanto el puntero se sale del campo.
+        SetCapture(m_hwnd);
+        const LONG when = GetMessageTime();
+        const int clicks =
+            m_clicks.Count(static_cast<std::uint64_t>(when < 0 ? 0 : when),
+                           Dpi::ToDip(static_cast<float>(GET_X_LPARAM(lparam)), m_scale),
+                           Dpi::ToDip(static_cast<float>(GET_Y_LPARAM(lparam)), m_scale));
+        Emit(Input::Action::Down, Input::Button::Left, lparam, clicks);
         return 0;
+    }
 
     case WM_LBUTTONUP:
-        if (callbacks.onPointerUp) {
-            callbacks.onPointerUp(Dpi::ToDip(static_cast<float>(GET_X_LPARAM(lparam)), m_scale),
-                                  Dpi::ToDip(static_cast<float>(GET_Y_LPARAM(lparam)), m_scale));
+        if (GetCapture() == m_hwnd) ReleaseCapture();
+        Emit(Input::Action::Up, Input::Button::Left, lparam);
+        return 0;
+
+    case WM_RBUTTONDOWN:
+        SetFocus(m_hwnd);
+        Emit(Input::Action::Down, Input::Button::Right, lparam);
+        return 0;
+
+    case WM_RBUTTONUP:
+        Emit(Input::Action::Up, Input::Button::Right, lparam);
+        return 0;
+
+    // El que todo el mundo olvida. Un Alt+Tab a mitad de una pulsación roba la captura y
+    // el control se queda hundido para siempre.
+    case WM_CAPTURECHANGED:
+        if (callbacks.onPointer) {
+            Input::Pointer pointer;
+            pointer.action = Input::Action::Cancel;
+            callbacks.onPointer(pointer);
         }
         return 0;
 
+    case WM_CONTEXTMENU: {
+        const bool keyboard = lparam == -1;
+        POINT point{};
+        if (!keyboard) {
+            point = POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            ScreenToClient(m_hwnd, &point);
+        }
+        if (callbacks.onContextMenu) {
+            callbacks.onContextMenu(Dpi::ToDip(static_cast<float>(point.x), m_scale),
+                                    Dpi::ToDip(static_cast<float>(point.y), m_scale), keyboard);
+        }
+        return 0;
+    }
+
+    // Ojo: la rueda llega en coordenadas de PANTALLA, al revés que los botones.
+    case WM_MOUSEWHEEL:
+    case WM_MOUSEHWHEEL: {
+        POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        ScreenToClient(m_hwnd, &point);
+        EmitWheel(message == WM_MOUSEHWHEEL, GET_WHEEL_DELTA_WPARAM(wparam), point);
+        return 0;
+    }
+
+    // lparam no trae las coordenadas: hay que preguntarlas. Y llega en cada movimiento,
+    // así que el cursor hay que volver a ponerlo cada vez.
+    case WM_SETCURSOR:
+        if (LOWORD(lparam) == HTCLIENT && callbacks.onSetCursor) {
+            POINT point{};
+            if (GetCursorPos(&point) && ScreenToClient(m_hwnd, &point)) {
+                if (callbacks.onSetCursor(Dpi::ToDip(static_cast<float>(point.x), m_scale),
+                                          Dpi::ToDip(static_cast<float>(point.y), m_scale))) {
+                    return TRUE;
+                }
+            }
+        }
+        // Sin return: los bordes de redimensionado conservan sus flechas.
+        break;
+
     case WM_KEYDOWN:
-        if (callbacks.onKeyDown) callbacks.onKeyDown(static_cast<int>(wparam));
+    case WM_SYSKEYDOWN:
+    case WM_KEYUP:
+    case WM_SYSKEYUP: {
+        Input::Key key;
+        key.virtualKey = static_cast<int>(wparam);
+        key.down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
+        key.repeat = (lparam & 0x40000000) != 0;
+        key.system = message == WM_SYSKEYDOWN || message == WM_SYSKEYUP;
+        key.modifiers = CurrentModifiers();
+        if (callbacks.onKey && callbacks.onKey(key)) return 0;
+        // Si nadie la quiso, que la vea Windows: ahí viven Alt+F4 y Alt+Espacio.
+        break;
+    }
+
+    // TranslateMessage ya compuso la tecla muerta: el acento y luego la «a» llegan aquí
+    // como un solo WM_CHAR con U+00E1, y la eñe llega directa. Lo único que hay que hacer
+    // es no dejar pasar los controles: Ctrl+V manda un 0x16 por aquí además de su
+    // WM_KEYDOWN, y sin este filtro se escribe un carácter invisible en el campo.
+    case WM_CHAR:
+        if (wparam >= 0x20 && wparam != 0x7F && callbacks.onChar) {
+            callbacks.onChar(static_cast<wchar_t>(wparam));
+        }
+        return 0;
+
+    // Anunciar que hablamos Unicode. Tres líneas y evita la ruta ANSI.
+    case WM_UNICHAR:
+        if (wparam == UNICODE_NOCHAR) return TRUE;
+        if (callbacks.onChar) callbacks.onChar(static_cast<wchar_t>(wparam));
+        return 0;
+
+    case WM_SETFOCUS:
+        if (callbacks.onWindowFocus) callbacks.onWindowFocus(true);
+        return 0;
+
+    case WM_KILLFOCUS:
+        if (callbacks.onWindowFocus) callbacks.onWindowFocus(false);
+        return 0;
+
+    case WM_ACTIVATE:
+        if (LOWORD(wparam) == WA_INACTIVE && callbacks.onDeactivate) callbacks.onDeactivate();
+        break;
+
+    // El IME. Lo único nuestro es colocar su ventana donde se está escribiendo: la cadena
+    // confirmada la convierte DefWindowProc en mensajes WM_CHAR, que es por donde ya entra
+    // todo lo demás, así que no hay una segunda ruta de texto que mantener.
+    case WM_IME_STARTCOMPOSITION:
+    case WM_IME_COMPOSITION:
+        PlaceImeWindow();
+        break;
+
+    case kFlushMessage:
+        if (callbacks.onFlush) callbacks.onFlush();
         return 0;
 
     case WM_SIZE:

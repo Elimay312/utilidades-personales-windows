@@ -183,7 +183,7 @@ Parser tolerante: si el archivo no tiene frontmatter o tiene campos desconocidos
 El plan completo está en `PROMPTS.md`.
 
 - [x] Fase 1 — Ventana Mac: Mica, barra de título propia, composición y muelles
-- [ ] Fase 2 — Kit de UI propio y catálogo de componentes
+- [x] Fase 2 — Kit de UI propio y catálogo de componentes
 - [ ] Fase 3 — GitHub: token seguro, GraphQL, SQLite y sincronización
 - [ ] Fase 4 — Vista principal: barra lateral, lista y clasificación
 - [ ] Fase 5 — Inspector, notas y PROYECTO.md
@@ -194,6 +194,102 @@ El plan completo está en `PROMPTS.md`.
 Al terminar una fase: marcarla aquí, anotar decisiones abajo y hacer commit.
 
 ## Decisiones y notas
+
+### Fase 2 — 21 de septiembre de 2026
+
+El detalle con todas las mediciones está en `CHANGELOG.md`. Aquí van solo las decisiones
+que condicionan lo que venga después.
+
+**Hay un árbol de elementos, y hay que usarlo.** `ui/Element` y `ui/Host` son la base: un
+elemento tiene marco en DIP, opcionalmente un material y un `Gfx::Layer`, y recibe la
+entrada ya en coordenadas locales. La fase 4 escribe la vista principal componiendo
+piezas, no colocando visuales a mano como hace `Views::Demo`.
+
+**No todo elemento tiene textura, y eso no es una optimización.** Un `Gfx::Layer` son dos
+superficies de Direct2D; quinientas filas serían mil, y la fase 1 ya midió que cincuenta
+repintados dejaban 105 MB. Un elemento o es *dueño de superficie* —tiene `Gfx::Layer`— o
+se pinta dentro de la del ancestro más cercano que la tenga. Un menú es una superficie;
+sus opciones no. Una fila de lista sí, pero solo hay entre siete y diez vivas de las 500.
+
+*Consecuencia:* un contenedor cuyos hijos sean dueños de superficie no debe pintar
+contenido propio. El orden dentro de un elemento es material abajo, hijos en medio y
+contenido arriba, así que el texto del padre quedaría por encima de sus hijos.
+
+**El hover y el pulsado no repintan.** El hover anima el color del material y el pulsado
+anima la escala, las dos propiedades de la GPU. Repintar para aclarar un fondo sería
+reconstruir una superficie mientras el ratón cruza una lista. Solo repinta lo que cambia
+píxeles: habilitar, deshabilitar, cambiar el texto.
+
+**El repintado se difiere y se reúne.** `Element::Invalidate` no pinta: apunta el elemento
+y publica un solo `WM_APP+1`. Como el mensaje cae después del que se está tratando, todos
+los cambios de estado de un mismo evento de entrada se funden en un repintado. Sigue sin
+haber tic por fotograma, y no debe haberlo.
+
+**Todo elemento se desapunta al morir.** El destructor de `Element` se quita del conjunto
+de repintado y del enrutador. Una fila reciclada y un menú cerrado se destruyen mientras
+los dos todavía les apuntan; sin eso, es la caída más probable de todo el kit.
+
+**La capa flotante es hermana del contenido, no hija.** Las sombras no las recorta el clip
+implícito del tamaño, pero **sí** las recorta un `Visual.Clip` explícito, y `Gfx::Morph`
+pone uno en su raíz. Nada que lleve sombra puede colgar de un `Morph`. De ahí que el Host
+tenga dos raíces.
+
+**La sombra suave, que la fase 1 dejó sin resolver, es `LayerVisual::Shadow`.** Con
+`SourcePolicy` en `InheritFromVisualContent`, la sombra sale del alfa aplanado del
+subárbol. Esto deja intacta la regla de la fase 1: el material sigue siendo un
+`ShapeVisual` con su geometría y su brocha, y las esquinas suavizadas del rasterizador son
+también el borde de la sombra. No hizo falta ni nine-grid ni máscara a mano.
+
+*Y el límite:* un `LayerVisual` aplana su subárbol en una superficie fuera de pantalla
+cada vez que cambia. **Solo para lo que flota** —menú, aviso y hoja—. En una lista de 500
+filas sería el final del criterio de los 60 fps.
+
+**Los números tabulares no caben en un formato.** `'tnum'` es propiedad de un rango de una
+maquetación, no de un `IDWriteTextFormat`. Y la alineación tampoco: `Text::Format` devuelve
+un objeto compartido y cacheado, así que un `SetTextAlignment` ahí centraría todas las
+etiquetas de la aplicación. Las dos van en la maquetación, y por eso existen `Ui::Run` y
+`Ui::Text::Layout`.
+
+**El desplazamiento es un `InteractionTracker`.** La inercia la calcula DWM y el contenido
+va atado con una expresión. Lo que decide que sea esto y no un muelle reapuntado es que
+avisa en cada fotograma con la posición: sin esa lectura, una lista virtualizada no sabe
+qué filas materializar. La rueda le manda velocidad, no destino, y por eso dos muescas
+seguidas llegan más lejos que el doble de una.
+
+**El campo de texto es puro por dentro.** `Ui::Editor` —cadena, cursor, selección e
+historial— no llama a Windows ni sabe de píxeles, y está en `brujula_core` con pruebas.
+`Ui::Field` solo pone dónde cae el cursor y de dónde salen las teclas. La composición del
+IME vive fuera del texto y fuera del historial, así que quien lea `Text()` no tiene que
+saber que existe un IME.
+
+**El IME se limita a colocar su ventana.** `DefWindowProc` ya convierte la cadena
+confirmada en mensajes `WM_CHAR`, que es por donde entra todo lo demás; lo único nuestro es
+`ImmSetCompositionWindow` en el cursor. No hay una segunda ruta de texto que mantener.
+
+**Las tildes y la eñe no necesitaron nada.** `TranslateMessage` ya compone la tecla muerta:
+el acento y luego la «a» llegan como un solo `WM_CHAR`. Lo que sí hizo falta fue filtrar
+los caracteres de control, porque Ctrl+V manda un 0x16 por `WM_CHAR` además de su
+`WM_KEYDOWN`, y sin el filtro se escribe un carácter invisible.
+
+**`auditar.ps1` no se toca para acallar un falso positivo.** La regla 4 marcaba
+`"Windows.UI.Composition.LayerVisual"` porque el «.Co» se lee como un dominio. En vez de
+relajar la regla se quitó la cadena: ahora se pregunta por las interfaces `ILayerVisual2` e
+`IDropShadow2`, que además es la pregunta de verdad.
+
+**El catálogo se compila solo en Debug.** `$<$<CONFIG:Debug>:...>` en las fuentes y
+`BRUJULA_CATALOGO` en las definiciones. La ruta del archivo va **absoluta**: una ruta
+relativa dentro de una expresión de generador se resuelve contra el directorio de
+compilación y no contra el de fuentes, y CMake no avisa.
+
+**El tema baja por el árbol, no se lee de un global.** `Ui::Paint` lleva los tokens por
+puntero y `Element::ApplyTheme` recorre un subárbol, así que un contenedor puede
+sustituirlos sobrescribiendo `Substitute`. Es lo que permite que el catálogo enseñe cada
+componente en claro y en oscuro a la vez sin ninguna máquina añadida, y lo que la fase 7
+necesitará si la revisión semanal quiere su propia paleta.
+
+**Falta comprobar tres cosas**, y las tres por falta de máquina: la nitidez a otras
+escalas —sigue sin dispararse `WM_DPICHANGED`, y ahora hay veinte veces más superficies—,
+el IME con un método de entrada de verdad, y el panel táctil de precisión.
 
 ### Fase 1 — 21 de septiembre de 2026
 

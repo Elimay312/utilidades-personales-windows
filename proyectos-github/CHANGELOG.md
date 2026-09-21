@@ -10,6 +10,91 @@ lo dice.
 
 ## Sin publicar
 
+### Fase 2 — Kit de UI y catálogo
+
+Los ocho componentes que pedía `PROMPTS.md`, la base de entrada y repintado que necesitan,
+y una pantalla de catálogo para juzgarlos. Sigue sin haber datos.
+
+**Lo que hay**
+
+- **Núcleo puro ampliado**: `ui/Metrics.h` (rejilla de 4, radios, elevaciones y el
+  rectángulo de layout), `shell/Input.h` (eventos ya traducidos y el contador de clics),
+  `ui/Edit` (el modelo del campo de texto) y `ui/Virtual` (la aritmética de la lista).
+  Todo en `brujula_core`, o sea todo probado.
+- **Dieciséis tokens nuevos** en `Theme::Tokens` —velos de control, estados del acento,
+  foco, selección, superficies flotantes, velo y sombra— más `OnColor` y `Shade`, que los
+  derivan del acento del sistema en vez de fijarlos a mano.
+- **Entrada de verdad en `Shell::Window`**: mover, salir, rueda vertical y horizontal,
+  botón derecho, captura, `WM_CAPTURECHANGED`, cursor, foco de ventana, menú contextual,
+  `WM_CHAR` y la colocación de la ventana del IME.
+- **`Ui::Element` + `Ui::Host`**: árbol retenido mínimo con enrutado, hover en cadena,
+  captura, foco con Tab, capas modales y un conjunto de repintado diferido.
+- **Los ocho componentes**: texto (medida, alineación, elipsis y números tabulares),
+  botón en tres formas y botón de icono, píldora de prioridad y punto de actividad, campo
+  de texto, lista virtualizada, elemento de barra lateral con selección deslizante, menú
+  contextual y aviso discreto, y hoja modal con fondo atenuado.
+- **Catálogo con F12, solo en Debug**: dos columnas, la izquierda con los tokens de claro
+  y la derecha con los de oscuro, sea cual sea el tema de Windows.
+
+**Medido**
+
+| | Objetivo | Medido |
+|---|---|---|
+| Warnings con `/W4 /permissive-`, Debug y Release | 0 | 0 |
+| Pruebas | pasan | 86 casos, 891 aserciones |
+| Auditoría de seguridad | sale 0 | 10 reglas, 1 pendiente de la fase 3 |
+| Reciclado de la lista, 500 elementos | < 16,6 ms | **0,01 ms** |
+| Superficies vivas con 500 elementos | pocas | **7 a 10 filas**, no 500 |
+| Velo de la hoja modal sobre blanco | `rgba(0,0,0,0.40)` | (153,153,153), que es 255 × 0,6 |
+| Aviso sobre la columna oscura | 0,94 de `#38383a` sobre `#2c2c2e` | (55,55,57), lo calculado |
+| Escribir «Revisión año niño» | sin problemas | 17 unidades, tildes y eñe en una cada una |
+
+El reciclado es el número que decide el criterio de los 60 fps: el movimiento lo lleva
+DWM, así que lo único que puede tirar un fotograma es lo que hace el hilo de UI al
+reciclar filas, y hace 0,01 ms. Hay mil seiscientas veces más presupuesto del que gasta.
+
+**Decisiones**
+
+Las que condicionan lo que venga después están en `CLAUDE.md`. Aquí, las que solo
+importan para entender este código.
+
+**El contador de clics es nuestro.** Windows cuenta hasta dos y manda
+`WM_LBUTTONDBLCLK`; el triple clic que selecciona la línea entera no existe. Se cuenta en
+`Input::Clicks` con dos umbrales, tiempo y distancia, y el de distancia importa tanto como
+el otro: sin él, teclear deprisa y pinchar luego en otro sitio selecciona una palabra que
+nadie pidió. El cuarto clic vuelve a uno, como en los navegadores, para poder recolocar el
+cursor sin esperar medio segundo.
+
+**El deshacer se agrupa por forma y no por reloj.** Agrupar por tiempo obligaría a pasarle
+un `now()` al modelo y a que las pruebas mintieran sobre él. Se agrupa por lo que se
+escribe: letras seguidas en el mismo sitio son un paso, y el grupo se cierra al escribir un
+espacio, al pegar, al mover el cursor y al perder el foco. Escribir «Revisión año niño» y
+deshacer una vez devuelve «niño», que es lo que la mano espera.
+
+**El resto de la rueda se guarda.** Un panel táctil de precisión manda deltas de ocho
+unidades, que con filas de 36 DIP son menos de una fila. Truncando cada uno por separado
+salen todos cero y el desplazamiento suave no existe. `Ui::Wheel` acumula, y la prueba
+comprueba que tres deltas de 40 mueven exactamente lo mismo que una muesca de 120.
+
+**La aparición y la salida del cursor van por la GPU.** El cursor parpadea con una
+animación en bucle con `IterationBehavior::Forever` y escalones, no con un `WM_TIMER`: el
+bucle de mensajes se queda dormido en `GetMessageW` y así sigue. Con las animaciones del
+sistema apagadas se queda encendido, que es lo que pide quien las apaga.
+
+**Lo que no se pudo comprobar**
+
+- **La nitidez a otras escalas**, igual que en la fase 1: esta máquina tiene una sola
+  pantalla al 100 % y `WM_DPICHANGED` no llega a dispararse. El kit hereda el riesgo y lo
+  agrava, porque ahora hay veinte veces más superficies.
+- **El IME de verdad.** No hay ningún método de entrada de Asia oriental instalado aquí.
+  Lo que sí está probado es el modelo: `Ui::Editor` mantiene la composición fuera del
+  texto y fuera del historial, y hay casos para ello. Lo que falta por ver en pantalla es
+  que la ventana de composición caiga donde se le dice.
+- **El panel táctil de precisión.** La aritmética está probada con deltas pequeños; el
+  panel, no, porque esta máquina no tiene.
+
+---
+
 ### Fase 1 — Ventana Mac
 
 La base del proyecto y una ventana que ya se siente como una aplicación de Mac. Sin datos.

@@ -63,6 +63,39 @@ struct Tokens {
     Color activityActive;
     Color activityPaused;
     Color activityDormant;
+
+    // --- Controles ------------------------------------------------------------------
+    // Velos sobre la Mica, no colores opacos: debajo hay material y taparlo con un gris
+    // plano es exactamente lo que hace que una app no parezca de Mac.
+    Color controlFill;
+    Color controlHover;
+    Color controlPressed;
+    Color controlStroke;
+
+    // --- Acento ---------------------------------------------------------------------
+    // Los estados del botón primario se DERIVAN del acento en vez de ser dos hexadecimales
+    // más, porque el acento lo elige Windows y puede ser cualquier cosa.
+    Color accentHover;
+    Color accentPressed;
+    // Blanco no: el acento del sistema puede ser un amarillo, y entonces el texto
+    // desaparece. Se decide por luminancia, igual que el tema.
+    Color textOnAccent;
+    Color textDisabled;
+
+    // --- Foco y selección -------------------------------------------------------------
+    Color focusRing;
+    Color selectionText;  // el resalte de la selección dentro del campo de texto
+    Color selectionRow;   // la fila seleccionada de una lista
+
+    // --- Superficies flotantes ----------------------------------------------------------
+    // Más opacas que cardSurface a propósito: no hay desenfoque detrás —el acrílico se
+    // pinta negro en Win32 sin empaquetar, medido en la fase 1—, así que un menú
+    // translúcido sobre contenido denso no se lee.
+    Color menuSurface;
+    Color toastSurface;
+    Color fieldSurface;  // un pozo, no un relieve: más oscuro que el fondo en los dos temas
+    Color scrim;
+    Color shadow;
 };
 
 Tokens TokensFor(Appearance appearance, Color accent);
@@ -75,5 +108,13 @@ Tokens TokensFor(Appearance appearance, Color accent);
 // en oscuro. Con él, el tema salía oscuro también en claro, y como la máquina de
 // desarrollo estaba en oscuro, parecía que funcionaba.
 Appearance AppearanceFromForeground(Color foreground);
+
+// Texto legible sobre un fondo cualquiera. Misma luminancia que AppearanceFromForeground
+// y por el mismo motivo: un canal solo se equivoca.
+Color OnColor(Color background);
+
+// Aclara (amount > 0) u oscurece (amount < 0) sin salirse de 0..255. De aquí salen los
+// estados del botón primario, que no pueden estar en la tabla porque dependen del acento.
+Color Shade(Color color, float amount);
 
 }  // namespace Theme

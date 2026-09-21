@@ -13,6 +13,7 @@
 #include <functional>
 
 #include "shell/Caption.h"
+#include "shell/Input.h"
 
 namespace Shell {
 
@@ -26,13 +27,39 @@ public:
         std::function<void()> onMotionSetting;
         // El ratón entró, salió o pulsó un botón de la barra de título.
         std::function<void()> onCaptionState;
-        std::function<void(float xDip, float yDip)> onPointerDown;
-        std::function<void(float xDip, float yDip)> onPointerUp;
-        std::function<void(int virtualKey)> onKeyDown;
+
+        // Una sola puerta para el ratón: mover, pulsar, soltar, salir, cancelar y rueda.
+        // La ventana ya no interpreta nada, solo traduce a DIP y cuenta los clics.
+        std::function<void(const Input::Pointer&)> onPointer;
+
+        // true si alguien pidió un cursor propio —la viga sobre el campo de texto—.
+        std::function<bool(float xDip, float yDip)> onSetCursor;
+
+        // true consume la tecla; false la deja bajar a DefWindowProc, que es lo que hace
+        // falta para que Alt+F4 y Alt+Espacio sigan funcionando.
+        std::function<bool(const Input::Key&)> onKey;
+        std::function<void(wchar_t unit)> onChar;
+
+        std::function<void(bool focused)> onWindowFocus;
+        // La ventana dejó de estar activa: hay que cerrar menús y avisos, o se quedan
+        // encendidos encima de otra aplicación.
+        std::function<void()> onDeactivate;
+
+        // Menú contextual. keyboard = llegó por Shift+F10 o por la tecla de menú, y
+        // entonces no hay coordenadas que valgan.
+        std::function<void(float xDip, float yDip, bool keyboard)> onContextMenu;
+
+        // Dónde está el cursor de texto, en DIP, para colocar la ventana del IME.
+        std::function<bool(float& xDip, float& yDip, float& heightDip)> onCaretRect;
+
+        // Toca vaciar el conjunto de repintado.
+        std::function<void()> onFlush;
     };
 
     // El aviso que publica ThemeWatcher desde su hilo.
     static constexpr UINT kThemeMessage = WM_APP + 0;
+    // El que se publica a sí misma para repintar lo sucio de una sola vez.
+    static constexpr UINT kFlushMessage = WM_APP + 1;
 
     bool Create(HINSTANCE instance, const wchar_t* title, float widthDip, float heightDip);
     void Show(int showCommand);
@@ -60,6 +87,11 @@ private:
     void OnNcMouseMove(WPARAM wparam);
     void SetCaptionState(Caption::Zone hovered, Caption::Zone pressed);
     void UpdateLayout();
+    void TrackClientLeave();
+    void PlaceImeWindow();
+    Input::Modifiers CurrentModifiers() const;
+    void Emit(Input::Action action, Input::Button button, LPARAM lparam, int clicks = 1);
+    void EmitWheel(bool horizontal, int delta, POINT clientPx);
 
     HWND m_hwnd = nullptr;
     float m_scale = 1.0f;
@@ -67,6 +99,8 @@ private:
     float m_heightDip = 0.0f;
     bool m_mica = false;
     bool m_trackingNc = false;
+    bool m_trackingClient = false;
+    Input::Clicks m_clicks;
     Caption::Layout m_caption;
     Caption::Zone m_hovered = Caption::Zone::Client;
     Caption::Zone m_pressed = Caption::Zone::Client;

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <vector>
 
 namespace Ui {
 
@@ -152,12 +153,85 @@ winrt::com_ptr<IDWriteTextLayout> Text::Fit(std::wstring_view text, float maxWid
     return Lay(candidate, maxWidth, format);
 }
 
-void Text::DrawLine(ID2D1DeviceContext* dc, std::wstring_view text, Style style, Weight weight,
-                    const D2D1_RECT_F& box, ID2D1Brush* brush) {
-    if (!dc || !brush || text.empty()) return;
-    IDWriteTextFormat* format = Format(style, weight);
-    const auto layout = Fit(text, box.right - box.left, format);
+IDWriteTypography* Text::Tabular() {
+    if (m_tabular) return m_tabular.get();
+    if (FAILED(m_factory->CreateTypography(m_tabular.put()))) return nullptr;
+    // 'tnum'. No se puede poner en un IDWriteTextFormat: es propiedad de un RANGO de una
+    // maquetación, y por eso los números tabulares pasan obligatoriamente por aquí.
+    const DWRITE_FONT_FEATURE feature{DWRITE_FONT_FEATURE_TAG_TABULAR_FIGURES, 1};
+    if (FAILED(m_tabular->AddFontFeature(feature))) {
+        m_tabular = nullptr;
+        return nullptr;
+    }
+    return m_tabular.get();
+}
+
+void Text::ApplyTabular(IDWriteTextLayout* layout) {
+    IDWriteTypography* typography = Tabular();
+    if (!layout || !typography) return;
+    // Todo el rango. IDWriteTextLayout no sabe decir cuánto texto tiene, pero sí sujeta
+    // los rangos a la longitud real, así que pedir el máximo es la forma de decir
+    // "entero" sin tener que llevar la cuenta por fuera —y la cuenta cambiaría cuando
+    // Fit recorta con elipsis—.
+    const DWRITE_TEXT_RANGE range{0, UINT32_MAX};
+    layout->SetTypography(typography, range);
+}
+
+Extent Text::Measure(std::wstring_view text, Style style, Weight weight, Figures figures,
+                     float maxWidthDip) {
+    Extent extent;
+    if (text.empty()) {
+        // Sin texto no hay anchura, pero sí altura de línea: una etiqueta vacía tiene que
+        // ocupar su renglón o el layout de al lado se descuadra al vaciarse.
+        const auto empty = Lay(L" ", maxWidthDip, Format(style, weight));
+        if (empty) {
+            DWRITE_TEXT_METRICS metrics{};
+            empty->GetMetrics(&metrics);
+            extent.height = metrics.height;
+            DWRITE_LINE_METRICS line{};
+            UINT32 count = 1;
+            if (SUCCEEDED(empty->GetLineMetrics(&line, 1, &count)) && count > 0) {
+                extent.baseline = line.baseline;
+            }
+        }
+        return extent;
+    }
+
+    auto layout = Lay(text, maxWidthDip, Format(style, weight));
+    if (!layout) return extent;
+    if (figures == Figures::Tabular) ApplyTabular(layout.get());
+
+    DWRITE_TEXT_METRICS metrics{};
+    layout->GetMetrics(&metrics);
+    extent.width = metrics.width;
+    extent.height = metrics.height;
+
+    DWRITE_LINE_METRICS line{};
+    UINT32 count = 1;
+    if (SUCCEEDED(layout->GetLineMetrics(&line, 1, &count)) && count > 0) {
+        extent.baseline = line.baseline;
+    }
+    return extent;
+}
+
+void Text::Draw(ID2D1DeviceContext* dc, const Run& run, const D2D1_RECT_F& box,
+                ID2D1Brush* brush) {
+    if (!dc || !brush || run.text.empty()) return;
+
+    IDWriteTextFormat* format = Format(run.style, run.weight);
+    const float width = box.right - box.left;
+    auto layout = run.trim ? Fit(run.text, width, format) : Lay(run.text, width, format);
     if (!layout) return;
+
+    // La alineación va en la MAQUETACIÓN y nunca en el formato: el formato está cacheado
+    // y compartido, y centrarlo aquí centraría todas las etiquetas de la aplicación.
+    if (run.align != Align::Leading) {
+        layout->SetTextAlignment(run.align == Align::Center ? DWRITE_TEXT_ALIGNMENT_CENTER
+                                                            : DWRITE_TEXT_ALIGNMENT_TRAILING);
+    }
+    if (run.figures == Figures::Tabular) {
+        ApplyTabular(layout.get());
+    }
 
     DWRITE_TEXT_METRICS metrics{};
     layout->GetMetrics(&metrics);
@@ -165,6 +239,125 @@ void Text::DrawLine(ID2D1DeviceContext* dc, std::wstring_view text, Style style,
 
     dc->DrawTextLayout(D2D1::Point2F(box.left, y), layout.get(), brush,
                        D2D1_DRAW_TEXT_OPTIONS_NONE);
+}
+
+void Text::DrawLine(ID2D1DeviceContext* dc, std::wstring_view text, Style style, Weight weight,
+                    const D2D1_RECT_F& box, ID2D1Brush* brush) {
+    Run run;
+    run.text = text;
+    run.style = style;
+    run.weight = weight;
+    Draw(dc, run, box, brush);
+}
+
+bool Text::Lay(Layout& layout, std::wstring_view text, Style style, Weight weight,
+               float maxWidthDip, bool tabular) {
+    // Solo si cambió algo. El campo de texto pide esto en cada pulsación y en cada
+    // movimiento del cursor, y rehacer la maquetación para mover el cursor sería tirar
+    // el trabajo de DirectWrite sesenta veces por segundo.
+    if (layout.m_layout && layout.m_style == style && layout.m_weight == weight &&
+        layout.m_tabular == tabular && layout.m_maxWidth == maxWidthDip &&
+        layout.m_text.size() == text.size() && layout.m_text == text) {
+        return true;
+    }
+
+    layout.m_text.assign(text);
+    layout.m_style = style;
+    layout.m_weight = weight;
+    layout.m_maxWidth = maxWidthDip;
+    layout.m_tabular = tabular;
+    // Sin recorte: en un campo de texto lo que no cabe se sale, y el desplazamiento lo
+    // lleva el campo. Una elipsis cambiaría los índices y el cursor caería donde no es.
+    layout.m_layout = Lay(layout.m_text, maxWidthDip, Format(style, weight));
+    if (layout.m_layout && tabular) {
+        ApplyTabular(layout.m_layout.get());
+    }
+    return layout.m_layout != nullptr;
+}
+
+void Text::DrawLayout(ID2D1DeviceContext* dc, const Layout& layout, float xDip, float yDip,
+                      ID2D1Brush* brush) {
+    if (!dc || !brush || !layout.Valid()) return;
+    dc->DrawTextLayout(D2D1::Point2F(xDip, yDip), layout.Raw(), brush,
+                       D2D1_DRAW_TEXT_OPTIONS_NONE);
+}
+
+void Text::Layout::Reset() {
+    m_layout = nullptr;
+    m_text.clear();
+}
+
+std::size_t Text::Layout::IndexAt(float xDip, float yDip) const {
+    if (!m_layout) return 0;
+
+    BOOL trailing = FALSE;
+    BOOL inside = FALSE;
+    DWRITE_HIT_TEST_METRICS metrics{};
+    if (FAILED(m_layout->HitTestPoint(xDip, yDip, &trailing, &inside, &metrics))) return 0;
+
+    // Sumar metrics.length y no 1: así el índice cae siempre en un límite legal aunque
+    // debajo hubiera un par suplente o un grupo de letra más tilde. Es el mismo invariante
+    // que Ui::PrevBoundary defiende por el lado del modelo, y los dos tienen que coincidir
+    // o el cursor se pondría donde el modelo no lo deja estar.
+    return metrics.textPosition + (trailing ? metrics.length : 0);
+}
+
+Text::Layout::Caret Text::Layout::CaretAt(std::size_t index) const {
+    Caret caret;
+    if (!m_layout) return caret;
+
+    DWRITE_HIT_TEST_METRICS metrics{};
+    float x = 0.0f;
+    float y = 0.0f;
+    if (FAILED(m_layout->HitTestTextPosition(static_cast<UINT32>(index), FALSE, &x, &y,
+                                             &metrics))) {
+        return caret;
+    }
+    caret.x = x;
+    caret.y = y;
+    caret.height = metrics.height;
+    return caret;
+}
+
+std::size_t Text::Layout::SelectionBoxes(std::size_t begin, std::size_t end, D2D1_RECT_F* out,
+                                         std::size_t max) const {
+    if (!m_layout || end <= begin) return 0;
+
+    const UINT32 position = static_cast<UINT32>(begin);
+    const UINT32 length = static_cast<UINT32>(end - begin);
+
+    // Dos llamadas: la primera dice cuántos hay —devuelve E_NOT_SUFFICIENT_BUFFER— y la
+    // segunda los trae. Preguntar con cero es la forma documentada de contar.
+    UINT32 actual = 0;
+    m_layout->HitTestTextRange(position, length, 0.0f, 0.0f, nullptr, 0, &actual);
+    if (actual == 0) return 0;
+
+    std::vector<DWRITE_HIT_TEST_METRICS> hits(actual);
+    if (FAILED(m_layout->HitTestTextRange(position, length, 0.0f, 0.0f, hits.data(), actual,
+                                          &actual))) {
+        return 0;
+    }
+
+    const std::size_t copied = std::min(static_cast<std::size_t>(actual), max);
+    for (std::size_t i = 0; i < copied; ++i) {
+        out[i] = D2D1::RectF(hits[i].left, hits[i].top, hits[i].left + hits[i].width,
+                             hits[i].top + hits[i].height);
+    }
+    return actual;
+}
+
+float Text::Layout::Width() const {
+    if (!m_layout) return 0.0f;
+    DWRITE_TEXT_METRICS metrics{};
+    m_layout->GetMetrics(&metrics);
+    return metrics.width;
+}
+
+float Text::Layout::Height() const {
+    if (!m_layout) return 0.0f;
+    DWRITE_TEXT_METRICS metrics{};
+    m_layout->GetMetrics(&metrics);
+    return metrics.height;
 }
 
 void Text::DrawGlyph(ID2D1DeviceContext* dc, std::wstring_view glyph, float sizeDip,

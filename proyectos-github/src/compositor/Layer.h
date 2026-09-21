@@ -39,9 +39,17 @@ public:
     void Close();
 
 private:
+    bool Attach(int face);
+
     winrt::Windows::UI::Composition::Compositor m_compositor{nullptr};
     winrt::Windows::UI::Composition::ContainerVisual m_root{nullptr};
     winrt::Windows::UI::Composition::SpriteVisual m_faces[2]{nullptr, nullptr};
+    // Un pincel por cara, creado al reservar la textura y NO en cada repintado. Una lista
+    // reciclando filas al desplazarse repinta unas cuantas veces por fotograma, y crear
+    // ahí un CompositionSurfaceBrush es basura por fotograma en el peor sitio posible.
+    // El handle de la superficie no cambia porque Surface::Resize redimensiona la que ya
+    // hay en vez de crear otra.
+    winrt::Windows::UI::Composition::CompositionSurfaceBrush m_brushes[2]{nullptr, nullptr};
     Surface m_surfaces[2];
     int m_front = 0;
     float m_widthDip = 0.0f;

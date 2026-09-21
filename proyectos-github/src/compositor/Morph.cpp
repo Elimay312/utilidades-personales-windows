@@ -2,7 +2,6 @@
 
 #include "compositor/Device.h"
 #include "compositor/Motion.h"
-#include "compositor/Paint.h"
 
 namespace wuc = winrt::Windows::UI::Composition;
 
@@ -17,16 +16,7 @@ bool Morph::Create(const wuc::Compositor& compositor, const wuc::ContainerVisual
     m_root.Clip(compositor.CreateInsetClip());
     parent.Children().InsertAtTop(m_root);
 
-    m_geometry = compositor.CreateRoundedRectangleGeometry();
-    m_materialBrush = compositor.CreateColorBrush();
-
-    auto shape = compositor.CreateSpriteShape(m_geometry);
-    shape.FillBrush(m_materialBrush);
-
-    m_material = compositor.CreateShapeVisual();
-    m_material.RelativeSizeAdjustment({1.0f, 1.0f});
-    m_material.Shapes().Append(shape);
-    m_root.Children().InsertAtTop(m_material);
+    if (!m_material.Create(compositor, m_root, 0.0f)) return false;
 
     if (!m_collapsed.Create(compositor)) return false;
     if (!m_expanded.Create(compositor)) return false;
@@ -53,13 +43,11 @@ void Morph::Snap() {
     const Frame& frame = Current();
     m_root.StopAnimation(L"Offset");
     m_root.StopAnimation(L"Size");
-    m_geometry.StopAnimation(L"Size");
-    m_geometry.StopAnimation(L"CornerRadius");
 
     m_root.Offset({frame.x, frame.y, 0.0f});
     m_root.Size({frame.width, frame.height});
-    m_geometry.Size({frame.width, frame.height});
-    m_geometry.CornerRadius({frame.radius, frame.radius});
+    m_material.SetSize(frame.width, frame.height);
+    m_material.SetRadius(frame.radius);
 
     m_collapsed.Visual().Opacity(m_isExpanded ? 0.0f : 1.0f);
     m_expanded.Visual().Opacity(m_isExpanded ? 1.0f : 0.0f);
@@ -73,8 +61,8 @@ void Morph::Go(bool expanded, const Motion::Animator& animator, Motion::Kind kin
     // la geometría y radio. Si el radio fuese con fotogramas clave, interrumpir a mitad
     // lo haría reempezar desde el radio inicial y se vería el mordisco.
     animator.Offset(m_root, {frame.x, frame.y, 0.0f}, kind);
-    animator.SizeTogether(m_root, m_geometry, {frame.width, frame.height}, kind);
-    animator.CornerRadius(m_geometry, {frame.radius, frame.radius}, kind);
+    animator.SizeTogether(m_root, m_material.Geometry(), {frame.width, frame.height}, kind);
+    m_material.AnimateRadius(animator, frame.radius, kind);
 
     // El contenido se cruza más deprisa que la forma, para que ya se lea mientras el
     // muelle todavía se está asentando.
@@ -84,13 +72,7 @@ void Morph::Go(bool expanded, const Motion::Animator& animator, Motion::Kind kin
 }
 
 void Morph::SetMaterial(Theme::Color color, const Motion::Animator& animator, float durationMs) {
-    if (!m_materialBrush) return;
-    if (durationMs > 0.0f) {
-        animator.Color(m_materialBrush, ToUi(color), durationMs);
-    } else {
-        m_materialBrush.StopAnimation(L"Color");
-        m_materialBrush.Color(ToUi(color));
-    }
+    m_material.SetColor(color, animator, durationMs);
 }
 
 bool Morph::Resize(Device& device, float scale) {
@@ -102,9 +84,7 @@ bool Morph::Resize(Device& device, float scale) {
 void Morph::Close() {
     m_collapsed.Close();
     m_expanded.Close();
-    m_material = nullptr;
-    m_geometry = nullptr;
-    m_materialBrush = nullptr;
+    m_material.Close();
     m_root = nullptr;
 }
 

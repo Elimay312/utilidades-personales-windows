@@ -11,8 +11,13 @@
 #include "compositor/Scene.h"
 #include "shell/ThemeWatcher.h"
 #include "shell/Window.h"
+#include "ui/Host.h"
 #include "ui/Text.h"
 #include "views/Demo.h"
+
+#if BRUJULA_CATALOGO
+#include "views/Catalog.h"
+#endif
 
 namespace App {
 
@@ -24,6 +29,13 @@ public:
 
 private:
     void ApplyTheme(float crossfadeMs);
+    void WireInput();
+#if BRUJULA_CATALOGO
+    void ToggleCatalog();
+    bool CatalogOpen() const { return m_catalog != nullptr; }
+#else
+    static constexpr bool CatalogOpen() { return false; }
+#endif
 
     Shell::Window m_window;
     Shell::ThemeWatcher m_theme;
@@ -31,7 +43,13 @@ private:
     Gfx::Device m_device;
     Motion::Animator m_animator;
     Ui::Text m_text;
+    Ui::Host m_host;
     Views::Demo m_demo;
+#if BRUJULA_CATALOGO
+    // El catálogo es de Ui::Host, que lo destruye; esto es solo el puntero prestado que
+    // dice si está abierto.
+    Views::Catalog* m_catalog = nullptr;
+#endif
 };
 
 }  // namespace App

@@ -13,6 +13,7 @@
 // tiene el borde duro.
 
 #include "compositor/Layer.h"
+#include "compositor/Material.h"
 #include "compositor/MotionSpec.h"
 #include "compositor/Winrt.h"
 #include "shell/Theme.h"
@@ -62,9 +63,9 @@ private:
 
     winrt::Windows::UI::Composition::Compositor m_compositor{nullptr};
     winrt::Windows::UI::Composition::ContainerVisual m_root{nullptr};
-    winrt::Windows::UI::Composition::ShapeVisual m_material{nullptr};
-    winrt::Windows::UI::Composition::CompositionRoundedRectangleGeometry m_geometry{nullptr};
-    winrt::Windows::UI::Composition::CompositionColorBrush m_materialBrush{nullptr};
+    // El trío de la fase 1 —forma, geometría y brocha— ahora es Gfx::Material, que lo
+    // comparte con los ocho componentes del kit.
+    Material m_material;
 
     Layer m_collapsed;
     Layer m_expanded;

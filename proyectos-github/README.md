@@ -14,7 +14,9 @@ resulta que corre en Windows.
 
 ## Estado
 
-**Fase 1 de 8 terminada.** Hay ventana y no hay datos.
+**Fase 2 de 8 terminada.** Hay ventana y hay kit de componentes; sigue sin haber
+datos. En una compilación de Debug, F12 abre el catálogo que los enseña todos, en
+claro y en oscuro a la vez.
 
 Lo que ya funciona: la ventana con Mica, la barra de título propia (arrastrable, doble
 clic para maximizar, botones dibujados por nosotros con el comportamiento de Windows y el
@@ -61,15 +63,19 @@ DWM, no este hilo.
 src/
   app/          monta las piezas y las conecta
   shell/        ventana, marco propio, Mica, DPI, tema
-  compositor/   escena, dispositivo gráfico, superficies, muelles, transición compartida
-  ui/           texto con DirectWrite
-  views/        la demo de la fase 1 (temporal)
+  compositor/   escena, dispositivo gráfico, superficies, muelles, materiales, sombras
+  ui/           el kit: texto, elementos, entrada, botones, campo, lista, barra, flotantes
+  views/        la demo de la fase 1 (temporal) y el catálogo (solo en Debug)
 tests/          doctest sobre el núcleo puro
 ```
 
 `brujula_core` es una biblioteca aparte con lo que no necesita ni Win32 ni WinRT para
-decidir —la geometría de la barra de título, la tabla de colores y los muelles—, y es lo
-único que enlazan las pruebas.
+decidir —la geometría de la barra de título, la tabla de colores, los muelles, la rejilla,
+el contador de clics, el modelo del campo de texto y la aritmética de la lista
+virtualizada—, y es lo único que enlazan las pruebas. La regla para decidir si algo va ahí
+es la que este proyecto viene aplicando: *¿se equivocaría esto en silencio, sin que se vea
+en pantalla hasta que ya ha decidido mal?* El cursor de un campo de texto y el rango de
+filas de una lista, sí. El color de una brocha, no.
 
 ## Seguridad
 

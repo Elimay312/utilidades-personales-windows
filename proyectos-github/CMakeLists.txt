@@ -83,7 +83,10 @@ target_compile_definitions(sqlite3 PRIVATE
 add_library(brujula_core STATIC
   src/shell/Caption.cpp
   src/shell/Theme.cpp
-  src/compositor/MotionSpec.cpp)
+  src/shell/Input.cpp
+  src/compositor/MotionSpec.cpp
+  src/ui/Edit.cpp
+  src/ui/Virtual.cpp)
 target_include_directories(brujula_core PUBLIC src)
 target_compile_options(brujula_core PRIVATE ${BRUJULA_FLAGS})
 target_compile_definitions(brujula_core PRIVATE ${BRUJULA_DEFS})
@@ -102,8 +105,25 @@ add_executable(brujula WIN32
   src/compositor/Surface.cpp
   src/compositor/Motion.cpp
   src/compositor/Morph.cpp
+  src/compositor/Material.cpp
+  src/compositor/Scroller.cpp
+  src/compositor/Shadow.cpp
   src/ui/Text.cpp
+  src/ui/Element.cpp
+  src/ui/Host.cpp
+  src/ui/Controls.cpp
+  src/ui/Field.cpp
+  src/ui/List.cpp
+  src/ui/Sidebar.cpp
+  src/ui/Overlays.cpp
   src/views/Demo.cpp
+  # El catálogo solo existe en Debug: es una pantalla de revisión, no una función del
+  # producto, y en Release ni se compila ni deja su texto de ejemplo dentro del binario.
+  #
+  # La ruta va ABSOLUTA a propósito. Una ruta relativa dentro de una expresión de
+  # generador se resuelve contra el directorio de compilación y no contra el de fuentes,
+  # y CMake no avisa: falla al enlazar y parece otra cosa.
+  $<$<CONFIG:Debug>:${CMAKE_CURRENT_SOURCE_DIR}/src/views/Catalog.cpp>
   src/brujula.rc
   # El manifiesto va suelto, no dentro del .rc, para que link.exe lo funda con el
   # trustInfo que genera él. Con los dos habría dos RT_MANIFEST y haría falta
@@ -111,7 +131,10 @@ add_executable(brujula WIN32
   src/brujula.manifest)
 
 target_compile_options(brujula PRIVATE ${BRUJULA_FLAGS})
-target_compile_definitions(brujula PRIVATE ${BRUJULA_DEFS})
+target_compile_definitions(brujula PRIVATE ${BRUJULA_DEFS}
+  # Con esto se compila el catálogo y se enciende la tecla F12. En Release vale 0 y las
+  # dos cosas desaparecen del binario.
+  BRUJULA_CATALOGO=$<IF:$<CONFIG:Debug>,1,0>)
 target_link_libraries(brujula PRIVATE
   brujula_core
   # dwmapi: Mica, esquinas redondeadas, modo oscuro del marco y DwmExtendFrameIntoClientArea.
@@ -123,7 +146,11 @@ target_link_libraries(brujula PRIVATE
   # solo, o DWM no puede muestrear nuestras superficies.
   d3d11 dxgi
   # d2d1 + dwrite: todo lo que se dibuja dentro de la ventana.
-  d2d1 dwrite)
+  d2d1 dwrite
+  # imm32: colocar la ventana de composición del IME en el cursor del campo de texto. La
+  # cadena confirmada la reparte DefWindowProc como WM_CHAR, así que esto es lo único que
+  # hace falta enlazar para que escribir con un método de entrada funcione.
+  imm32)
 # wWinMain sin WinMain: el CRT necesita que se lo digan.
 target_link_options(brujula PRIVATE /ENTRY:wWinMainCRTStartup)
 
@@ -138,7 +165,11 @@ add_executable(brujula_tests
   tests/caption_test.cpp
   tests/theme_test.cpp
   tests/motion_test.cpp
-  tests/deps_test.cpp)
+  tests/deps_test.cpp
+  tests/metrics_test.cpp
+  tests/input_test.cpp
+  tests/edit_test.cpp
+  tests/virtual_test.cpp)
 target_compile_options(brujula_tests PRIVATE ${BRUJULA_FLAGS})
 target_compile_definitions(brujula_tests PRIVATE ${BRUJULA_DEFS})
 target_link_libraries(brujula_tests PRIVATE

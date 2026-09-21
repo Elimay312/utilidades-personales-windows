@@ -1,0 +1,251 @@
+# CLAUDE.md — Brújula (priorizador de repos de GitHub para Windows)
+
+> "Brújula" es un nombre de trabajo. Cámbialo aquí y en `CMakeLists.txt` si prefieres otro.
+
+## Visión
+
+Una app nativa de Windows que conecta con la cuenta de GitHub del autor (unos 120 repos, en su mayoría privados y de trabajo interno) y le ayuda a decidir **en qué trabajar**. Clasifica los repos por actividad automáticamente, permite asignar prioridades a mano y guarda por cada proyecto su estado, sus novedades y, sobre todo, **el siguiente paso concreto**, para que retomar un proyecto dormido no cueste reconstruir dónde se quedó.
+
+La estética es de **app de Mac**: materiales translúcidos, tipografía cuidada, mucho aire, animaciones con física de muelle y transiciones que conectan los estados. Debe sentirse como una app de Apple que resulta que corre en Windows.
+
+Prioridades, en orden:
+1. **Seguridad de los datos del trabajo:** el token nunca en texto plano, nada sale del equipo salvo hacia la API de GitHub.
+2. **Sensación de calidad:** animaciones fluidas e interrumpibles, cero parpadeos, texto nítido.
+3. **Rapidez:** la ventana muestra datos de la caché al instante; la sincronización ocurre en segundo plano.
+
+## Stack
+
+- C++20, MSVC, CMake + Ninja, x64. Windows 11 como objetivo (degradar con elegancia en Windows 10).
+- **Ventana:** Win32 puro con Mica como fondo (`DWMWA_SYSTEMBACKDROP_TYPE`), barra de título integrada en el contenido (extender el marco con `DwmExtendFrameIntoClientArea` y gestionar `WM_NCHITTEST`) y esquinas redondeadas del sistema.
+- **Animación y composición:** `Windows.UI.Composition` desde Win32 con C++/WinRT (`DesktopWindowTarget`), para animaciones con muelle en la GPU, materiales y sombras.
+- **Dibujo:** Direct2D + DirectWrite sobre superficies de composición (`CompositionGraphicsDevice` / `ICompositionDrawingSurfaceInterop`).
+- **Red:** WinHTTP (viene con Windows, sin dependencias).
+- **JSON:** nlohmann/json por FetchContent.
+- **Caché local:** SQLite (amalgamación por FetchContent).
+- **Tests:** doctest por FetchContent.
+- Sin Qt, sin Electron, sin .NET. Dependencias nuevas: consultar antes.
+
+## Comandos
+
+```
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+build\brujula.exe
+build\brujula_tests.exe
+```
+
+Después de cada cambio: compilar sin warnings y pasar los tests.
+
+## Arquitectura
+
+```
+src/
+  main.cpp            wWinMain mínimo
+  app/                Estado de la app, comandos, navegación entre vistas
+  shell/              Ventana, Mica, barra de título propia, DPI, tema claro/oscuro
+  compositor/         Árbol de visuales, animaciones, muelles, transiciones compartidas
+  ui/                 Kit de componentes propio (texto, botones, listas, campos, paneles)
+  views/              Barra lateral, lista de repos, inspector, revisión semanal, paleta de comandos
+  github/             Autenticación, cliente GraphQL/REST, sincronización
+  store/              SQLite: repos, prioridades, notas, historial
+  model/              Tipos de dominio y reglas (clasificación, límite de Enfoque)
+  projectfile/        Lectura y escritura de PROYECTO.md
+tests/
+```
+
+### Reglas de arquitectura
+
+1. **La UI nunca espera a la red.** Al abrir, se pinta todo desde SQLite. La sincronización corre en un hilo de trabajo y publica cambios al hilo de UI con `PostMessageW`; la UI anima los cambios (repos que cambian de grupo se deslizan a su nuevo sitio).
+2. **Modelo separado de la vista.** Las reglas (clasificación por actividad, límite de Enfoque) viven en `model/` como funciones puras con tests. La UI solo lee estado y emite comandos.
+3. **Toda animación pasa por `compositor/`.** Nada de interpolar a mano en el bucle de mensajes. Las animaciones deben poder interrumpirse: si el usuario actúa a mitad de una, la nueva parte desde el estado actual, sin saltos.
+4. **Errores como valores**, mostrados como avisos discretos dentro de la app, nunca como `MessageBox`.
+
+## GitHub: autenticación y datos
+
+- **Token:** orden de preferencia:
+  1. Si GitHub CLI está instalado y autenticado, obtenerlo con `gh auth token`.
+  2. Si no, pedir un fine-grained personal access token con permisos mínimos: *Metadata: read* y, solo si el usuario activa el modo repo (ver abajo), *Contents: read and write*.
+- **El token se guarda en el Administrador de credenciales de Windows** (`CredWriteW` / `CredReadW`), nunca en archivos, logs ni SQLite.
+- **Sincronización con GraphQL:** traer los ~120 repos en pocas peticiones paginadas (100 por página) con: nombre, dueño, descripción, privado/archivado, lenguaje principal, `pushedAt`, fecha y mensaje del último commit de la rama principal, número de issues y PRs abiertos, y el contenido de `PROYECTO.md` si existe (`object(expression: "HEAD:PROYECTO.md")`).
+- Incluir repos personales y de organizaciones a las que el usuario pertenece; qué organizaciones incluir es configurable.
+- Sincronización incremental: solo actualizar repos cuyo `pushedAt` cambió. Respetar los límites de la API y mostrar cuándo fue la última sincronización.
+
+## Modos de guardado de notas
+
+Como los repos son de trabajo, **escribir en ellos debe ser una decisión explícita**:
+
+- **Modo local (por defecto):** prioridad, estado, siguiente paso y novedades se guardan solo en SQLite en `%LOCALAPPDATA%\Brujula\`. No se crea ningún commit.
+- **Modo repo (opcional, por repo o global):** además se escribe `PROYECTO.md` en la raíz del repo mediante la API de contenidos (commit con mensaje `chore: actualizar PROYECTO.md`). Antes del primer commit en un repo, pedir confirmación.
+- Exportar e importar todo a un archivo, para copias de seguridad.
+
+### Formato de PROYECTO.md
+
+```markdown
+---
+prioridad: enfoque        # enfoque | secundario | algun-dia | archivado
+estado: activo            # activo | bloqueado | en-espera | terminado
+siguiente_paso: Conectar el lector de carpetas a la columna central
+actualizado: 2026-09-21
+---
+
+## Novedades
+
+- 2026-09-20 — Terminada la fase 2, falta probar con rutas largas.
+```
+
+Parser tolerante: si el archivo no tiene frontmatter o tiene campos desconocidos, no se rompe nada y se conserva el contenido que no entiende.
+
+## Reglas de dominio
+
+- **Actividad automática** (umbrales configurables): *activo* si hubo push en los últimos 14 días; *en pausa* entre 14 y 90 días; *dormido* más de 90 días.
+- **Prioridad manual:** Enfoque, Secundario, Algún día, Archivado, o Sin clasificar (repos nuevos).
+- **Límite de Enfoque:** máximo 5 (configurable). Al intentar añadir uno más, la app pide elegir cuál baja a Secundario; no se puede saltar.
+- **Alertas de desajuste:** un repo en Enfoque dormido más de 14 días, o un repo Archivado con pushes recientes, aparece en la vista "Necesita decisión".
+
+## Lenguaje visual (estilo Mac)
+
+### Principios
+
+- **Contenido primero:** chrome mínimo, sin bordes innecesarios, jerarquía con tipografía y espacio, no con cajas.
+- **Materiales:** Mica en la ventana; barra lateral e inspector con un material más translúcido. Sombras suaves y difusas solo en elementos flotantes.
+- **Movimiento con significado:** cada animación explica de dónde viene y a dónde va algo. Nada gira ni rebota por decoración.
+
+### Tokens
+
+| Token | Claro | Oscuro |
+|---|---|---|
+| Texto principal | `#1d1d1f` | `#f5f5f7` |
+| Texto secundario | `#6e6e73` | `#a1a1a6` |
+| Separador | `rgba(0,0,0,0.08)` | `rgba(255,255,255,0.08)` |
+| Superficie tarjeta | `rgba(255,255,255,0.72)` | `rgba(44,44,46,0.72)` |
+| Acento | color de acento del sistema (`UISettings::GetColorValue(UIColorType::Accent)`), con `#0a84ff` como respaldo | |
+| Enfoque | `#ff9f0a` | `#ff9f0a` |
+| Secundario | `#0a84ff` | `#0a84ff` |
+| Algún día | `#bf5af2` | `#bf5af2` |
+| Archivado | `#8e8e93` | `#8e8e93` |
+| Activo / en pausa / dormido | `#30d158` / `#ffd60a` / `#8e8e93` | igual |
+
+- **Tipografía:** Segoe UI Variable (Display para títulos, Text para cuerpo). Escala: 26 / 20 / 15 / 13 / 11 px lógicos. Pesos: regular, semibold. Números tabulares en fechas y contadores.
+- **Espaciado:** rejilla de 4 px; espacios habituales 8, 12, 16, 24, 32.
+- **Radios:** 6 (controles pequeños), 10 (tarjetas), 14 (paneles), 20 (hojas modales).
+- **Iconos:** Segoe Fluent Icons, trazo fino, 16 px.
+- El tema sigue al de Windows (claro/oscuro) y cambia en caliente con transición cruzada de 250 ms.
+
+### Movimiento
+
+| Uso | Muelle |
+|---|---|
+| Interacciones pequeñas (hover, pulsar, marcar) | rígido: amortiguación 0,9, periodo 120 ms |
+| Paneles e inspector | estándar: amortiguación 0,85, periodo 220 ms |
+| Reordenar y mover tarjetas entre grupos | suave: amortiguación 0,8, periodo 300 ms |
+| Hojas modales y revisión semanal | expresivo: amortiguación 0,75, periodo 350 ms |
+
+- Pulsar un control lo escala a 0,97; soltarlo vuelve con muelle rígido.
+- **Transiciones compartidas:** al abrir un repo, su tarjeta se transforma en el inspector (posición, tamaño y radio a la vez, con fundido cruzado del contenido). Al cerrar, vuelve a su sitio.
+- Listas: los elementos que entran aparecen con fundido + desplazamiento de 8 px escalonado 20 ms; los que cambian de posición se deslizan, nunca saltan.
+- **Respetar "Mostrar animaciones en Windows"** (`SPI_GETCLIENTAREAANIMATION`): si está desactivado, sustituir movimientos por fundidos cortos.
+- Objetivo: 60 fps constantes (y la frecuencia del monitor si es mayor) incluso con los 120 repos visibles.
+
+## Vistas
+
+- **Barra lateral:** grupos de prioridad con contador, y vistas inteligentes: Necesita decisión, Dormidos, Actividad esta semana, Sin clasificar.
+- **Lista principal:** tarjetas con nombre, siguiente paso (lo más visible tras el nombre), indicador de actividad, prioridad, lenguaje y "hace X días". Alternar entre lista compacta y cuadrícula.
+- **Inspector (panel derecho):** prioridad, estado, siguiente paso editable, novedades con fecha, últimos commits, issues/PRs abiertos, botones para abrir en GitHub y en la carpeta local.
+- **Revisión semanal:** modo a pantalla completa que presenta una tarjeta por repo que necesita decisión; con 1-4 asignas prioridad, E editas el siguiente paso, espacio salta. Cada decisión anima la tarjeta hacia su grupo.
+- **Paleta de comandos (Ctrl+K):** buscar repos y ejecutar acciones escribiendo.
+
+## Atajos
+
+| Atajo | Acción |
+|---|---|
+| Ctrl+K | Paleta de comandos |
+| Ctrl+F o / | Buscar |
+| ↑ / ↓ o j / k | Mover selección |
+| Enter | Abrir inspector |
+| Esc | Cerrar inspector o modal |
+| 1 / 2 / 3 / 4 | Enfoque / Secundario / Algún día / Archivado |
+| E | Editar siguiente paso |
+| N | Añadir novedad |
+| Ctrl+R | Sincronizar ahora |
+| Ctrl+Shift+R | Empezar revisión semanal |
+| Ctrl+O | Abrir el repo en GitHub |
+
+## Convenciones de código
+
+- `UNICODE`, `_UNICODE`, `WIN32_LEAN_AND_MEAN`, `NOMINMAX`. Manifiesto con DPI Per-Monitor V2.
+- Flags `/W4 /permissive- /utf-8 /EHsc /await:strict` (C++/WinRT). CRT estático si C++/WinRT lo permite; si no, documentar la decisión.
+- RAII para handles, `winrt::com_ptr` / `winrt::` para COM y WinRT.
+- Cadenas internas en `std::wstring`; UTF-8 solo en el borde con JSON y SQLite.
+- Nunca registrar el token ni respuestas completas de la API en el log.
+
+## Fases
+
+El plan completo está en `PROMPTS.md`.
+
+- [x] Fase 1 — Ventana Mac: Mica, barra de título propia, composición y muelles
+- [ ] Fase 2 — Kit de UI propio y catálogo de componentes
+- [ ] Fase 3 — GitHub: token seguro, GraphQL, SQLite y sincronización
+- [ ] Fase 4 — Vista principal: barra lateral, lista y clasificación
+- [ ] Fase 5 — Inspector, notas y PROYECTO.md
+- [ ] Fase 6 — Priorizar: arrastrar, límite de Enfoque, atajos y paleta
+- [ ] Fase 7 — Revisión semanal
+- [ ] Fase 8 — Pulido final y rendimiento
+
+Al terminar una fase: marcarla aquí, anotar decisiones abajo y hacer commit.
+
+## Decisiones y notas
+
+### Fase 1 — 21 de septiembre de 2026
+
+El detalle con todas las mediciones está en `CHANGELOG.md`. Aquí van solo las decisiones
+que condicionan lo que venga después.
+
+**La Mica necesita `WS_EX_NOREDIRECTIONBITMAP`, no solo el marco extendido.** Con una
+ventana normal, el área de cliente tiene superficie de redirección y sale blanca opaca
+(medido: `(255,255,255)` con Windows en oscuro), así que tapa la Mica pase lo que pase con
+`DwmExtendFrameIntoClientArea`. Este documento pedía el marco extendido y se mantiene,
+pero con un margen de **un píxel arriba** —para que DWM siga dibujando la línea de borde
+que `WM_NCCALCSIZE` se lleva— y no con `-1`: con `-1`, DWM considera que toda la ventana es
+marco y dibuja encima sus propios botones de ventana, que se ven a la vez que los nuestros.
+
+*Consecuencia para las fases siguientes:* **no puede haber controles hijos HWND.** Sin
+superficie de redirección no se pintan. El campo de texto de la fase 2 y todo lo demás se
+dibujan con Direct2D, que es lo que este documento ya pedía.
+
+**El tema se deduce del texto del sistema, no del fondo.** `UIColorType::Background`
+devuelve negro siempre en una aplicación de escritorio, en claro y en oscuro. Se usa
+`UIColorType::Foreground`: texto claro significa fondo oscuro.
+
+**Un token nuevo en la tabla: el velo de la barra lateral.** El «material más translúcido»
+de la barra lateral y el inspector no puede ser acrílico, porque `CreateHostBackdropBrush`
+se pinta negro en una aplicación Win32 sin empaquetar (medido en la isla). Es un color
+sobre la Mica: `rgba(255,255,255,0.35)` en claro y `rgba(0,0,0,0.20)` en oscuro.
+
+**El texto va con suavizado en gris, no con ClearType.** No es una elección: ClearType no
+existe sobre una superficie con alfa premultiplicado, y todas las nuestras lo son porque
+debajo está la Mica y no un color opaco.
+
+**El material y el contenido de una tarjeta van separados.** Las formas de Composition se
+rellenan con color y degradados, no con superficies, así que el rectángulo redondeado es un
+`ShapeVisual` y el contenido son `SpriteVisual` encima. Sale mejor de todos modos: las
+esquinas las suaviza el rasterizador de formas, mientras que un recorte geométrico tiene el
+borde duro.
+
+**El layout se escribe en DIP y la escala va en la raíz.** Un cambio de DPI es una
+escritura de propiedad, no rehacer el árbol de visuales. Las superficies sí se reservan al
+tamaño físico, que es lo que mantiene el texto nítido. Los vecinos rehacen el árbol entero
+porque tienen los píxeles horneados en los visuals; aquí no hace falta.
+
+**Los muelles interrumpibles no admiten fotogramas clave.** Una animación de fotogramas
+clave interrumpida reempieza desde su valor inicial, y eso es un salto. Todo lo que pueda
+interrumpirse —posición, tamaño y radio— va con `SpringXNaturalMotionAnimation`, que retoma
+valor y velocidad. Los fotogramas clave se quedan para lo que no se interrumpe: opacidad y
+color.
+
+**`Period` no es la duración.** Los cuatro muelles de la tabla de arriba asientan en 85,
+165, 239 y 297 ms. Los vecinos usan periodos de 40-50 ms, bastante más secos; volver a
+afinarlo es trabajo de la fase 8, no de ahora.
+
+**Falta comprobar la nitidez a otras escalas.** Esta máquina tiene una sola pantalla al
+100 %, así que `WM_DPICHANGED` no llega a dispararse. La aritmética está probada; la
+pantalla no.

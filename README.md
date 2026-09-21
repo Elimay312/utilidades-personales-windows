@@ -15,7 +15,9 @@ reunidas en este repositorio para poder clonarlas y probarlas en otro equipo.
 | [`hud/`](hud/README.md) | El aviso de volumen, rehecho: cápsula de cristal abajo y centrada, que se transforma en vez de ir y venir. Las teclas son suyas, así que el recuadro gris de Windows no sale. | Funcionando en tres pantallas. Falta usarlo unos días. |
 | [`isla/`](isla/README.md) | Una isla dinámica en el borde superior: qué suena, de quién, cuánto queda, y poder pausarlo. Más pomodoro, batería y volumen. | Funcionando. Falta probarla en otros equipos. |
 | [`lanzador/`](lanzador/README.md) | `Alt+Espacio` y escribes: aplicaciones, ficheros (vía Everything), prefijos web, sitios del sistema y cuentas, ordenados por lo que más abres. | Funcionando. Falta usarlo unos días. |
+| [`proyectos-github/`](proyectos-github/README.md) | **Brújula**: los ~120 repositorios de GitHub ordenados por en cuál conviene trabajar, con el siguiente paso de cada uno guardado para no tener que reconstruirlo. | En construcción: fase 1 de 8. Hay ventana, todavía no hay datos. |
 | [`quicklook/`](quicklook/README.md) | Vista previa con la barra espaciadora: seleccionas un archivo en el Explorador, pulsas espacio, lo ves. Imágenes, PDF, vídeo y audio. | Funcionando. Su README va por detrás del código. |
+| [`rayo-file-manager/`](rayo-file-manager/CLAUDE.md) | **Rayo**: un gestor de archivos en C++ con vista previa, vigilancia de carpetas y orden natural. | Funcionando. Le falta README propio; por ahora su documentación es `CLAUDE.md`. |
 | [`renombrar/`](renombrar/README.md) | Renombrado masivo con vista previa: ves la tabla antes → después de todo el lote, y solo entonces se aplica. Con deshacer. | Funcionando. Falta usarlo unos días en la oficina. |
 
 ## Qué podría haber

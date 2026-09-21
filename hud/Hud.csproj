@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- WinExe: sin esto, el autoarranque abriria una ventana de consola al iniciar
+         sesion. Los mensajes no se pierden: Program engancha la consola del padre si
+         se lanza desde una terminal. -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <AssemblyName>Hud</AssemblyName>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>Hud</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+
+    <!-- SEGURIDAD.md regla 9: nada de ofuscacion, packers ni compresion. El binario
+         debe tener PDB y secciones legibles para un analizador estatico. -->
+    <DebugType>portable</DebugType>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="hud.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Source generator: no aparece en la salida. Todo lo Win32 sale de
+         NativeMethods.txt, que es la lista cerrada que audita SEGURIDAD.md.
+
+         Iba a haber una segunda, System.Management, para leer el brillo. El brillo se
+         cayo del alcance al medirlo (SEGURIDAD.md §1) y la dependencia se cayo con el.
+         Sigue habiendo una, y auditar.ps1 comprueba que WMI no vuelve por la puerta de
+         atras. -->
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.333" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

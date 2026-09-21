@@ -1,0 +1,89 @@
+using System.Diagnostics;
+using System.Text;
+using Windows.Win32;
+
+namespace Hud;
+
+internal static class Program
+{
+    // Local\ y no Global\: el ambito es la sesion del usuario, que es donde hay un
+    // teclado y una pantalla. Global\ necesitaria permisos que esta app no tiene ni
+    // quiere (SEGURIDAD.md regla 1).
+    private const string MutexName = @"Local\HudVolumen.instancia";
+
+    [STAThread]
+    private static int Main(string[] args)
+    {
+        // Compilado como WinExe no hay consola propia. Si nos han lanzado desde una
+        // terminal nos enganchamos a la suya; si no, no hay donde escribir y da igual.
+        // El guardia evita romper una tuberia cuando la salida esta redirigida.
+        if (!Console.IsOutputRedirected) PInvoke.AttachConsole(0xFFFFFFFF);
+        Console.OutputEncoding = Encoding.UTF8;
+
+        // Logica pura, sin ventana. Va dentro del binario y no en un proyecto de tests
+        // aparte: lo que se comprueba aqui es lo que se rompe en silencio.
+        if (args.Contains("--check"))
+        {
+            HudWindow.SelfCheck();
+            Glifos.SelfCheck();
+            Volumen.SelfCheck();
+            Console.WriteLine("[hud] --check OK");
+            return 0;
+        }
+
+        // Dos HUD serian dos capsulas exactamente en el mismo sitio, y los dos
+        // peleandose por registrar las mismas tres teclas.
+        using Mutex unica = new(true, MutexName, out bool primera);
+        if (!primera)
+        {
+            Console.WriteLine("[hud] ya hay uno corriendo.");
+            return 1;
+        }
+
+        Stopwatch reloj = Stopwatch.StartNew();
+
+        HudConfig config = Config.Cargar();
+        Config.AplicarAutoArranque(config.AutoArranque);
+
+        // --demo: niveles falsos en bucle, para afinar los muelles sin tocar audio.
+        if (HudWindow.Create(config, args.Contains("--demo")) is null)
+        {
+            Console.Error.WriteLine("[hud] no se pudo crear la ventana.");
+            return 2;
+        }
+
+        using FileSystemWatcher vigilante = Vigilar();
+
+        Console.WriteLine($"[hud] arrancado en {reloj.ElapsedMilliseconds} ms");
+        Console.WriteLine("[hud] Ctrl+Alt+H para salir.");
+
+        HudWindow.RunMessageLoop();
+        return 0;
+    }
+
+    /// <summary>
+    /// Recarga hud.json al guardarlo, con rebote de 250 ms: los editores disparan varios
+    /// eventos por guardado y a veces truncan el fichero antes de escribirlo, asi que sin
+    /// esperar se leeria un JSON a medias. Copiado de la isla, incluido el porque.
+    /// </summary>
+    private static FileSystemWatcher Vigilar()
+    {
+        FileSystemWatcher vigilante = new(Config.Carpeta, "hud.json")
+        {
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+            EnableRaisingEvents = true,
+        };
+
+        Timer? espera = null;
+        void Cambio()
+        {
+            espera?.Dispose();
+            espera = new Timer(_ => HudWindow.Recargar(), null, 250, Timeout.Infinite);
+        }
+
+        vigilante.Changed += (_, _) => Cambio();
+        vigilante.Created += (_, _) => Cambio();
+        vigilante.Renamed += (_, _) => Cambio();
+        return vigilante;
+    }
+}

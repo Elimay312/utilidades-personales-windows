@@ -1,0 +1,20 @@
+// Configuracion del HUD. Vive en %LOCALAPPDATA%\Hud\hud.json.
+// Admite comentarios y comas finales. Se recarga sola al guardarla.
+{
+  // El aviso gris de Windows no sale con el volumen y no hay nada que configurar:
+  // al capturar las teclas, el shell nunca llega a verlas. SEGURIDAD.md §1.
+
+  // Cuanto sube o baja el volumen cada pulsacion, en porcentaje. Windows usa 2.
+  // Como las teclas las registramos nosotros, el paso lo decides tu.
+  "pasoVolumen": 2,
+
+  // Cuanto se queda el HUD en pantalla despues de la ultima pulsacion, en ms.
+  "msAutoocultar": 1600,
+
+  // Donde sale: "abajo" (como macOS) o "arriba".
+  "posicion": "abajo",
+
+  // Autoarranque con la sesion. Escribe en HKCU\...\Run, que sale en la pestana
+  // Inicio del Administrador de tareas. Por defecto no se escribe nada.
+  "autoArranque": false
+}

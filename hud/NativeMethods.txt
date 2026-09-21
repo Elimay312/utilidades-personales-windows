@@ -1,0 +1,121 @@
+// Lista auditable de P/Invokes. Crece un grupo por hito: si una entrada esta aqui es
+// porque hay codigo que la usa hoy, no porque vaya a hacer falta. Cada grupo lleva
+// encima para que es -- ahi es donde mira un auditor -- y cada entrada tiene que poder
+// senalarse a una seccion de SEGURIDAD.md §3. Si una no se puede, o sobra la entrada o
+// falta una seccion.
+//
+// Lo que NO esta aqui y no va a estar: SetWindowsHookEx, SetWinEventHook,
+// GetAsyncKeyState, EnumWindows, OpenProcess, GetWindowThreadProcessId. Las teclas se
+// registran (§3.1) y la unica ventana ajena se busca por su clase (§3.5).
+
+// --- H0: ventana propia ---
+RegisterClassExW
+CreateWindowExW
+DefWindowProcW
+DestroyWindow
+PostQuitMessage
+SetWindowPos
+LoadCursorW
+IDC_ARROW
+WINDOWPOS
+
+// --- H0: bucle de mensajes propio ---
+GetMessageW
+TranslateMessage
+DispatchMessageW
+
+// --- H0: modulo propio (para hInstance) ---
+GetModuleHandleW
+
+// --- H0: geometria de pantalla (solo lectura) ---
+// No se enumera ninguna ventana ni ningun proceso: solo se pregunta donde esta el
+// monitor del cursor y a que escala, para colocarnos encima. GetCursorPos devuelve un
+// punto; no observa botones, no observa teclas, y no es un hook.
+GetCursorPos
+MonitorFromPoint
+GetMonitorInfoW
+GetDpiForMonitor
+
+// --- H0: teclas de volumen y salida (SEGURIDAD.md §3.1) ---
+// NO es un hook: no se observa el teclado, se le pide a Windows que mande WM_HOTKEY a
+// NUESTRA ventana cuando se pulse UNA de tres teclas concretas. Sin DLL en otros
+// procesos y sin ver ninguna otra tecla. Es como registra su atajo cualquier app.
+RegisterHotKey
+UnregisterHotKey
+
+// --- H0: consola estando compilado como WinExe ---
+AttachConsole
+
+// --- H1: ensenar y esconder la ventana PROPIA ---
+// El HUD vive escondido y solo se ensena cuando hay algo que decir. Una ventana
+// escondida no recibe clics, que es la forma mas barata de no estorbar: mas barata
+// que una region vacia y sin el riesgo de dejarla puesta por error.
+ShowWindow
+SHOW_WINDOW_CMD
+SetTimer
+KillTimer
+
+// --- H1: Composition interop, sobre el HWND propio ---
+// El puente Win32 -> Windows.UI.Composition. Toda la animacion vive aqui y no en el
+// hilo de UI, asi que sigue corriendo aunque nos bloqueemos.
+ICompositorDesktopInterop
+CreateDispatcherQueueController
+DispatcherQueueOptions
+
+// --- H1: superficie de dibujo propia: D3D11 -> D2D -> Composition ---
+// Fuera de XAML no existe LoadedImageSurface, asi que para pintar cualquier cosa que
+// no sea un color plano hay que montar esta cadena. Actua solo sobre nuestras
+// superficies: no lee la pantalla ni la ventana de nadie (SEGURIDAD.md §3.3).
+D3D11CreateDevice
+D2D1CreateDevice
+ID3D11Device
+ID2D1Device
+ID2D1DeviceContext
+IDXGIDevice
+D3D_DRIVER_TYPE
+D3D11_CREATE_DEVICE_FLAG
+D2D1_ALPHA_MODE
+DXGI_FORMAT
+ICompositorInterop
+ICompositionDrawingSurfaceInterop
+
+// --- H1: los cinco glifos, sobre nuestra propia superficie ---
+DWriteCreateFactory
+IDWriteFactory
+IDWriteTextFormat
+IDWriteTextLayout
+DWRITE_FACTORY_TYPE
+DWRITE_TEXT_METRICS
+DWRITE_FONT_WEIGHT
+DWRITE_FONT_STYLE
+DWRITE_FONT_STRETCH
+DWRITE_WORD_WRAPPING
+D2D1_DRAW_TEXT_OPTIONS
+ID2D1SolidColorBrush
+
+// --- H1: dejar pasar los clics, sobre la ventana PROPIA ---
+// WS_EX_TRANSPARENT solo surte efecto si la ventana es layered, y a alfa 255 eso no
+// cambia nada de como se ve. Medido: con los dos puestos, WindowFromPoint sobre el
+// centro de la capsula devuelve la ventana de detras. Esto sustituye a SetWindowRgn,
+// que era la via de los vecinos y que ademas recorta el dibujo.
+SetLayeredWindowAttributes
+LAYERED_WINDOW_ATTRIBUTES_FLAGS
+
+// --- H2: volumen maestro de la SALIDA (SEGURIDAD.md §3.2) ---
+// La misma API publica que usa el control de volumen de la barra de tareas. Un escalar
+// de 0 a 1: no se abre ningun flujo de audio, no hay nada que grabar. El endpoint es
+// eRender; eCapture no aparece en este proyecto y la auditoria lo comprueba.
+IMMDeviceEnumerator
+MMDeviceEnumerator
+IMMDevice
+IAudioEndpointVolume
+EDataFlow
+ERole
+CLSCTX
+
+// --- H4: que COM avise de los cambios de volumen, en vez de preguntar ---
+// El callback llega en un hilo del pool, asi que lo unico que hace es mandarle un
+// mensaje a NUESTRA ventana con PostMessage. No se manda nada a nadie mas.
+IAudioEndpointVolumeCallback
+AUDIO_VOLUME_NOTIFICATION_DATA
+PostMessageW

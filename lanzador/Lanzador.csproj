@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- WinExe: el lanzador vive oculto y se asoma con el atajo. Una ventana de
+         consola al arrancar la sesion no tendria ningun sentido. Los mensajes no se
+         pierden: Program engancha la consola del padre si se lanza desde una terminal,
+         y ahi escriben los modos de consola. -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <AssemblyName>Lanzador</AssemblyName>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>Lanzador</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+
+    <!-- El dock y la isla ponen InvariantGlobalization a true. Aqui NO, y no es un
+         descuido: en modo invariante string.Normalize devuelve la cadena tal cual, sin
+         lanzar ni avisar, asi que quitar los acentos deja de funcionar en silencio y
+         "configuracion" no encuentra "Configuración". Costo un rato en H2, y lo
+         encontro la comprobacion, no leer el codigo. En Windows 10 1903+ el ICU lo pone el
+         sistema: comprobado contando los ficheros de bin\Debug antes y despues, 8 y 8. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+
+    <!-- SEGURIDAD.md regla 8: nada de ofuscacion, packers ni compresion. El binario
+         debe tener PDB y secciones legibles para un analizador estatico. -->
+    <DebugType>portable</DebugType>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="lanzador.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Unica dependencia. Source generator: no aparece en la salida. Todo lo Win32
+         sale de NativeMethods.txt, que es la lista cerrada que audita SEGURIDAD.md. -->
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.333" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

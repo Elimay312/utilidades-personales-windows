@@ -1,0 +1,32 @@
+// Configuracion del lanzador. Vive en %LOCALAPPDATA%\Lanzador\lanzador.json.
+// Admite comentarios y comas finales. Se lee AL ARRANCAR: si lo cambias, reinicia
+// el lanzador. (Recargarlo en caliente no esta hecho porque el atajo habria que
+// volver a registrarlo, y no se ha echado de menos todavia.)
+//
+// Lo que NO esta aqui es lo que has lanzado: eso va en uso.json, al lado, y se borra
+// entero con "lanzador --olvidar".
+{
+  // Atajo global. Modificadores: Ctrl, Alt, Shift, Win, separados por +.
+  // Si otro programa ya lo tiene registrado, RegisterHotKey falla y el lanzador lo dice
+  // por consola en vez de quedarse mudo. Cambialo aqui y guarda; no hace falta recompilar.
+  "atajo": "Alt+Space",
+
+  // Cuantas filas se ensenan. Mas de una decena deja de ser un lanzador y pasa a ser
+  // una lista que hay que leer.
+  "maxResultados": 8,
+
+  // Prefijos web: escribes la clave, un espacio, y lo que busques.
+  // {} se sustituye por el termino, ya escapado. SEGURIDAD.md §3.5: el resultado tiene
+  // que ser http: o https:, o no se abre.
+  "web": {
+    "g": "https://www.google.com/search?q={}",
+    "y": "https://www.youtube.com/results?search_query={}",
+    "w": "https://es.wikipedia.org/w/index.php?search={}",
+    "gh": "https://github.com/search?q={}",
+    "t": "https://www.deepl.com/translator#es/en/{}"
+  },
+
+  // Autoarranque con la sesion. Escribe en HKCU\...\Run, que sale en la pestana Inicio
+  // del Administrador de tareas. Por defecto no se escribe nada.
+  "autoArranque": false
+}

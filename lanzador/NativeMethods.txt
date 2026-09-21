@@ -1,0 +1,206 @@
+// Lista auditable de P/Invokes. Todas son APIs publicas documentadas y actuan sobre el
+// propio proceso o el propio HWND. Cada grupo lleva encima para que es: ahi es donde
+// mira un auditor, y cada entrada tiene que poder senalarse a una seccion de
+// SEGURIDAD.md §3.
+//
+// Crece un grupo por hito. Si una entrada no se puede senalar a una seccion, o sobra la
+// entrada o falta la seccion.
+
+// --- Consola estando compilado como WinExe (H0) ---
+// Sin esto, --check y --buscar no tendrian donde escribir al lanzarse desde una terminal.
+AttachConsole
+
+// --- Inventario de aplicaciones (H1, SEGURIDAD.md §3.1) ---
+// La misma carpeta virtual que enumera el menu Inicio para pintarse a si mismo. Se leen
+// SOLO el nombre visible y el destino; no se abre ningun ejecutable ni se mira dentro de
+// nada. IShellLink NO esta aqui a proposito: los .lnk se lanzan tal cual y el shell los
+// resuelve, asi que ni su destino se lee.
+SHCreateItemFromParsingName
+IShellItem
+IEnumShellItems
+BHID_EnumItems
+SIGDN
+
+// --- Ventana propia (H4) ---
+RegisterClassExW
+CreateWindowExW
+DefWindowProcW
+DestroyWindow
+PostQuitMessage
+ShowWindow
+SetWindowPos
+GetModuleHandleW
+LoadCursorW
+IDC_ARROW
+GetClientRect
+GetWindowRect
+
+// --- Bucle de mensajes propio (H4) ---
+GetMessageW
+TranslateMessage
+DispatchMessageW
+
+// --- Atajo de teclado (H4, SEGURIDAD.md §3.3) ---
+// NO es un hook: no se observa el teclado, se le pide a Windows que mande WM_HOTKEY a
+// NUESTRA ventana cuando se pulse UNA combinacion. Sin DLL en otros procesos y sin ver
+// ninguna otra tecla. Es como registra su atajo cualquier app.
+RegisterHotKey
+UnregisterHotKey
+
+// --- Ponerse delante, SOLO nosotros (H4, SEGURIDAD.md §3.4) ---
+// La unica excepcion de la regla 15, y la que auditar.ps1 vigila aparte: el argumento
+// es siempre _hwnd. Windows autoriza esto al proceso que acaba de recibir WM_HOTKEY;
+// sin ello la ventana aparece sin foco y no recibe lo que escribes.
+SetForegroundWindow
+SetFocus
+
+// --- La caja de texto, que es un control del sistema (H4, SEGURIDAD.md §3.2) ---
+// El caret, la seleccion, las teclas muertas y Ctrl+V los hace el propio EDIT dentro
+// del sistema. Nosotros solo le pedimos el texto con WM_GETTEXT y le ponemos la fuente.
+// Por eso aqui no hay ni una API de portapapeles (regla 14).
+SendMessageW
+CreateFontIndirectW
+DeleteObject
+LOGFONTW
+SystemParametersInfoW
+NONCLIENTMETRICSW
+
+// --- Donde ponerse y a que escala (H4, solo lectura) ---
+// No se enumera ninguna ventana ni ningun proceso: solo se pregunta donde esta el
+// monitor del cursor y a que escala, para colocarnos encima.
+GetCursorPos
+MonitorFromPoint
+GetMonitorInfoW
+GetDpiForMonitor
+
+// --- Acrilico y esquinas redondas sobre la ventana propia (H4) ---
+DwmSetWindowAttribute
+DWMWINDOWATTRIBUTE
+
+// --- Composition interop, sobre el HWND propio (H4) ---
+// El puente Win32 -> Windows.UI.Composition.
+ICompositorDesktopInterop
+CreateDispatcherQueueController
+DispatcherQueueOptions
+
+// --- Superficie de dibujo propia: D3D11 -> D2D -> Composition (H4) ---
+// Fuera de XAML no existe LoadedImageSurface, asi que para pintar texto hay que montar
+// esta cadena. Actua solo sobre nuestras superficies; no lee la pantalla ni la ventana
+// de nadie.
+D3D11CreateDevice
+D2D1CreateDevice
+ID3D11Device
+ID2D1Device
+ID2D1DeviceContext
+IDXGIDevice
+D3D_DRIVER_TYPE
+D3D11_CREATE_DEVICE_FLAG
+D2D1_ALPHA_MODE
+DXGI_FORMAT
+ICompositorInterop
+ICompositionDrawingSurfaceInterop
+
+// --- Texto, sobre nuestra propia superficie de dibujo (H4) ---
+DWriteCreateFactory
+IDWriteFactory
+IDWriteTextFormat
+IDWriteTextLayout
+DWRITE_FACTORY_TYPE
+DWRITE_TEXT_METRICS
+DWRITE_FONT_WEIGHT
+DWRITE_FONT_STYLE
+DWRITE_FONT_STRETCH
+DWRITE_WORD_WRAPPING
+D2D1_DRAW_TEXT_OPTIONS
+
+// --- Lanzar lo seleccionado (H4, SEGURIDAD.md §3.8) ---
+// Es lo mismo que hace un doble clic: mismo API, mismo alcance, y siempre detras de un
+// Enter tuyo sobre una fila que estas viendo. Nunca el verbo runas (regla 17).
+ShellExecuteExW
+SHELLEXECUTEINFOW
+
+// --- La caja de texto en oscuro (H4) ---
+// Un EDIT pinta su propio fondo con los colores del sistema, que en claro es blanco.
+// WM_CTLCOLOREDIT es la forma documentada de decirle otros, y por eso la franja va en
+// color solido y el acrilico empieza debajo.
+CreateSolidBrush
+SetTextColor
+SetBkColor
+
+// --- Realce de la fila elegida (H4) ---
+ID2D1SolidColorBrush
+D2D1_ROUNDED_RECT
+
+// --- Preguntarle a Everything (H5, SEGURIDAD.md §3.7) ---
+// FindWindow busca UN buzon concreto, el que Everything publica para esto y que su
+// propia linea de comandos usa. No se enumera nada: se pregunta por una clase y ya.
+// WM_COPYDATA es el unico mensaje que este programa manda fuera de si mismo, y va a un
+// destinatario que existe solo para recibirlo.
+FindWindowW
+COPYDATASTRUCT
+WM_COPYDATA
+
+// Con limite de tiempo: es una llamada sincrona a otro proceso, y sin el, si Everything
+// se cuelga nuestra ventana se cuelga con el.
+SendMessageTimeout
+SEND_MESSAGE_TIMEOUT_FLAGS
+
+// --- Rebote de la consulta (H5) ---
+// Sin el, cada pulsacion seria una pregunta a Everything. Es un temporizador sobre
+// nuestra propia ventana.
+SetTimer
+KillTimer
+
+// --- Bloquear la sesion (H6, SEGURIDAD.md §3.10) ---
+// Lo mismo que Win+L: no cierra nada, no termina ningun proceso y se deshace con tu
+// contrasena. ExitWindowsEx NO esta aqui y no va a estar: apagar y reiniciar siguen
+// prohibidos por la regla 16.
+LockWorkStation
+
+// --- Iconos (H7, SEGURIDAD.md §3.11) ---
+// Se le pide al shell EL MISMO icono que ya te ensena el Explorador. SIIGBF_ICONONLY no
+// es una opcion de calidad: sin ella GetImage devuelve la MINIATURA, y la miniatura de un
+// documento es su contenido dibujado, que es la regla 12. auditar.ps1 lo comprueba.
+IShellItemImageFactory
+SIIGBF
+GetObject
+BITMAP
+BITMAPINFO
+BITMAPINFOHEADER
+BI_COMPRESSION
+GetDIBits
+DIB_USAGE
+GetDC
+ReleaseDC
+
+// --- Que programa abre un esquema, para ponerle su cara a un prefijo web (H7) ---
+// Lectura de las asociaciones por la API que existe para preguntarlo. No se toca ninguna
+// y no se lee el registro a mano.
+AssocQueryString
+ASSOCF
+ASSOCSTR
+
+// --- Pintar el icono en nuestra superficie (H7) ---
+ID2D1Bitmap1
+D2D1_BITMAP_PROPERTIES1
+D2D1_BITMAP_INTERPOLATION_MODE
+
+// --- Avisar a la ventana desde el hilo que carga iconos (H7) ---
+// Sobre NUESTRA propia ventana y con un mensaje propio. No se manda nada a nadie.
+PostMessageW
+
+// --- Pegar en la caja (SEGURIDAD.md §3.12) ---
+// La unica lectura del portapapeles del programa, y solo se llega desde Ctrl+V. Se pide
+// CF_UNICODETEXT y nada mas: ni imagenes, ni listas de ficheros, ni HTML.
+// SetClipboardData NO esta aqui y no va a estar: el lanzador no escribe en el
+// portapapeles, y por eso el resultado de la calculadora no se puede copiar.
+OpenClipboard
+GetClipboardData
+CloseClipboard
+GlobalLock
+GlobalUnlock
+
+// --- Arrastrar para seleccionar texto, dentro de la ventana propia ---
+// Sin capturar, al salirse el cursor de la ventana se pierde el arrastre a mitad.
+SetCapture
+ReleaseCapture

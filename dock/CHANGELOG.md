@@ -33,8 +33,24 @@ Lo que hay ahora en `main`. Se está probando en varios equipos antes de darlo p
   `PrintWindow`, que le pide a la app que se dibuje en vez de leer la pantalla y por eso la
   saca entera aunque esté detrás de otras.
 
+- **La memoria privada baja de 80 a 36 MB, y los hilos de 70 a 24.** El device de D3D se
+  pide sobre WARP y no sobre la GPU: solo sube píxeles a superficies de composición y no
+  renderiza ni un fotograma, así que el adaptador de verdad solo servía para mapear el
+  driver de usuario entero con su pool de compilación de shaders. Dibuja igual —comparado
+  con capturas— y sigue por delante de una ventana maximizada.
+- **El arranque baja de 645 a 579 ms** con `PublishReadyToRun`. No recorta ni comprime, así
+  que no toca la regla 8 de `SEGURIDAD.md`; NativeAOT sí recortaría y por eso no se ha
+  puesto.
+- **La miniatura de la rueda ya no sube la ventana entera.** Para enseñarla en un chip de
+  300x190 subía la captura a tamaño completo dos veces por segundo: de 35 MB a 26,7.
+
 ### Arreglado
 
+- **Un juego de Steam recién instalado ya no espera a reiniciar el dock.** La caché
+  guardaba también los fallos y para siempre; ahora el «no está instalado» caduca a los
+  30 s y el acierto se queda.
+- **Soltar varios ficheros sobre una app de la Store los abre todos**, por los dos
+  caminos: el de contrato y el de argumentos. Antes se quedaba con el primero.
 - **El dock se apartaba entero cada vez que minimizabas una ventana.** Al minimizar,
   `SHQueryUserNotificationState` devuelve `BUSY` durante un instante y el shell llega a
   disparar `ABN_FULLSCREENAPP`; el dock lo daba por pantalla completa y se ocultaba. En ese

@@ -345,10 +345,29 @@ no lo detecta, la prueba no vale.
 
 ## 8. Lo que falta
 
-- **Rendimiento.** Los tres números medidos: arranque **1029 ms** (objetivo < 1000),
-  memoria **121 MB** con tres pantallas (objetivo < 60), CPU en reposo **~3%** (objetivo 0).
-  Pendiente: caché de iconos a disco, `PublishReadyToRun`, y averiguar de dónde sale ese 3%
-  — no es el inventario ni el compositor, y con los temporizadores apagados no baja.
+- **Rendimiento.** Vueltos a medir con una pantalla, y los de antes estaban viejos:
+
+  | | antes | ahora |
+  |---|---|---|
+  | Arranque, hasta los iconos en pantalla | 1029 ms | **579 ms** (objetivo < 1000) |
+  | Memoria privada | 121 MB con tres pantallas | **36 MB** con una (objetivo < 60) |
+  | Hilos | 70 | **24** |
+  | CPU en reposo, el proceso | ~3% | **0,5% de un núcleo** |
+
+  Del arranque, ~90 ms son anteriores a `Main`: eso es lo único que devolverían R2R
+  -ya puesto- o AOT, que recorta y por eso pide enmienda a `SEGURIDAD.md` antes.
+
+  Lo del **3% en reposo** no existe: era un número de tres pantallas y del código de
+  antes de los avisos del shell. Midiendo el escritorio con el dock encendido y apagado,
+  alternando para que la deriva no cuente, el dock cuesta **1,6-1,9% de un núcleo** y la
+  mayor parte cae en `dwm.exe`, no en el proceso. Se buscó de dónde sale y **no es el
+  acrílico** -midiendo el mismo binario con y sin él, la diferencia sale del orden del
+  ruido de fondo- **ni el vigilante del z-order**, que cuesta 0,16%. Con un escritorio
+  ocupado el ruido es de ±1-3%, así que por debajo de eso esta máquina no resuelve.
+
+  Pendiente: caché de iconos a disco, y armar el barrido de seguridad en **un solo dock**
+  en vez de uno por pantalla — con tres monitores son tres `Process.GetProcesses()` y
+  cuatro `EnumWindows` cada 10 s. Sin medir: aquí solo había una pantalla conectada.
 - **Una rejilla con todas las miniaturas a la vez**, en vez de la de la ventana elegida.
 - **Empaquetar como MSIX**, si alguna vez hace falta identidad de paquete.
 - Las listas de saltos solo funcionan con apps que declaran su AppUserModelID en la ventana.

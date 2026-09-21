@@ -2,7 +2,6 @@
 
 #include <Windows.h>
 #include <imgui.h>
-#include <shlwapi.h>
 
 #include <algorithm>
 #include <string>
@@ -80,11 +79,8 @@ int DrawEntries(const std::vector<DirectoryEntry>& entries, int cursor, bool& sc
 
             if (entry.IsDirectory()) continue;
 
-            wchar_t bytes[32];
-            if (!StrFormatByteSizeW(static_cast<LONGLONG>(entry.size), bytes, ARRAYSIZE(bytes)))
-                continue;
-
-            const std::string text = ToUtf8(bytes);
+            const std::string text = ToUtf8(FormatBytes(entry.size));
+            if (text.empty()) continue;
             const float right = rowStart.x + rowWidth - ImGui::CalcTextSize(text.c_str()).x;
             if (right <= nameEnd + ImGui::GetStyle().ItemSpacing.x) continue;
 

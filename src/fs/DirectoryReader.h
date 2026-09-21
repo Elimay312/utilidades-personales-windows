@@ -25,10 +25,16 @@ struct DirectoryListing {
     std::wstring path;
     std::vector<DirectoryEntry> entries;
     DWORD error = ERROR_SUCCESS;
+    // Espacio libre de la unidad, para la barra de estado. 0 = no se pudo saber (raiz
+    // virtual). Viaja con el listado porque sale del mismo hilo y del mismo sitio: un
+    // buzon aparte solo para esto seria mas fontaneria que dato.
+    unsigned long long freeBytes = 0;
 };
 
-// Absoluta, con barras invertidas y sin . ni .. : el prefijo \\?\ exige exactamente eso.
-// La ruta vacia es la raiz virtual (lista de unidades) y se devuelve tal cual.
+// Absoluta, con barras invertidas, sin . ni .. y sin barra final salvo en la raiz de una
+// unidad: el prefijo \\?\ exige exactamente eso, y la misma carpeta escrita de dos formas
+// serian dos claves distintas en la cache. La ruta vacia es la raiz virtual (lista de
+// unidades) y se devuelve tal cual.
 std::wstring NormalizePath(const std::wstring& path);
 
 // Ruta lista para las APIs de disco: prefijo \\?\ (o \\?\UNC\) para saltarse MAX_PATH.
@@ -49,6 +55,15 @@ std::wstring LastComponent(const std::wstring& path);
 // Ordena carpetas primero y luego por orden natural (archivo2 antes que archivo10).
 // Con la ruta vacia enumera las unidades logicas.
 DirectoryListing ReadDirectory(std::wstring path);
+
+// Subcadena ignorando mayusculas y tildes ("cafe" encuentra "Cafe.txt"). Aguja vacia =
+// todo pasa. Es el filtro de la columna central.
+bool NameContains(const std::wstring& name, const std::wstring& needle);
+
+// En el formato del usuario: "1,21 MB" y "21/09/2026 14:03". Los usan la lista, la vista
+// previa y la barra de estado, asi que viven aqui y no en uno de los tres.
+std::wstring FormatBytes(unsigned long long bytes);
+std::wstring FormatTime(const FILETIME& utc);
 
 std::string ToUtf8(const std::wstring& text);
 // La vuelta: lo que se escribe en un campo de ImGui llega en UTF-8 y el disco quiere wide.

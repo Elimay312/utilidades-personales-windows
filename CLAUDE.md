@@ -106,6 +106,7 @@ third_party/            (solo si algo no puede venir por FetchContent)
 | `r` | Renombrar |
 | `a` | Crear archivo (terminar en `\` crea carpeta) |
 | `/` | Filtrar la carpeta actual |
+| `Esc` | Quitar el filtro |
 | `.` | Mostrar / ocultar archivos ocultos |
 | `~` | Ir a la carpeta de usuario |
 | `:` | Ir a una ruta escrita |
@@ -132,7 +133,7 @@ El plan completo está en `PROMPTS.md`. Estado actual:
 - [x] Fase 4 — Vista previa (imágenes, texto, carpetas)
 - [x] Fase 5 — Vigilancia de cambios en disco
 - [x] Fase 6 — Operaciones de archivos
-- [ ] Fase 7 — Filtro, ir a ruta, archivos ocultos, barra de estado
+- [x] Fase 7 — Filtro, ir a ruta, archivos ocultos, barra de estado
 - [ ] Fase 8 — Pulido: configuración, pestañas, marcadores, medición de arranque
 
 Al terminar una fase: marcarla aquí, anotar decisiones importantes en la sección siguiente y hacer commit.
@@ -439,6 +440,80 @@ Medido tras la fase 5:
   `ReadDirectoryChangesW` no funciona sobre algunos sistemas de archivos remotos; el código lo
   trata como "sin vigilancia" y la app se comporta como en la fase 4, pero no se ha podido
   probar. Tampoco los volúmenes extraíbles.
+
+### 2026-09-21 — Fase 7
+
+- **Cada columna tiene ahora una `view` al lado de `entries`.** El filtro y los ocultos no
+  tocan el disco ni la caché: `RebuildView` deja en `view` lo que se pinta, y el cursor, el
+  contador y `Selected()` se mueven sobre eso. Si no sobra nada que esconder, `view` es el
+  mismo `shared_ptr` que `entries` y no se copia ni una entrada. Como consecuencia, quitar el
+  filtro no relee nada y la caché sigue guardando la carpeta entera.
+- **El cursor por nombre de la fase 3 vale igual para el filtro.** `PlaceCursor` sale de
+  `ApplyListing` y ahora lo llaman los dos caminos: cuando llega un listado y cuando cambia
+  el filtro. Estrechar el filtro deja el cursor donde estaba mientras lo que había siga
+  pasando, y Esc lo devuelve a su sitio en la lista entera (visto: `5/47` al quitar el filtro
+  con el cursor sobre `Canción.mp3`). La fase 7 no añadió lógica de cursor, solo movió la que
+  ya había.
+- **`FindNLSStringEx` es el filtro entero.** Con `LINGUISTIC_IGNORECASE |
+  LINGUISTIC_IGNOREDIACRITIC` la búsqueda de subcadena del sistema ya ignora mayúsculas y
+  tildes: "cancion" encuentra `Canción.mp3` y "KERNEL32" encuentra `kernel32.dll`, sin
+  normalizar a mano ni guardar una copia "plana" de cada nombre. **10.000 nombres en 6,2 ms**
+  (`rayo_filter_check`), así que una tecla del filtro cabe de sobra en un frame.
+- **Ocultos = `HIDDEN` o `SYSTEM`**, que es lo que ya decía `DirectoryEntry::IsHidden` desde
+  la fase 2 (MillerView los pinta en gris desde entonces). Esta fase solo decide si se ven.
+- **El autocompletado de `:` no toca el disco.** Tab es `ImGuiInputTextFlags_CallbackCompletion`,
+  el mecanismo del propio widget, y ahí dentro solo se puede mirar `ListingCache`. Si la
+  carpeta no está, se pide por el camino normal (`Request`, ya fuera de ImGui) y el Tab
+  siguiente completa: al escribir `C:\Wind`, el primer Tab no hace nada visible y el segundo
+  deja `C:\Windows\`. La carpeta actual y sus vecinas están siempre en caché, que es el caso
+  normal.
+- **Completa con el prefijo común y no cicla.** Ciclar obliga a guardar la lista de
+  candidatos y por dónde iba; el prefijo no guarda nada, y con una sola coincidencia completa
+  el nombre entero y le añade la barra para seguir bajando. `Doc` con `Documentos` y
+  `Documentales` delante deja `Document`.
+- **`NormalizePath` quita ahora la barra final** (menos en la raíz de una unidad, donde `C:`
+  significaría el directorio actual de esa unidad). Escribir una ruta con barra al final
+  creaba una segunda clave de caché para la misma carpeta, y con `:` eso pasa a ser lo normal.
+  Se arregla en la función por la que pasan todas las rutas, no en quien la llama.
+- **El espacio libre viaja dentro de `DirectoryListing`.** `GetDiskFreeSpaceExW` se llama en
+  el mismo hilo de trabajo y dentro del mismo `SetThreadErrorMode` que el listado, así que no
+  hay buzón nuevo ni hilo nuevo: son cuatro líneas. Se aplica solo cuando el listado es el de
+  la columna actual, y `Navigate` lo pone a cero para no enseñar el de la unidad anterior.
+- **Los mensajes caducan a los 5 s**, con el mismo `timeout` de `MsgWaitForMultipleObjectsEx`
+  que ya usaban la vista previa y el vigilante. Al caducar vuelve a `INFINITE`: el 0 % en
+  reposo se conserva.
+- **`FormatBytes` y `FormatTime` bajan a `fs/DirectoryReader`.** Los tenían por separado la
+  lista (`StrFormatByteSizeW` a mano) y la vista previa (`GetDateFormatEx` + `GetTimeFormatEx`
+  a mano), y la barra de estado habría sido el tercero.
+- **El bloque de la derecha no se pinta si no cabe**, igual que los tamaños de la lista: con
+  una ruta larga desaparece en vez de montarse encima. Y mientras hay un campo abierto
+  tampoco se pinta: el campo se come lo que queda de línea a propósito.
+
+Medido tras la fase 7:
+
+| Métrica | Objetivo | Medido |
+|---|---|---|
+| Filtro sobre 10.000 nombres | instantáneo | 6,2 ms (una sola pasada, en el hilo de UI) |
+| CPU en reposo | 0 % | 31,3 ms en 80 s — 2 ticks del reloj, igual que antes |
+| Memoria recién abierto | < 50 MB | 46,4 MB de working set (52,7 privada) |
+| Warnings con `/W4 /permissive-` | 0 | 0 |
+
+- **Lo que cuesta el filtro no es comparar, es copiar.** Los 6,2 ms de 10.000 nombres son
+  `FindNLSStringEx`; encima va una copia de las entradas que pasan (~3 ms para 12.000). Las
+  dos cosas ocurren en el hilo de UI y por tecla, y juntas siguen cabiendo en un frame. Si
+  algún día molestara, la salida es un vector de índices, a cambio de tocar todo lo que hoy
+  recibe un vector plano de entradas. Anotado en `App::RebuildView`.
+- **Con los ocultos escondidos se copia siempre**, porque casi toda carpeta de Windows tiene
+  algún `desktop.ini`. El atajo de "no sobra nada, comparto el puntero" solo salta con `.`
+  activado y sin filtro.
+- **La columna padre puede quedarse sin resaltar** si se entra en una carpeta oculta con los
+  ocultos escondidos (con `:`, por ejemplo): el nombre no está en su `view` y el cursor se
+  queda donde estaba. Se ve raro pero no engaña: lo que hay en pantalla es lo que hay.
+- **El exe pasa de 768 a 788 KB**, sin dependencias nuevas: el filtro, las fechas y el
+  espacio libre son kernel32 y shlwapi, que ya se enlazaban.
+- **Sin verificar**: unidades de red y recursos UNC (ni el espacio libre ni el completado de
+  `\\servidor\...`, que no tiene listado en caché de donde tirar); y el filtro sobre nombres
+  en árabe o hebreo, donde `FindNLSStringEx` hace más cosas de las que se han probado.
 
 ### 2026-09-21 — Fase 6
 

@@ -225,24 +225,6 @@ bool DecodeImage(const std::wstring& path, int targetPx, Preview& out) {
 
 // -- Metadatos ---------------------------------------------------------------------------
 
-std::wstring FormatTime(const FILETIME& utc) {
-    FILETIME local{};
-    SYSTEMTIME time{};
-    if (!FileTimeToLocalFileTime(&utc, &local) || !FileTimeToSystemTime(&local, &time))
-        return L"-";
-
-    wchar_t date[64];
-    if (!GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, &time, nullptr, date,
-                         ARRAYSIZE(date), nullptr))
-        return L"-";
-
-    wchar_t clock[64];
-    if (!GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &time, nullptr, clock,
-                         ARRAYSIZE(clock)))
-        return date;
-    return std::wstring(date) + L" " + clock;
-}
-
 std::wstring FormatAttributes(DWORD attributes) {
     static const struct {
         DWORD bit;
@@ -277,15 +259,11 @@ std::string DescribeFile(const std::wstring& path) {
     const unsigned long long size = (static_cast<unsigned long long>(info.nFileSizeHigh) << 32) |
                                     static_cast<unsigned long long>(info.nFileSizeLow);
 
-    wchar_t bytes[32];
-    if (!StrFormatByteSizeW(static_cast<LONGLONG>(size), bytes, ARRAYSIZE(bytes)))
-        bytes[0] = L'\0';
-
     // ñ en vez del caracter suelto: el resto del arbol es ASCII puro y no hay razon
     // para que este archivo dependa de como se guarde.
     std::wstring text;
     text += L"Tipo          " + TypeName(path) + L"\n";
-    text += L"Tamaño        " + std::wstring(bytes) + L"  (" + std::to_wstring(size) +
+    text += L"Tamaño        " + FormatBytes(size) + L"  (" + std::to_wstring(size) +
             L" bytes)\n";
     text += L"Modificado    " + FormatTime(info.ftLastWriteTime) + L"\n";
     text += L"Atributos     " + FormatAttributes(info.dwFileAttributes) + L"\n";

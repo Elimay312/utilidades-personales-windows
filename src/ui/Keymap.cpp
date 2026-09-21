@@ -38,6 +38,8 @@ constexpr Binding kBindings[] = {
     {ImGuiKey_D, ImGuiMod_Shift, false, Command::DeleteForever},
     {ImGuiKey_R, ImGuiMod_None, false, Command::Rename},
     {ImGuiKey_A, ImGuiMod_None, false, Command::Create},
+    // Esc solo llega aqui con los campos y el popup cerrados: los dos se lo quedan antes.
+    {ImGuiKey_Escape, ImGuiMod_None, false, Command::ClearFilter},
 };
 
 // Atajos que son un caracter y no una tecla fisica: '~' es Shift+` en un teclado de EE.UU.
@@ -48,6 +50,11 @@ constexpr struct {
     Command command;
 } kCharBindings[] = {
     {L'~', Command::GoHome},
+    // Los tres de la fase 7 son caracteres por lo mismo: ':' es Shift+. en un teclado
+    // espanol y '/' vive en Shift+7, en teclas que no coinciden con las de EE.UU.
+    {L'/', Command::Filter},
+    {L':', Command::Goto},
+    {L'.', Command::ToggleHidden},
 };
 
 }  // namespace

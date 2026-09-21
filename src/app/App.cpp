@@ -45,6 +45,10 @@ constexpr int kPreviewSizeStep = 256;
 // entre refrescos de la misma carpeta, no subir este numero.
 constexpr unsigned long long kWatchDebounceMs = 100;
 
+// Lo que dura un mensaje en la barra antes de borrarse solo. Sin plazo, el error de hace
+// diez navegaciones sigue ahi como si acabara de pasar.
+constexpr unsigned long long kStatusMs = 5000;
+
 constexpr ImGuiWindowFlags kPanelFlags =
     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
@@ -64,6 +68,27 @@ std::wstring UserFolder() {
     const DWORD length = GetEnvironmentVariableW(L"USERPROFILE", buffer, MAX_PATH);
     if (length == 0 || length >= MAX_PATH) return L"C:\\";
     return std::wstring(buffer, length);
+}
+
+// Ordinal y sin distinguir mayusculas, que es como compara nombres el sistema de archivos:
+// al completar una ruta la tilde si importa (otra carpeta), la caja no.
+bool SameText(const wchar_t* a, const wchar_t* b, size_t length) {
+    if (length == 0) return true;
+    return CompareStringOrdinal(a, static_cast<int>(length), b, static_cast<int>(length),
+                                TRUE) == CSTR_EQUAL;
+}
+
+bool StartsWith(const std::wstring& name, const std::wstring& prefix) {
+    return name.size() >= prefix.size() && SameText(name.c_str(), prefix.c_str(), prefix.size());
+}
+
+size_t CommonLength(const std::wstring& a, const std::wstring& b) {
+    const size_t limit = std::min(a.size(), b.size());
+    size_t length = 0;
+    while (length < limit && SameText(a.c_str() + length, b.c_str() + length, 1)) ++length;
+    // Sin cortar un par suplente por la mitad: media pareja no es un caracter.
+    if (length > 0 && IS_HIGH_SURROGATE(a[length - 1])) --length;
+    return length;
 }
 
 int IndexOfName(const std::vector<DirectoryEntry>& entries, const std::wstring& name) {
@@ -149,7 +174,7 @@ int App::Run() {
         if (m_pendingFrames == 0) {
             const ULONGLONG now = GetTickCount64();
             DWORD timeout = INFINITE;
-            for (const unsigned long long due : {m_previewDue, m_refreshDue}) {
+            for (const unsigned long long due : {m_previewDue, m_refreshDue, m_statusUntil}) {
                 if (due == 0) continue;
                 const DWORD wait = due > now ? static_cast<DWORD>(due - now) : 0;
                 if (timeout == INFINITE || wait < timeout) timeout = wait;
@@ -174,6 +199,11 @@ int App::Run() {
             RequestFrames();  // una carpeta en cache se sirve en el acto y hay que pintarla
         }
 
+        if (m_statusUntil != 0 && GetTickCount64() >= m_statusUntil) {
+            SetStatus({});
+            RequestFrames();
+        }
+
         RefreshDirty();
         DrainResults();
 
@@ -192,7 +222,12 @@ void App::RequestFrames() {
 void App::Navigate(std::wstring path) {
     path = NormalizePath(path);
     m_pathUtf8 = path.empty() ? "Unidades" : ToUtf8(path);
-    m_status.clear();
+    SetStatus({});
+    // El filtro es de la carpeta en la que se escribio: arrastrarlo a la siguiente
+    // esconderia media carpeta sin que se vea por que.
+    m_filter.clear();
+    m_filterUtf8.clear();
+    m_freeBytes = 0;  // hasta que llegue el listado de la carpeta nueva no se sabe
 
     const std::optional<std::wstring> parent = ParentPath(path);
     if (parent) {
@@ -273,6 +308,7 @@ void App::SetPane(Pane& pane, std::wstring path, std::wstring select) {
         ApplyListing(pane, cached);
     } else {
         pane.entries.reset();
+        pane.view.reset();
         pane.cursor = 0;
     }
     Request(pane.path);  // ...y a la vez se relee por detras para refrescarla
@@ -280,14 +316,47 @@ void App::SetPane(Pane& pane, std::wstring path, std::wstring select) {
 
 void App::ApplyListing(Pane& pane, const EntryList& entries) {
     pane.entries = entries;
+    RebuildView(pane);
+}
 
-    // El cursor sigue al nombre, no al indice: un refresco con entradas nuevas o
-    // borradas no mueve la seleccion de sitio.
-    const int found = IndexOfName(*entries, pane.select);
-    pane.cursor = found >= 0
-                      ? found
-                      : std::clamp(pane.cursor, 0, std::max(0, static_cast<int>(entries->size()) - 1));
-    if (found < 0 && !entries->empty()) pane.select = (*entries)[static_cast<size_t>(pane.cursor)].name;
+// `view` es lo unico que se pinta y sobre lo que se mueve el cursor. Si no sobra nada que
+// esconder se comparte el mismo shared_ptr y no se copia ni una entrada.
+//
+// ponytail: cuando si sobra, copia las que pasan (12.000 entradas son ~3 ms en el hilo de
+// UI, una vez por listado o por tecla del filtro). Si se notara, un vector de indices, a
+// cambio de tocar todo lo que hoy recibe un vector plano de entradas.
+void App::RebuildView(Pane& pane) {
+    const bool filtered = &pane == &m_current && !m_filter.empty();
+    if (pane.entries && (!m_showHidden || filtered)) {
+        std::vector<DirectoryEntry> visible;
+        visible.reserve(pane.entries->size());
+        for (const DirectoryEntry& entry : *pane.entries) {
+            if (!m_showHidden && entry.IsHidden()) continue;
+            if (filtered && !NameContains(entry.name, m_filter)) continue;
+            visible.push_back(entry);
+        }
+        pane.view = visible.size() == pane.entries->size()
+                        ? pane.entries
+                        : std::make_shared<const std::vector<DirectoryEntry>>(std::move(visible));
+    } else {
+        pane.view = pane.entries;
+    }
+    PlaceCursor(pane);
+}
+
+void App::RebuildViews() {
+    for (Pane* pane : {&m_current, &m_parent, &m_preview}) RebuildView(*pane);
+}
+
+// El cursor sigue al nombre, no al indice: ni un refresco con entradas nuevas o borradas ni
+// un filtro que se estrecha mueven la seleccion de sitio.
+void App::PlaceCursor(Pane& pane) {
+    const std::vector<DirectoryEntry>& rows = Rows(pane.view);
+    const int found = IndexOfName(rows, pane.select);
+    pane.cursor =
+        found >= 0 ? found
+                   : std::clamp(pane.cursor, 0, std::max(0, static_cast<int>(rows.size()) - 1));
+    if (found < 0 && !rows.empty()) pane.select = rows[static_cast<size_t>(pane.cursor)].name;
     pane.scrollToCursor = true;
 }
 
@@ -462,9 +531,10 @@ void App::DrainResults() {
 
         if (listing.error != ERROR_SUCCESS) {
             // Se queda el listado anterior en pantalla: el error va a la barra de estado.
-            if (listing.path == m_current.path) m_status = FormatWin32Error(listing.error);
+            if (listing.path == m_current.path) SetStatus(FormatWin32Error(listing.error));
             continue;
         }
+        if (listing.path == m_current.path) m_freeBytes = listing.freeBytes;
 
         const EntryList entries =
             std::make_shared<const std::vector<DirectoryEntry>>(std::move(listing.entries));
@@ -486,11 +556,11 @@ void App::DrainResults() {
         if (ptr->gen == m_previewGen.load()) m_previewFile = std::move(ptr);
     }
 
-    for (std::string& message : messages) m_status = std::move(message);
+    for (std::string& message : messages) SetStatus(std::move(message));
 }
 
 void App::SetCursor(int cursor) {
-    const std::vector<DirectoryEntry>& rows = Rows(m_current.entries);
+    const std::vector<DirectoryEntry>& rows = Rows(m_current.view);
     cursor = std::clamp(cursor, 0, std::max(0, static_cast<int>(rows.size()) - 1));
     if (cursor == m_current.cursor) return;
 
@@ -502,7 +572,7 @@ void App::SetCursor(int cursor) {
 }
 
 const DirectoryEntry* App::Selected() const {
-    const std::vector<DirectoryEntry>& rows = Rows(m_current.entries);
+    const std::vector<DirectoryEntry>& rows = Rows(m_current.view);
     if (rows.empty()) return nullptr;
     const int cursor = std::clamp(m_current.cursor, 0, static_cast<int>(rows.size()) - 1);
     return &rows[static_cast<size_t>(cursor)];
@@ -511,8 +581,30 @@ const DirectoryEntry* App::Selected() const {
 // En la raiz virtual las filas son unidades: ni se marcan ni se opera sobre ellas.
 bool App::CanEdit() {
     if (!m_current.path.empty()) return true;
-    m_status = "Aqui no: elige una carpeta";
+    SetStatus("Aqui no: elige una carpeta");
     return false;
+}
+
+void App::SetStatus(std::string message) {
+    m_status = std::move(message);
+    m_statusUntil = m_status.empty() ? 0 : GetTickCount64() + kStatusMs;
+}
+
+// Lo que va a la derecha de la barra: tamano y fecha de lo que hay bajo el cursor, y espacio
+// libre de la unidad. Se arma cada frame; son tres concatenaciones cortas.
+std::string App::StatusInfo() const {
+    std::wstring info;
+    if (const DirectoryEntry* entry = Selected()) {
+        if (!entry->IsDirectory()) info += FormatBytes(entry->size) + L"   ";
+        // Una unidad de la raiz virtual no trae fecha, y un FILETIME a cero seria 1601.
+        if (entry->modified.dwLowDateTime != 0 || entry->modified.dwHighDateTime != 0)
+            info += FormatTime(entry->modified);
+    }
+    if (m_freeBytes != 0) {
+        if (!info.empty()) info += L"   ";
+        info += L"libre " + FormatBytes(m_freeBytes);
+    }
+    return ToUtf8(info);
 }
 
 std::vector<std::wstring> App::Targets() const {
@@ -623,6 +715,68 @@ void App::BeginCreate() {
     m_edit.focus = true;
 }
 
+// El filtro se escribe en la barra de estado y se aplica mientras se escribe: lo recoge
+// CommitEdits una vez por frame, como cualquier otra decision del campo.
+void App::BeginFilter() {
+    m_editKind = EditKind::Filter;
+    m_edit = EditField::State{};
+    m_edit.focus = true;
+    m_edit.text = m_filterUtf8;  // reabrirlo continua el filtro que ya hubiera
+}
+
+void App::BeginGoto() {
+    m_editKind = EditKind::Goto;
+    m_edit = EditField::State{};
+    m_edit.focus = true;
+    // Se entra con la carpeta actual escrita: asi Tab completa desde el primer momento.
+    m_edit.text = ToUtf8(m_current.path);
+    if (!m_edit.text.empty() && m_edit.text.back() != '\\') m_edit.text.push_back('\\');
+    m_edit.onTab = [this](std::string& text) { CompletePath(text); };
+}
+
+void App::SetFilter(std::wstring needle) {
+    m_filterUtf8 = ToUtf8(needle);
+    m_filter = std::move(needle);
+    RebuildView(m_current);
+}
+
+// Tab: completa con el prefijo comun de las carpetas que encajan con lo escrito. Solo mira
+// la cache de listados, porque esto corre dentro del callback de ImGui y el hilo de UI no
+// toca el disco: una carpeta que no este se pide y el Tab siguiente ya completa.
+//
+// ponytail: prefijo comun y sin ciclar entre candidatos. Ciclar obliga a guardar la lista y
+// por donde iba; el prefijo no guarda nada y con una sola coincidencia completa el nombre
+// entero, que es el caso normal.
+void App::CompletePath(std::string& text) {
+    const std::wstring typed = FromUtf8(text);
+    const size_t slash = typed.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return;  // sin carpeta que listar no hay que completar
+
+    std::wstring dir = NormalizePath(typed.substr(0, slash + 1));
+    const std::wstring prefix = typed.substr(slash + 1);
+
+    const EntryList entries = m_cache.Get(dir);
+    if (!entries) {
+        m_completePending = std::move(dir);
+        return;
+    }
+
+    std::wstring common;
+    int hits = 0;
+    for (const DirectoryEntry& entry : *entries) {
+        if (!entry.IsDirectory() || !StartsWith(entry.name, prefix)) continue;
+        if (++hits == 1)
+            common = entry.name;
+        else
+            common.resize(CommonLength(common, entry.name));
+    }
+    if (hits == 0 || common.size() < prefix.size()) return;
+
+    std::wstring completed = JoinPath(dir, common);
+    if (hits == 1) completed.push_back(L'\\');  // una sola: se entra y se sigue completando
+    text = ToUtf8(completed);
+}
+
 // Lo que decidieron el campo de texto y el popup, fuera de las llamadas a ImGui: BuildUi solo
 // marca la decision y aqui se ejecuta.
 void App::CommitEdits() {
@@ -635,6 +789,20 @@ void App::CommitEdits() {
         RequestFrames();
     }
 
+    // El filtro no espera al Enter: cada tecla estrecha la lista.
+    if (m_editKind == EditKind::Filter) {
+        std::wstring needle = FromUtf8(m_edit.text);
+        if (needle != m_filter) {
+            SetFilter(std::move(needle));
+            RequestFrames();
+        }
+    }
+    // Lo que el autocompletado no encontro en la cache: se pide aqui, ya fuera de ImGui.
+    if (!m_completePending.empty()) {
+        Request(m_completePending);
+        m_completePending.clear();
+    }
+
     const EditField::Result result = m_edit.result;
     if (result == EditField::Result::None) return;
 
@@ -643,7 +811,17 @@ void App::CommitEdits() {
     m_editKind = EditKind::None;
     m_edit = EditField::State{};
     RequestFrames();
+    // Esc quita el filtro; Enter lo deja fijo (ya esta aplicado) y solo cierra el campo.
+    if (kind == EditKind::Filter) {
+        if (result == EditField::Result::Cancel) SetFilter({});
+        return;
+    }
     if (result == EditField::Result::Cancel || text.empty()) return;
+
+    if (kind == EditKind::Goto) {
+        Navigate(FromUtf8(text));  // si no existe, el error va a la barra como cualquier otro
+        return;
+    }
 
     std::wstring name = FromUtf8(text);
     if (kind != EditKind::Rename) {
@@ -685,7 +863,7 @@ void App::Execute(Command command) {
         SetCursor(0);
         return;
     case Command::MoveBottom:
-        SetCursor(static_cast<int>(Rows(m_current.entries).size()) - 1);
+        SetCursor(static_cast<int>(Rows(m_current.view).size()) - 1);
         return;
     case Command::HalfPageDown:
         SetCursor(m_current.cursor + halfPage);
@@ -716,6 +894,19 @@ void App::Execute(Command command) {
         return;
     case Command::Create:
         BeginCreate();
+        return;
+    case Command::Filter:
+        BeginFilter();
+        return;
+    case Command::ClearFilter:
+        if (!m_filter.empty()) SetFilter({});
+        return;
+    case Command::Goto:
+        BeginGoto();
+        return;
+    case Command::ToggleHidden:
+        m_showHidden = !m_showHidden;
+        RebuildViews();
         return;
     }
 }
@@ -756,20 +947,20 @@ void App::BuildUi() {
     BeginPanel("##parent", ImVec2(x, top), ImVec2(parentWidth, bodyHeight));
     // Las marcas son globales, asi que ensenarlas tambien en la columna padre sale gratis.
     if (m_parent.active)
-        MillerView::DrawEntries(Rows(m_parent.entries), m_parent.cursor, m_parent.scrollToCursor,
+        MillerView::DrawEntries(Rows(m_parent.view), m_parent.cursor, m_parent.scrollToCursor,
                                 m_parent.path, &m_marked);
     ImGui::End();
     x += parentWidth;
 
     BeginPanel("##current", ImVec2(x, top), ImVec2(currentWidth, bodyHeight));
     m_visibleRows = MillerView::DrawEntries(
-        Rows(m_current.entries), m_current.cursor, m_current.scrollToCursor, m_current.path,
+        Rows(m_current.view), m_current.cursor, m_current.scrollToCursor, m_current.path,
         &m_marked, m_editKind == EditKind::Rename ? &m_edit : nullptr);
     ImGui::End();
     x += currentWidth;
 
     BeginPanel("##preview", ImVec2(x, top), ImVec2(previewWidth, bodyHeight));
-    PreviewPane::Draw(Selected(), m_preview.entries, m_previewFile);
+    PreviewPane::Draw(Selected(), m_preview.view, m_previewFile);
     ImGui::End();
 
     BeginPanel("##status", ImVec2(vp->WorkPos.x, top + bodyHeight),
@@ -779,7 +970,7 @@ void App::BuildUi() {
     ImGui::TextUnformatted(m_pathUtf8.c_str());
     ImGui::PopStyleColor();
     ImGui::SameLine();
-    const int count = static_cast<int>(Rows(m_current.entries).size());
+    const int count = static_cast<int>(Rows(m_current.view).size());
     ImGui::TextColored(Theme::kTextDim, "%d/%d", count == 0 ? 0 : m_current.cursor + 1, count);
 
     if (!m_marked.empty()) {
@@ -793,18 +984,48 @@ void App::BuildUi() {
         ImGui::TextColored(Theme::kTextDim, "%s: %zu", m_clipboardCut ? "cortado" : "copiado",
                            m_clipboard.size());
     }
-    if (m_editKind == EditKind::Create) {
+    if (m_showHidden) {
         ImGui::SameLine();
-        ImGui::TextColored(Theme::kAccent, "nuevo:");
+        ImGui::TextColored(Theme::kTextDim, "+ocultos");
+    }
+    if (!m_filter.empty() && m_editKind != EditKind::Filter) {
         ImGui::SameLine();
-        // Acabar el nombre en barra invertida crea una carpeta; lo decide SplitNewName.
-        EditField::Draw(m_edit, ImGui::GetContentRegionAvail().x, "##crear");
+        ImGui::TextColored(Theme::kAccent, "filtro:");
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, Theme::kAccent);
+        ImGui::TextUnformatted(m_filterUtf8.c_str());  // texto del usuario: nunca como formato
+        ImGui::PopStyleColor();
     }
     if (!m_status.empty()) {
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text, Theme::kAccent);
         ImGui::TextUnformatted(m_status.c_str());
         ImGui::PopStyleColor();
+    }
+
+    // El campo se come lo que queda de linea, asi que va el ultimo y se lleva por delante
+    // los datos del elemento: mientras se escribe, lo que importa es lo que se escribe.
+    if (m_editKind != EditKind::None && m_editKind != EditKind::Rename) {
+        const char* label = m_editKind == EditKind::Create   ? "nuevo:"
+                            : m_editKind == EditKind::Filter ? "buscar:"
+                                                             : "ir a:";
+        ImGui::SameLine();
+        ImGui::TextColored(Theme::kAccent, "%s", label);
+        ImGui::SameLine();
+        // Al crear, acabar el nombre en barra hace carpeta; lo decide SplitNewName.
+        EditField::Draw(m_edit, ImGui::GetContentRegionAvail().x, "##campo");
+    } else if (const std::string info = StatusInfo(); !info.empty()) {
+        // A la derecha, con coordenadas de pantalla como los tamanos de la lista, y si no
+        // cabe no se pinta: manda la ruta.
+        const float right = ImGui::GetWindowPos().x + ImGui::GetWindowSize().x -
+                            ImGui::GetStyle().WindowPadding.x -
+                            ImGui::CalcTextSize(info.c_str()).x;
+        if (right > ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x) {
+            ImGui::SetCursorScreenPos(ImVec2(right, ImGui::GetItemRectMin().y));
+            ImGui::PushStyleColor(ImGuiCol_Text, Theme::kTextDim);
+            ImGui::TextUnformatted(info.c_str());
+            ImGui::PopStyleColor();
+        }
     }
     ImGui::End();
 

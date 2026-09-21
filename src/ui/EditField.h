@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <string>
 
 // Campo de texto de una linea para renombrar (sobre la fila) y para crear (en la barra de
@@ -17,6 +18,8 @@ struct State {
     std::string text;         // UTF-8, que es lo que come ImGui
     bool focus = false;       // primer frame: coger el foco (y preseleccionar)
     bool selectStem = false;  // renombrar preselecciona el nombre sin extension; crear no
+    // Tab: quien abre el campo decide que completar. Vacio = Tab no hace nada.
+    std::function<void(std::string&)> onTab;
     Result result = Result::None;
 };
 

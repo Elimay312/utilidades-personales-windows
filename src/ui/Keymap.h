@@ -20,6 +20,10 @@ enum class Command {
     DeleteForever, // sin Papelera, tras confirmar
     Rename,
     Create,      // archivo, o carpeta si el nombre acaba en barra
+    Filter,      // abre el filtro de la columna central
+    ClearFilter, // Esc sin ningun campo abierto
+    Goto,        // abre el campo de escribir una ruta
+    ToggleHidden,
     Quit,
 };
 

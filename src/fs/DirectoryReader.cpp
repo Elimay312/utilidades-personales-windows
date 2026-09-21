@@ -25,6 +25,12 @@ std::wstring TrimTrailingSlashes(const std::wstring& path) {
     return out;
 }
 
+// Lo que devuelve NormalizePath: sin barra final, salvo en la raiz de una unidad, donde
+// quitarla convertiria "C:\" (la raiz) en "C:" (el directorio actual de esa unidad).
+std::wstring Canonical(std::wstring path) {
+    return IsDriveRoot(path) ? path : TrimTrailingSlashes(path);
+}
+
 // La raiz virtual: ninguna API enumera "Este equipo" como carpeta, asi que el listado
 // de unidades se fabrica a mano y desde ahi todo lo demas funciona igual.
 DirectoryListing ReadDrives() {
@@ -84,14 +90,14 @@ std::wstring NormalizePath(const std::wstring& path) {
     wchar_t buffer[MAX_PATH];
     DWORD length = GetFullPathNameW(path.c_str(), MAX_PATH, buffer, nullptr);
     if (length == 0) return path;
-    if (length < MAX_PATH) return std::wstring(buffer, length);
+    if (length < MAX_PATH) return Canonical(std::wstring(buffer, length));
 
     // No cabia: el valor devuelto es el tamano que hace falta, con el nulo incluido.
     std::wstring large(length, L'\0');
     length = GetFullPathNameW(path.c_str(), length, large.data(), nullptr);
     if (length == 0 || length >= large.size()) return path;
     large.resize(length);
-    return large;
+    return Canonical(std::move(large));
 }
 
 // El prefijo \\?\ quita el limite de MAX_PATH, pero a cambio desactiva toda la
@@ -133,6 +139,42 @@ std::wstring LastComponent(const std::wstring& path) {
     const std::wstring trimmed = TrimTrailingSlashes(path);
     const size_t slash = trimmed.find_last_of(L'\\');
     return slash == std::wstring::npos ? trimmed : trimmed.substr(slash + 1);
+}
+
+// FindNLSStringEx es la busqueda de subcadena del propio Windows, y con estas dos banderas
+// ya ignora mayusculas y tildes sin tocar el texto: nada de normalizar a mano ni de guardar
+// una copia "plana" de cada nombre.
+bool NameContains(const std::wstring& name, const std::wstring& needle) {
+    if (needle.empty()) return true;
+    if (name.size() < needle.size()) return false;
+    return FindNLSStringEx(LOCALE_NAME_USER_DEFAULT,
+                           FIND_FROMSTART | LINGUISTIC_IGNORECASE | LINGUISTIC_IGNOREDIACRITIC,
+                           name.c_str(), static_cast<int>(name.size()), needle.c_str(),
+                           static_cast<int>(needle.size()), nullptr, nullptr, nullptr, 0) >= 0;
+}
+
+std::wstring FormatBytes(unsigned long long bytes) {
+    wchar_t text[32];
+    if (!StrFormatByteSizeW(static_cast<LONGLONG>(bytes), text, ARRAYSIZE(text))) return {};
+    return text;
+}
+
+std::wstring FormatTime(const FILETIME& utc) {
+    FILETIME local{};
+    SYSTEMTIME time{};
+    if (!FileTimeToLocalFileTime(&utc, &local) || !FileTimeToSystemTime(&local, &time))
+        return L"-";
+
+    wchar_t date[64];
+    if (!GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, &time, nullptr, date,
+                         ARRAYSIZE(date), nullptr))
+        return L"-";
+
+    wchar_t clock[64];
+    if (!GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &time, nullptr, clock,
+                         ARRAYSIZE(clock)))
+        return date;
+    return std::wstring(date) + L" " + clock;
 }
 
 std::string ToUtf8(const std::wstring& text) {
@@ -187,6 +229,12 @@ DirectoryListing ReadDirectory(std::wstring path) {
     // el cursor por encima para llegar aqui, no hace falta ni entrar.
     DWORD previousErrorMode = 0;
     SetThreadErrorMode(SEM_FAILCRITICALERRORS, &previousErrorMode);
+
+    // Dentro de la ventana sin dialogos y en este hilo: para la barra de estado, pero una
+    // unidad de red lenta puede tardar tanto como el propio listado.
+    ULARGE_INTEGER freeBytes{};
+    if (GetDiskFreeSpaceExW(listing.path.c_str(), &freeBytes, nullptr, nullptr))
+        listing.freeBytes = freeBytes.QuadPart;
 
     WIN32_FIND_DATAW data;
     const HANDLE find =

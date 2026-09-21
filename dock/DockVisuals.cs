@@ -133,20 +133,29 @@ internal sealed unsafe class DockVisuals : IDisposable
     {
         if (_graphics is not null) return _graphics;
 
-        // HARDWARE: DWM tiene que muestrear estas superficies, asi que lo prudente es
-        // que esten en el mismo adaptador que el compositor.
+        // WARP, no HARDWARE. Este device solo sube pixeles a superficies de composicion
+        // y no renderiza ni un fotograma, asi que el adaptador de verdad no aporta nada
+        // y si cuesta. Medido con el mismo binario y una variable de entorno, tres
+        // arranques por lado y mediana:
         //
-        // WARP tambien funciona y gasta menos (working set privado ~13 MB frente a
-        // ~22 MB), porque este device solo sube los pixeles una vez y nunca renderiza
-        // un frame. Llegue a culparlo de que el dock se volviera invisible, pero la
-        // causa real era otra (el z-order, ver DockWindow.EnsureTopmost) y con WARP
-        // nunca se reprobo el bug aislado. Queda como posible ahorro si la memoria
-        // llega a apretar; los dos valores estan muy por debajo del limite de 60 MB.
+        //     HARDWARE   privada 79,6 MB   WS 101,4 MB   70 hilos
+        //     WARP       privada 34,9 MB   WS  88,5 MB   25 hilos
+        //
+        // Los 45 hilos que sobran son del driver de usuario de la GPU, que HARDWARE mapea
+        // entero con su pool de compilacion de shaders para no dibujar nada. La nota que
+        // habia aqui daba 22 contra 13 MB; hoy la diferencia es mucho mayor y no se ha
+        // averiguado por que, pero el numero de arriba esta medido tres veces.
+        //
+        // Esa nota tambien dejaba pendiente reprobar con WARP el fallo del dock
+        // invisible, cuya causa real fue el z-order (ver DockWindow.EnsureTopmost). Hecho:
+        // una captura de la barra con los dos drivers sale igual -mismos iconos, mismo
+        // acrilico, mismos puntitos- y el dock sigue por delante de una ventana
+        // maximizada en el orden Z.
         //
         // BGRA_SUPPORT es obligatorio para poder interoperar con Direct2D.
         PInvoke.D3D11CreateDevice(
             null,
-            D3D_DRIVER_TYPE.D3D_DRIVER_TYPE_HARDWARE,
+            D3D_DRIVER_TYPE.D3D_DRIVER_TYPE_WARP,
             default,
             D3D11_CREATE_DEVICE_FLAG.D3D11_CREATE_DEVICE_BGRA_SUPPORT,
             null,

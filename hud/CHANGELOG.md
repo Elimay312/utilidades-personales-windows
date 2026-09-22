@@ -1,5 +1,26 @@
 # Changelog
 
+## La medición del dispositivo se fue a la isla
+
+**Trabajo en colaboración con la [isla](../isla/README.md)**, y lo interesante es lo que
+NO hizo falta: **los dos procesos no se hablan.** No hay mensaje entre ventanas, ni
+tubería, ni fichero compartido, ni uno depende de que el otro esté vivo. Cada uno le
+pregunta al sistema y por eso coinciden: misma fuente, mismo instante.
+
+Lo que viajó de un proyecto al otro fue **una medición**: que cambiar el dispositivo de
+salida no invalida el endpoint abierto —47 muestras, cero excepciones, 38 % contra el
+100 % real—. La isla tenía el mismo fallo latente en su medidor de pico y en su nivel, y
+por el mismo motivo: los dos se tiraban solo cuando algo lanzaba, y no lanzaba nunca. Su
+onda seguía latiendo con el audio del dispositivo que ya no sonaba.
+
+De paso se saldó allí una deuda que llevaba anotada en su código —el sondeo del volumen a
+2 Hz— con las mismas cuarenta líneas de COM que aquí resultaron obligatorias.
+
+**El HUD no cambia.** La cápsula sigue sin número y sin nombre de dispositivo: quien tiene
+sitio para texto es la isla, y quien tiene las teclas es el HUD. Si solo instalas uno de
+los dos, el HUD sigue haciendo su trabajo entero —capturar las teclas y enseñar el nivel—
+y la isla el suyo.
+
 ## El cuadro negro no era del HUD, y se cerró sin tocar una línea
 
 Apareció un rectángulo negro alrededor de la cápsula, **del tamaño exacto de la ventana** (la

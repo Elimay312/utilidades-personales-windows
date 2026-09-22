@@ -13,6 +13,52 @@ está en el mensaje de su commit.
 
 Todo lo que hay. Falta probarlo en otros equipos y con otras aplicaciones de música.
 
+### El volumen, con nombre y apellidos — y la isla se muda contigo
+
+**Trabajo en colaboración con el [HUD](../hud/README.md).** Los dos proyectos leen el
+mismo volumen del mismo sistema y ninguno sabía decir de qué altavoces estaba hablando.
+Se arregló en los dos, y lo que viajó de uno a otro **no fue código ni una interfaz entre
+procesos: fue una medición.** Está contada entera en `../hud/CHANGELOG.md`.
+
+**Lo que se midió allí y valía aquí igual:** cambiar el dispositivo de salida **no**
+invalida el endpoint de audio que tienes abierto. No falla, se queda contestando del
+dispositivo anterior —47 muestras con otro predeterminado puesto, cero excepciones, y el
+endpoint viejo diciendo 38 % cuando el real era 100 %—. `Audio.cs` tenía escrita la
+suposición contraria desde el primer día, en el medidor de pico y en el nivel: los dos se
+tiraban solo cuando algo lanzaba, y no lanzaba nunca. **La onda seguía latiendo con el
+audio del dispositivo que ya no sonaba.**
+
+**Se salda la deuda del sondeo.** El volumen se leía a 2 Hz y el propio comentario decía
+por qué no podía ir a 8: `GetMasterVolumeLevelScalar` cruza al servicio de audio, y a 8 Hz
+la CPU en reposo subía de 0,42 % a 2,29 % —más que todo lo demás junto—. Ahora avisa COM
+(`IAudioEndpointVolumeCallback`), que no cuesta nada y no llega medio segundo tarde. Eran
+«unas cuarenta líneas de COM que no compensan todavía»; compensaron cuando el HUD
+descubrió que hacían falta de todas formas.
+
+**El aviso dice por dónde sale.** `Volumen 48 % · LG ULTRAWIDE (NVI…`, y cambiar de salida
+tiene su propio aviso, que es el que de verdad faltaba: el volumen que vas a oír a partir
+de ahora es otro. El nombre es **una** propiedad del endpoint que ya estaba abierto y no
+se enumera nada — `SEGURIDAD.md` §3.3 y los dos centinelas que lo comprueban.
+
+**Un fallo que llevaba ahí desde el primer día y que este nombre destapó:** la píldora
+compacta rotula sin marquesina y con `InsetClip`, así que un aviso largo no se recortaba,
+se **cortaba** a mitad de letra. Ahora entra por búsqueda binaria —6 medidas de DirectWrite
+en vez de 43— y acaba en puntos suspensivos.
+
+**Y la isla se muda a la pantalla donde estás trabajando.** `pantalla` vacío en
+`isla.json` pasa a querer decir *sigue al ratón*; con un nombre puesto se queda clavada
+como antes. No hay ajuste nuevo: el que había ya tenía el hueco. Se aprovecha el
+`Rehacer()` que existía para enchufar monitores —destruir y crear la ventana entera—
+porque **medido cuesta 17-29 ms, mediana 21**, y reescala solo: 520x260 al 100 %, 650x325
+al 125 %, 910x455 al 175 %. Histéresis de tres tics (~375 ms) para no mudarse al rozar un
+borde de paso.
+
+Eso destapó lo que ese camino se llevaba por delante sin que importase: **`Rehacer()`
+perdía el pomodoro.** Daba igual cuando solo pasaba al enchufar un monitor; con esto
+pasaría cada vez que cruzas de pantalla con el ratón. Comprobado con capturas en las dos
+pantallas: **24:58 antes de mudarse, 24:56 después** — la misma cuenta, dos segundos más
+tarde, en el otro monitor.
+
 ### M0 — Las reglas, antes del código
 
 - **`SEGURIDAD.md` propio**, escrito antes de la primera línea. No es el del dock con

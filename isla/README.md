@@ -1,8 +1,9 @@
 # Isla
 
-Una isla dinámica para Windows 11. Vive en el borde superior, dice qué está sonando y
-deja pausarlo sin ir a buscar la ventana. También cuenta pomodoros, avisa al enchufar y
-al desenchufar, y enseña el volumen.
+Una isla dinámica para Windows 11. Vive en el borde superior **de la pantalla en la que
+estés trabajando**, dice qué está sonando y deja pausarlo sin ir a buscar la ventana.
+También cuenta pomodoros, avisa al enchufar y al desenchufar, y enseña el volumen —con
+el número y **por qué altavoces está saliendo**.
 
 El referente es la isla de macOS, pero con una diferencia que lo cambia todo: **macOS
 puede permitirse una pastilla negra permanente porque la muesca ya existe** — es espacio
@@ -106,8 +107,16 @@ sesión de audio que encuentra:
 ```
 [isla] \\.\DISPLAY2 al 100%, ventana 520x260 en 1020,0
 [isla] pantallas: \\.\DISPLAY1, \\.\DISPLAY2, \\.\DISPLAY3
+[isla] salida: LG ULTRAWIDE (NVIDIA High Definition Audio)
 [isla] arrancada en 413 ms
 [isla] SpotifyAB.SpotifyMusic_...!Spotify: ただ君に晴れ - ヨルシカ (03:18)
+```
+
+Y cada vez que se muda de pantalla, lo que tardó:
+
+```
+[isla] \\.\DISPLAY1 al 125%, ventana 650x325 en 3195,0
+[isla] rehecha en 21 ms
 ```
 
 ---
@@ -119,14 +128,15 @@ ejecutable. **Admite comentarios y comas finales.** Se recarga sola al guardarlo
 
 ```jsonc
 {
-  // Vacio = la pantalla principal. Los nombres salen en la consola al arrancar.
+  // VACIO = la isla sigue al raton y se muda a la pantalla donde trabajas.
+  // Con un nombre se queda clavada ahi. Los nombres salen en la consola al arrancar.
   // Ojo con las barras: en JSON hay que doblarlas.
-  "pantalla": "\\\\.\\DISPLAY2",
+  "pantalla": "",
 
   "pomodoroMinutos": 25,
 
-  // Windows ya ensena su propio aviso de volumen y NO se puede quitar.
-  // Ponlo en false si te sobra verlo dos veces.
+  // Si un cambio de volumen -- o de dispositivo de salida -- hace asomar la isla.
+  // El aviso dice el numero Y por donde sale: "Volumen 48 % · LG ULTRAWIDE (NVI..."
   "volumenAsoma": true,
 
   // Escribe en HKCU\...\Run, que sale en la pestana Inicio del Administrador
@@ -206,7 +216,7 @@ la onda de 50 ms— solo corren con el panel desplegado.
 | `IslaWindow.cs` | La ventana, su `WndProc`, los estados y los avisos. El fichero grande. |
 | `IslaVisuals.cs` | El árbol de composición: la caja, el titular, la ficha, la onda. |
 | `Medios.cs` | El puente con el canal de medios de Windows. |
-| `Audio.cs` | El medidor de pico y el volumen. Solo lectura. |
+| `Audio.cs` | El pico, el nivel y el nombre del dispositivo de salida. Solo lectura, y por evento. |
 | `Texto.cs` | DirectWrite. Un formato por tamaño físico y peso. |
 | `Config.cs` | `isla.json` y el autoarranque. |
 | `NativeMethods.txt` | **La lista cerrada de P/Invokes.** Si no está aquí, no compila. |
@@ -298,10 +308,11 @@ lee `GetCursorPos` entre muestras antes de culpar al código.
 - **Sin sombra.** Dos intentos: un sprite de molde por debajo del panel tapaba el fondo al
   volverlo translúcido, y un `LayerVisual` con `Shadow` pintó la ventana entera de negro.
   El camino cuando toque es `DropShadow` con `Mask` sobre una superficie con la forma.
-- **El volumen se sondea a 2 Hz**, o sea hasta medio segundo de retraso frente al aviso de
-  Windows. El techo es `IAudioEndpointVolumeCallback`, que avisa por evento.
-- **Una sola isla, en una sola pantalla.** Se elige cuál; no hay una por monitor, igual que
-  un portátil no repite la muesca en cada pantalla.
+- **Una sola isla**, aunque ahora se muda a la pantalla donde estás trabajando. No hay una
+  por monitor, igual que un portátil no repite la muesca en cada pantalla: lo que faltaba
+  no era tener tres, era que la que hay estuviera donde miras.
+- **El nombre del dispositivo se recorta** si no cabe en la píldora: `LG ULTRAWIDE (NVI…`.
+  Cabe lo que cabe, y la parte útil va delante.
 - **Sin forma de salir por interfaz.** Hoy es `Stop-Process`.
 - **Las notificaciones de otras apps** no van a estar: `UserNotificationListener` exige
   identidad de paquete, y aunque no la exigiera está prohibido por la regla 13.

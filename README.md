@@ -13,7 +13,7 @@ reunidas en este repositorio para poder clonarlas y probarlas en otro equipo.
 |---|---|---|
 | [`dock/`](dock/README.md) | Un dock estilo macOS: magnificación, efecto genio, uno por pantalla, miniaturas de ventanas. | En uso diario. Falta pulir rendimiento. |
 | [`hud/`](hud/README.md) | El aviso de volumen, rehecho: cápsula de cristal abajo y centrada, que se transforma en vez de ir y venir. Las teclas son suyas, así que el recuadro gris de Windows no sale. | Funcionando en tres pantallas. Falta usarlo unos días. |
-| [`isla/`](isla/README.md) | Una isla dinámica en el borde superior: qué suena, de quién, cuánto queda, y poder pausarlo. Más pomodoro, batería y volumen. | Funcionando. Falta probarla en otros equipos. |
+| [`isla/`](isla/README.md) | Una isla dinámica en el borde superior de la pantalla en la que estés trabajando: qué suena, de quién, cuánto queda, y poder pausarlo. Más pomodoro, batería y volumen —con el número y por qué altavoces sale. | Funcionando. Falta probarla en otros equipos. |
 | [`lanzador/`](lanzador/README.md) | `Alt+Espacio` y escribes: aplicaciones, ficheros (vía Everything), prefijos web, sitios del sistema y cuentas, ordenados por lo que más abres. | Funcionando. Falta usarlo unos días. |
 | [`proyectos-github/`](proyectos-github/README.md) | **Brújula**: los ~120 repositorios de GitHub ordenados por en cuál conviene trabajar, con el siguiente paso de cada uno guardado para no tener que reconstruirlo. | En construcción: fase 1 de 8. Hay ventana, todavía no hay datos. |
 | [`quicklook/`](quicklook/README.md) | Vista previa con la barra espaciadora: seleccionas un archivo en el Explorador, pulsas espacio, lo ves. Imágenes, PDF, vídeo y audio. | Funcionando. Su README va por detrás del código. |
@@ -37,6 +37,24 @@ separadas.
 Si algún día dos necesitan hablarse, se conectan **entonces** y con la interfaz más
 pequeña que funcione. Adelantar una biblioteca compartida antes de tener el segundo
 proyecto es adivinar qué comparten, y casi siempre se acierta mal.
+
+### Lo que pasó la primera vez que dos se rozaron
+
+El HUD y la isla enseñan los dos el volumen, y a los dos les faltaba lo mismo: decir **de
+qué dispositivo** estaban hablando. Parecía el caso de libro de «estos dos tienen que
+hablarse».
+
+**No hizo falta ninguna interfaz.** No hay mensaje entre ventanas, ni tubería, ni fichero
+compartido, ni uno depende de que el otro esté corriendo. Los dos le preguntan al sistema,
+que es la fuente de verdad de las dos, y por eso coinciden sin coordinarse: mismo dato,
+mismo instante. Si desinstalas uno, el otro sigue entero.
+
+Lo que sí viajó de un proyecto al otro fue **una medición**: que cambiar el dispositivo de
+salida *no* invalida el endpoint de audio que tienes abierto —no falla, se queda
+contestando del anterior—. El HUD lo midió con una sonda, la isla tenía exactamente el
+mismo fallo latente escrito desde su primer día, y arreglarlo allí costó leer el
+`CHANGELOG` del vecino. Eso es lo que estos proyectos comparten de verdad: no código, sino
+lo que a cada uno le costó averiguar.
 
 ## Sobre las reglas de seguridad
 

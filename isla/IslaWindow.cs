@@ -101,6 +101,12 @@ internal sealed unsafe class IslaWindow : IDisposable
     private const uint WM_APP_RECARGAR = 0x8002;
     private const uint WM_APP_REHACER = 0x8003;
 
+    /// <summary>Cambio el nivel de la salida. Lo manda COM, no un temporizador.</summary>
+    private const uint WM_APP_VOLUMEN = 0x8004;
+
+    /// <summary>Cambiaste de altavoces. Tambien lo manda COM.</summary>
+    private const uint WM_APP_DISPOSITIVO = 0x8005;
+
     private const int MA_NOACTIVATE = 3;
 
     private static readonly HWND HWND_TOPMOST = new(-1);
@@ -134,7 +140,12 @@ internal sealed unsafe class IslaWindow : IDisposable
     private DateTime _finPomodoro;
     private bool _hayPomodoro;
     private int _segundoPomodoro = -1;
-    private float _volumenAnterior = -1f;
+    /// <summary>
+    /// El ultimo porcentaje ANUNCIADO, no el ultimo leido. Sirve para no repetir el
+    /// mismo aviso: COM avisa de cualquier cambio del escalar, y dos escalares distintos
+    /// pueden redondear al mismo entero.
+    /// </summary>
+    private int _porcentajeAnterior = -1;
     private int _tic;
     private bool _atajoPomodoro;
     private bool _arrastrando;
@@ -226,8 +237,13 @@ internal sealed unsafe class IslaWindow : IDisposable
         // Medios avisa con WM_APP_MEDIA en cuanto encuentra una sesion de audio.
         Medios.Arrancar(_hwnd, WM_APP_MEDIA);
 
+        // El camino normal: COM avisa en cuanto cambia el nivel o el dispositivo. El tic
+        // de 8 Hz solo queda como red por si el aviso se cae.
+        Audio.Escuchar(_hwnd, WM_APP_VOLUMEN, WM_APP_DISPOSITIVO);
+
         Console.WriteLine($"[isla] {NombreDe(_monitor)} al {_dpi * 100 / 96}%, ventana {_w}x{h} en {_x},{_y}");
         Console.WriteLine($"[isla] pantallas: {string.Join(", ", Monitores().Select(NombreDe))}");
+        Console.WriteLine($"[isla] salida: {Audio.Dispositivo()}");
     }
 
     /// <summary>
@@ -333,6 +349,14 @@ internal sealed unsafe class IslaWindow : IDisposable
 
             case WM_APP_MEDIA:
                 isla?.OnMedios();
+                return new LRESULT(0);
+
+            case WM_APP_VOLUMEN:
+                isla?.OnVolumen();
+                return new LRESULT(0);
+
+            case WM_APP_DISPOSITIVO:
+                isla?.OnDispositivo();
                 return new LRESULT(0);
 
             case WM_LBUTTONDOWN:
@@ -583,6 +607,60 @@ internal sealed unsafe class IslaWindow : IDisposable
         Aplicar();
     }
 
+    /// <summary>
+    /// Cambio el nivel, lo cambie quien lo cambie: el HUD con sus teclas, el mezclador,
+    /// o el mando de unos auriculares. La isla no lo toca nunca, solo lo cuenta.
+    ///
+    /// <para>
+    /// Y lo cuenta <b>con el dispositivo</b>, que es lo que le faltaba: con tres salidas
+    /// enchufadas, un «Volumen 45 %» a secas dice que algo cambio, no donde.
+    /// </para>
+    /// </summary>
+    private void OnVolumen()
+    {
+        if (!_config.VolumenAsoma) return;
+
+        float v = Audio.Volumen();
+        if (v < 0f) return;
+
+        int porcentaje = (int)Math.Round(v * 100);
+        if (porcentaje == _porcentajeAnterior) return;
+        _porcentajeAnterior = porcentaje;
+
+        string donde = Audio.Dispositivo();
+        Avisar(donde.Length == 0 ? $"Volumen   {porcentaje} %" : $"Volumen   {porcentaje} %   ·   {donde}");
+    }
+
+    /// <summary>
+    /// Has cambiado de altavoces. Es el aviso que mas se echaba de menos: el volumen que
+    /// vas a oir a partir de ahora es OTRO, y hasta aqui no habia forma de saberlo.
+    ///
+    /// <para>
+    /// Soltar el endpoint viejo tiene que pasar en este hilo y no en el de COM, y tiene
+    /// que pasar aunque el aviso este apagado: si no, la onda seguiria latiendo con el
+    /// audio del dispositivo anterior.
+    /// </para>
+    /// </summary>
+    private void OnDispositivo()
+    {
+        Audio.OtroDispositivo();
+
+        // El nivel del dispositivo nuevo no tiene por que parecerse al del viejo, asi
+        // que el guardia del aviso de nivel se reinicia: si no, el primer cambio de
+        // volumen despues de cambiar de salida se podria comer.
+        _porcentajeAnterior = -1;
+
+        if (!_config.VolumenAsoma) return;
+
+        string donde = Audio.Dispositivo();
+        if (donde.Length == 0) return;
+
+        float v = Audio.Volumen();
+        Avisar(v < 0f
+            ? $"Salida   {donde}"
+            : $"Salida   {donde}   ·   {(int)Math.Round(v * 100)} %");
+    }
+
     /// <summary>Un aviso que se lee y se va: bateria, volumen, fin de pomodoro.</summary>
     private void Avisar(string texto)
     {
@@ -658,23 +736,15 @@ internal sealed unsafe class IslaWindow : IDisposable
             }
         }
 
-        // El volumen, a 2 Hz y no a 8.
-        //
-        // GetMasterVolumeLevelScalar no es leer un campo: cruza al servicio de audio,
-        // asi que cada llamada es una ida y vuelta entre procesos. Medido, a 8 Hz subia
-        // la CPU en reposo de 0.42% a 2.29% -- mas que todo lo demas junto.
-        //
-        // ponytail: sondeo a 2 Hz, o sea hasta medio segundo de retraso frente al aviso
-        // de Windows. El techo es IAudioEndpointVolumeCallback, que avisa por evento y
-        // no cuesta nada; son unas cuarenta lineas de COM y no compensan todavia.
-        // La primera lectura no avisa, que si no la isla saltaria nada mas arrancar.
-        float v = (++_tic & 3) == 0 ? Audio.Volumen() : -1f;
-        if (v >= 0f)
-        {
-            if (_config.VolumenAsoma && _volumenAnterior >= 0f && Math.Abs(v - _volumenAnterior) > 0.005f)
-                Avisar($"Volumen   {(int)Math.Round(v * 100)} %");
-            _volumenAnterior = v;
-        }
+        // Aqui habia un sondeo del volumen a 2 Hz con su propia deuda anotada: hasta medio
+        // segundo de retraso, y a 8 Hz no se podia poner porque GetMasterVolumeLevelScalar
+        // cruza al servicio de audio y subia la CPU en reposo de 0,42 % a 2,29 %. La deuda
+        // esta saldada: ahora avisa COM (Audio.Escuchar) y esto solo cuenta el tic.
+        _tic++;
+
+        // La red de seguridad, una vez por segundo. Si el aviso de nivel se cayo -- que
+        // pasa cuando falla algo de COM, no al cambiar de altavoces -- se vuelve a poner.
+        if ((_tic & 7) == 0 && !Audio.Escuchando) Audio.Escuchar(_hwnd, WM_APP_VOLUMEN, WM_APP_DISPOSITIVO);
 
         if (_regionCuando != default && ahora > _regionCuando)
         {
@@ -1021,6 +1091,10 @@ internal sealed unsafe class IslaWindow : IDisposable
         PInvoke.KillTimer(_hwnd, TimerOnda);
         if (_atajo) PInvoke.UnregisterHotKey(_hwnd, HotkeyId);
         if (_atajoPomodoro) PInvoke.UnregisterHotKey(_hwnd, AtajoPomodoro);
+        // Antes de destruir la ventana: un CCW registrado apuntando a un HWND que ya no
+        // existe es pedirle a COM que le mande mensajes a un muerto. Y esto se llama
+        // tambien al rehacerse, no solo al cerrar.
+        Audio.Callar();
         _visuals.Dispose();
         if (!_hwnd.IsNull) PInvoke.DestroyWindow(_hwnd);
         _instancia = null;

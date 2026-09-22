@@ -586,7 +586,43 @@ internal sealed unsafe class IslaVisuals : IDisposable
 
         if (a.Texto == _textoCompacto) return;
         _textoCompacto = a.Texto;
-        Rotular(_rotCompacto, a.Texto, CompTextoPx, true, 0.95f);
+        Rotular(_rotCompacto, Cabe(a.Texto, _cajaCompacta.Size.X, S(CompTextoPx)), CompTextoPx, true, 0.95f);
+    }
+
+    /// <summary>
+    /// Lo que cabe de <paramref name="s"/> en <paramref name="ancho"/>, con puntos
+    /// suspensivos si sobra.
+    ///
+    /// <para>
+    /// La caja compacta lleva <c>InsetClip</c> y aqui no hay marquesina -- la que pasea
+    /// el titulo solo corre en el estado abierto --, asi que sin esto un aviso largo no
+    /// se recorta: se <b>corta</b>, a mitad de letra y sin que se note que falta algo.
+    /// Se vio al estrenar el nombre del dispositivo: «LG ULTRAWIDE (NVIDI». Le pasaba
+    /// igual a cualquier aviso largo desde el primer dia.
+    /// </para>
+    ///
+    /// <para>
+    /// Busqueda binaria y no letra a letra: medir con DirectWrite cruza a la fuente y
+    /// esto corre en el hilo de UI. Para 43 caracteres son 6 medidas en vez de 43.
+    /// </para>
+    /// </summary>
+    private static string Cabe(string s, float ancho, float px)
+    {
+        if (string.IsNullOrEmpty(s) || ancho <= 0f) return s;
+        if (Texto.Medir(s, px, grueso: true).X <= ancho) return s;
+
+        const string Puntos = "…";
+
+        // Invariante: bajo siempre cabe, alto+1 nunca. Se busca el ultimo que cabe.
+        int bajo = 0, alto = s.Length - 1;
+        while (bajo < alto)
+        {
+            int medio = (bajo + alto + 1) / 2;
+            if (Texto.Medir(s[..medio] + Puntos, px, grueso: true).X <= ancho) bajo = medio;
+            else alto = medio - 1;
+        }
+
+        return bajo == 0 ? Puntos : s[..bajo].TrimEnd() + Puntos;
     }
 
     private SpriteVisual Hueco(Vector2 en, ContainerVisual padre)

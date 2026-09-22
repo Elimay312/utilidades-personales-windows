@@ -140,3 +140,21 @@ GetAncestor
 GetWindowThreadProcessId
 OpenProcess
 QueryFullProcessImageNameW
+
+// --- que COM avise del nivel y del dispositivo, en vez de preguntar ---
+// No abren nada: CIERRAN el sondeo de 2 Hz que este proyecto tenia anotado como deuda.
+// Los dos callbacks llegan en un hilo del pool y lo unico que hacen es mandarle un
+// mensaje a NUESTRA ventana con PostMessage. De IMMNotificationClient solo se usa
+// OnDefaultDeviceChanged; los otros cuatro metodos estan vacios (SEGURIDAD.md 3.3).
+IAudioEndpointVolumeCallback
+AUDIO_VOLUME_NOTIFICATION_DATA
+IMMNotificationClient
+
+// --- el nombre del dispositivo de salida (SEGURIDAD.md 3.3) ---
+// UNA propiedad, la que ensena el propio control de volumen de Windows, sobre el
+// endpoint predeterminado que ya estaba abierto. NO se enumera: sin EnumAudioEndpoints
+// no hay lista de dispositivos, que es la mitad del corte que sostiene la enmienda.
+IPropertyStore
+PKEY_Device_FriendlyName
+PropVariantClear
+STGM

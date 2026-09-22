@@ -2,13 +2,26 @@
 
 #include <d2d1.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <string_view>
 
 namespace agenda {
 
+// The views a snapshot can render. Named once: the flag parser and the renderer both ask here,
+// and a view added to one but not the other is a flag that is refused before it is used.
+inline constexpr std::wstring_view kSnapshotViews[] = {
+    L"popup",         // the panel as it opens
+    L"popup-creado",  // and a moment after Enter, with the notice up and the card still rising
+};
+
+inline bool KnowsSnapshotView(std::wstring_view view) {
+  return std::find(std::begin(kSnapshotViews), std::end(kSnapshotViews), view) !=
+         std::end(kSnapshotViews);
+}
+
 // Renders a view offscreen to a PNG with Direct2D over a WIC bitmap, which is how CLAUDE.md
-// says to review the design: no desktop screenshots. Only "popup" exists so far.
+// says to review the design: no desktop screenshots. The views are listed above.
 // `panel` is the panel size in DIP to render; a zero size means the one the design was drawn
 // at, which is what the committed PNGs use so they never depend on the machine. `text` is what
 // the input should already have typed in it, which is the only way to see the live preview in

@@ -1,0 +1,291 @@
+#include <catch2/catch_test_macros.hpp>
+
+#include <chrono>
+#include <filesystem>
+#include <string>
+
+#include "data/db.h"
+#include "data/model.h"
+#include "data/schema.h"
+#include "data/store.h"
+
+using namespace agenda;
+
+namespace {
+
+Date Day(int year, unsigned month, unsigned day) {
+  return Date{std::chrono::year{year}, std::chrono::month{month}, std::chrono::day{day}};
+}
+
+// Every test writes through the queue, so every test has to wait for it. Wrapped up here so a
+// forgotten Drain() cannot turn into a test that passes by accident.
+struct Open {
+  Store store;
+  Open() { REQUIRE(store.OpenMemory()); }
+  Store* operator->() { return &store; }
+  void settle() { store.Drain(); }
+};
+
+Draft EventAt(std::wstring title, Date day, int startMin, int endMin) {
+  Draft draft;
+  draft.isTask = false;
+  draft.title = std::move(title);
+  draft.day = day;
+  draft.startMin = startMin;
+  draft.endMin = endMin;
+  return draft;
+}
+
+int CountRows(Db& db, const char* sql) {
+  std::optional<Stmt> stmt = db.Prepare(sql);
+  REQUIRE(stmt.has_value());
+  REQUIRE(stmt->Step());
+  return static_cast<int>(stmt->Int(0));
+}
+
+// A file of its own per run, so two runs cannot collide and a crashed one cannot poison the
+// next. The user's own agenda lives in %LOCALAPPDATA% and is never opened by a test.
+std::filesystem::path ScratchFile() {
+  const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+  return std::filesystem::temp_directory_path() /
+         ("agenda-test-" + std::to_string(stamp) + ".db");
+}
+
+void Erase(const std::filesystem::path& file) {
+  std::error_code ignored;
+  for (const char* suffix : {"", "-wal", "-shm"}) {
+    std::filesystem::remove(file.wstring() + ToWide(suffix), ignored);
+  }
+}
+
+}  // namespace
+
+TEST_CASE("a day key survives the round trip") {
+  CHECK(DayKey(Day(2026, 9, 23)) == "2026-09-23");
+  CHECK(DayKey(Day(2026, 12, 1)) == "2026-12-01");
+  CHECK(ParseDayKey("2026-09-23") == Day(2026, 9, 23));
+  CHECK_FALSE(ParseDayKey("2026-9-23").has_value());
+  CHECK_FALSE(ParseDayKey("2026-02-30").has_value());
+  CHECK_FALSE(ParseDayKey("").has_value());
+}
+
+TEST_CASE("migrating stamps the version and is idempotent") {
+  Db db;
+  REQUIRE(db.OpenMemory());
+  REQUIRE(db.UserVersion() == 0);
+
+  REQUIRE(Migrate(db));
+  CHECK(db.UserVersion() == kSchemaVersion);
+
+  // Running it again on a database already up to date does nothing and is not an error.
+  REQUIRE(Migrate(db));
+  CHECK(db.UserVersion() == kSchemaVersion);
+
+  // v1 seeds somewhere for an event to hang from before there is a Google account.
+  CHECK(CountRows(db, "SELECT COUNT(*) FROM calendars") == 2);
+  CHECK(CountRows(db, "SELECT COUNT(*) FROM sync_state") == 2);
+}
+
+TEST_CASE("a cache from a newer build is refused instead of converted") {
+  Db db;
+  REQUIRE(db.OpenMemory());
+  REQUIRE(db.SetUserVersion(kSchemaVersion + 1));
+
+  CHECK_FALSE(Migrate(db));
+  // And it is left exactly as it was found: converting it backwards blind would lose whatever
+  // the newer build wrote.
+  CHECK(db.UserVersion() == kSchemaVersion + 1);
+}
+
+TEST_CASE("an event created shows up in its day and puts a dot on it") {
+  Open store;
+  const Date day = Day(2026, 9, 23);
+
+  const DayItem shown = store->Create(EventAt(L"Dentista", day, 17 * 60, 18 * 60));
+  CHECK_FALSE(shown.uid.empty());
+  CHECK(shown.title == L"Dentista");
+  CHECK(shown.startMin == 17 * 60);
+  CHECK(shown.color != 0);  // the card has to paint right on the first frame
+  store.settle();
+
+  const std::vector<DayItem> items = store->ItemsForDay(day, false);
+  REQUIRE(items.size() == 1);
+  CHECK(items[0].uid == shown.uid);
+  CHECK(items[0].title == L"Dentista");
+  CHECK(items[0].startMin == 17 * 60);
+  CHECK(items[0].endMin == 18 * 60);
+  CHECK_FALSE(items[0].isTask);
+
+  CHECK(store->ItemsForDay(Day(2026, 9, 22), false).empty());
+
+  const std::vector<DayDot> dots = store->DotsForRange(Day(2026, 9, 1), Day(2026, 9, 30));
+  REQUIRE(dots.size() == 1);
+  CHECK(dots[0].date == day);
+  CHECK(dots[0].color == shown.color);
+}
+
+TEST_CASE("an event over two days appears on both, with a clock only on the first") {
+  Open store;
+  Draft draft = EventAt(L"Viaje", Day(2026, 9, 23), 9 * 60, 18 * 60);
+  draft.endDay = Day(2026, 9, 25);
+  store->Create(draft);
+  store.settle();
+
+  const std::vector<DayItem> first = store->ItemsForDay(Day(2026, 9, 23), false);
+  REQUIRE(first.size() == 1);
+  CHECK(first[0].startMin == 9 * 60);
+
+  const std::vector<DayItem> middle = store->ItemsForDay(Day(2026, 9, 24), false);
+  REQUIRE(middle.size() == 1);
+  CHECK_FALSE(middle[0].startMin.has_value());
+
+  REQUIRE(store->ItemsForDay(Day(2026, 9, 25), false).size() == 1);
+  CHECK(store->ItemsForDay(Day(2026, 9, 26), false).empty());
+
+  CHECK(store->DotsForRange(Day(2026, 9, 1), Day(2026, 9, 30)).size() == 3);
+}
+
+TEST_CASE("the day reads as a shape: all day, then the clock, then what has no hour") {
+  Open store;
+  const Date day = Day(2026, 9, 23);
+
+  store->Create(EventAt(L"Tarde", day, 15 * 60, 16 * 60));
+  store->Create(EventAt(L"Manana", day, 9 * 60, 10 * 60));
+  Draft allDay = EventAt(L"Festivo", day, 0, 0);
+  allDay.startMin.reset();
+  allDay.endMin.reset();
+  store->Create(allDay);
+  Draft chore;
+  chore.isTask = true;
+  chore.title = L"Sacar la basura";
+  chore.day = day;
+  store->Create(chore);
+  store.settle();
+
+  const std::vector<DayItem> items = store->ItemsForDay(day, false);
+  REQUIRE(items.size() == 4);
+  CHECK(items[0].title == L"Festivo");
+  CHECK(items[1].title == L"Manana");
+  CHECK(items[2].title == L"Tarde");
+  // Last, and that is the point: the popup shows two cards, so a to-do with no hour must not
+  // be able to push the day's meetings off the panel.
+  CHECK(items[3].title == L"Sacar la basura");
+}
+
+TEST_CASE("a task carries its check and keeps its place when it is ticked") {
+  Open store;
+  const Date day = Day(2026, 9, 23);
+
+  Draft draft;
+  draft.isTask = true;
+  draft.title = L"Pagar luz";
+  draft.day = day;
+  const DayItem created = store->Create(draft);
+  store.settle();
+
+  std::vector<DayItem> items = store->ItemsForDay(day, false);
+  REQUIRE(items.size() == 1);
+  CHECK(items[0].isTask);
+  CHECK_FALSE(items[0].done);
+  CHECK_FALSE(items[0].startMin.has_value());
+
+  store->SetDone(created.uid, true);
+  store.settle();
+
+  items = store->ItemsForDay(day, false);
+  // Ticked, not gone: the text is struck through, which only works if the row is still there.
+  REQUIRE(items.size() == 1);
+  CHECK(items[0].done);
+
+  store->SetDone(created.uid, false);
+  store.settle();
+  CHECK_FALSE(store->ItemsForDay(day, false)[0].done);
+}
+
+TEST_CASE("a task with no date at all lands on today instead of vanishing") {
+  Open store;
+  Draft draft;
+  draft.isTask = true;
+  draft.title = L"Comprar leche";
+  store->Create(draft);
+  store.settle();
+
+  const Date today = Day(2026, 9, 23);
+  CHECK(store->ItemsForDay(today, false).empty());
+  REQUIRE(store->ItemsForDay(today, true).size() == 1);
+  CHECK(store->ItemsForDay(today, true)[0].title == L"Comprar leche");
+
+  // It has no date, so it earns no dot on any day.
+  CHECK(store->DotsForRange(Day(2026, 9, 1), Day(2026, 9, 30)).empty());
+}
+
+TEST_CASE("creating queues one operation and undoing takes both away") {
+  Open store;
+  const DayItem created =
+      store->Create(EventAt(L"Dentista", Day(2026, 9, 23), 17 * 60, 18 * 60));
+  store.settle();
+
+  CHECK(store->ItemsForDay(Day(2026, 9, 23), false).size() == 1);
+  // The row and its operation were written together, which is the whole point of doing both
+  // inside one transaction.
+  CHECK(store->PendingOpCount() == 1);
+
+  store->Remove(created.uid, /*isTask=*/false);
+  store.settle();
+
+  CHECK(store->ItemsForDay(Day(2026, 9, 23), false).empty());
+  CHECK(store->DotsForRange(Day(2026, 9, 1), Day(2026, 9, 30)).empty());
+  // Nothing has been sent yet, so undoing leaves no tombstone and no orphan operation.
+  CHECK(store->PendingOpCount() == 0);
+  CHECK(store->TakeFailures().empty());
+}
+
+TEST_CASE("the recurrence is kept but the event only shows on the day it starts") {
+  Open store;
+  Draft draft = EventAt(L"Gym", Day(2026, 9, 28), 7 * 60, 8 * 60);
+  draft.recurrence = L"RRULE:FREQ=WEEKLY;BYDAY=MO";
+  store->Create(draft);
+  store.settle();
+
+  const std::vector<DayItem> items = store->ItemsForDay(Day(2026, 9, 28), false);
+  REQUIRE(items.size() == 1);
+  CHECK(items[0].repeats);
+
+  // Phase 4 does not expand occurrences: the following Monday is still empty.
+  CHECK(store->ItemsForDay(Day(2026, 10, 5), false).empty());
+}
+
+TEST_CASE("what was created is still there after the app is closed and opened again") {
+  // The acceptance test of this phase, minus the window: write it, let go of the file the way
+  // quitting does, open it again from scratch and look.
+  const std::filesystem::path file = ScratchFile();
+  Erase(file);
+  const Date day = Day(2026, 9, 23);
+  std::wstring uid;
+
+  {
+    Store store;
+    REQUIRE(store.Open(file));
+    uid = store.Create(EventAt(L"Dentista", day, 17 * 60, 18 * 60)).uid;
+    store.Drain();
+  }
+
+  {
+    Store store;
+    REQUIRE(store.Open(file));
+    // Opening an existing cache migrates nothing and seeds nothing twice.
+    CHECK(store.PendingOpCount() == 1);
+
+    const std::vector<DayItem> items = store.ItemsForDay(day, false);
+    REQUIRE(items.size() == 1);
+    CHECK(items[0].uid == uid);
+    CHECK(items[0].title == L"Dentista");
+    CHECK(items[0].startMin == 17 * 60);
+
+    const std::vector<DayDot> dots = store.DotsForRange(Day(2026, 9, 1), Day(2026, 9, 30));
+    REQUIRE(dots.size() == 1);
+    CHECK(dots[0].date == day);
+  }
+
+  Erase(file);
+}

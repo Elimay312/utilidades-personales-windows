@@ -13,6 +13,7 @@
 #include "core/config.h"
 #include "core/log.h"
 #include "core/paths.h"
+#include "data/store.h"
 #include "ui/popup_window.h"
 #include "ui/snapshot.h"
 
@@ -27,6 +28,7 @@ constexpr wchar_t kAppClassName[] = L"AgendaApp";
 struct App {
   PopupWindow popup;
   Tray tray;
+  Store store;
 };
 
 // Shortcut names and config keys are ASCII, so widening them is this and nothing more.
@@ -192,6 +194,20 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                                          static_cast<float>(options.panelHeight)});
   if (!app.popup.Create(instance, monitor, timing, options.theme)) return 2;
   app.tray.Add(instance, hwnd);
+
+  // The cache opens before the hotkey is even registered, so the first time the popup appears
+  // it already has a day to paint. Its worker posts to the popup's window, which is the one
+  // that has to redraw.
+  if (app.store.Open(AppDataDir() / L"agenda.db")) {
+    app.store.SetNotifyWindow(app.popup.hwnd());
+    app.popup.SetStore(&app.store);
+  } else {
+    // Said out loud and not swallowed: a popup that quietly forgets everything typed into it
+    // is worse than one that admits it cannot save.
+    app.tray.Warn(L"Agenda: no se pudo abrir la agenda",
+                  L"Lo que escribas no se guardará. El motivo está en el log, dentro de "
+                  L"%LOCALAPPDATA%\\Agenda\\logs.");
+  }
 
   std::optional<Hotkey> hotkey = ParseHotkey(shortcut);
   if (!hotkey) {

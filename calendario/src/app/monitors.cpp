@@ -3,6 +3,10 @@
 #include <format>
 #include <utility>
 
+// For the list of snapshot views, which is written down once so the flag cannot accept a view
+// the renderer does not know.
+#include "ui/snapshot.h"
+
 namespace agenda {
 namespace {
 
@@ -76,8 +80,10 @@ Options ParseOptions(int argc, const wchar_t* const* argv, std::wstring_view env
       options.monitor = *parsed;
       fromCommandLine = true;
     } else if (Flag(arg, L"--render-snapshot=", value)) {
-      if (value != L"popup") {
-        options.error = std::format(L"--render-snapshot only knows 'popup', got '{}'", value);
+      if (!KnowsSnapshotView(value)) {
+        options.error =
+            std::format(L"--render-snapshot only knows 'popup' and 'popup-creado', got '{}'",
+                        value);
         return options;
       }
       options.snapshotView = value;

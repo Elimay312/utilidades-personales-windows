@@ -8,9 +8,11 @@
 #include <dxgi1_2.h>
 #include <wrl/client.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
 
+#include "data/store.h"
 #include "ui/paint.h"
 #include "ui/popup_view.h"
 #include "ui/theme.h"
@@ -35,6 +37,11 @@ class PopupWindow {
   // Forces the panel size in DIP instead of working it out from the monitor. Only --panel
   // sets this, so a size can be judged on a screen that would not produce it.
   void SetPanelOverride(D2D1_SIZE_F panel) { panelOverride_ = panel; }
+
+  // Where the popup reads its day from and sends its writes. Owned by the app, not by the
+  // window, because phase 5 hangs the Google sync off the same store.
+  void SetStore(Store* store) { store_ = store; }
+
   void Toggle();
   void Show();
   void Hide();
@@ -61,6 +68,16 @@ class PopupWindow {
   // There is no WM_PAINT on a window with no redirection bitmap, so anything that changes the
   // model redraws by hand.
   void Invalidate();
+  // Rereads the day and the month dots. Called when the day or the month changes and when the
+  // worker says it finished something; never in the middle of drawing.
+  void Reload();
+  // Enter: turns whatever the preview understood into a row. Optimistic -- the card is on
+  // screen before the worker has written anything.
+  bool CreateFromInput();
+  void UndoCreate();
+  void ShowToast(std::wstring text);
+  void HideToast();
+  bool ToggleCardAt(float x, float y);
   bool Tick(float ms);  // advances hover, focus and the month slide; true while still moving
   void StartTicking();
   void RestartCaret();
@@ -102,6 +119,18 @@ class PopupWindow {
   bool ticking_ = false;
   bool inputFocused_ = true;
   bool caretVisible_ = true;
+  bool toastOn_ = false;
+  bool strikeOn_ = false;
+
+  // What Ctrl+Z would take back, and the line it would put back in the capsule. Empty once the
+  // notice is gone: undo is offered while it is on screen and not a second longer.
+  struct Undone {
+    std::wstring uid;
+    bool isTask = false;
+    std::wstring typed;
+  };
+  std::optional<Undone> undo_;
+  Store* store_ = nullptr;
   ULONGLONG lastTick_ = 0;
   std::wstring parsed_;  // the text the preview in the model was built from
 

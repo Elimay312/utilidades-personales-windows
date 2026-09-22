@@ -3,10 +3,12 @@
 #include <d2d1.h>
 #include <dwrite.h>
 
+#include <vector>
+
+#include "data/model.h"
 #include "ui/layout.h"
 #include "ui/paint.h"
 #include "ui/popup_view.h"
-#include "ui/sample_data.h"
 
 namespace agenda {
 
@@ -16,16 +18,25 @@ namespace agenda {
 // `layout` carries every measurement, already scaled to the panel this monitor got.
 
 // One month of six by seven cells. `hover` is the 42 entry fade array, or null for the month
-// that is sliding away. `offsetX` shifts the whole grid during that slide.
+// that is sliding away. `offsetX` shifts the whole grid during that slide. `dots` covers both
+// months while one is sliding, so it is searched by date and not indexed by cell.
 void DrawMonthGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush, Month month,
-                   Date today, Date selected, const float* hover, float offsetX);
+                   Date today, Date selected, const std::vector<DayDot>& dots,
+                   const float* hover, float offsetX);
 
-// A card: a bar of calendar colour down the left, the time in secondary and the title in
-// primary. `more` above zero adds the "+N" counter that says the day has more than fits.
+// A card: a bar of calendar colour down the left, then either the time (an event) or a tick
+// box (a task), and the title in primary. `more` above zero adds the "+N" counter that says
+// the day has more than fits. `strike` walks nought to one as a finished task's line draws
+// itself across the title.
 void DrawEventCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush,
-                   const D2D1_RECT_F& rect, const SampleEvent& event, int more);
+                   const D2D1_RECT_F& rect, const DayItem& item, int more, float strike);
+
+// The discreet notice that says something was created and can still be undone. It takes the
+// preview card's rectangle, which is empty the moment after Enter cleared the capsule.
+void DrawToast(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+               const PanelLayout& layout, ID2D1SolidColorBrush* brush, const PopupModel& model);
 
 // The capsule: placeholder, text, selection, IME composition and caret. `accent` is a second
 // brush, and not the scratch one, because the recognised spans hand it to DirectWrite as a

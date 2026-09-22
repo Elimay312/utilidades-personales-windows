@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <utility>
+#include <vector>
 
 #include "core/dates.h"
 #include "core/hr.h"
@@ -22,6 +24,7 @@ constexpr wchar_t kClassName[] = L"AgendaPopup";
 constexpr UINT_PTR kHideTimer = 1;
 constexpr UINT_PTR kAnimTimer = 2;
 constexpr UINT_PTR kCaretTimer = 3;
+constexpr UINT_PTR kToastTimer = 4;
 constexpr UINT kTickMs = 16;  // one frame at 60 Hz, which is all the content fades need
 
 Theme ResolveTheme(std::wstring_view override) {
@@ -348,6 +351,13 @@ void PopupWindow::Show() {
 
   model_ = MakeModel(TodayLocal());
   model_.focus = 1.0f;
+  // Opening closes the undo window: the notice lives inside the panel, so once the panel is
+  // gone there is nothing left offering to take anything back.
+  undo_.reset();
+  toastOn_ = false;
+  strikeOn_ = false;
+  KillTimer(hwnd_, kToastTimer);
+  Reload();
   hoverDay_ = -1;
   hoverPrev_ = false;
   hoverNext_ = false;
@@ -472,6 +482,22 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       Invalidate();
       break;
 
+    case kStoreChangedMessage: {
+      // The worker finished something. It sends no payload -- a pointer allocated on that
+      // thread would have to be freed on this one -- so the answer is always to reread.
+      if (store_ != nullptr) {
+        for (const Store::Failure& failure : store_->TakeFailures()) {
+          // Optimism undone: whatever was put on screen before the write was not written.
+          LogError(L"popup: {}", failure.message);
+          if (undo_ && undo_->uid == failure.uid) undo_.reset();
+          ShowToast(failure.message);
+        }
+        Reload();
+        Invalidate();
+      }
+      return 0;
+    }
+
     case WM_ACTIVATE:
       if (LOWORD(wparam) == WA_INACTIVE) {
         Hide();
@@ -497,6 +523,11 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
         }
         return 0;
       }
+      if (wparam == kToastTimer) {
+        KillTimer(hwnd_, kToastTimer);
+        HideToast();
+        return 0;
+      }
       if (wparam == kCaretTimer) {
         caretVisible_ = !caretVisible_;
         model_.caretOn = inputFocused_ && caretVisible_;
@@ -520,6 +551,149 @@ void PopupWindow::Invalidate() {
     model_.preview = nlp::ParseInput(parsed_, nlp::Now{TodayLocal(), NowMinuteLocal()});
   }
   if (swapChain_) Render();
+}
+
+void PopupWindow::Reload() {
+  if (store_ == nullptr || !store_->IsOpen()) return;
+  // Today's list is also where the tasks with no date at all land, so nothing that was created
+  // is left with nowhere to be seen.
+  model_.day = store_->ItemsForDay(model_.selected, model_.selected == model_.today);
+
+  // Mid-slide two months are on screen, so the dots have to cover both grids.
+  Month from = model_.month;
+  Month to = model_.month;
+  if (model_.slideDir != 0) {
+    from = (std::min)(from, model_.slideFrom);
+    to = (std::max)(to, model_.slideFrom);
+  }
+  model_.dots = store_->DotsForRange(GridStart(from), AddDays(GridStart(to), kGridCells - 1));
+}
+
+bool PopupWindow::CreateFromInput() {
+  if (store_ == nullptr || !store_->IsOpen()) return false;
+  const nlp::ParsedInput& understood = model_.preview;
+  // A line with no title is a date and nothing else. There is nothing to create and nothing to
+  // say about it: Enter simply does nothing, the way it did before this phase.
+  if (understood.title.empty()) return false;
+
+  Draft draft;
+  draft.isTask = understood.kind == nlp::Kind::Task;
+  draft.title = understood.title;
+  if (understood.recurrence) draft.recurrence = *understood.recurrence;
+  if (understood.start) {
+    draft.day = understood.start->date;
+    if (understood.start->minuteOfDay != nlp::kNoTime) draft.startMin = understood.start->minuteOfDay;
+  }
+  if (understood.end) {
+    draft.endDay = understood.end->date;
+    if (understood.end->minuteOfDay != nlp::kNoTime) draft.endMin = understood.end->minuteOfDay;
+  }
+
+  const std::wstring typed = model_.input.text();
+  const DayItem created = store_->Create(draft);
+
+  // Jump to the day it landed on first: SelectDay rereads the list, and doing it afterwards
+  // would wipe the card that has not been written yet.
+  if (draft.day && *draft.day != model_.selected) SelectDay(*draft.day);
+
+  const bool onScreen = draft.day ? (*draft.day == model_.selected)
+                                  : (model_.selected == model_.today);
+  if (onScreen) {
+    const auto where = std::lower_bound(model_.day.begin(), model_.day.end(), created,
+                                        EarlierThan);
+    model_.day.insert(where, created);
+  }
+  if (draft.day) {
+    bool already = false;
+    for (const DayDot& dot : model_.dots) already = already || dot.date == *draft.day;
+    if (!already) model_.dots.push_back(DayDot{*draft.day, created.color});
+  }
+
+  model_.enterUid = created.uid;
+  model_.enterT = 0.0f;
+  undo_ = Undone{created.uid, created.isTask, typed};
+  ShowToast(L"Creado · Deshacer");
+
+  model_.input.Clear();
+  RestartCaret();
+  StartTicking();
+  Invalidate();
+  return true;
+}
+
+void PopupWindow::UndoCreate() {
+  if (!undo_ || store_ == nullptr) return;
+  const Undone taken = *undo_;
+  store_->Remove(taken.uid, taken.isTask);
+
+  std::erase_if(model_.day, [&taken](const DayItem& item) { return item.uid == taken.uid; });
+  if (model_.enterUid == taken.uid) {
+    model_.enterUid.clear();
+    model_.enterT = 1.0f;
+  }
+  // The dot is left for the worker to correct: its message arrives in under a millisecond, and
+  // guessing here would mean a second idea of which days have something on them.
+
+  KillTimer(hwnd_, kToastTimer);
+  HideToast();
+
+  // The line goes back in the capsule. Undoing a typo is only worth anything if the typo comes
+  // back to be fixed.
+  FocusInput(true);
+  model_.input.Clear();
+  model_.input.Insert(taken.typed);
+  RestartCaret();
+  StartTicking();
+  Invalidate();
+}
+
+void PopupWindow::ShowToast(std::wstring text) {
+  model_.toast = std::move(text);
+  toastOn_ = true;
+  SetTimer(hwnd_, kToastTimer, kToastMs, nullptr);
+  StartTicking();
+}
+
+void PopupWindow::HideToast() {
+  toastOn_ = false;
+  // The offer ends with the notice: undo is available while it is on screen and not a second
+  // longer, which is the only way the two can never disagree.
+  undo_.reset();
+  StartTicking();
+}
+
+bool PopupWindow::ToggleCardAt(float x, float y) {
+  if (store_ == nullptr || model_.day.empty()) return false;
+  const D2D1_RECT_F list = DayListRect(layout_, model_);
+  if (!Inside(list, x, y)) return false;
+
+  int entering = -1;
+  for (size_t i = 0; i < model_.day.size(); ++i) {
+    if (!model_.enterUid.empty() && model_.day[i].uid == model_.enterUid) {
+      entering = static_cast<int>(i);
+    }
+  }
+  const CardSlots slots =
+      PlaceCards(layout_, list, static_cast<int>(model_.day.size()), entering);
+
+  for (int position = 0; position < slots.shown; ++position) {
+    const D2D1_RECT_F card = CardRect(layout_, list, slots, position);
+    if (!Inside(card, x, y)) continue;
+    DayItem& item = model_.day[static_cast<size_t>(slots.first + position)];
+    // A click anywhere else on a card is still a click on the card, not on the day behind it.
+    if (!item.isTask || !Inside(CheckboxRect(layout_, card), x, y)) return true;
+
+    item.done = !item.done;
+    store_->SetDone(item.uid, item.done);
+    model_.strikeUid = item.uid;
+    // Start from where the line is drawn right now, which is the state it had a moment ago.
+    model_.strikeT = item.done ? 0.0f : 1.0f;
+    strikeOn_ = item.done;
+    StartTicking();
+    Invalidate();
+    return true;
+  }
+  return false;
 }
 
 void PopupWindow::StartTicking() {
@@ -548,6 +722,34 @@ bool PopupWindow::Tick(float ms) {
     } else {
       moving = true;
     }
+  }
+
+  // The card that just arrived rises once and is then forgotten: dropping the uid is what
+  // stops it animating again the next time the list is reread.
+  if (!model_.enterUid.empty()) {
+    model_.enterT = animate ? (std::min)(1.0f, model_.enterT + ms / kCardEnterMs) : 1.0f;
+    if (model_.enterT >= 1.0f) {
+      model_.enterUid.clear();
+    } else {
+      moving = true;
+    }
+  }
+
+  // The line across a finished task. It walks both ways, because unticking has to take it back
+  // off rather than blink it away.
+  if (!model_.strikeUid.empty()) {
+    const float strikeStep = animate ? ms / kStrikeMs : 1.0f;
+    if (Settle(model_.strikeT, strikeOn_, strikeStep)) {
+      moving = true;
+    } else {
+      model_.strikeUid.clear();
+    }
+  }
+
+  if (Settle(model_.toastT, toastOn_, animate ? ms / kMonthSlideMs : 1.0f)) {
+    moving = true;
+  } else if (!toastOn_) {
+    model_.toast.clear();
   }
   return moving;
 }
@@ -615,6 +817,8 @@ void PopupWindow::OnLeftDown(float x, float y) {
     return;
   }
 
+  if (ToggleCardAt(x, y)) return;
+
   const int cell = HitDay(x, y);
   if (cell >= 0) {
     FocusInput(false);
@@ -645,6 +849,12 @@ bool PopupWindow::OnKeyDown(WPARAM key) {
         FocusInput(true);
         Paste();
         break;
+      case 0x5A:  // Ctrl+Z
+        // Nothing on offer means this is not ours. The capsule keeps no history of its own, so
+        // there is nothing else in the popup for Ctrl+Z to mean.
+        if (!undo_) return false;
+        UndoCreate();
+        return true;
       default:
         return false;
     }
@@ -659,6 +869,10 @@ bool PopupWindow::OnKeyDown(WPARAM key) {
   const bool editing = inputFocused_ && !input.empty();
 
   switch (key) {
+    case VK_RETURN:
+      CreateFromInput();
+      return true;
+
     case VK_ESCAPE:
       Hide();
       return true;
@@ -739,6 +953,7 @@ void PopupWindow::SelectDay(Date date) {
     }
   }
 
+  Reload();
   StartTicking();
   Invalidate();
 }

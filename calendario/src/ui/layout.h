@@ -29,6 +29,16 @@ inline constexpr float kPanelMaxHeightDip = 560.0f;
 inline constexpr float kTypeMinScale = 0.80f;
 inline constexpr float kTypeMaxScale = 2.00f;
 
+// Card metrics at the size the design system is written at. They live here, with the rest of
+// the measurements, because the checkbox on a task has to be drawn and hit-tested from the
+// same numbers -- the rule the month grid already follows.
+inline constexpr float kCardTextLeftDip = 14.0f;
+inline constexpr float kCardTimeWidthDip = 40.0f;
+inline constexpr float kCardTitleLeftDip = 62.0f;
+inline constexpr float kCardRightPadDip = 12.0f;
+inline constexpr float kCounterWidthDip = 30.0f;
+inline constexpr float kCheckboxDip = 14.0f;
+
 inline constexpr int kPopupMarginDip = 12;
 inline constexpr float kPopupSlideDip = 8.0f;  // how far the popup rises while opening
 
@@ -158,6 +168,59 @@ struct PanelLayout {
 
 inline constexpr bool Inside(const D2D1_RECT_F& rect, float x, float y) {
   return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+}
+
+// The room the day list's cards get: the whole list normally, and whatever is left above the
+// card-sized slot when something else is using it -- the live preview while somebody types, or
+// the notice after Enter. Both live in the same rectangle and neither may sit on top of a card.
+inline D2D1_RECT_F DayListRect(const PanelLayout& layout, bool slotTaken) {
+  D2D1_RECT_F list = layout.list();
+  if (slotTaken) list.bottom = std::max(list.top, layout.preview().top - layout.gap);
+  return list;
+}
+
+// Which cards of the day are on screen and where they land. Worked out here and not inside the
+// drawing, so a click on a checkbox cannot disagree with the box it looks like it hit.
+struct CardSlots {
+  int first = 0;  // index in the day's list of the first card shown
+  int shown = 0;
+  float top = 0.0f;
+  float stride = 0.0f;
+};
+
+// `keep` is the index that has to stay on screen -- the card that was just created -- or -1.
+// Without it, creating something on a day that was already full would animate a card nobody
+// can see.
+inline CardSlots PlaceCards(const PanelLayout& layout, const D2D1_RECT_F& list, int total,
+                            int keep) {
+  CardSlots out;
+  out.stride = layout.cardHeight + layout.gap;
+  const float room = list.bottom - list.top;
+  const int fits =
+      std::clamp(static_cast<int>((room + layout.gap) / out.stride), 0, layout.visibleCards);
+  out.shown = std::min(total, fits);
+  if (out.shown <= 0) return out;
+  if (keep >= out.shown) out.first = std::min(keep - out.shown + 1, total - out.shown);
+  // The cards sit in the middle of whatever room the grid left, so the leftover never piles up
+  // against the capsule.
+  out.top = list.top + std::max(0.0f, (room - (static_cast<float>(out.shown) * out.stride -
+                                               layout.gap)) /
+                                          2.0f);
+  return out;
+}
+
+inline D2D1_RECT_F CardRect(const PanelLayout& layout, const D2D1_RECT_F& list,
+                            const CardSlots& slots, int position) {
+  const float top = slots.top + static_cast<float>(position) * slots.stride;
+  return D2D1_RECT_F{list.left, top, list.right, top + layout.cardHeight};
+}
+
+// The tick box on a task, in the column an event puts its clock in.
+inline D2D1_RECT_F CheckboxRect(const PanelLayout& layout, const D2D1_RECT_F& card) {
+  const float side = std::round(kCheckboxDip * layout.type);
+  const float left = card.left + std::round(kCardTextLeftDip * layout.type);
+  const float top = std::round((card.top + card.bottom - side) / 2.0f);
+  return D2D1_RECT_F{left, top, left + side, top + side};
 }
 
 // Worked out bottom up: the capsule is pinned above the lower padding, the list keeps room for

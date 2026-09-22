@@ -3,9 +3,12 @@
 #include <d2d1.h>
 
 #include <string>
+#include <vector>
 
 #include "core/dates.h"
+#include "data/model.h"
 #include "nlp/parser.h"
+#include "ui/layout.h"
 #include "ui/paint.h"
 #include "ui/text_input.h"
 #include "ui/theme.h"
@@ -27,6 +30,25 @@ struct PopupModel {
   // capsule and the rest of it becomes the preview card above.
   nlp::ParsedInput preview;
 
+  // What the day list paints and which days of the grid carry a dot. The window fills both
+  // from the store; drawing never touches SQLite, because this same DrawPopup is what the
+  // offscreen snapshot calls.
+  std::vector<DayItem> day;
+  std::vector<DayDot> dots;
+
+  // One card animates at a time, and each is held by uid rather than by position: the list is
+  // rebuilt from the database whenever the worker finishes, and an index would then point at
+  // whatever moved into that slot.
+  std::wstring enterUid;   // the card that was just created, sliding in
+  float enterT = 1.0f;
+  std::wstring strikeUid;  // the task whose line is drawing itself; the rest are already struck
+  float strikeT = 0.0f;
+
+  // The discreet notice over the tail of the list: "Creado / Deshacer" while undo is still on
+  // the table. It borrows the preview card's rectangle, which is free right after Enter.
+  std::wstring toast;
+  float toastT = 0.0f;
+
   // Hover and focus, each walking to its target over kStateMs.
   float dayHover[kGridCells] = {};
   float prevHover = 0.0f;
@@ -47,6 +69,19 @@ inline PopupModel MakeModel(Date today) {
   model.month = Month{today.year(), today.month()};
   model.slideFrom = model.month;
   return model;
+}
+
+// The live preview and the notice share one rectangle above the capsule, and they never share
+// a moment: Enter is what empties the capsule, which is what makes the preview go away.
+inline bool ShowingPreview(const PopupModel& model) { return !model.input.empty(); }
+inline bool ShowingToast(const PopupModel& model) {
+  return !ShowingPreview(model) && model.toastT > 0.0f && !model.toast.empty();
+}
+
+// Where the day's cards land. Asked from one place so the drawing and the click cannot end up
+// with different answers about how much room the list had.
+inline D2D1_RECT_F DayListRect(const PanelLayout& layout, const PopupModel& model) {
+  return DayListRect(layout, ShowingPreview(model) || ShowingToast(model));
 }
 
 // Paints the panel and everything in it: this is the one place the popup is described, so the

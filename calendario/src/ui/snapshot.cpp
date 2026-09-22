@@ -4,6 +4,7 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 
+#include <algorithm>
 #include <system_error>
 
 #include "core/dates.h"
@@ -12,6 +13,7 @@
 #include "ui/layout.h"
 #include "ui/paint.h"
 #include "ui/popup_view.h"
+#include "ui/sample_data.h"
 #include "ui/theme.h"
 
 using Microsoft::WRL::ComPtr;
@@ -36,8 +38,11 @@ constexpr int kSnapshotMinute = 10 * 60;  // and a fixed hour, for the same reas
 
 bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F panel,
                     std::wstring_view text, const std::filesystem::path& out) {
-  if (view != L"popup") {
-    LogError(L"--render-snapshot only knows 'popup', got '{}'", view);
+  // "popup-creado" is the same panel a moment after Enter. A still of something that lasts a
+  // hundred and sixty milliseconds is the only way to judge it without filming the screen.
+  const bool justCreated = view == L"popup-creado";
+  if (!KnowsSnapshotView(view)) {
+    LogError(L"--render-snapshot only knows 'popup' and 'popup-creado', got '{}'", view);
     return false;
   }
 
@@ -58,6 +63,23 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
   PopupModel model = MakeModel(kSnapshotToday);
   model.focus = 1.0f;
   model.caretOn = true;
+  // Made-up data and not the user's cache: a committed PNG has to change when the design does
+  // and not when somebody writes something down that morning.
+  FillSampleData(model);
+  if (justCreated) {
+    DayItem fresh;
+    fresh.uid = L"sample-nuevo";
+    fresh.title = L"Dentista";
+    fresh.startMin = 17 * 60;
+    fresh.endMin = 18 * 60;
+    fresh.color = detail::kSampleEventColor;
+    model.day.push_back(fresh);
+    std::sort(model.day.begin(), model.day.end(), EarlierThan);
+    model.enterUid = fresh.uid;
+    model.enterT = 0.30f;  // caught on the way up, where the lift and the fade are visible
+    model.toast = L"Creado · Deshacer";
+    model.toastT = 1.0f;
+  }
   if (!text.empty()) {
     model.input.Insert(text);
     model.preview = nlp::ParseInput(text, nlp::Now{kSnapshotToday, kSnapshotMinute});

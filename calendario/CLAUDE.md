@@ -35,10 +35,10 @@ Un calendario nativo para Windows escrito en C++ que se abre con un atajo global
 | Ventanas | Win32 puro (`RegisterClassExW` y `CreateWindowExW`) |
 | Render | Direct2D 1.1, DirectWrite y DirectComposition |
 | Fondo | Acrylic o Mica mediante `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE)`, esquinas con `DWMWA_WINDOW_CORNER_PREFERENCE`; fallback a color sólido en Windows 10 |
-| Animación | Transiciones simples (abrir, cerrar, fundidos) con animaciones de DirectComposition (`IDCompositionAnimation`, tramos cúbicos que interpola la GPU). El motor propio de springs sobre temporizador vsync llega en la fase 6, que es la que lo necesita para la expansión popup→app. Los estados de hover y foco y el deslizamiento del mes viven dentro del contenido Direct2D, que DirectComposition no puede animar por sí solo, así que los interpola un temporizador de 16 ms que solo corre mientras algo se mueve |
+| Animación | 160 ms y ease-out para todo lo que entra: el panel al abrirse, el mes al deslizarse, la tarjeta nueva al subir a la lista y la línea que tacha una tarea terminada. Un solo vocabulario de movimiento, no uno por cosa que se mueve. Transiciones simples (abrir, cerrar, fundidos) con animaciones de DirectComposition (`IDCompositionAnimation`, tramos cúbicos que interpola la GPU). El motor propio de springs sobre temporizador vsync llega en la fase 6, que es la que lo necesita para la expansión popup→app. Los estados de hover y foco y el deslizamiento del mes viven dentro del contenido Direct2D, que DirectComposition no puede animar por sí solo, así que los interpola un temporizador de 16 ms que solo corre mientras algo se mueve |
 | HTTP | WinHTTP (nativo, sin dependencias) |
 | JSON | nlohmann-json (vcpkg) |
-| Almacenamiento | SQLite3 (vcpkg), en `%LOCALAPPDATA%\Agenda\agenda.db` |
+| Almacenamiento | SQLite3 (vcpkg; donde no hay vcpkg, la amalgamación por FetchContent con su hash fijado), en `%LOCALAPPDATA%\Agenda\agenda.db`, en modo WAL |
 | Secretos | Refresh token cifrado con `CryptProtectData` (DPAPI) |
 | Tests | Catch2 v3 (vcpkg) |
 | DPI | Per-Monitor v2 en el manifiesto; todo el layout en DIPs |
@@ -73,6 +73,10 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
 
 - **Evento:** tiene inicio y fin y ocupa tiempo. Se sincroniza con Google Calendar API v3.
 - **Tarea:** tiene fecha límite opcional y hora opcional, y se completa con un check. Se sincroniza con Google Tasks API v1.
+- **Las horas se guardan como reloj de pared local**, o sea un día (`YYYY-MM-DD`) y un minuto de ese día, nunca como instante UTC. Es lo que ya lleva el código (`nlp::DateTime`), es la única pregunta que hace la interfaz —«¿qué hay el día D?»— y es lo que guarda Google Calendar, que manda `dateTime` con su `timeZone`. Guardar además el UTC serían dos conversiones por consulta y dos ideas de qué día es hoy dentro de la misma caché. `updated_at` sí es un instante UTC, porque es metadato de conflicto y no una hora de la agenda.
+- **La lista del día se lee como la forma del día:** primero lo de día entero, después todo lo que tiene hora, y al final las tareas sin hora. El final es lo que importa: el popup enseña dos tarjetas, y con las tareas sin hora delante, tres pendientes echarían del panel la reunión de hoy.
+- **Una tarea sin fecha aparece en el día de hoy.** No se le inventa una fecha —se guarda con `due_day` nulo— pero se enseña ahí, porque algo que se crea y no se ve en ninguna parte es peor que no haberlo creado.
+- **Una regla de repetición se guarda y no se despliega** hasta que haya vistas de semana y mes que lo justifiquen. El evento sale en su primer día y su tarjeta dice que se repite.
 - Reglas del parser:
   - Si el texto trae una hora, se crea un **evento** de 60 min por defecto.
   - Si no trae hora, se crea una **tarea**.
@@ -114,7 +118,7 @@ docs/         decisiones de arquitectura (ADR) si hacen falta
 
 - El código, los identificadores y los comentarios van en **inglés**. README, CHANGELOG y los textos de la interfaz van en **español**.
 - Se usa RAII para todo recurso Win32 y COM: `wil` o `Microsoft::WRL::ComPtr`. Nunca uses `new` o `delete` directos.
-- No lances excepciones a través de callbacks Win32. Los errores se manejan con `std::expected` o HRESULT comprobado.
+- No lances excepciones a través de callbacks Win32. Los errores se manejan con HRESULT comprobado o con un valor de retorno que haya que mirar. **`std::expected` es de C++23 y el proyecto es C++20**, así que `src/data/` devuelve `bool` y deja el motivo en `Db::error()` y en el log; si algún día se sube el estándar, ese es el sitio por donde empezar.
 - Nada bloquea el hilo de la interfaz. La red y SQLite pesado se ejecutan en un hilo de trabajo y se comunican con la interfaz mediante `PostMessage`.
 - Cada commit lleva un mensaje en formato Conventional Commits (`feat:`, `fix:`, `docs:`...).
 
@@ -155,4 +159,5 @@ cmake --preset debug && cmake --build --preset debug
 ctest --preset debug
 build\debug\Agenda.exe --monitor=3
 build\debug\Agenda.exe --render-snapshot=popup --out=docs\img\popup.png
+build\debug\Agenda.exe --render-snapshot=popup-creado --out=docs\img\popup-creado.png
 ```

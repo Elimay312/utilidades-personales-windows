@@ -9,13 +9,14 @@ Las decisiones de producto, el stack y el sistema de diseño están en [CLAUDE.m
 
 ## Estado
 
-**En desarrollo, fase 3.** Agenda se queda residente en la bandeja, el atajo abre un popup con
+**En desarrollo, fase 4.** Agenda se queda residente en la bandeja, el atajo abre un popup con
 fondo acrylic en la esquina inferior derecha del monitor de trabajo, y el popup muestra el
-mes, los eventos del día y el campo de texto. El panel se adapta al monitor: su alto es el
+mes, lo que hay ese día y el campo de texto. El panel se adapta al monitor: su alto es el
 42 % del área de trabajo, entre 380 y 560 DIP, y todo lo de dentro escala con él. Al escribir,
-Agenda ya **entiende lo que lee**: resalta los trozos que reconoce y muestra encima una tarjeta
-con lo que se va a crear. Los eventos son **datos de ejemplo en memoria**: todavía no hay
-SQLite ni sincronización, y **pulsar Enter no guarda nada**.
+Agenda **entiende lo que lee**: resalta los trozos que reconoce y muestra encima una tarjeta
+con lo que se va a crear. **Con Enter lo crea, y sigue ahí al volver a abrir la aplicación**:
+todo se guarda en SQLite, en `%LOCALAPPDATA%\Agenda\agenda.db`. Todavía no hay
+sincronización con Google: lo que se escribe se queda en el equipo.
 
 | Tema oscuro | Tema claro |
 |---|---|
@@ -75,8 +76,23 @@ globo en la bandeja y sigue funcionando: se abre desde el icono.
   último que sí (31 de enero más un mes es 28 de febrero).
 - La lista muestra hasta dos eventos del día; si hay más, el segundo lleva un `+N` a la
   derecha. Un día sin eventos dice «Sin eventos».
-- Lo que se escribe se entiende al vuelo, pero **Enter todavía no guarda nada**: falta el
-  almacenamiento, que llega en la fase 4.
+- **Enter crea** lo que dice la vista previa, limpia el campo y la tarjeta nueva entra
+  animada. Si el día ya estaba lleno, la lista se desplaza para que la recién creada sea una
+  de las visibles, y el `+N` cuenta el resto. Si el evento cae en otro día, el popup salta a
+  ese día.
+- Durante **cinco segundos** aparece un aviso discreto que dice «Creado · Deshacer».
+  **Ctrl+Z** dentro de esos cinco segundos borra lo creado y **devuelve la frase al campo**,
+  para poder corregir un error de tecleo en vez de escribirlo otra vez. Cuando el aviso se
+  va, la oferta se va con él.
+- **Las tareas llevan una casilla.** Un clic en ella la marca y el texto se tacha con una
+  línea que se dibuja sola; otro clic la desmarca y la línea se retira. La tarea sigue en la
+  lista: tachada, no desaparecida.
+- La lista mezcla eventos y tareas y se lee como la forma del día: primero lo de día entero,
+  después todo lo que tiene hora, y al final las tareas sin hora. Una tarea **sin fecha**
+  («comprar leche») aparece en el día de hoy, que es lo único que evita que algo creado no se
+  vea en ninguna parte.
+- Los puntos del mes salen de lo que hay guardado de verdad. Un evento de varios días pone
+  punto en todos ellos.
 
 ### Escribir en lenguaje natural
 
@@ -98,6 +114,9 @@ lo que queda sin pintar es el título. Encima aparece una tarjeta con lo que se 
 | `comprar leche` | ☑ Tarea sin fecha · Comprar leche |
 | `t: pagar luz el lunes` | ☑ Tarea · Lunes · Pagar luz |
 | `gym cada lunes 7am` | 📅 Lunes · 07:00–08:00 · Cada semana · Gym |
+
+De momento, una frase que se repite **guarda su regla pero no se despliega**: el evento sale
+solo en su primer día. Desplegar las repeticiones llega con las vistas de semana y mes.
 
 La fecha se escribe como «Hoy», «Mañana», «Pasado mañana» o el día de la semana si cae dentro
 de los próximos siete días, y como `25 Oct` si queda más lejos.
@@ -156,7 +175,14 @@ Las reglas cuando la frase no lo dice todo:
 build\debug\Agenda.exe --render-snapshot=popup --theme=dark  --out=docs\img\popup.png
 build\debug\Agenda.exe --render-snapshot=popup --theme=light --out=docs\img\popup-claro.png
 build\debug\Agenda.exe --render-snapshot=popup "--text=mañana 5pm dentista" --out=docs\img\popup-preview.png
+build\debug\Agenda.exe --render-snapshot=popup-creado --out=docs\img\popup-creado.png
 ```
+
+Hay dos vistas: `popup` es el panel tal como se abre y `popup-creado` es el instante siguiente
+a pulsar Enter, con el aviso puesto y la tarjeta nueva a medio subir. La segunda existe porque
+ese momento dura ciento sesenta milisegundos y no hay otra forma de mirarlo con calma.
+
+![El popup justo después de crear algo](docs/img/popup-creado.png)
 
 Renderiza la vista fuera de pantalla con Direct2D sobre un bitmap WIC, guarda el PNG y sale.
 Así se revisa el diseño: **no con capturas del escritorio**. No necesita monitor ni que la
@@ -219,7 +245,7 @@ docs/       capturas y decisiones de arquitectura
 | 1 | Ventana popup con fondo acrylic, atajo global e icono en la bandeja | Hecha |
 | 2 | Sistema de diseño y vista de mes compacta con datos de ejemplo | Hecha |
 | 3 | Parser de lenguaje natural con vista previa en vivo | Hecha |
-| 4 | Almacenamiento en SQLite: eventos, tareas y caché local | Pendiente |
+| 4 | Almacenamiento en SQLite: eventos, tareas y caché local | Hecha |
 | 5 | Sincronización con Google Calendar y Google Tasks (OAuth) | Pendiente |
 | 6 | Expansión animada a la app completa con vistas de día, semana y mes | Pendiente |
 | 7 | Pulido, rendimiento, empaquetado y arranque con Windows | Pendiente |

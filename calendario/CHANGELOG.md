@@ -9,6 +9,80 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- Fase 4: **Enter crea, y lo creado sobrevive a cerrar la aplicación.** Todo va a SQLite, en
+  `%LOCALAPPDATA%\Agenda\agenda.db`, en modo WAL. El esquema tiene cinco tablas —`calendars`,
+  `events`, `tasks`, `sync_state` y `pending_ops`— con migraciones versionadas en
+  `PRAGMA user_version`, que es transaccional: si una migración se cae por la mitad, el número
+  no sube y el siguiente arranque vuelve a intentarlo desde el mismo sitio. Una caché escrita
+  por una versión más nueva no se toca y da error, en vez de convertirse hacia atrás a ciegas.
+- Fase 4: `src/data/` como biblioteca estática (`agenda_data`), por el mismo motivo que
+  `agenda_nlp`: aquí dentro no entra ni Direct2D ni una ventana, así que los tests la prueban
+  directa contra una base en memoria. `db.{h,cpp}` envuelve SQLite en lo justo —un handle que
+  se cierra solo, una sentencia que se finaliza sola y la conversión UTF-8 ↔ `wstring` en un
+  único sitio—, `schema.{h,cpp}` lleva las migraciones y `store.{h,cpp}` el repositorio.
+- Fase 4: **las lecturas van en el hilo de interfaz y las escrituras en uno de trabajo.** El
+  popup tiene que estar en pantalla en menos de 100 ms y sin spinners, y las dos consultas que
+  lo llenan son un índice y unas pocas filas. Las escrituras se encolan; el trabajador avisa
+  con un `WM_APP+2` **sin carga** y la interfaz relee, porque un puntero reservado en un hilo
+  habría que liberarlo en el otro.
+- Fase 4: **la interfaz es optimista.** El `uid` lo genera la ventana antes de encolar nada,
+  así que la tarjeta está en pantalla desde el primer fotograma y nunca hay que esperar al
+  `rowid`. Si el trabajador falla, devuelve el `uid`, la fila se quita y se dice por qué. Cada
+  escritura y su fila de `pending_ops` van **en la misma transacción**: una creación guardada
+  sin su operación sería un evento que jamás llega a Google, sin un solo error por ningún lado.
+- Fase 4: **Ctrl+Z deshace durante cinco segundos**, mientras el aviso «Creado · Deshacer» está
+  puesto, y **devuelve la frase al campo de texto** —deshacer un error de tecleo solo sirve si
+  el error vuelve para corregirlo—. La oferta termina con el aviso, que es la única forma de
+  que las dos cosas no puedan discrepar. Nada se ha enviado todavía, así que deshacer borra la
+  fila y su operación juntas y no deja lápida.
+- Fase 4: **las tareas llevan casilla y se tachan con animación.** El tachado es un rectángulo
+  de 1 DIP que crece, y no `IDWriteTextLayout::SetStrikethrough`, que es todo o nada y por eso
+  no se puede animar. La casilla se dibuja con dos trazos, como el chevron, para no depender
+  de un glifo. La tarea marcada se queda en la lista: tachada, no desaparecida.
+- Fase 4: la lista del día mezcla eventos y tareas y los ordena como la forma del día —día
+  entero, luego la hora, y las tareas sin hora al final—; los puntos del mes salen de datos
+  reales y un evento de varios días los pone en todos ellos. Una tarea **sin fecha** se guarda
+  con `due_day` nulo y se enseña en el día de hoy.
+- Fase 4: vista de captura nueva, `--render-snapshot=popup-creado`: el panel en el instante
+  siguiente a Enter, con el aviso puesto y la tarjeta a medio subir. Ese momento dura ciento
+  sesenta milisegundos y no había otra forma de mirarlo con calma.
+- Fase 4: `tests/test_store.cpp`, con la mitad del criterio de aceptación que no necesita
+  ventana: crear, soltar el archivo como lo suelta cerrar la aplicación, volver a abrirlo y
+  encontrarlo. Más las migraciones, la caché de versión superior, el evento de dos días, el
+  orden del día, la tarea sin fecha, marcar y desmarcar, y que deshacer se lleve la operación
+  encolada.
+
+### Cambiado
+
+- Fase 4: **el tiempo se guarda como reloj de pared local** —un día y un minuto de ese día—
+  y no como instante UTC. Es lo que ya llevaba el código, es la única pregunta que hace la
+  interfaz y es lo que guarda Google Calendar. `updated_at` es la excepción y sí es UTC,
+  porque es metadato de conflicto y no una hora de la agenda.
+- Fase 4: `src/ui/sample_data.h` deja de ser lo que pinta la aplicación y pasa a ser lo que
+  pinta **solo la captura**. `--render-snapshot` ya congelaba el día y la hora para que el PNG
+  cambiara cuando cambia el diseño y no cuando pasa el tiempo; enchufarlo a la base del usuario
+  habría hecho que la herramienta con la que se revisa el diseño dependiera de lo que alguien
+  escribiera esa mañana.
+- Fase 4: el aviso y la vista previa comparten rectángulo y **la lista les cede una tarjeta**
+  mientras uno de los dos está puesto. La primera versión dejaba el aviso encima de la tarjeta
+  recién creada, que es justo la que había que mirar; se vio en la captura de `popup-creado`.
+- Fase 4: una regla de repetición **se guarda y no se despliega**. El RRULE va a su columna
+  —es literalmente lo que quiere Google en la fase 5— y el evento sale en su primer día. El
+  motor de ocurrencias es de la fase 6, que es la que tiene vistas donde se note.
+- Fase 4: `CLAUDE.md` pedía `std::expected`, que es de C++23, y el proyecto es C++20. `src/data/`
+  devuelve `bool` y deja el motivo en `Db::error()` y en el log. Anotado allí.
+
+### Corregido
+
+- Fase 4: la descarga de la amalgamación de SQLite moría con «SSL certificate verification
+  failed» mientras los clones de git funcionaban, así que parecía un problema de red y no lo
+  era: el `cmake` del PATH no trae almacén de certificados. `CMakeLists.txt` le pasa el de Git
+  para Windows por `CMAKE_TLS_CAINFO`, que FetchContent reenvía al sub-build, y lo normaliza a
+  barras hacia delante porque `%ProgramFiles%` trae `C:\Program Files` y ese `\P` aborta el
+  script generado.
+
+### Añadido
+
 - Fase 3: parser de lenguaje natural en `src/nlp/`, compilado como biblioteca estática
   (`agenda_nlp`) sin nada de interfaz dentro. Entiende español e inglés a la vez, sin detectar
   idioma: fechas relativas (`hoy`, `mañana`, `pasado mañana`, días de la semana, `próximo

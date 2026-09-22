@@ -2,22 +2,85 @@
 
 #include <algorithm>
 #include <format>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace agenda {
 namespace {
 
-// Card metrics at the size the design system is written at; the layout scale stretches them.
-constexpr float kCardTextLeft = 14.0f;
-constexpr float kCardTimeWidth = 40.0f;
-constexpr float kCardTitleLeft = 62.0f;
-constexpr float kCardRightPad = 12.0f;
-constexpr float kCounterWidth = 30.0f;
+// The card metrics live in layout.h now, so the checkbox is drawn and hit-tested from the same
+// numbers. These two are the caret's and belong to the capsule.
 constexpr float kCaretHeight = 18.0f;
 constexpr float kCaretWidth = 1.0f;
 
-std::wstring FormatTime(int minutes) {
-  return std::format(L"{:02}:{:02}", minutes / 60, minutes % 60);
+std::wstring FormatTime(std::optional<int> minutes) {
+  // Nothing at all for something that takes the whole day: the column is forty DIP wide and
+  // the bar and the title already say what it is.
+  if (!minutes) return {};
+  return std::format(L"{:02}:{:02}", *minutes / 60, *minutes % 60);
+}
+
+// The colour of the dot under a day, or nothing when the day is free. A linear walk over at
+// most two grids' worth of days, which is what the sample data did and costs nothing here.
+const DayDot* FindDot(const std::vector<DayDot>& dots, Date date) {
+  for (const DayDot& dot : dots) {
+    if (dot.date == date) return &dot;
+  }
+  return nullptr;
+}
+
+// A tick box. Two strokes rather than a glyph, for the same reason the chevron is: at this
+// size a drawn mark lands on the pixel grid the same way whatever font the machine has.
+void DrawCheckbox(ID2D1RenderTarget* target, const Theme& theme, const PanelLayout& layout,
+                  ID2D1SolidColorBrush* brush, const D2D1_RECT_F& box, float checked) {
+  const float side = box.right - box.left;
+  const float radius = std::round(4.0f * layout.type);
+  const float stroke = (std::max)(1.0f, std::round(1.5f * layout.type));
+
+  if (checked > 0.0f) {
+    brush->SetColor(Fade(theme.accent, checked));
+    FillRound(target, box, radius, brush);
+  }
+  brush->SetColor(Lerp(theme.textSecondary, theme.accent, checked));
+  StrokeRound(target, box, radius, brush, stroke);
+
+  if (checked <= 0.0f) return;
+  brush->SetColor(Fade(theme.onAccent, checked));
+  const D2D1_POINT_2F start{box.left + side * 0.26f, box.top + side * 0.52f};
+  const D2D1_POINT_2F knee{box.left + side * 0.44f, box.top + side * 0.70f};
+  const D2D1_POINT_2F end{box.left + side * 0.75f, box.top + side * 0.32f};
+  target->DrawLine(start, knee, brush, stroke);
+  target->DrawLine(knee, end, brush, stroke);
+}
+
+// The line across a finished task, drawn as a rectangle whose width grows rather than with
+// IDWriteTextLayout::SetStrikethrough, which is all or nothing and so cannot be animated.
+void StrikeThrough(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                   const PanelLayout& layout, ID2D1SolidColorBrush* brush,
+                   const D2D1_RECT_F& rect, const std::wstring& text, float progress) {
+  if (progress <= 0.0f || text.empty() || !fonts.ok()) return;
+  const float room = rect.right - rect.left;
+  if (room <= 0.0f) return;
+
+  Microsoft::WRL::ComPtr<IDWriteTextLayout> measured;
+  if (FAILED(fonts.factory->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()),
+                                             fonts.event.Get(), room, rect.bottom - rect.top,
+                                             &measured))) {
+    return;
+  }
+  // The shared format carries whatever the last DrawTextIn left on it, so the measurement says
+  // what it wants: one line, from the left.
+  measured->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+  DWRITE_TEXT_METRICS metrics{};
+  if (FAILED(measured->GetMetrics(&metrics))) return;
+
+  const float width = (std::min)(metrics.width, room) * progress;
+  const float middle = std::round((rect.top + rect.bottom) / 2.0f);
+  const float thickness = (std::max)(1.0f, std::round(layout.type));
+  brush->SetColor(theme.textMuted);
+  target->FillRectangle(D2D1_RECT_F{rect.left, middle, rect.left + width, middle + thickness},
+                        brush);
 }
 
 // What the input shows: the text with any in-flight IME composition spliced in at the caret.
@@ -88,7 +151,8 @@ void ApplySpans(const InputLayout& input, const PopupModel& model, ID2D1Brush* a
 
 void DrawMonthGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush, Month month,
-                   Date today, Date selected, const float* hover, float offsetX) {
+                   Date today, Date selected, const std::vector<DayDot>& dots,
+                   const float* hover, float offsetX) {
   const float radius = layout.dayCircle / 2.0f;
   const float ring = 1.5f * layout.type;
 
@@ -123,8 +187,8 @@ void DrawMonthGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
                D2D1_RECT_F{rect.left, center.y - radius, rect.right, center.y + radius}, brush,
                Align::Center);
 
-    if (const std::optional<std::uint32_t> color = SampleDayColor(date)) {
-      brush->SetColor(Rgb(*color, inMonth ? 1.0f : 0.40f));
+    if (const DayDot* dot = FindDot(dots, date)) {
+      brush->SetColor(Rgb(dot->color, inMonth ? 1.0f : 0.40f));
       FillCircle(target, D2D1_POINT_2F{center.x, rect.top + layout.dotCenterY},
                  layout.eventDot / 2.0f, brush);
     }
@@ -133,7 +197,7 @@ void DrawMonthGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
 
 void DrawEventCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush,
-                   const D2D1_RECT_F& rect, const SampleEvent& event, int more) {
+                   const D2D1_RECT_F& rect, const DayItem& item, int more, float strike) {
   const float type = layout.type;
 
   brush->SetColor(theme.surface);
@@ -144,28 +208,52 @@ void DrawEventCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
   target->PushAxisAlignedClip(
       D2D1_RECT_F{rect.left, rect.top, rect.left + layout.barWidth, rect.bottom},
       D2D1_ANTIALIAS_MODE_ALIASED);
-  brush->SetColor(Rgb(event.color));
+  brush->SetColor(Rgb(item.color));
   FillRound(target, rect, layout.cardRadius, brush);
   target->PopAxisAlignedClip();
 
-  float right = rect.right - kCardRightPad * type;
+  float right = rect.right - kCardRightPadDip * type;
   if (more > 0) {
     brush->SetColor(theme.textSecondary);
     DrawTextIn(target, fonts.event.Get(), std::format(L"+{}", more),
-               D2D1_RECT_F{right - kCounterWidth * type, rect.top, right, rect.bottom}, brush,
+               D2D1_RECT_F{right - kCounterWidthDip * type, rect.top, right, rect.bottom}, brush,
                Align::Right);
-    right -= (kCounterWidth + 2.0f * kGapDip) * type;
+    right -= (kCounterWidthDip + 2.0f * kGapDip) * type;
   }
 
-  brush->SetColor(theme.textSecondary);
-  DrawTextIn(target, fonts.event.Get(), FormatTime(event.startMin),
-             D2D1_RECT_F{rect.left + kCardTextLeft * type, rect.top,
-                         rect.left + (kCardTextLeft + kCardTimeWidth) * type, rect.bottom},
-             brush);
+  if (item.isTask) {
+    DrawCheckbox(target, theme, layout, brush, CheckboxRect(layout, rect), strike);
+  } else {
+    brush->SetColor(theme.textSecondary);
+    DrawTextIn(target, fonts.event.Get(), FormatTime(item.startMin),
+               D2D1_RECT_F{rect.left + kCardTextLeftDip * type, rect.top,
+                           rect.left + (kCardTextLeftDip + kCardTimeWidthDip) * type,
+                           rect.bottom},
+               brush);
+  }
 
-  brush->SetColor(theme.textPrimary);
-  DrawTextIn(target, fonts.event.Get(), event.title,
-             D2D1_RECT_F{rect.left + kCardTitleLeft * type, rect.top, right, rect.bottom}, brush);
+  // A task with an hour keeps it, in front of the title: the clock column is taken by the box,
+  // and nothing the user typed is allowed to quietly disappear.
+  const std::wstring title = (item.isTask && item.startMin)
+                                 ? std::format(L"{} · {}", FormatTime(item.startMin), item.title)
+                                 : item.title;
+
+  const D2D1_RECT_F titleRect{rect.left + kCardTitleLeftDip * type, rect.top, right, rect.bottom};
+  brush->SetColor(Lerp(theme.textPrimary, theme.textMuted, strike));
+  DrawTextIn(target, fonts.event.Get(), title, titleRect, brush);
+  StrikeThrough(target, fonts, theme, layout, brush, titleRect, title, strike);
+}
+
+void DrawToast(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+               const PanelLayout& layout, ID2D1SolidColorBrush* brush, const PopupModel& model) {
+  const D2D1_RECT_F rect = layout.preview();
+  brush->SetColor(Fade(theme.surface, model.toastT));
+  FillRound(target, rect, layout.cardRadius, brush);
+  brush->SetColor(Fade(theme.textSecondary, model.toastT));
+  DrawTextIn(target, fonts.event.Get(), model.toast,
+             D2D1_RECT_F{rect.left + kCardTextLeftDip * layout.type, rect.top,
+                         rect.right - kCardRightPadDip * layout.type, rect.bottom},
+             brush, Align::Center);
 }
 
 void DrawPreviewCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
@@ -188,8 +276,8 @@ void DrawPreviewCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme&
 
   brush->SetColor(theme.textPrimary);
   DrawTextIn(target, fonts.event.Get(), nlp::PreviewText(model.preview, model.today),
-             D2D1_RECT_F{rect.left + kCardTextLeft * type, rect.top,
-                         rect.right - kCardRightPad * type, rect.bottom},
+             D2D1_RECT_F{rect.left + kCardTextLeftDip * type, rect.top,
+                         rect.right - kCardRightPadDip * type, rect.bottom},
              brush);
 }
 

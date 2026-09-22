@@ -9,7 +9,6 @@
 
 #include "ui/components.h"
 #include "ui/layout.h"
-#include "ui/sample_data.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -81,12 +80,12 @@ void DrawGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
     const float width = static_cast<float>(model.slideDir) * layout.contentWidth;
     const float offset = width * (1.0f - EaseOutCubic(model.slideT));
     DrawMonthGrid(target, fonts, theme, layout, brush, model.slideFrom, model.today,
-                  model.selected, nullptr, offset - width);
+                  model.selected, model.dots, nullptr, offset - width);
     DrawMonthGrid(target, fonts, theme, layout, brush, model.month, model.today, model.selected,
-                  nullptr, offset);
+                  model.dots, nullptr, offset);
   } else {
     DrawMonthGrid(target, fonts, theme, layout, brush, model.month, model.today, model.selected,
-                  model.dayHover, 0.0f);
+                  model.dots, model.dayHover, 0.0f);
   }
 
   target->PopAxisAlignedClip();
@@ -97,35 +96,59 @@ void DrawGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
 void DrawEventList(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush,
                    const PopupModel& model, const D2D1_RECT_F& list) {
-  const float room = list.bottom - list.top;
-  const std::vector<SampleEvent> events = SampleEvents(model.selected);
-
-  if (events.empty()) {
+  const int total = static_cast<int>(model.day.size());
+  if (total == 0) {
     brush->SetColor(theme.textMuted);
     DrawTextIn(target, fonts.event.Get(), L"Sin eventos", list, brush, Align::Center);
     return;
   }
 
-  const int fits = std::clamp(
-      static_cast<int>((room + layout.gap) / (layout.cardHeight + layout.gap)), 0,
-      layout.visibleCards);
-  const int shown = (std::min)(static_cast<int>(events.size()), fits);
-  if (shown == 0) return;
+  // Whatever was just created has to be one of the cards on screen, or its arrival would be
+  // animated where nobody can see it.
+  int entering = -1;
+  for (int i = 0; i < total; ++i) {
+    if (!model.enterUid.empty() && model.day[i].uid == model.enterUid) entering = i;
+  }
 
-  const float stride = layout.cardHeight + layout.gap;
-  // The cards sit in the middle of whatever room the grid left, so the leftover never piles up
-  // against the capsule.
-  const float top =
-      list.top +
-      std::max(0.0f, (room - (static_cast<float>(shown) * stride - layout.gap)) / 2.0f);
+  const CardSlots slots = PlaceCards(layout, list, total, entering);
+  if (slots.shown == 0) return;
 
-  for (int i = 0; i < shown; ++i) {
-    const float cardTop = top + static_cast<float>(i) * stride;
+  for (int position = 0; position < slots.shown; ++position) {
+    const int index = slots.first + position;
+    const DayItem& item = model.day[index];
+    D2D1_RECT_F rect = CardRect(layout, list, slots, position);
+
+    // A finished task is already struck through; the one that was just ticked is the only one
+    // whose line is still drawing itself.
+    const float strike =
+        item.uid == model.strikeUid ? model.strikeT : (item.done ? 1.0f : 0.0f);
     // The last card carries the count of whatever did not fit.
-    const int more = i == shown - 1 ? static_cast<int>(events.size()) - shown : 0;
-    DrawEventCard(target, fonts, theme, layout, brush,
-                  D2D1_RECT_F{list.left, cardTop, list.right, cardTop + layout.cardHeight},
-                  events[i], more);
+    const int more = position == slots.shown - 1 ? total - slots.shown : 0;
+
+    const bool arriving = index == entering && model.enterT < 1.0f;
+    if (!arriving) {
+      DrawEventCard(target, fonts, theme, layout, brush, rect, item, more, strike);
+      continue;
+    }
+
+    // It rises into place and fades in, the same eight DIP and the same curve the whole panel
+    // uses when it opens: one vocabulary of movement, not two.
+    const float eased = EaseOutCubic(model.enterT);
+    const float lift = kPopupSlideDip * layout.type * (1.0f - eased);
+    rect.top += lift;
+    rect.bottom += lift;
+
+    ComPtr<ID2D1Layer> layer;
+    if (FAILED(target->CreateLayer(nullptr, &layer))) {
+      DrawEventCard(target, fonts, theme, layout, brush, rect, item, more, strike);
+      continue;
+    }
+    target->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr,
+                                            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                            D2D1::IdentityMatrix(), eased),
+                      layer.Get());
+    DrawEventCard(target, fonts, theme, layout, brush, rect, item, more, strike);
+    target->PopLayer();
   }
 }
 
@@ -166,14 +189,11 @@ void DrawPopup(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme
   DrawGrid(target, fonts, theme, layout, brush.Get(), model);
   // While there is something written, the list gives way to the preview: the grid stays put
   // and only the cards nobody is looking at move out of the way.
-  const bool previewing = !model.input.empty();
-  D2D1_RECT_F list = layout.list();
-  if (previewing) {
-    list.bottom = std::max(list.top, layout.preview().top - layout.gap);
-  }
+  const D2D1_RECT_F list = DayListRect(layout, model);
 
   DrawEventList(target, fonts, theme, layout, brush.Get(), model, list);
-  if (previewing) DrawPreviewCard(target, fonts, theme, layout, brush.Get(), model);
+  if (ShowingPreview(model)) DrawPreviewCard(target, fonts, theme, layout, brush.Get(), model);
+  if (ShowingToast(model)) DrawToast(target, fonts, theme, layout, brush.Get(), model);
   DrawTextInput(target, fonts, theme, layout, brush.Get(), accent.Get(), model);
 }
 

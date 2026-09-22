@@ -1,0 +1,150 @@
+#include "data/schema.h"
+
+#include <string>
+
+#include "core/log.h"
+
+namespace agenda {
+namespace {
+
+// --- v1 -----------------------------------------------------------------------------------
+//
+// Time is stored as a LOCAL WALL CLOCK -- a day and a minute of that day -- and not as a UTC
+// instant. That is what the code already carries around (nlp::DateTime is a Date plus a
+// minuteOfDay), it is the only question the interface ever asks ("what is there on day D?"),
+// and it is what Google Calendar itself stores: a dateTime with a timeZone, not an instant.
+// Keeping a UTC column as well would mean two conversions per query and two ideas of what
+// day today is inside one cache, which is one of them being wrong.
+//
+// `updated_at` is the exception and is a real UTC instant, because it is conflict metadata
+// and not an hour of anybody's day.
+constexpr const char* kV1 = R"SQL(
+-- One table for both kinds of list: a Google calendar and a Google Tasks list are used the
+-- same way from here -- a name, a colour, a remote id -- and splitting them would be two
+-- tables with the same five columns.
+CREATE TABLE calendars (
+  id          TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL,
+  title       TEXT NOT NULL,
+  color       INTEGER NOT NULL,
+  time_zone   TEXT NOT NULL DEFAULT '',
+  is_primary  INTEGER NOT NULL DEFAULT 0,
+  visible     INTEGER NOT NULL DEFAULT 1,
+  sort        INTEGER NOT NULL DEFAULT 0
+);
+
+-- No cascade on DELETE and cascade on UPDATE, which is the opposite of what one writes by
+-- reflex and is exactly what is needed: deleting a calendar has to fail while events hang
+-- from it, and an id that changes has to drag them along.
+CREATE TABLE events (
+  id          INTEGER PRIMARY KEY,
+  uid         TEXT NOT NULL UNIQUE,
+  calendar_id TEXT NOT NULL REFERENCES calendars(id) ON UPDATE CASCADE,
+  title       TEXT NOT NULL,
+  notes       TEXT NOT NULL DEFAULT '',
+  start_day   TEXT NOT NULL,
+  start_min   INTEGER,
+  end_day     TEXT NOT NULL,
+  end_min     INTEGER,
+  recurrence  TEXT NOT NULL DEFAULT '',
+  remote_id   TEXT,
+  etag        TEXT,
+  updated_at  INTEGER NOT NULL,
+  deleted_at  INTEGER
+);
+CREATE INDEX events_by_day ON events(start_day, start_min);
+
+CREATE TABLE tasks (
+  id          INTEGER PRIMARY KEY,
+  uid         TEXT NOT NULL UNIQUE,
+  list_id     TEXT NOT NULL REFERENCES calendars(id) ON UPDATE CASCADE,
+  title       TEXT NOT NULL,
+  notes       TEXT NOT NULL DEFAULT '',
+  due_day     TEXT,
+  due_min     INTEGER,
+  done_at     INTEGER,
+  position    TEXT NOT NULL DEFAULT '',
+  remote_id   TEXT,
+  etag        TEXT,
+  updated_at  INTEGER NOT NULL,
+  deleted_at  INTEGER
+);
+CREATE INDEX tasks_by_day ON tasks(due_day, due_min);
+
+-- One row per calendar or list: each one carries its own cursor.
+CREATE TABLE sync_state (
+  id          TEXT PRIMARY KEY REFERENCES calendars(id) ON UPDATE CASCADE,
+  sync_token  TEXT NOT NULL DEFAULT '',
+  updated_min TEXT NOT NULL DEFAULT '',
+  synced_at   INTEGER NOT NULL DEFAULT 0
+);
+
+-- The queue. The autoincrement id IS the replay order: a create and the edit that follows it
+-- have to leave in that order or the server gets an edit for something that does not exist.
+-- It points at 'uid' and not at 'remote_id' because when it is queued there is no remote yet.
+--
+-- There is no payload column on purpose. The operation says WHAT changed, and the body that
+-- goes out is built by reading the row when it is sent. With a JSON copy inside the queue,
+-- two edits in a row send the first version and then the second instead of sending the good
+-- one once.
+CREATE TABLE pending_ops (
+  id        INTEGER PRIMARY KEY,
+  entity    TEXT NOT NULL,
+  uid       TEXT NOT NULL,
+  op        TEXT NOT NULL,
+  tries     INTEGER NOT NULL DEFAULT 0,
+  last_err  TEXT NOT NULL DEFAULT '',
+  queued_at INTEGER NOT NULL
+);
+CREATE INDEX pending_by_uid ON pending_ops(uid);
+
+-- Somewhere to land before a Google account exists. Creating and undoing keep working with
+-- no network, which is this phase's acceptance test.
+INSERT INTO calendars (id, kind, title, color, is_primary) VALUES
+  ('local',       'calendar', 'Local',  0x4A8BF5, 1),
+  ('local-tasks', 'tasklist', 'Tareas', 0xF5A623, 1);
+INSERT INTO sync_state (id) VALUES ('local'), ('local-tasks');
+)SQL";
+
+struct Migration {
+  int version;
+  const char* sql;
+};
+
+constexpr Migration kMigrations[] = {
+    {1, kV1},
+};
+
+}  // namespace
+
+bool Migrate(Db& db) {
+  const std::optional<std::int64_t> current = db.UserVersion();
+  if (!current) return false;
+
+  const std::int64_t from = *current;
+  if (from > kSchemaVersion) {
+    LogError(L"db: la cache la escribio una version mas nueva de Agenda (v{}), no se toca",
+             from);
+    return db.Fail(L"la cache es de una version mas nueva de Agenda");
+  }
+  if (from == kSchemaVersion) return true;
+
+  // Everything inside one transaction, user_version included. If a CREATE TABLE fails, the
+  // Transaction destructor undoes whatever there was and the number stays where it was, so
+  // the next start tries again from the same place.
+  Transaction tx(db);
+  if (!tx.Begin()) return false;
+
+  for (const Migration& step : kMigrations) {
+    if (step.version <= from) continue;
+    if (!db.Exec(step.sql)) return false;
+  }
+
+  if (!db.SetUserVersion(kSchemaVersion)) return false;
+  if (!tx.Commit()) return false;
+
+  LogInfo(L"db: esquema en v{} (venia de v{})", kSchemaVersion, from);
+  return true;
+}
+
+}  // namespace agenda

@@ -31,6 +31,14 @@ inline constexpr float kGapDip = 4.0f;
 inline constexpr float kStateMs = 100.0f;
 // How long the grid takes to slide when the month changes.
 inline constexpr float kMonthSlideMs = 160.0f;
+// How long a new card takes to rise into the list, and how long the line takes to draw itself
+// across a task that was just finished. The same 160 ms the panel opens in: one vocabulary of
+// movement for the whole popup, not one per thing that moves.
+inline constexpr float kCardEnterMs = 160.0f;
+inline constexpr float kStrikeMs = 160.0f;
+// How long the "Creado / Deshacer" notice stays before it fades. Five seconds is the window
+// undo is offered for, so the notice and the offer end together.
+inline constexpr UINT kToastMs = 5000;
 
 // Every colour the popup can paint with. Two of these exist: the dark theme is the one the
 // design system describes, and the light one is derived from it.

@@ -48,6 +48,8 @@ bool Isla::Offer(const Reminder& reminder, long long now) {
       // The absolute time and not "en 10 min": the bubble can wait a long while to be opened.
       {"linea", ToUtf8(ReminderWhen(reminder, now))},
       {"color", std::format("#{:06X}", reminder.color & 0xFFFFFFu)},
+      // The day of the event inside the bubble, like a calendar icon.
+      {"insignia", std::to_string(static_cast<unsigned>(reminder.day.day()))},
       {"botones",
        {{{"id", kDone}, {"texto", ToUtf8(T(L"Terminado", L"Done"))}},
         {{"id", kSnooze5}, {"texto", "5 min"}},

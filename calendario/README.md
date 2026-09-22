@@ -323,8 +323,9 @@ Las notificaciones nativas necesitan el acceso del menú Inicio que crea el inst
 lanzada desde su carpeta avisa con el globo de la bandeja, que Windows muestra igual.
 
 **Con la [Isla](../isla/README.md) corriendo, el aviso va a la isla y no hay toast.** Asoma ocho
-segundos con el título y la hora, y después queda un punto del color del calendario junto a la
-isla; al pasar el ratón por el punto (o con `Ctrl+Alt+I`) se abre la tarjeta con **Terminado**,
+segundos con el título y la hora, y se recoge en una burbuja junto a la isla con el día del
+evento en el color de su calendario, escondida tras el borde salvo su aro. Al pasar el ratón
+baja, y si te quedas (o con `Ctrl+Alt+I`) crece desde ella la tarjeta con **Terminado**,
 **5 min**, **10 min** y **Abrir**. Terminado cierra el aviso; los otros dos lo vuelven a dar
 pasado ese rato, y Abrir trae la app con el evento abierto. Si el evento termina sin respuesta,
 el aviso se retira solo. Cada proyecto funciona sin el otro: si la isla no está, o tiene ya tres

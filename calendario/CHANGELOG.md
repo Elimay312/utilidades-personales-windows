@@ -55,7 +55,8 @@ sigue [SemVer](https://semver.org/lang/es/).
 - Fase 7: capturas `configuracion`, `configuracion-claro`, `popup-contraste` y
   `app-semana-contraste`.
 - **Los recordatorios van a la Isla** cuando está corriendo, como la isla de Xiaomi: asoman,
-  quedan como un punto del color del calendario y al abrirlos ofrecen Terminado, posponer 5 o
+  se recogen en una burbuja con el día del evento en el color del calendario (el campo
+  `insignia` del buzón) y al abrirlos ofrecen Terminado, posponer 5 o
   10 minutos y Abrir, que trae la app con el evento abierto (`src/app/isla.*`). Sin la isla, o
   con su buzón lleno, sale el toast de siempre. Un aviso sin responder se retira al terminar su
   evento.

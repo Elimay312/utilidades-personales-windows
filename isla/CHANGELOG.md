@@ -53,6 +53,23 @@ porque **medido cuesta 17-29 ms, mediana 21**, y reescala solo: 520x260 al 100 %
 al 125 %, 910x455 al 175 %. Histéresis de tres tics (~375 ms) para no mudarse al rozar un
 borde de paso.
 
+**Los dos avisos se van a la vez.** Con el HUD delante, la cápsula desaparecía y la isla
+se quedaba dos segundos más sola: 4 s de asomo contra los 1,6 s del otro. Ahora el aviso
+de audio —y **solo** el de audio; la batería, el pomodoro y la canción siguen con sus 4 s—
+dura lo justo para terminar cuando termina el HUD.
+
+Y no es copiarle el número, que fue el primer intento y dejaba **162 ms** de diferencia
+con la isla yéndose antes: empiezan a la vez, pero el HUD tarda ~370 ms en salir (340 de
+animación) y la isla ~150 (muelle de periodo 55). **Lo que hay que igualar es el final, no
+el principio.** Medido muestreando los dos a la vez —el HUD por `IsWindowVisible`, la isla
+por píxeles, porque no se esconde sino que se retrae—: **20, 30 y 48 ms en tres pasadas, y
+el signo cambia entre ellas**, o sea el suelo de ruido del muestreo.
+
+Los dos siguen sin hablarse: el 1815 sale de una resta hecha a mano sobre el
+`msAutoocultar` del vecino, con su `ponytail:` al lado diciendo que si tocas ese ajuste
+hay que tocar este, y por qué no se lee `hud.json` —acoplaría los dos procesos justo donde
+presumen de no conocerse—.
+
 Y lo que se vio en cuanto se usó de verdad: **la isla se presentaba otra vez en cada
 mudanza.** Cruzabas de pantalla y te saltaba encima la ficha entera —carátula, título,
 artista— de la canción que ya estabas escuchando. La causa es la misma familia que el

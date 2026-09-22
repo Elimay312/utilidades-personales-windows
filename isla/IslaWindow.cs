@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Numerics;
 using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
@@ -55,6 +55,38 @@ internal sealed unsafe class IslaWindow : IDisposable
     // Cuanto se queda asomada un aviso. La caducidad la vigila el tic de 8 Hz que ya
     // existe, asi que no hace falta un temporizador para esto.
     private const int AsomoSegundos = 4;
+
+    /// <summary>
+    /// Lo que dura un aviso de AUDIO, y solo ese. Cuatro segundos estan bien para una
+    /// cancion o un pomodoro, pero el HUD del volumen ensena su capsula en la misma
+    /// pulsacion y se va a los 1600 ms: con los dos delante, la isla se quedaba dos
+    /// segundos sola despues de que el otro se hubiera ido.
+    ///
+    /// <para>
+    /// <b>No es el mismo numero que el HUD, y esa es la gracia.</b> Copiar su 1600 deja
+    /// 162 ms de diferencia medidos, con la isla yendose ANTES: empiezan a la vez, pero
+    /// el HUD tarda ~370 ms en salir (animacion de 340) y la isla ~150 (muelle de
+    /// periodo 55). Lo que hay que igualar es el FINAL, no el principio, asi que la isla
+    /// tiene que empezar mas tarde: 1815 = los ~1965 en que el HUD esta fuera, menos su
+    /// propia retraccion.
+    /// </para>
+    ///
+    /// <para>
+    /// Medido muestreando los dos a la vez -- el HUD por <c>IsWindowVisible</c>, la isla
+    /// por pixeles, porque no se esconde sino que se retrae --: <b>20, 30 y 48 ms de
+    /// diferencia en tres pasadas, y el signo cambia entre ellas</b>. O sea que ya
+    /// estamos en el suelo de ruido del muestreo (~20 ms): a la vez.
+    /// </para>
+    ///
+    /// <para>
+    /// ponytail: es una copia del numero del vecino, no una lectura. Si cambias
+    /// <c>msAutoocultar</c> en <c>hud.json</c>, esto se desincroniza y hay que tocarlo a
+    /// mano. El techo es leer <c>hud.json</c>, y no se hace porque acoplaria la isla al
+    /// HUD justo donde los dos proyectos presumen de no conocerse: hoy ninguno depende
+    /// de que el otro exista. Cuando el numero se mueva mas de una vez, tocara subirlo.
+    /// </para>
+    /// </summary>
+    private const int MsAvisoAudio = 1815;
 
     private const int AtajoPomodoro = 2;
 
@@ -690,15 +722,18 @@ internal sealed unsafe class IslaWindow : IDisposable
         Cancion? c = Medios.Ultima;
         if (c is null) return new Aviso(string.Empty, false);
         return new Aviso(
-            string.IsNullOrWhiteSpace(c.Artista) ? c.Titulo : $"{c.Titulo}   ·   {c.Artista}",
+            string.IsNullOrWhiteSpace(c.Artista) ? c.Titulo : $"{c.Titulo}   Â·   {c.Artista}",
             true);
     }
 
     private void RefrescarTitular() => _visuals.Compacto(Titular(), Medios.Ultima?.Arte is not null);
 
-    private void Asomar()
+    private void Asomar(int ms = AsomoSegundos * 1000)
     {
-        _finAsomo = DateTime.UtcNow.AddSeconds(AsomoSegundos);
+        // Las dos caducidades tienen que ir juntas: el texto lo cierra _finTransitorio y
+        // el tamano _finAsomo. Si solo se acorta una, el aviso se va y la isla se queda
+        // asomada en blanco, o al reves.
+        _finAsomo = DateTime.UtcNow.AddMilliseconds(ms);
         RefrescarTitular();
         if (_hover) return;
         _base = Estado.Asomada;
@@ -711,7 +746,7 @@ internal sealed unsafe class IslaWindow : IDisposable
     ///
     /// <para>
     /// Y lo cuenta <b>con el dispositivo</b>, que es lo que le faltaba: con tres salidas
-    /// enchufadas, un «Volumen 45 %» a secas dice que algo cambio, no donde.
+    /// enchufadas, un Â«Volumen 45 %Â» a secas dice que algo cambio, no donde.
     /// </para>
     /// </summary>
     private void OnVolumen()
@@ -726,7 +761,9 @@ internal sealed unsafe class IslaWindow : IDisposable
         _porcentajeAnterior = porcentaje;
 
         string donde = Audio.Dispositivo();
-        Avisar(donde.Length == 0 ? $"Volumen   {porcentaje} %" : $"Volumen   {porcentaje} %   ·   {donde}");
+        Avisar(
+            donde.Length == 0 ? $"Volumen   {porcentaje} %" : $"Volumen   {porcentaje} %   Â·   {donde}",
+            MsAvisoAudio);
     }
 
     /// <summary>
@@ -754,18 +791,22 @@ internal sealed unsafe class IslaWindow : IDisposable
         if (donde.Length == 0) return;
 
         float v = Audio.Volumen();
-        Avisar(v < 0f
-            ? $"Salida   {donde}"
-            : $"Salida   {donde}   ·   {(int)Math.Round(v * 100)} %");
+        Avisar(
+            v < 0f ? $"Salida   {donde}" : $"Salida   {donde}   Â·   {(int)Math.Round(v * 100)} %",
+            MsAvisoAudio);
     }
 
-    /// <summary>Un aviso que se lee y se va: bateria, volumen, fin de pomodoro.</summary>
-    private void Avisar(string texto)
+    /// <summary>
+    /// Un aviso que se lee y se va: bateria, volumen, fin de pomodoro. Por defecto dura
+    /// lo mismo que cualquier asomo; los de audio piden menos para irse a la vez que el
+    /// HUD (ver <see cref="MsAvisoAudio"/>).
+    /// </summary>
+    private void Avisar(string texto, int ms = AsomoSegundos * 1000)
     {
         _transitorio = new Aviso(texto, false);
-        _finTransitorio = DateTime.UtcNow.AddSeconds(AsomoSegundos);
+        _finTransitorio = DateTime.UtcNow.AddMilliseconds(ms);
         Ensenar(true);
-        Asomar();
+        Asomar(ms);
     }
 
     /// <summary>
@@ -780,7 +821,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         if ((energia.BatteryFlag & 128) != 0) return;
 
         string carga = energia.BatteryLifePercent <= 100 ? $"{energia.BatteryLifePercent} %" : "";
-        Avisar(energia.ACLineStatus == 1 ? $"Bateria   {carga}   ·   cargando" : $"Bateria   {carga}");
+        Avisar(energia.ACLineStatus == 1 ? $"Bateria   {carga}   Â·   cargando" : $"Bateria   {carga}");
     }
 
     private void OnPomodoro()
@@ -919,7 +960,7 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// La isla se escondia al ocultar la barra y no volvia.
     ///
     /// Solo se lee la ventana en primer plano, y el marco raiz si esa ventana es una
-    /// CoreWindow. No se enumera nada y no se toca nada (SEGURIDAD.md §3.5).
+    /// CoreWindow. No se enumera nada y no se toca nada (SEGURIDAD.md Â§3.5).
     /// </summary>
     private bool HayPlenoPantalla()
     {

@@ -135,6 +135,25 @@ if ($otras) {
     Write-Output ("  {0,-34} {1}" -f 'solo el nombre del dispositivo', 'no se lee ninguna propiedad')
 }
 
+# El buzon de avisos (SEGURIDAD.md s.3.7, enmienda del 22-09-2026). Si hay tuberia, tiene que
+# ser un servidor y tiene que negarle la entrada a las sesiones de red. Un cliente querria decir que la isla
+# llama a alguien, y eso no lo hace nunca.
+$tuberia = $codigo | Where-Object { $_.Texto -match 'NamedPipeServerStream|NamedPipeClientStream|CreateNamedPipe|CallNamedPipe' }
+if ($tuberia) {
+    $cliente = $tuberia | Where-Object { $_.Texto -match 'NamedPipeClientStream|CallNamedPipe|CreateNamedPipe' }
+    # .NET no rechaza clientes remotos por su cuenta: lo que lo cierra es denegar el SID NETWORK.
+    $soloTuyo = $codigo | Where-Object { $_.Texto -match 'WellKnownSidType\.NetworkSid' }
+    if ($cliente -or -not $soloTuyo) {
+        $fallos++
+        Write-Output ("  {0,-34} INCUMPLE (s.3.7)" -f 'buzon de avisos')
+        ($cliente + $tuberia) | Select-Object -Unique Fichero, Linea, Texto | ForEach-Object { Write-Output ("      {0}:{1}  {2}" -f $_.Fichero, $_.Linea, $_.Texto.Trim()) }
+    } else {
+        Write-Output ("  {0,-34} {1}" -f 'buzon de avisos', 'si, servidor, sin NETWORK')
+    }
+} else {
+    Write-Output ("  {0,-34} {1}" -f 'buzon de avisos', 'no hay tuberia')
+}
+
 if (Test-Path 'NativeMethods.txt') {
     $pinvokes = (Get-Content NativeMethods.txt | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('//') }).Count
     $lista = "$pinvokes entradas en NativeMethods.txt"

@@ -210,6 +210,52 @@ minimizado, y eso ya provocó un fallo real en el vecino.
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, y nada más. Sale en la pestaña Inicio
 del Administrador de tareas, se puede quitar desde ahí, y **se pregunta antes de escribirlo**.
 
+### 3.7 Avisos que entregan las apps de la casa — enmienda del 22 de septiembre de 2026
+
+Es la primera vez que la isla abre una **entrada**, y se abre para que Agenda, el calendario
+de este mismo repositorio, pueda ponerle en la isla el recordatorio de un evento —como hace la
+isla de Xiaomi— en vez de un toast de Windows. Cada proyecto sigue funcionando solo: si la isla
+no está, Agenda saca su toast; si Agenda no está, a la isla no le llega nada.
+
+**Lo que se abre.** Un servidor de tubería con nombre, `\\.\pipe\IslaDinamica.avisos`, hecho
+con `System.IO.Pipes.NamedPipeServerStream` de la biblioteca de .NET, sin P/Invoke nuevo. Una
+app se conecta, escribe **un** aviso —una línea de JSON— y espera. Cuando la persona pulsa uno
+de sus botones, la isla le devuelve **por esa misma conexión** cuál fue, y la cierra.
+
+**Por qué no rompe las reglas que ya había:**
+
+- **Regla 7, red.** Una tubería con nombre **sí puede** abrirse desde otra máquina por SMB
+  (`\equipo\pipe\...`), y .NET no pone `PIPE_REJECT_REMOTE_CLIENTS` —comprobado en su código
+  fuente, `NamedPipeServerStream.Windows.cs`, antes de escribir esto; se daba por hecho que sí—.
+  Tampoco basta `PipeOptions.CurrentUserOnly`: da permiso a *tu* usuario, y en un dominio tu
+  usuario puede venir de otra máquina. Así que la tubería se crea con una ACL propia
+  (`NamedPipeServerStreamAcl`): **permitir** a la cuenta de la sesión, **denegar** al SID
+  `NETWORK` (S-1-5-2), que Windows pone en todo inicio de sesión remoto. La denegación va
+  primero y gana. Otro usuario de este mismo equipo tampoco entra: no está en la ACL.
+- **Regla 13, notificaciones ajenas.** Sigue entera. La isla no lee avisos de nadie: es un
+  buzón donde una app **decide** dejar uno, igual que Spotify decide publicar lo que suena en
+  el canal de medios (§3.1). Lo que no se le entrega, la isla no lo sabe.
+- **Regla 15, ventanas ajenas.** Tampoco se toca: la respuesta va por la conexión que abrió la
+  otra app, no a una ventana suya. La isla no busca, no conoce y no manda mensajes a ninguna
+  ventana que no sea la propia.
+
+**Los cortes, que son los que sostienen la enmienda:**
+
+- **Solo texto y botones.** Un aviso es un título (80 caracteres como mucho), una línea (120),
+  un color `#RRGGBB` y hasta 4 botones con un id corto (`[a-z0-9]`, 16) y su etiqueta (16).
+  Ni rutas, ni URLs, ni imágenes, ni nada que se abra, se cargue o se ejecute. Lo que no encaja
+  se recorta o se rechaza.
+- **4 KB por aviso y 3 esperando a la vez.** Una línea más larga corta la conexión; un cuarto
+  aviso se rechaza y la app de al lado sabe que tiene que avisar por su cuenta.
+- **No se guarda y no se registra.** El aviso vive en memoria mientras espera respuesta y
+  muere con el proceso. La consola dice qué app avisó, nunca qué dice el aviso: el título de
+  un evento del calendario es tan personal como una canción (regla 12).
+- **La isla no llama a nadie.** Solo escucha. No hay `NamedPipeClientStream` en el código, y
+  `auditar.ps1` lo comprueba, igual que comprueba que la denegación de `NETWORK` está.
+- **Lo que la isla devuelve es el id de un botón que la propia app le dio**, o nada. No hay
+  forma de que la isla pida algo, ni de que un aviso le pida algo a la isla más allá de
+  enseñarse.
+
 ---
 
 ## 4. Descartado, y por qué

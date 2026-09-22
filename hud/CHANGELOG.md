@@ -1,5 +1,41 @@
 # Changelog
 
+## El cuadro negro no era del HUD, y se cerró sin tocar una línea
+
+Apareció un rectángulo negro alrededor de la cápsula, **del tamaño exacto de la ventana** (la
+cápsula más la holgura del squash). La hipótesis era buena: la ventana es `WS_EX_LAYERED` con
+alfa 255 y **no** lleva `WS_EX_NOREDIRECTIONBITMAP`, así que todo lo que el compositor deja
+transparente se vería como el bitmap de redirección, que es negro opaco. Encajaba con el
+tamaño, encajaba con que solo se notara sobre fondos que no son negros, y encajaba con el aviso
+que ya estaba escrito en `HudVisuals.PincelAcrilico` sobre no pedirle el fondo a DWM «porque se
+vería un rectángulo alrededor».
+
+**Era falsa.** Una sonda saca dos fotos del **mismo rect** —con la ventana escondida y con la
+ventana visible— y cuenta cuántos píxeles del marco cambian:
+
+| pantalla | escala | muestras del marco | cambiaron | negro puro |
+|---|---|---|---|---|
+| `DISPLAY1` | 125 % | 7440 | 0 | 0 |
+| `DISPLAY2` | 175 % | 14574 | 0 | 0 |
+| `DISPLAY3` | 100 % | 4752 | 0 | 0 |
+
+La tercera es la que cierra el asunto: fondo `#E5E5E5` detrás, donde un rectángulo negro sería
+imposible de no ver. **El HUD no pinta un solo píxel fuera de la cápsula.** El cuadro se fue al
+reiniciar el proceso y `WS_EX_NOREDIRECTIONBITMAP` no llegó a código. De paso, la misma sonda
+confirmó que los clics siguen pasando en las tres: `WindowFromPoint` sobre el centro de la
+cápsula devuelve la ventana de detrás.
+
+**Y la sonda mintió dos veces antes de servir**, que ya es costumbre de esta carpeta:
+
+- `GetClassNameW` declarado **sin `CharSet=CharSet.Unicode`** marshalla el `StringBuilder` como
+  ANSI y devuelve basura. La sonda decía «no hay ventana» con la ventana delante.
+- `FindWindowW` devuelve 0 sobre esta ventana —`WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`— aunque
+  `EnumWindows` sí la encuentra. No se investigó: la sonda no lo necesita.
+
+Y el dato de entorno que hacía falta para medir bien: **esta máquina tiene tres pantallas y a
+tres escalas distintas** —100 %, 125 % y 175 %—, que es exactamente el caso que CLAUDE.md manda
+comprobar y el que casi nadie reproduce con una sola.
+
 ## El HUD ya no se queda pegado a los altavoces con los que arrancó
 
 Cambiabas la salida a los altavoces del monitor y el HUD seguía enseñando —y moviendo con las

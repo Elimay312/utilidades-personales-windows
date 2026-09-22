@@ -77,6 +77,15 @@ lo que le escriben es peor que una que admite que no puede guardar.
 `--monitor=3` es el monitor de desarrollo. Si ese número no existe en la máquina, Agenda lo
 registra y **no se abre**: no hay fallback silencioso. Pásale el que haya.
 
+**Windows 11 esconde el icono la primera vez.** Los iconos nuevos de la bandeja van al
+desbordamiento, detrás de la flecha `^` que hay junto al reloj, y una aplicación ya no puede
+sacarse de ahí sola. Si además la barra de tareas está en modo automático, no hay nada visible
+que pulsar: hay que llevar el ratón al borde inferior para que aparezca, abrir la `^` y ahí está
+Agenda. Para fijarlo, se arrastra el icono desde ese panel a la barra, o se activa en
+*Configuración → Personalización → Barra de tareas → Otros iconos de la bandeja del sistema*.
+Mientras tanto el atajo **Alt+Shift+C** funciona igual, que es la forma en que Agenda está
+pensada para abrirse; el icono hace falta para el menú.
+
 ### Cómo se usa el popup
 
 - **Alt+Shift+C** abre y cierra el popup. También se cierra con Esc o al hacer clic fuera.

@@ -56,6 +56,11 @@ struct Now {
 
 ParsedInput ParseInput(std::wstring_view text, Now now);
 
+// First letter up. It lives here because the preview card uses it to say what will be
+// created, and what gets created has to be what the preview promised -- the window titles its
+// rows with this same call.
+std::wstring Capitalised(std::wstring text);
+
 // The line the preview card shows. It lives here, not in the UI, because it is plain logic and
 // this way it is covered by the tests instead of only by looking at a PNG. It returns Spanish
 // because it is interface text (CLAUDE.md: code in English, interface in Spanish).

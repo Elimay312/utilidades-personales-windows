@@ -447,13 +447,6 @@ std::wstring BuildTitle(std::wstring_view original, const std::vector<Span>& spa
   return out;
 }
 
-std::wstring Capitalised(std::wstring text) {
-  if (!text.empty() && text[0] >= L'a' && text[0] <= L'z') {
-    text[0] = static_cast<wchar_t>(text[0] - L'a' + L'A');
-  }
-  return text;
-}
-
 std::wstring DayLabel(Date date, Date today) {
   const int delta = static_cast<int>((sys_days{date} - sys_days{today}).count());
   if (delta == 0) return L"Hoy";
@@ -568,6 +561,13 @@ ParsedInput ParseInput(std::wstring_view text, Now now) {
             [](const Span& a, const Span& b) { return a.offset < b.offset; });
   out.title = BuildTitle(text, out.spans);
   return out;
+}
+
+std::wstring Capitalised(std::wstring text) {
+  if (!text.empty() && text[0] >= L'a' && text[0] <= L'z') {
+    text[0] = static_cast<wchar_t>(text[0] - L'a' + L'A');
+  }
+  return text;
 }
 
 std::wstring PreviewText(const ParsedInput& parsed, Date today) {

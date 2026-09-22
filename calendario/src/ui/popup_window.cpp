@@ -578,7 +578,10 @@ bool PopupWindow::CreateFromInput() {
 
   Draft draft;
   draft.isTask = understood.kind == nlp::Kind::Task;
-  draft.title = understood.title;
+  // The same capital the preview card put on it: what gets created has to be what the preview
+  // promised, and "Dentista" in the card above turning into "dentista" in the list is exactly
+  // the sort of small lie that makes a preview stop being worth reading.
+  draft.title = nlp::Capitalised(understood.title);
   if (understood.recurrence) draft.recurrence = *understood.recurrence;
   if (understood.start) {
     draft.day = understood.start->date;
@@ -593,12 +596,13 @@ bool PopupWindow::CreateFromInput() {
   const DayItem created = store_->Create(draft);
 
   // Jump to the day it landed on first: SelectDay rereads the list, and doing it afterwards
-  // would wipe the card that has not been written yet.
-  if (draft.day && *draft.day != model_.selected) SelectDay(*draft.day);
+  // would wipe the card that has not been written yet. A task with no date lands on today,
+  // so that is where the popup goes -- otherwise the notice says "Creado" over a day where
+  // nothing appeared, which is the one thing this was all meant to avoid.
+  const Date landed = draft.day ? *draft.day : model_.today;
+  if (landed != model_.selected) SelectDay(landed);
 
-  const bool onScreen = draft.day ? (*draft.day == model_.selected)
-                                  : (model_.selected == model_.today);
-  if (onScreen) {
+  {
     const auto where = std::lower_bound(model_.day.begin(), model_.day.end(), created,
                                         EarlierThan);
     model_.day.insert(where, created);

@@ -54,6 +54,11 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Cambiado
 
+- Fase 4: la **regla de monitores** de `CLAUDE.md` daba por hecho el puesto de tres pantallas y
+  dejaba una fase sin verificar cuando no está montado. Ahora dice las dos situaciones: con las
+  tres, todo al monitor 3 como siempre; con una sola, se usa la que haya y se dice en el
+  resumen. La razón de la regla no cambia —no dejar ventanas encima de lo que el usuario mira—
+  pero ya no impide probar el criterio de aceptación con la aplicación delante.
 - Fase 4: **el tiempo se guarda como reloj de pared local** —un día y un minuto de ese día—
   y no como instante UTC. Es lo que ya llevaba el código, es la única pregunta que hace la
   interfaz y es lo que guarda Google Calendar. `updated_at` es la excepción y sí es UTC,
@@ -74,6 +79,14 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Corregido
 
+- Fase 4: **algo creado podía seguir sin verse.** Una tarea sin fecha escrita mientras se
+  miraba otro día se guardaba en el día de hoy, pero el popup se quedaba donde estaba: el
+  aviso decía «Creado» encima de un día donde no había aparecido nada. Ahora el popup salta
+  siempre al día donde cayó, y para una tarea sin fecha ese día es hoy. Encontrado usando la
+  aplicación, no leyendo el código.
+- Fase 4: la vista previa prometía «Dentista» y la tarjeta creaba «dentista». `nlp::Capitalised`
+  sale del anónimo y la usan las dos, porque una vista previa que no dice exactamente lo que
+  va a pasar deja de merecer que se lea.
 - Fase 4: la descarga de la amalgamación de SQLite moría con «SSL certificate verification
   failed» mientras los clones de git funcionaban, así que parecía un problema de red y no lo
   era: el `cmake` del PATH no trae almacén de certificados. `CMakeLists.txt` le pasa el de Git

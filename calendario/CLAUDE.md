@@ -19,11 +19,22 @@ Un calendario nativo para Windows escrito en C++ que se abre con un atajo global
 
 ## Regla de monitores (OBLIGATORIA)
 
-- El usuario trabaja en el **monitor 1** y orquesta desde el **monitor 2**. **NUNCA** abras, muevas ni captures ventanas en los monitores 1 o 2.
-- **Todo** lo que se ejecute durante el desarrollo va al **monitor 3**: la app, las ventanas de prueba y las capturas.
-- Resuelve el monitor por nombre de dispositivo `\\.\DISPLAY3`, usando `EnumDisplayMonitors` con `GetMonitorInfoW` y `MONITORINFOEXW::szDevice`. No uses el índice de enumeración, porque no coincide con el número que muestra Windows.
+- **Cuando el puesto completo está montado** —tres pantallas— el usuario trabaja en el
+  **monitor 1** y orquesta desde el **2**: no abras, muevas ni captures ventanas ahí, y
+  manda todo al **monitor 3**, la app, las ventanas de prueba y las capturas.
+- **Cuando no está montado** —de viaje, una sola pantalla— `\\.\DISPLAY3` no existe y el
+  monitor 3 deja de ser una opción. Entonces **se usa la pantalla que haya**, con
+  `--monitor=N` o `AGENDA_DEV_MONITOR=N` apuntando a una que exista. Lo que no cambia es
+  la razón de la regla: no dejar ventanas encima de lo que el usuario está mirando. Cierra
+  lo que abras y **dilo en el resumen**, para que se sepa que esa comprobación se hizo en
+  la pantalla del usuario y no en la de desarrollo.
+- Comprueba cuál hay antes de lanzar nada, en vez de dar el 3 por hecho. Una fase no se
+  queda sin verificar por no tener el monitor de siempre: el criterio de aceptación se
+  prueba con la aplicación delante, en la pantalla que haya.
+- Resuelve el monitor por nombre de dispositivo `\\.\DISPLAYN`, usando `EnumDisplayMonitors` con `GetMonitorInfoW` y `MONITORINFOEXW::szDevice`. No uses el índice de enumeración, porque no coincide con el número que muestra Windows.
 - La app acepta `--monitor=N` y la variable de entorno `AGENDA_DEV_MONITOR`. En builds Debug el valor por defecto es 3. Si el monitor no existe, la app registra una advertencia y **no se abre**. No hay fallback silencioso a otro monitor.
-- Para verificar el diseño **no** hagas capturas del escritorio. Usa `Agenda.exe --render-snapshot=<vista> --out=shot.png`, que renderiza la vista fuera de pantalla a PNG (con Direct2D sobre un bitmap WIC). Revisa ese PNG.
+- Para verificar el **diseño** no hagas capturas del escritorio: usa `Agenda.exe --render-snapshot=<vista> --out=shot.png`, que renderiza la vista fuera de pantalla a PNG (con Direct2D sobre un bitmap WIC), y revisa ese PNG.
+- Para verificar el **escalado y el movimiento**, la captura no sirve —sale siempre a 96 ppp y al tamaño base—, así que ahí sí se captura el rectángulo de la ventana de Agenda, y solo ese, con la aplicación abierta en una pantalla escalada.
 - El flujo OAuth abre el navegador por defecto, y Windows decide en qué monitor. Antes de lanzarlo, **avisa al usuario y espera su confirmación**.
 
 ## Stack fijado (no cambiar sin preguntar)

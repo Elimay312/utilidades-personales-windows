@@ -9,10 +9,11 @@ Las decisiones de producto, el stack y el sistema de diseño están en [CLAUDE.m
 
 ## Estado
 
-**En desarrollo, fase 4.** Agenda se queda residente en la bandeja, el atajo abre un popup con
-fondo acrylic en la esquina inferior derecha del monitor de trabajo, y el popup muestra el
-mes, lo que hay ese día y el campo de texto. El panel se adapta al monitor: su alto es el
-42 % del área de trabajo, entre 380 y 560 DIP, y todo lo de dentro escala con él. Al escribir,
+**Fase 4 terminada; la siguiente es la 5.** Agenda se queda residente en la bandeja, el atajo
+abre un popup con fondo acrylic en la esquina inferior derecha del monitor de trabajo, y el
+popup muestra el mes, lo que hay ese día y el campo de texto. El panel se adapta al monitor:
+su alto es el 42 % del área de trabajo, entre 380 y 560 DIP, y todo lo de dentro escala con
+él. Al escribir,
 Agenda **entiende lo que lee**: resalta los trozos que reconoce y muestra encima una tarjeta
 con lo que se va a crear. **Con Enter lo crea, y sigue ahí al volver a abrir la aplicación**:
 todo se guarda en SQLite, en `%LOCALAPPDATA%\Agenda\agenda.db`. Todavía no hay
@@ -49,6 +50,12 @@ ctest --preset debug
 Lo mismo con `release`. Los binarios quedan en `build\debug\Agenda.exe` y
 `build\release\Agenda.exe`.
 
+Las dependencias salen de vcpkg en modo manifest si hay `VCPKG_ROOT`, y si no, de FetchContent:
+nlohmann/json y Catch2 por clon de git, y SQLite como **amalgamación con su hash fijado**. Esa
+última llega por HTTPS, así que CMake necesita un almacén de certificados; si el `cmake` del
+PATH no trae ninguno, `CMakeLists.txt` le pasa el de Git para Windows y la descarga funciona
+sin tocar nada.
+
 ### Ejecución
 
 ```
@@ -58,7 +65,12 @@ build\debug\Agenda.exe --monitor=3
 Al arrancar no se ve nada: Agenda deja el icono en la bandeja y espera el atajo. Con el
 clic izquierdo en el icono se abre el popup; con el derecho aparece un menú con **Abrir** y
 **Salir**. Si otra aplicación ya usa el atajo, Agenda lo registra en el log, avisa con un
-globo en la bandeja y sigue funcionando: se abre desde el icono.
+globo en la bandeja y sigue funcionando: se abre desde el icono. Y si la caché no se puede
+abrir, lo dice también con un globo en vez de callárselo: una agenda que olvida en silencio
+lo que le escriben es peor que una que admite que no puede guardar.
+
+`--monitor=3` es el monitor de desarrollo. Si ese número no existe en la máquina, Agenda lo
+registra y **no se abre**: no hay fallback silencioso. Pásale el que haya.
 
 ### Cómo se usa el popup
 
@@ -200,6 +212,12 @@ PowerShell conviene lanzarlo con `Start-Process ... -Wait` si hace falta esperar
 
 ### Datos en disco
 
+- Agenda: `%LOCALAPPDATA%\Agenda\agenda.db`, una base SQLite en modo WAL (de ahí los archivos
+  `agenda.db-wal` y `agenda.db-shm` al lado). Dentro van los eventos, las tareas, los
+  calendarios, el estado de sincronización y la cola de operaciones pendientes de subir.
+  Las horas se guardan como **reloj de pared local** —un día y un minuto de ese día—, que
+  es lo que guarda también Google Calendar. Se crea sola la primera vez y se migra con
+  `PRAGMA user_version`; una base escrita por una versión más nueva de Agenda no se toca.
 - Log: `%LOCALAPPDATA%\Agenda\logs\agenda-AAAAMMDD.log` (UTF-8, un archivo por día).
 - Configuración: `config.json` y, opcionalmente, `config.local.json`, primero junto al
   ejecutable y después en `%LOCALAPPDATA%\Agenda`. Se fusionan en ese orden, así que el
@@ -229,7 +247,7 @@ src/
   app/      entrada (wWinMain), atajo global, bandeja, monitores y argumentos
   ui/       ventana popup, render D2D, composición, animación y capturas
   nlp/      parser de lenguaje natural (biblioteca estática, sin nada de interfaz dentro)
-  data/     SQLite, modelos y repositorios
+  data/     SQLite, esquema, modelos y repositorios (biblioteca estática, por lo mismo)
   sync/     OAuth y clientes de Google Calendar y Tasks
   core/     logging, configuración, rutas y utilidades
 tests/      pruebas con Catch2

@@ -751,7 +751,13 @@ internal sealed unsafe class DockWindow : IDisposable
         // reordenar) acaban pasando por aquí.
         ApplyRegion();
 
-        if (_config.AutoHide)
+        // Recién construido el dock nace escondido, pero NO si el ratón está encima:
+        // por aquí se pasa también al reordenar iconos, y bajarse en las narices de
+        // quien acaba de soltar uno es justo lo contrario de lo que pide el gesto.
+        // Además, desde que la franja es lo único nuestro, esconderse ahí deja el
+        // cursor fuera de la ventana y el dock ya no vuelve solo: hay que ir a buscar
+        // el filo. La misma salvedad que hace UpdateSmartHide.
+        if (_config.AutoHide && !_hovering && !_dragging)
         {
             _hidden = true;
             _slidingOut = true;

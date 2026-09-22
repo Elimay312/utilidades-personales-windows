@@ -43,6 +43,13 @@ Lo que hay ahora en `main`. Se está probando en varios equipos antes de darlo p
   puesto.
 - **La miniatura de la rueda ya no sube la ventana entera.** Para enseñarla en un chip de
   300x190 subía la captura a tamaño completo dos veces por segundo: de 35 MB a 26,7.
+- **Escondido, el dock solo se revela desde el filo de la pantalla.** Reclamaba el ratón en
+  los 86 px de la altura de la barra aunque ahí no se viera nada, así que saltaba al
+  *acercarse* y tapaba lo que vive pegado al borde inferior: el botón de un chat, la barra
+  de una tienda. Ahora la región escondida es la franja de 3 px del filo y por encima se
+  responde `HTTRANSPARENT`, medido con `WM_NCHITTEST` preguntado desde fuera. El borde de la
+  pantalla se acierta sin mirar, así que la precisión no cuesta puntería. La región no se
+  encoge hasta que la barra ha acabado de bajar (150 ms), porque también recorta el dibujo.
 
 ### Arreglado
 
@@ -61,6 +68,18 @@ Lo que hay ahora en `main`. Se está probando en varios equipos antes de darlo p
   200 px la ventana medía 287, y esa columna invisible marcaba el icono desde doscientos
   píxeles más arriba. Ahora la región llega solo hasta lo que se dibuja: 115 px medidos en
   vez de 287.
+- **Enchufar o quitar una pantalla apagaba el dock.** No se estrellaba: se salía limpio, sin
+  dejar nada en el visor de eventos, y por eso costaba de ver. Al cambiar las pantallas se
+  tiran los docks y se vuelven a crear, y el `WM_DESTROY` del último veía la lista vacía y
+  posteaba `WM_QUIT`: los tres docks nuevos nacían con la sentencia ya en la cola. Medido
+  mandando `WM_DISPLAYCHANGE` desde fuera: de 3 ventanas a 0 y el proceso fuera; ahora
+  quedan las 3 y el mismo PID.
+- **Soltar un icono reordenado bajaba el dock con el ratón encima.** Reordenar pasa por la
+  reconstrucción, y la reconstrucción se escondía siempre, sin mirar si había alguien
+  encima. Molestaba poco cuando bastaba mover el ratón para recuperarlo, pero con la franja
+  del filo obligaba a bajar hasta abajo otra vez. Medido con un arrastre sintético que
+  devuelve el icono a su sitio: la región pasaba de 123 px a 3 al soltar, y ahora se queda
+  en 123. Sigue escondiéndose al apartar el ratón, de golpe o poco a poco (559 y 681 ms).
 
 ---
 

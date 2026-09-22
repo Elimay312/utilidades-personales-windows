@@ -1,0 +1,11 @@
+{
+  "hotkey": "Alt+Shift+C",
+  "popup": {
+    "openMs": 160,
+    "closeMs": 120
+  },
+  "google": {
+    "clientId": "000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com",
+    "clientSecret": "GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxx"
+  }
+}

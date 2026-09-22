@@ -52,7 +52,10 @@ Un calendario nativo para Windows escrito en C++ que se abre con un atajo global
 | Almacenamiento | SQLite3 (vcpkg; donde no hay vcpkg, la amalgamación por FetchContent con su hash fijado), en `%LOCALAPPDATA%\Agenda\agenda.db`, en modo WAL |
 | Secretos | Refresh token cifrado con `CryptProtectData` (DPAPI) |
 | Tests | Catch2 v3 (vcpkg) |
-| DPI | Per-Monitor v2 en el manifiesto; todo el layout en DIPs |
+| DPI | Per-Monitor v2 en el manifiesto; todo el layout en DIPs. El popup lee el DPI del **monitor** (`MonitorDpi` en `layout.h`), no el de la ventana: Windows no le manda `WM_DPICHANGED` cuando cambia la escala de su propio monitor (medido en la fase 7) |
+| Notificaciones | Toast de Windows por WinRT con WRL (`runtimeobject`, del SDK), escenario *reminder*; necesita el acceso del menú Inicio con el AUMID `Agenda.Desktop` (`src/core/aumid.h`) que crea el instalador |
+| Accesibilidad | UI Automation (`uiautomationcore`) con un proveedor genérico sobre una lista plana de nodos (`src/ui/accessibility.*`) |
+| Instalación | Instalador nativo propio (`Instalar-Agenda.exe`, `src/installer/`), por usuario y sin administrador; ni MSIX ni WiX (decisión de la fase 7) |
 
 Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
 
@@ -67,7 +70,8 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - Acento y hoy: `#4A8BF5`.
   - Evento alternativo: `#F5A623`.
   - Punto de evento en el día: 4 px con el color del calendario.
-- **Colores (tema claro, derivado del oscuro):** panel `#F4F4F7` al 85 %, superficie `#FFFFFF`, texto primario `#1B1C21`, secundario `#6C6D75`, borde negro al 10 %. El acento baja a `#2F6FE0`, porque el número del día va en blanco sobre el círculo y `#4A8BF5` no da contraste suficiente sobre un panel claro. La app sigue el tema del sistema (`AppsUseLightTheme`, solo lectura).
+- **Colores (tema claro, derivado del oscuro):** panel `#F4F4F7` al 85 %, superficie `#FFFFFF`, texto primario `#1B1C21`, secundario `#6C6D75`, borde negro al 10 %. El acento baja a `#2F6FE0`, porque el número del día va en blanco sobre el círculo y `#4A8BF5` no da contraste suficiente sobre un panel claro. Por defecto la app sigue el tema del sistema (`AppsUseLightTheme`, solo lectura); desde la fase 7 la configuración puede fijar oscuro o claro.
+- **Alto contraste:** con un tema de contraste de Windows, todos los colores salen de `GetSysColor` (`HighContrastTheme`), nada es translúcido y lo que se distinguía por un tinte lleva borde. Manda sobre cualquier preferencia.
 - **Formas:** radio de 14 px en el panel, 8 px en las tarjetas de evento, cápsula completa en el input y círculo en el día de hoy.
 - **Espaciado:** rejilla de 4 px y 16 px de padding interno.
 - **Tamaño del panel:** 340×420 DIP es el tamaño en el que está escrito el diseño, no un tamaño fijo. En ejecución el alto es el 42 % del área de trabajo del monitor, recortado entre 380 y 560 DIP, y el ancho sale de la proporción 340:420. **Todo escala uno a uno**: letras, círculos, tarjetas y espacios. Un panel más grande tiene que significar contenido más grande, nunca el mismo contenido flotando en más panel vacío. Las medidas se calculan una vez en `MakeLayout` y las leen igual el dibujo y la detección de clics.
@@ -88,7 +92,9 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - Panel de detalle: 320 DIP a la derecha, superficie de tarjeta con el radio del panel (14), campos de 32 DIP con fondo `panelOpaque` y radio 8; foco en acento, error en el rojo de `now`. Entra con los 160 ms de siempre y no con el muelle: es algo que entra, no la ventana que cambia de tamaño.
   - Arrastrar: ajuste a 15 min, 4 DIP de temblor siguen siendo un clic, y los 6 DIP de abajo de un bloque lo estiran. El fantasma del arrastre es el bloque con el contorno de la selección.
   - Respeta la preferencia de "reducir animaciones" de Windows (`SPI_GETCLIENTAREAANIMATION`).
-- **Semana:** empieza en lunes. Iniciales en español: L M X J V S D. El locale por defecto es es-CO.
+- **Semana:** empieza en lunes. Iniciales en español: L M X J V S D; en inglés, M T W T F S S. El locale por defecto es es-CO.
+- **Configuración (fase 7):** ventana normal con barra de título del color de `panelOpaque`, 560 DIP de ancho, tarjetas de 64 DIP con radio 8 sobre el panel, secciones en 15 semibold, controles de 32 DIP a la derecha: el segmentado es la cápsula de las pestañas de la app, el selector es el del panel de detalle, el interruptor mide 44×22 y su bola viaja en 160 ms.
+- **Foco de teclado:** anillo de 2 DIP en `textPrimary`, 3 DIP por fuera de lo enfocado, y solo después de usar el teclado (un clic lo quita), como en Windows.
 - Cada vista nueva debe verificarse con `--render-snapshot` antes de darla por terminada. El PNG se renderiza siempre a 96 ppp y al tamaño base, así que **no puede pillar errores de DPI ni de escalado**: eso hay que mirarlo con la app delante en un monitor escalado. `--panel=WxH` fuerza un tamaño de panel para poder juzgarlo en cualquier pantalla.
 
 ## Modelo de datos: evento o tarea
@@ -107,6 +113,7 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
 - **`calendars.is_primary` significa «aquí cae lo que se crea»**, no «es el primary de Google». Se siembra con el primary en la primera conexión y a partir de ahí la mueve el submenú de la bandeja. Es la desviación que evitó inventar un almacén de ajustes para una elección que se hace una vez.
 - **La sincronización corre en su propio hilo, no en la cola del `Store`**, aunque `store.h` diera eso por hecho en la fase 4. Esa cola lleva también las escrituras del popup, y una petición de veinte segundos por delante dejaría una creación sin escribir veinte segundos. Lo que sí pasa por el `Store` es cada escritura en SQLite, con `Store::Run`: una conexión y un escritor. Dos conexiones habrían sido peor, porque en SQLite las transacciones son de la conexión y no del hilo.
 - **El esquema se quedó en v1 en la fase 5.** Todo lo que hacía falta ya estaba reservado; el token es lo único que no cabía en una tabla y va a un archivo cifrado con DPAPI.
+- **El esquema pasó a v3 en la fase 7**, con permiso y solo con columnas: `events.reminders` (minutos antes separados por comas; NULL es «los del calendario», que es el `useDefault` de Google; cadena vacía es ninguno) y `calendars.reminders` (sus `defaultReminders`). Solo los recordatorios de tipo notificación. La migración vacía los `syncToken`. Agenda nunca edita recordatorios, así que en cada pasada los de Google ganan siempre, como el etag.
 - **El esquema pasó a v2 en la fase 6**, con permiso del usuario y solo añadiendo columnas: `calendars.hidden` (el interruptor de la barra lateral; `visible` significa «Google todavía lo lista» y cada pasada lo reescribe), `events.location` y `events.moved_from` (el calendario de origen de un evento que se cambió de calendario, para el `POST .../move` de Google).
 - **La cola dice qué cambió.** Una operación de edición de evento es `update`, `update+location`, `update+recurrence` o las dos: el PATCH solo manda la ubicación y la repetición cuando se editaron (la RRULE sin sus EXDATE, reenviada con cada movimiento, devolvería repeticiones borradas en la web).
 - **En `pending_ops` la nueva operación entra antes de que salgan las que sustituye.** El id es un rowid sin AUTOINCREMENT y borrar primero reutiliza el número; una pasada con la vieja en vuelo borraría la nueva al terminar.
@@ -147,7 +154,7 @@ docs/         decisiones de arquitectura (ADR) si hacen falta
 
 ## Convenciones
 
-- El código, los identificadores y los comentarios van en **inglés**. README, CHANGELOG y los textos de la interfaz van en **español**.
+- El código, los identificadores y los comentarios van en **inglés**. README y CHANGELOG van en **español**. Desde la fase 7 la interfaz es **bilingüe**: cada texto se escribe con sus dos versiones juntas donde se dibuja, `T(L"español", L"English")` (`src/core/i18n.h`), y el español es el idioma por defecto.
 - Se usa RAII para todo recurso Win32 y COM: `wil` o `Microsoft::WRL::ComPtr`. Nunca uses `new` o `delete` directos.
 - No lances excepciones a través de callbacks Win32. Los errores se manejan con HRESULT comprobado o con un valor de retorno que haya que mirar. **`std::expected` es de C++23 y el proyecto es C++20**, así que `src/data/` devuelve `bool` y deja el motivo en `Db::error()` y en el log; si algún día se sube el estándar, ese es el sitio por donde empezar.
 - Nada bloquea el hilo de la interfaz. La red y SQLite pesado se ejecutan en un hilo de trabajo y se comunican con la interfaz mediante `PostMessage`.
@@ -165,7 +172,7 @@ docs/         decisiones de arquitectura (ADR) si hacen falta
 - **Detente y pregunta antes de:**
   - borrar archivos;
   - añadir dependencias;
-  - escribir en el registro (por ejemplo, arranque con Windows);
+  - escribir en el registro (por ejemplo, arranque con Windows). Aprobado en la fase 7 y solo eso: el valor `Agenda` de `HKCU\...\Run` (interruptor de la configuración e instalador) y la clave `HKCU\...\Uninstall\Agenda` del instalador;
   - cambiar el esquema de SQLite después de la fase 4;
   - lanzar el navegador para OAuth;
   - hacer cualquier cosa fuera de la carpeta del repo.
@@ -199,4 +206,7 @@ build\debug\Agenda.exe --render-snapshot=app-transicion --out=docs\img\app-trans
 build\debug\Agenda.exe --render-snapshot=app-detalle --out=docs\img\app-detalle.png
 build\debug\Agenda.exe --render-snapshot=app-arrastre --out=docs\img\app-arrastre.png
 build\debug\Agenda.exe --render-snapshot=app-borrar --out=docs\img\app-borrar.png
+build\debug\Agenda.exe --render-snapshot=configuracion --theme=light --out=docs\img\configuracion-claro.png
+build\debug\Agenda.exe --render-snapshot=popup --theme=contrast --out=docs\img\popup-contraste.png
+powershell -NoProfile -ExecutionPolicy Bypass -File empaquetar.ps1   # build\release\Instalar-Agenda.exe
 ```

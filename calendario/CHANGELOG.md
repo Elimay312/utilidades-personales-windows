@@ -7,6 +7,81 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-22
+
+### Añadido
+
+- Fase 7: **ventana de configuración**, con el mismo sistema de diseño que el resto: atajo
+  global (se graba pulsándolo y dice en rojo si otra aplicación lo tiene), idioma, tema,
+  iniciar con Windows, calendario por defecto, duración por defecto de un evento y cuenta de
+  Google. Se abre desde la bandeja o con **Ctrl+,**; todo se aplica al momento y se guarda en
+  `%LOCALAPPDATA%\Agenda\config.local.json`, fusionado para no tocar las credenciales. Es una
+  ventana normal, con barra de título del color del panel, y se destruye al cerrarla: en la
+  bandeja no cuesta nada.
+- Fase 7: **interfaz en español o en inglés.** Cada texto lleva sus dos versiones juntas en el
+  sitio donde se dibuja (`T(L"Sin eventos", L"No events")`), incluidos los nombres de mes y de
+  día, la vista previa, los avisos, el menú de la bandeja y las notificaciones. El parser sigue
+  entendiendo los dos idiomas a la vez.
+- Fase 7: **notificaciones nativas de recordatorio.** Agenda lee los recordatorios de Google
+  —los del evento o, si no tiene, los del calendario; solo los de tipo notificación— y avisa en
+  su minuto con un toast de Windows en el escenario *reminder*: se queda hasta que se responde,
+  con posponer y descartar resueltos por el propio Windows, y un clic abre el popup en ese día.
+  Sin acceso en el menú Inicio (una build sin instalar) cae al globo de la bandeja. Tras una
+  suspensión solo avisa de lo que venció en el último cuarto de hora.
+- Fase 7: **accesibilidad.** Proveedores de UI Automation para el campo de texto (con el patrón
+  Value, que también escribe), el mes (un Calendar de 6 × 7 con Grid, GridItem y
+  SelectionItem), la lista del día, y en la app las pestañas, los eventos, los calendarios, las
+  tareas sin fecha y el panel de detalle. Los cambios de foco y de día se anuncian, y los avisos
+  se leen con `UiaRaiseNotificationEvent`. El módulo es uno solo (`src/ui/accessibility.*`): cada
+  ventana describe lo que tiene en pantalla como una lista plana y los proveedores la vuelven a
+  pedir en cada llamada, sin un árbol de objetos que mantener sincronizado.
+- Fase 7: **todo con el teclado.** `Tab` recorre zonas —en el popup, campo, mes y tarjetas; en
+  la app, campo, eventos, panel de detalle, calendarios y tareas— con un anillo de foco que solo
+  aparece cuando se usa el teclado. Las flechas eligen, `Espacio` marca, `Enter` abre, y el
+  arrastre tiene su versión: `Alt+↑↓` mueve el evento un cuarto de hora, `Alt+←→` un día y
+  `Ctrl+↑↓` estira su final. El panel de detalle incluye el selector de calendario, la
+  repetición y el botón de borrar en su orden de tabulación. La tabla completa está en el README.
+- Fase 7: **alto contraste.** Con un tema de contraste de Windows, Agenda pinta con los colores
+  del sistema, sin transparencias ni tintes, y bordea tarjetas y bloques. Cambia en caliente.
+  `--theme=contrast` lo renderiza en las capturas.
+- Fase 7: **la app expandida se mueve** arrastrando la franja de su título, también entre
+  monitores con distinta escala: conserva su tamaño en DIP, se redibuja al DPI nuevo y, al
+  contraerse, cae en la esquina del monitor donde está.
+- Fase 7: **instalador nativo**, `Instalar-Agenda.exe`: un solo archivo con Agenda dentro, por
+  usuario y sin administrador, en `%LOCALAPPDATA%\Programs\Agenda`, con acceso en el menú Inicio
+  (que lleva el AppUserModelID de los toasts), arranque con Windows marcado por defecto, entrada
+  en *Aplicaciones instaladas* y desinstalador que conserva los datos salvo que se pida lo
+  contrario. `--silent` para las dos cosas. `empaquetar.ps1` lo genera.
+- Fase 7: capturas `configuracion`, `configuracion-claro`, `popup-contraste` y
+  `app-semana-contraste`.
+
+### Cambiado
+
+- **Esquema v3**, con permiso y solo con columnas nuevas: `events.reminders` (NULL es «los del
+  calendario») y `calendars.reminders`. La migración vacía los `syncToken` para que la siguiente
+  pasada baje todo una vez y rellene los recordatorios. El calendario local avisa diez minutos
+  antes.
+- **El tema ya no es solo el de Windows**: la configuración puede fijar oscuro o claro. El alto
+  contraste manda sobre todo.
+- **La duración de un evento sin duración** sale de la configuración (60 minutos por defecto).
+- **En reposo, Agenda ocupa lo que ocupa un popup**: el swap chain tiene el tamaño del popup y
+  crece al de la app una sola vez, al empezar la expansión y antes de su primer fotograma; al
+  ocultarse vuelve al del popup y devuelve sus páginas a Windows. Medido con la versión
+  instalada: del atajo al primer fotograma compuesto, 17 ms de mediana y 23 ms de p95; en
+  reposo, 0,9 MB de memoria privada en uso, 2,3 MB de *working set* y 54,5 MB de bytes
+  privados.
+- En la app, **Esc quita también la selección** antes de contraer, y `↑↓` recorren los eventos
+  cuando hay uno seleccionado (sin selección siguen desplazando las horas).
+
+### Corregido
+
+- `config.example.json` volvió al repositorio: se había borrado sin querer en `ea578ac`.
+- La duración por defecto que se guardaba desde la configuración no se habría vuelto a leer:
+  se escribía como entero con signo y se leía solo si era sin signo. Lo encontró su test.
+- Con la escala de su propio monitor cambiada, Windows no avisa a la ventana del popup ni le
+  cambia el DPI (a una ventana con barra de título del mismo proceso sí). Agenda compara ahora
+  el DPI del monitor al cambiar los ajustes o las pantallas y se reescala sola.
+
 ## [0.6.0] - 2026-09-22
 
 ### Añadido

@@ -9,25 +9,21 @@ Las decisiones de producto, el stack y el sistema de diseño están en [CLAUDE.m
 
 ## Estado
 
-**Fase 6 terminada: el popup se expande a la app completa**, y en su línea de tiempo los
-eventos se crean, se mueven y se estiran arrastrando, y se editan en un panel lateral; todo eso
-sube a Google. Agenda se queda residente en la bandeja, el atajo
-abre un popup con fondo acrylic en la esquina inferior derecha del monitor de trabajo, y el
-popup muestra el mes, lo que hay ese día y el campo de texto. El panel se adapta al monitor:
-su alto es el 42 % del área de trabajo, entre 380 y 560 DIP, y todo lo de dentro escala con
-él. Al escribir,
-Agenda **entiende lo que lee**: resalta los trozos que reconoce y muestra encima una tarjeta
-con lo que se va a crear. **Con Enter lo crea, y sigue ahí al volver a abrir la aplicación**:
-todo se guarda en SQLite, en `%LOCALAPPDATA%\Agenda\agenda.db`. Y **se sincroniza en los
-dos sentidos con Google Calendar y Google Tasks**: lo creado aquí aparece en el móvil y lo
-creado en la web aparece aquí en la siguiente pasada. La interfaz nunca espera a la red, y sin
-conexión todo sigue funcionando: lo escrito se guarda igual, un punto discreto en la cabecera
-lo dice, y la cola se vacía sola cuando la red vuelve. Los pasos para crear las credenciales
-están en [docs/google-setup.md](docs/google-setup.md).
+**Versión 1.0.0: lista para usar a diario.** Se instala con un solo archivo, arranca con
+Windows, se configura desde su propia ventana y avisa de los recordatorios de Google con
+notificaciones nativas. Se maneja entera con el teclado, Narrador la lee, respeta el alto
+contraste y el cambio de escala entre monitores.
 
-| Tema oscuro | Tema claro |
-|---|---|
-| ![El popup de Agenda en tema oscuro](docs/img/popup.png) | ![El popup de Agenda en tema claro](docs/img/popup-claro.png) |
+Agenda se queda residente en la bandeja. El atajo abre un popup con fondo acrylic en la esquina
+inferior derecha del monitor de trabajo, con el mes, lo que hay ese día y el campo de texto. Al
+escribir, Agenda **entiende lo que lee**: resalta los trozos que reconoce y muestra encima una
+tarjeta con lo que se va a crear, y **con Enter lo crea**. Todo se guarda en SQLite y **se
+sincroniza en los dos sentidos con Google Calendar y Google Tasks**, sin que la interfaz espere
+nunca a la red.
+
+| Tema oscuro | Tema claro | Alto contraste |
+|---|---|---|
+| ![El popup de Agenda en tema oscuro](docs/img/popup.png) | ![El popup de Agenda en tema claro](docs/img/popup-claro.png) | ![El popup con alto contraste](docs/img/popup-contraste.png) |
 
 Un clic en el mes, o **Ctrl+Enter**, hace crecer **esa misma ventana** hasta la app completa,
 con un muelle: no es un corte a otra ventana. El mes se queda donde estaba y pasa a ser la
@@ -36,9 +32,30 @@ línea de tiempo aparece alrededor. **Esc** o el botón de contraer hacen el cam
 
 ![La app expandida en la vista de semana](docs/img/app-semana.png)
 
-Agenda sigue el tema de las aplicaciones de Windows, que lee del registro al abrir el popup.
+## Instalación
+
+1. Descarga o genera `Instalar-Agenda.exe` (ver [Compilación](#compilación): `empaquetar.ps1`
+   lo deja en `build\release\`).
+2. Ábrelo. Instala para tu usuario, sin pedir administrador, en
+   `%LOCALAPPDATA%\Programs\Agenda`, con un acceso en el menú Inicio y su entrada en
+   *Aplicaciones instaladas*. La casilla **Iniciar Agenda con Windows** viene marcada.
+3. Al terminar, Agenda arranca. Pulsa **Alt+Shift+C**.
+
+Instalar encima de una versión anterior la actualiza: cierra la que esté abierta, respeta si
+tenías el arranque con Windows puesto o quitado, y tus datos no se tocan. Para desinstalar,
+*Configuración de Windows → Aplicaciones → Aplicaciones instaladas → Agenda*, o
+`Desinstalar.exe` en la carpeta de instalación. Tus datos se quedan en
+`%LOCALAPPDATA%\Agenda` salvo que marques «Borrar también mis datos».
+
+Para instalar sin preguntas: `Instalar-Agenda.exe --silent` (con arranque con Windows y sin
+abrir Agenda al terminar) y `Desinstalar.exe --uninstall --silent` (que conserva los datos).
+
+Para sincronizar con Google hacen falta unas credenciales tuyas: los pasos están en
+[docs/google-setup.md](docs/google-setup.md).
 
 ## Requisitos
+
+Para usarla, solo Windows. Para compilarla, además:
 
 - Windows 10 1809 o superior, o Windows 11 (x64). El fondo acrylic necesita Windows 11 22H2;
   en versiones anteriores el panel se pinta opaco. Aunque esté disponible, Windows dibuja un
@@ -61,7 +78,12 @@ ctest --preset debug
 ```
 
 Lo mismo con `release`. Los binarios quedan en `build\debug\Agenda.exe` y
-`build\release\Agenda.exe`.
+`build\release\Agenda.exe`, y el instalador en `build\release\Instalar-Agenda.exe`. El
+atajo para generarlo todo en Release es:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File empaquetar.ps1
+```
 
 Las dependencias salen de vcpkg en modo manifest si hay `VCPKG_ROOT`, y si no, de FetchContent:
 nlohmann/json y Catch2 por clon de git, y SQLite como **amalgamación con su hash fijado**. Esa
@@ -77,9 +99,10 @@ build\debug\Agenda.exe --monitor=3
 
 Al arrancar no se ve nada: Agenda deja el icono en la bandeja y espera el atajo. Con el
 clic izquierdo en el icono se abre el popup; con el derecho aparece un menú con **Abrir**,
-**Salir** y, si hay credenciales de Google puestas, **Conectar con Google…** y **Calendario
-por defecto**. Si otra aplicación ya usa el atajo, Agenda lo registra en el log, avisa con un
-globo en la bandeja y sigue funcionando: se abre desde el icono. Y si la caché no se puede
+**Configuración…**, **Salir** y, si hay credenciales de Google puestas, **Conectar con
+Google…** y **Calendario por defecto**. Si otra aplicación ya usa el atajo, Agenda lo registra
+en el log, avisa con un globo en la bandeja y sigue funcionando: se abre desde el icono y el
+atajo se cambia en la configuración. Y si la caché no se puede
 abrir, lo dice también con un globo en vez de callárselo: una agenda que olvida en silencio
 lo que le escriben es peor que una que admite que no puede guardar.
 
@@ -149,16 +172,8 @@ La ventana crece hasta el 80 % del área de trabajo, centrada, y tiene tres part
 
 Los eventos que se repiten salen **en todos los días en que caen**, en el popup y en la app.
 
-| Tecla | Qué hace |
-|---|---|
-| `D`, `S`, `M` | Vista de día, semana o mes |
-| `T` | Ir a hoy |
-| `←` `→` | Periodo anterior o siguiente |
-| `↑` `↓` | Una hora arriba o abajo (en Mes, una semana) |
-| `Ctrl+K` | Escribir en el campo; Enter crea, como en el popup |
-| `Supr` | Borrar el evento seleccionado, después de preguntar (`Supr` otra vez confirma) |
-| `Ctrl+Z` | Deshacer lo último, mientras el aviso está en pantalla |
-| `Esc` | Soltar el campo, cerrar el panel de detalle y, al final, contraer al popup |
+Con el teclado se hace todo lo mismo; la lista completa está en
+[Todos los atajos](#todos-los-atajos).
 
 **En la línea de tiempo, con el ratón** (en Día y Semana, ajustando a cuartos de hora):
 
@@ -193,6 +208,153 @@ que Google tiene de él, como los invitados o los recordatorios.
 Un clic en la cabecera de un día de la semana abre ese día. A diferencia del popup, la app no
 se cierra al hacer clic en otra ventana: se queda detrás, como cualquier aplicación. El icono
 de la bandeja la vuelve a traer al frente, y el atajo la cierra; la siguiente vez abre el popup.
+**Se mueve arrastrando la franja de arriba** —la del título del periodo—, también a otro
+monitor, aunque tenga otra escala; al contraerse cae en la esquina del monitor donde esté.
+
+### Todos los atajos
+
+**En cualquier sitio**
+
+| Tecla | Qué hace |
+|---|---|
+| `Alt+Shift+C` | Abre y cierra el popup (se cambia en la configuración) |
+
+**En el popup**
+
+| Tecla | Qué hace |
+|---|---|
+| Escribir | Siempre va al campo de texto; `Enter` crea lo que dice la vista previa |
+| `Ctrl+Z` | Deshace lo creado mientras el aviso está en pantalla, y devuelve la frase al campo |
+| `Tab`, `Shift+Tab` | Campo → mes → tarjetas del día → campo |
+| `←` `→` `↑` `↓` | En el mes, un día o una semana (con texto escrito, `←` `→` mueven el cursor) |
+| `RePág`, `AvPág` | En el mes, el mes anterior o el siguiente |
+| `Enter`, `Espacio` | En el mes, abre la app en ese día |
+| `↑` `↓`, `Inicio`, `Fin` | En las tarjetas, la anterior, la siguiente, la primera o la última |
+| `Espacio` | En una tarea, la marca o la desmarca |
+| `Enter` | En una tarjeta, abre la app con ese evento en el panel de detalle |
+| `Ctrl+Enter` | Abre la app en el día seleccionado |
+| `Ctrl+,` | Configuración |
+| `Esc` | Cierra el popup |
+
+**En la app**
+
+| Tecla | Qué hace |
+|---|---|
+| `D`, `S`, `M` | Vista de día, semana o mes |
+| `T` | Ir a hoy |
+| `←` `→` | Periodo anterior o siguiente |
+| `↑` `↓` | Sin evento seleccionado, una hora arriba o abajo (en Mes, una semana); con uno, el anterior o el siguiente |
+| `RePág`, `AvPág` | Una pantalla de horas arriba o abajo |
+| `Tab`, `Shift+Tab` | Campo → eventos → panel de detalle → calendarios → tareas sin fecha |
+| `Enter` | En un evento, abre su detalle con el cursor en el título; en Mes, abre el día |
+| `Alt+↑` `Alt+↓` | Mueve el evento seleccionado un cuarto de hora |
+| `Alt+←` `Alt+→` | Lo mueve un día (la vista le sigue) |
+| `Ctrl+↑` `Ctrl+↓` | Acorta o alarga su final un cuarto de hora |
+| `Espacio` | En un calendario, lo muestra u oculta; en una tarea sin fecha, la marca |
+| `Enter` | En una tarea sin fecha, la convierte en un evento de una hora a la siguiente hora en punto |
+| `Ctrl+K` | Escribir en el campo; `Enter` crea, como en el popup |
+| `Supr` | Borra el evento seleccionado, después de preguntar (`Supr` otra vez confirma) |
+| `Ctrl+Z` | Deshace lo último, mientras el aviso está en pantalla |
+| `Ctrl+,` | Configuración |
+| `Esc` | Por capas: suelta el campo, cierra el detalle, quita la selección y al final contrae |
+
+**En el panel de detalle**
+
+| Tecla | Qué hace |
+|---|---|
+| `Tab`, `Shift+Tab` | Título → fecha → inicio → fin → calendario → ubicación → notas → repetición → borrar |
+| `Enter` | Guarda el campo; en las notas, `Shift+Enter` es un salto de línea |
+| `Espacio`, `Enter`, `F4` | En el calendario, abre la lista; `↑` `↓` eligen y `Enter` confirma |
+| `↑` `↓` | En el calendario cerrado, cambia al anterior o al siguiente |
+| `←` `→` | En la repetición, cambia la opción |
+| `Esc` | Cierra la lista del calendario o el panel |
+
+**En la configuración**
+
+| Tecla | Qué hace |
+|---|---|
+| `Tab`, `Shift+Tab` | De un ajuste al siguiente |
+| `←` `→` | Cambia la opción del idioma, el tema o la duración, y del calendario |
+| `Espacio`, `Enter` | Activa el interruptor, abre la lista o pulsa el botón; en el atajo, empieza a grabar |
+| `Retroceso` | Mientras graba el atajo, vuelve a `Alt+Shift+C` |
+| `Esc` | Deja de grabar, o cierra la ventana |
+
+El anillo de foco solo aparece cuando se usa el teclado; un clic lo quita hasta la siguiente
+tecla, como en Windows.
+
+### Configuración
+
+Se abre con **Configuración…** en el menú de la bandeja o con **Ctrl+,** en el popup y en la
+app. Es una ventana normal —con su barra de título, en Alt+Tab— dibujada con los mismos colores,
+letras y formas que el resto de Agenda. Todo se aplica al momento, sin botón de guardar.
+
+| Oscuro | Claro |
+|---|---|
+| ![La configuración en tema oscuro](docs/img/configuracion.png) | ![La configuración en tema claro](docs/img/configuracion-claro.png) |
+
+- **Atajo global.** Se pulsa el campo y luego la combinación. Tiene que llevar `Ctrl`, `Alt` o
+  `Win`; si otra aplicación la tiene, lo dice en rojo y se queda el atajo de antes.
+- **Idioma.** Español o inglés, para toda la interfaz: el popup, la app, los menús, los avisos
+  y las notificaciones. El campo de texto entiende los dos siempre.
+- **Tema.** Oscuro, claro o el de Windows. El alto contraste de Windows manda sobre los tres.
+- **Iniciar con Windows.** Escribe o borra el valor `Agenda` de
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, y nada más en el registro.
+- **Calendario por defecto.** Dónde cae lo que se crea; el mismo que el submenú de la bandeja.
+- **Duración por defecto.** Cuánto dura un evento escrito con hora y sin duración: 30 min,
+  45 min, 1 h, 1 h 30 o 2 h.
+- **Cuenta de Google.** Conectar (avisa antes de abrir el navegador) o desconectar.
+
+Se guarda en `%LOCALAPPDATA%\Agenda\config.local.json`, fusionado con lo que ya hubiera, así
+que las credenciales de Google que viven en ese mismo archivo no se tocan.
+
+### Recordatorios
+
+Agenda avisa con una **notificación de Windows** en el minuto que dicen los recordatorios de
+Google: los del propio evento o, si no tiene, los del calendario. Solo los de tipo
+*notificación*; los de correo los manda Google. El calendario local, sin cuenta, avisa diez
+minutos antes.
+
+La notificación se queda en pantalla hasta que se responde, con **Posponer** (5, 10 o 30
+minutos) y **Descartar**, que resuelve el propio Windows. Un clic en ella abre el popup en ese
+día. Si el equipo estaba dormido, al despertar solo avisa de lo que venció en el último cuarto
+de hora; lo demás ya pasó. Un calendario oculto en la barra lateral no avisa.
+
+Las notificaciones nativas necesitan el acceso del menú Inicio que crea el instalador. Una build
+lanzada desde su carpeta avisa con el globo de la bandeja, que Windows muestra igual.
+
+### Accesibilidad
+
+- **Todo con el teclado**: ver [Todos los atajos](#todos-los-atajos).
+- **Narrador y demás lectores de pantalla** leen el campo de texto (y pueden escribir en él), el
+  mes como un calendario de 6 × 7 con el día de hoy y los días con eventos, la lista del día con
+  horas, títulos y tareas hechas, y en la app las pestañas, los eventos, los calendarios, las
+  tareas sin fecha y cada campo del panel de detalle. Los avisos («Creado · Deshacer», «¿Borrar…?»)
+  se anuncian al aparecer.
+- **Alto contraste**: con un tema de contraste de Windows, Agenda usa los colores que eligió la
+  persona, sin transparencias, y dibuja el borde de lo que antes se distinguía por un tinte.
+  Cambia al momento, sin reiniciar.
+- Respeta **«Efectos de animación»** desactivado: sin fundidos ni muelle.
+
+| Semana con alto contraste |
+|---|
+| ![La app con alto contraste](docs/img/app-semana-contraste.png) |
+
+### Rendimiento
+
+Medido el 22 de septiembre de 2026 con la versión instalada, en un portátil con pantalla al
+125 % y GPU NVIDIA, 30 aperturas seguidas pulsando el atajo:
+
+| Qué | Mediana | p95 |
+|---|---|---|
+| Del atajo a la ventana visible (`ShowWindow`) | 5 ms | 9 ms |
+| Del atajo al primer fotograma compuesto | 17 ms | 23 ms |
+| Del atajo al primer fotograma del fundido | 34 ms | 40 ms |
+
+En reposo en la bandeja, 30 s después de cerrarse: **0,9 MB** de memoria privada en uso (lo
+que enseña el Administrador de tareas), 2,3 MB de *working set* y 54,5 MB de bytes privados,
+que son casi todos reservas del controlador gráfico. Al ocultarse, Agenda devuelve sus páginas a
+Windows y el búfer de la ventana vuelve al tamaño del popup; lo primero no se nota en la
+apertura siguiente, como dicen las cifras de arriba.
 
 ### Escribir en lenguaje natural
 
@@ -256,8 +418,9 @@ Las reglas cuando la frase no lo dice todo:
 - `AGENDA_DEV_MONITOR=N` hace lo mismo, y `--monitor` tiene prioridad.
 - En builds Debug el valor por defecto es 3, que es el monitor de desarrollo. En Release, sin
   argumento ni variable, se usa el monitor primario.
-- `--theme=dark` o `--theme=light` fuerza un tema sin tocar la configuración de Windows. Sin
-  el argumento, Agenda sigue al sistema.
+- `--theme=dark`, `--theme=light` o `--theme=contrast` fuerza un tema por encima de la
+  configuración. `contrast` usa los colores del alto contraste de Windows si está activo, y si
+  no los de «Contraste nocturno», para que la captura sea la misma en cualquier equipo.
 - `--panel=WxH` fuerza el tamaño del panel en DIP, por ejemplo `--panel=453x560`, en vez de
   calcularlo desde el monitor. Sirve para juzgar en una pantalla un tamaño que esa pantalla no
   produciría, y vale tanto para la app como para `--render-snapshot`.
@@ -279,7 +442,13 @@ build\debug\Agenda.exe --render-snapshot=popup-creado --out=docs\img\popup-cread
 build\debug\Agenda.exe --render-snapshot=app-semana --theme=dark  --out=docs\img\app-semana.png
 build\debug\Agenda.exe --render-snapshot=app-mes    --theme=light --out=docs\img\app-mes-claro.png
 build\debug\Agenda.exe --render-snapshot=app-transicion --out=docs\img\app-transicion.png
+build\debug\Agenda.exe --render-snapshot=configuracion --theme=dark --out=docs\img\configuracion.png
+build\debug\Agenda.exe --render-snapshot=popup --theme=contrast --out=docs\img\popup-contraste.png
 ```
+
+`configuracion` pinta el área de cliente de la ventana de configuración, con una cuenta
+conectada y los calendarios de ejemplo. Las capturas salen en el idioma que diga la
+configuración.
 
 La app tiene siete vistas más: `app-dia`, `app-semana` y `app-mes`, a su tamaño de diseño de
 1536×826 DIP (el 80 % de un área de trabajo de 1920×1032); `app-transicion`, que pinta la
@@ -323,12 +492,14 @@ PowerShell conviene lanzarlo con `Start-Process ... -Wait` si hace falta esperar
   `agenda.db-wal` y `agenda.db-shm` al lado). Dentro van los eventos, las tareas, los
   calendarios, el estado de sincronización y la cola de operaciones pendientes de subir.
   Las horas se guardan como **reloj de pared local** —un día y un minuto de ese día—, que
-  es lo que guarda también Google Calendar. Se crea sola la primera vez y se migra con
+  es lo que guarda también Google Calendar. Desde la 1.0.0 guarda también los recordatorios
+  (esquema v3). Se crea sola la primera vez y se migra con
   `PRAGMA user_version`; una base escrita por una versión más nueva de Agenda no se toca.
 - Token de Google: `%LOCALAPPDATA%\Agenda\token.bin`, el *refresh token* cifrado con
   **DPAPI**. Va atado a la cuenta de Windows: copiarlo a otro equipo o a otro usuario no sirve
   de nada. Borrarlo es desconectar. El *access token* no se escribe en ningún sitio.
 - Log: `%LOCALAPPDATA%\Agenda\logs\agenda-AAAAMMDD.log` (UTF-8, un archivo por día).
+- Programa instalado: `%LOCALAPPDATA%\Programs\Agenda` (`Agenda.exe` y `Desinstalar.exe`).
 - Configuración: `config.json` y, opcionalmente, `config.local.json`, primero junto al
   ejecutable y después en `%LOCALAPPDATA%\Agenda`. Se fusionan en ese orden, así que el
   archivo local manda. Los dos pueden faltar. **`config.local.json` guarda los secretos y
@@ -337,6 +508,9 @@ PowerShell conviene lanzarlo con `Start-Process ... -Wait` si hace falta esperar
 | Clave | Por defecto | Qué hace |
 |---|---|---|
 | `hotkey` | `"Alt+Shift+C"` | Atajo global. Combina `Ctrl`, `Alt`, `Shift` y `Win` con una letra, un dígito, `F1`–`F24`, `Space`, `Enter`, `Tab` o `Esc`. |
+| `language` | `"es"` | `"es"` o `"en"`: el idioma de la interfaz. |
+| `theme` | `"system"` | `"system"`, `"dark"` o `"light"`. |
+| `defaultDuration` | `60` | Minutos de un evento con hora y sin duración: 30, 45, 60, 90 o 120. |
 | `popup.openMs` | `160` | Duración de la animación de apertura, en milisegundos. |
 | `popup.closeMs` | `120` | Duración de la de cierre. |
 | `google.clientId` | — | El ID de cliente OAuth. Sin él, Agenda es un calendario local y el menú de la bandeja no menciona Google. |
@@ -349,9 +523,13 @@ versiona porque no lleva nada dentro; el archivo con los valores, no.
 ```json
 {
   "hotkey": "Ctrl+Alt+Space",
+  "language": "en",
   "popup": { "openMs": 160, "closeMs": 120 }
 }
 ```
+
+Todas menos las de `popup` y `google` se cambian también desde la ventana de configuración,
+que es la forma normal de hacerlo.
 
 Si Windows tiene desactivadas las animaciones (Configuración → Accesibilidad → Efectos
 visuales), el popup aparece y desaparece sin animación.
@@ -407,16 +585,52 @@ Dos límites que conviene saber:
   sabe leer —«el primer martes de cada mes»— se queda en su primer día, y las excepciones que
   se hagan en Google a una sola repetición todavía no se reflejan aquí.
 
+## Preguntas frecuentes
+
+**Pulso el atajo y no pasa nada.** Otra aplicación lo tiene: al arrancar, Agenda lo dice con un
+globo en la bandeja. Ábrela desde el icono y elige otro en *Configuración → Atajo global*.
+
+**No veo el icono en la bandeja.** Windows 11 esconde los iconos nuevos detrás de la flecha `^`
+junto al reloj; arrástralo a la barra o actívalo en *Configuración de Windows →
+Personalización → Barra de tareas → Otros iconos de la bandeja del sistema*. El atajo funciona
+igual.
+
+**No me llegan las notificaciones.** Hace falta haber instalado con `Instalar-Agenda.exe` (el
+acceso del menú Inicio es lo que Windows usa para identificarla) y que las notificaciones de
+Agenda estén activadas en *Configuración de Windows → Sistema → Notificaciones*. Con «No
+molestar» activo, Windows las guarda en el centro de notificaciones sin mostrarlas.
+
+**Conecté Google y a la semana dejó de sincronizar.** El proyecto de Google Cloud está en modo
+*Prueba*, que caduca el permiso a los siete días. Publícalo, como explica
+[docs/google-setup.md](docs/google-setup.md), y vuelve a conectar desde la configuración.
+
+**¿Dónde están mis datos? ¿Se pierden al desinstalar?** En `%LOCALAPPDATA%\Agenda`. Desinstalar
+no los toca salvo que marques «Borrar también mis datos».
+
+**¿Funciona sin conexión?** Sí. Todo se guarda en local y sube solo cuando vuelve la red; un
+punto pequeño en la cabecera del popup lo indica.
+
+**¿Por qué no se cambia de tamaño la app?** Ocupa el 80 % del área de trabajo del monitor, como
+decisión de diseño; sí se puede mover arrastrando su franja superior.
+
+**Quiero la interfaz en inglés.** *Configuración → Idioma → English*. El campo de texto sigue
+entendiendo español e inglés a la vez.
+
+**¿Cómo la quito del arranque sin desinstalarla?** *Configuración → Iniciar con Windows*, o
+desde *Administrador de tareas → Aplicaciones de arranque*.
+
 ## Estructura del proyecto
 
 ```
 src/
-  app/      entrada (wWinMain), atajo global, bandeja, monitores y argumentos
-  ui/       ventana popup y app expandida, render D2D, composición, muelle y capturas
+  app/      entrada (wWinMain), atajo global, bandeja, monitores, argumentos y notificaciones
+  ui/       popup y app expandida, configuración, render D2D, composición, muelle, capturas
+            y UI Automation
   nlp/      parser de lenguaje natural (biblioteca estática, sin nada de interfaz dentro)
   data/     SQLite, esquema, modelos y repositorios (biblioteca estática, por lo mismo)
   sync/     OAuth y clientes de Google Calendar y Tasks
-  core/     logging, configuración, rutas y utilidades
+  core/     logging, configuración, idioma, arranque con Windows, rutas y utilidades
+  installer/ el instalador y desinstalador (Instalar-Agenda.exe)
 tests/      pruebas con Catch2
 assets/     manifiesto (DPI Per-Monitor v2) e iconos
 docs/       capturas y decisiones de arquitectura
@@ -433,7 +647,6 @@ docs/       capturas y decisiones de arquitectura
 | 4 | Almacenamiento en SQLite: eventos, tareas y caché local | Hecha |
 | 5 | Sincronización con Google Calendar y Google Tasks (OAuth) | Hecha |
 | 6 | Expansión animada a la app completa con vistas de día, semana y mes | Hecha |
-| 7 | Pulido, rendimiento, empaquetado y arranque con Windows | Pendiente |
+| 7 | Configuración, recordatorios, accesibilidad, DPI mixto, rendimiento e instalador (1.0.0) | Hecha |
 
-El detalle de cada fase vive en el plan de fases del proyecto; las fases 3 a 7 pueden ajustarse
-sobre la marcha.
+El detalle de cada fase vive en el plan de fases del proyecto.

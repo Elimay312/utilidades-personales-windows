@@ -58,6 +58,15 @@ inline UINT MonitorDpi(HWND hwnd) {
   return x;
 }
 
+// Where to open: `pinned` when --monitor chose one, otherwise the monitor the mouse is on --
+// the one the user is looking at, whether the hotkey or the tray opened it.
+inline HMONITOR TargetMonitor(HMONITOR pinned) {
+  if (pinned != nullptr) return pinned;
+  POINT cursor{};
+  GetCursorPos(&cursor);
+  return MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
+}
+
 inline int ScaleDip(int dip, UINT dpi) {
   return MulDiv(dip, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI);
 }

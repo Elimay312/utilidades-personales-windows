@@ -15,7 +15,7 @@ notificaciones nativas, o en la [Isla](../isla/README.md) si está corriendo. Se
 contraste y el cambio de escala entre monitores.
 
 Agenda se queda residente en la bandeja. El atajo abre un popup con fondo acrylic en la esquina
-inferior derecha del monitor de trabajo, con el mes, lo que hay ese día y el campo de texto. Al
+inferior derecha del monitor donde está el ratón, con el mes, lo que hay ese día y el campo de texto. Al
 escribir, Agenda **entiende lo que lee**: resalta los trozos que reconoce y muestra encima una
 tarjeta con lo que se va a crear, y **con Enter lo crea**. Todo se guarda en SQLite y **se
 sincroniza en los dos sentidos con Google Calendar y Google Tasks**, sin que la interfaz espere
@@ -438,7 +438,8 @@ Las reglas cuando la frase no lo dice todo:
   `\\.\DISPLAYN`. El orden de enumeración **no** es ese número.
 - `AGENDA_DEV_MONITOR=N` hace lo mismo, y `--monitor` tiene prioridad.
 - En builds Debug el valor por defecto es 3, que es el monitor de desarrollo. En Release, sin
-  argumento ni variable, se usa el monitor primario.
+  argumento ni variable, el popup y la configuración se abren en el monitor donde está el
+  ratón en ese momento, sea con el atajo o desde la bandeja.
 - `--theme=dark`, `--theme=light` o `--theme=contrast` fuerza un tema por encima de la
   configuración. `contrast` usa los colores del alto contraste de Windows si está activo, y si
   no los de «Contraste nocturno», para que la captura sea la misma en cualquier equipo.

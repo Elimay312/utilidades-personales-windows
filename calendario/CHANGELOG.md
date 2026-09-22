@@ -9,6 +9,11 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Cambiado
 
+- **Varios monitores: el popup se abre donde está el ratón.** Antes salía siempre en el monitor
+  principal. Ahora, sin `--monitor`, cada apertura (atajo o bandeja) va a la esquina del
+  monitor que tiene el ratón, con su escala; la configuración también. `--monitor=N` y
+  `AGENDA_DEV_MONITOR` siguen fijando uno.
+
 - **Una hora sin a. m. ni p. m. se decide mejor, y si hay duda se pregunta.** `4:05` ya no es
   de madrugada por escribirse con dos puntos: va por la misma regla que `a las 4`. Hoy vale la
   mitad del día que todavía no ha pasado (`hoy a las 5` a las diez son las 17:00). Si las dos

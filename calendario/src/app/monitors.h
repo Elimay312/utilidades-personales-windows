@@ -8,12 +8,12 @@
 
 namespace agenda {
 
-// Debug always targets \\.\DISPLAY3 (see the monitor rule in CLAUDE.md); Release uses whatever
-// monitor Windows calls primary unless --monitor says otherwise.
+// Debug always targets \\.\DISPLAY3 (see the monitor rule in CLAUDE.md); Release opens on the
+// monitor the mouse is on unless --monitor pins one.
 #ifdef _DEBUG
 inline constexpr int kDefaultMonitor = 3;
 #else
-inline constexpr int kDefaultMonitor = 0;  // 0 = primary
+inline constexpr int kDefaultMonitor = 0;  // 0 = follow the mouse
 #endif
 
 struct Options {

@@ -51,7 +51,8 @@ class PopupWindow final : public A11ySource {
     UINT closeMs = 120;
   };
 
-  // `themeOverride` is "dark" or "light" from --theme; empty follows the system.
+  // `monitor` pins the popup to one monitor (--monitor); nullptr opens it on the one the mouse
+  // is on. `themeOverride` is "dark" or "light" from --theme; empty follows the system.
   bool Create(HINSTANCE instance, HMONITOR monitor, Timing timing,
               std::wstring_view themeOverride);
 

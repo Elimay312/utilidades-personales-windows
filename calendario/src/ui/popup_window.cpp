@@ -64,7 +64,7 @@ bool PopupWindow::Create(HINSTANCE instance, HMONITOR monitor, Timing timing,
 
   MONITORINFO info{};
   info.cbSize = sizeof(info);
-  if (!GetMonitorInfoW(monitor_, &info)) {
+  if (!GetMonitorInfoW(TargetMonitor(monitor_), &info)) {
     LogError(L"popup: GetMonitorInfoW failed with error {}", GetLastError());
     return false;
   }
@@ -433,7 +433,7 @@ void PopupWindow::Show() {
 
   MONITORINFO info{};
   info.cbSize = sizeof(info);
-  if (!GetMonitorInfoW(monitor_, &info)) {
+  if (!GetMonitorInfoW(TargetMonitor(monitor_), &info)) {
     LogError(L"popup: GetMonitorInfoW failed with error {}", GetLastError());
     return;
   }

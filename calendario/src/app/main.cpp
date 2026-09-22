@@ -228,7 +228,7 @@ LRESULT CALLBACK AppWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
               if (app->sync) app->sync->Disconnect();
               break;
             case kTraySettings:
-              app->settings.Show(app->monitor);
+              app->settings.Show(TargetMonitor(app->monitor));
               break;
             case kTrayExit:
               PostQuitMessage(0);
@@ -339,20 +339,22 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     timing.closeMs = ReadMilliseconds(*popup, "closeMs", timing.closeMs);
   }
 
+  // Pinned only when --monitor asks for one; otherwise nullptr, and each opening follows the
+  // mouse to whichever monitor it is on.
   HMONITOR monitor = nullptr;
-  if (options.monitor == 0) {
-    monitor = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
-  } else if (const std::optional<HMONITOR> found = FindMonitorByDisplayNumber(options.monitor)) {
+  if (options.monitor != 0) {
+    const std::optional<HMONITOR> found = FindMonitorByDisplayNumber(options.monitor);
+    if (!found) {
+      // No silent fallback to another monitor: CLAUDE.md forbids it.
+      LogError(L"\\\\.\\DISPLAY{} is not connected, refusing to start", options.monitor);
+      return 2;
+    }
     monitor = *found;
-  } else {
-    // No silent fallback to another monitor: CLAUDE.md forbids it.
-    LogError(L"\\\\.\\DISPLAY{} is not connected, refusing to start", options.monitor);
-    return 2;
   }
 
   MONITORINFOEXW info{};
   info.cbSize = sizeof(info);
-  if (!GetMonitorInfoW(monitor, &info)) {
+  if (!GetMonitorInfoW(TargetMonitor(monitor), &info)) {
     LogError(L"GetMonitorInfoW failed with error {}", GetLastError());
     return 2;
   }
@@ -392,7 +394,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   app.popup.SetPanelOverride(D2D1_SIZE_F{static_cast<float>(options.panelWidth),
                                          static_cast<float>(options.panelHeight)});
   app.popup.SetPreferences(&app.prefs);
-  app.popup.SetOpenSettings([&app] { app.settings.Show(app.monitor); });
+  app.popup.SetOpenSettings([&app] { app.settings.Show(TargetMonitor(app.monitor)); });
   if (!app.popup.Create(instance, monitor, timing, options.theme)) return 2;
   app.tray.Add(instance, hwnd);
 

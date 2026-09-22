@@ -1849,6 +1849,29 @@ internal sealed unsafe class DockWindow : IDisposable
         ShowWheelList();
     }
 
+    /// <summary>
+    /// Clic sobre el ICONO con la lista de la rueda abierta: va a la ventana que la
+    /// rueda dejó elegida, y le hace lo mismo que un clic normal.
+    ///
+    /// Antes este clic solo cerraba la lista y había que bajar a pinchar el título, que
+    /// es justo el viaje que la rueda venía a ahorrar: el ratón ya está encima del
+    /// icono, porque es donde se gira la rueda.
+    /// </summary>
+    private void OnWheelPick()
+    {
+        int index = _wheelIndex;
+        int at = _wheelAt;
+        int total = _wheelWindows.Length;
+        HWND window = at >= 0 && at < total ? _wheelWindows[at] : HWND.Null;
+
+        // Cerrar ANTES de actuar: la lista tapa el icono y el genio sale de él.
+        CloseMenu();
+
+        if (index < 0 || index >= _loaded.Count) return;
+
+        ClickWindow(index, window, $"{_loaded[index].App.Name} ({at + 1} de {total})");
+    }
+
     private void OnMenuChoice(int choice)
     {
         _visuals?.CloseMenu();
@@ -1950,6 +1973,7 @@ internal sealed unsafe class DockWindow : IDisposable
             {
                 int choice = _visuals.MenuHitTest(LoWord(lParam), HiWord(lParam));
                 if (choice >= 0) OnMenuChoice(choice);
+                else if (_wheelIndex >= 0 && _visuals.HitTest(_lastRest) == _wheelIndex) OnWheelPick();
                 else CloseMenu();
             }
 
@@ -2735,35 +2759,12 @@ internal sealed unsafe class DockWindow : IDisposable
         //
         // Lo que se paga, sabiéndolo: darle el foco desde el dock a una ventana que se
         // ve ya no se puede de un clic. El primero se la traga y el segundo la devuelve.
-        if (state.HasWindow
-            && (WindowActions.IsForeground(state.MainWindow) || WindowActions.IsOnScreen(state.MainWindow)))
-        {
-            // El genio se monta ANTES de minimizar, porque para capturarla tiene que
-            // estar todavía ahí. Si la captura falla, se minimiza a secas: degradar es
-            // mejor que romperse.
-            bool genie = PlayGenie(index, state.MainWindow);
-            WindowActions.Minimize(state.MainWindow, instant: genie);
-            Console.WriteLine($"[dock] minimizada '{app.Name}'{(genie ? " con genio" : "")}");
-            return;
-        }
+        if (ClickWindow(index, state.MainWindow, app.Name)) return;
 
-        // El rebote arranca ya, sin esperar: es acuse de recibo del clic. Corre en el
-        // compositor, así que no le afecta lo que tarde nada de lo de abajo.
-        _visuals?.Bounce(index, Scale(_config.IconSize) * 0.35f);
-
-        if (state.HasWindow)
-        {
-            // Sale del icono esté minimizada o solo tapada. El genio la trae al frente
-            // él mismo al acabar, por eso aquí no se hace nada más.
-            bool genie = PlayGenieBack(index, state.MainWindow);
-            if (!genie) WindowActions.BringToFront(state.MainWindow);
-
-            Console.WriteLine($"[dock] al frente '{app.Name}'{(genie ? " con genio" : "")}");
-            return;
-        }
-
-        // Y sigue botando hasta que la app tenga ventana, como en macOS: es el único
-        // aviso de que el clic llegó cuando una app tarda en arrancar.
+        // Sin ventana: se lanza, y el icono bota hasta que la app abra una, como en
+        // macOS. Es el único aviso de que el clic llegó cuando una app tarda en
+        // arrancar. El rebote corre en el compositor, así que no le afecta lo que
+        // tarde nada de lo de abajo.
         _visuals?.Bounce(index, Scale(_config.IconSize) * 0.35f, forever: true);
         _launchingIndex = index;
         _launchingUntil = DateTime.UtcNow.AddSeconds(20);
@@ -2783,6 +2784,42 @@ internal sealed unsafe class DockWindow : IDisposable
                 Console.WriteLine($"[dock] no se pudo lanzar '{app.Name}': {ex.Message}");
             }
         });
+    }
+
+    /// <summary>
+    /// Lo que un clic sobre el icono le hace a una de sus ventanas: traerla, o
+    /// tragársela si ya la estabas viendo. Devuelve false si no había ventana, que es
+    /// lo único que autoriza a lanzar la app.
+    ///
+    /// Está aparte porque lo piden dos sitios —el clic a secas, que va a la ventana
+    /// principal, y el clic tras elegir con la rueda, que va a la elegida— y si la
+    /// regla estuviera escrita dos veces, el mismo gesto acabaría haciendo dos cosas.
+    /// </summary>
+    private bool ClickWindow(int index, HWND window, string name)
+    {
+        if (window.IsNull) return false;
+
+        if (WindowActions.IsForeground(window) || WindowActions.IsOnScreen(window))
+        {
+            // El genio se monta ANTES de minimizar, porque para capturarla tiene que
+            // estar todavía ahí. Si la captura falla, se minimiza a secas: degradar es
+            // mejor que romperse.
+            bool tragada = PlayGenie(index, window);
+            WindowActions.Minimize(window, instant: tragada);
+            Console.WriteLine($"[dock] minimizada '{name}'{(tragada ? " con genio" : "")}");
+            return true;
+        }
+
+        // El rebote es acuse de recibo del clic y arranca ya, sin esperar a nada.
+        _visuals?.Bounce(index, Scale(_config.IconSize) * 0.35f);
+
+        // Sale del icono esté minimizada o solo tapada. El genio la trae al frente él
+        // mismo al acabar, por eso aquí no se hace nada más.
+        bool salida = PlayGenieBack(index, window);
+        if (!salida) WindowActions.BringToFront(window);
+
+        Console.WriteLine($"[dock] al frente '{name}'{(salida ? " con genio" : "")}");
+        return true;
     }
 
     private void OnDpiChanged(WPARAM wParam, LPARAM lParam)

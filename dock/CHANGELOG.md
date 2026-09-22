@@ -24,6 +24,14 @@ Lo que hay ahora en `main`. Se está probando en varios equipos antes de darlo p
 
 ### Cambiado
 
+- **Con la lista de la rueda abierta, el clic sobre el icono abre la ventana elegida**, y
+  ya no hace falta bajar el ratón al título. Ese viaje es justo el que la rueda venía a
+  ahorrar: el puntero ya está sobre el icono, que es donde se gira. La elegida recibe lo
+  mismo que un clic normal —sale del icono con el genio, o se la traga si ya la estabas
+  viendo—, porque la regla está escrita una sola vez y la usan los dos caminos. Medido con
+  las dos ventanas de Brave: dos muescas y un clic dan `al frente 'Brave (2 de 2)'`, y el
+  siguiente clic, `minimizada 'Brave (2 de 2)'`.
+
 - **El clic esconde la ventana que estás viendo, tenga el foco o no.** Con varias
   pantallas el foco no dice lo que se ve: la del monitor 1 sigue delante de tus ojos
   mientras escribes en la del 2, y el clic sobre su icono le hacía la animación de entrada

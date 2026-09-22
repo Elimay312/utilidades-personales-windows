@@ -512,6 +512,12 @@ internal sealed unsafe class IslaWindow : IDisposable
         bool pomodoro = _instancia?._hayPomodoro ?? false;
         DateTime finPomodoro = _instancia?._finPomodoro ?? default;
 
+        // Y lo que YA se anuncio. Sin esto la isla renace con _sonando en null, Medios
+        // se vuelve a enganchar, OnMedios cree que la cancion es nueva y asoma: cada
+        // cruce de pantalla te saltaba encima la ficha entera de lo que ya estabas
+        // escuchando. Mudarse tiene que ser mudarse, no volver a presentarse.
+        string? sonando = _instancia?._sonando;
+
         Stopwatch reloj = Stopwatch.StartNew();
 
         _rehaciendo = true;
@@ -527,7 +533,11 @@ internal sealed unsafe class IslaWindow : IDisposable
             return;
         }
 
-        if (pomodoro && finPomodoro > DateTime.UtcNow) _instancia!.RetomarPomodoro(finPomodoro);
+        // Antes de que llegue el WM_APP_MEDIA que Medios.Arrancar va a postear: esto corre
+        // dentro del bucle de mensajes, asi que el mensaje se procesa despues de volver.
+        _instancia!._sonando = sonando;
+
+        if (pomodoro && finPomodoro > DateTime.UtcNow) _instancia.RetomarPomodoro(finPomodoro);
 
         Console.WriteLine($"[isla] rehecha en {reloj.ElapsedMilliseconds} ms");
     }

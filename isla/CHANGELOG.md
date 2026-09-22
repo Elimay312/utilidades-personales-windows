@@ -53,6 +53,15 @@ porque **medido cuesta 17-29 ms, mediana 21**, y reescala solo: 520x260 al 100 %
 al 125 %, 910x455 al 175 %. Histéresis de tres tics (~375 ms) para no mudarse al rozar un
 borde de paso.
 
+Y lo que se vio en cuanto se usó de verdad: **la isla se presentaba otra vez en cada
+mudanza.** Cruzabas de pantalla y te saltaba encima la ficha entera —carátula, título,
+artista— de la canción que ya estabas escuchando. La causa es la misma familia que el
+pomodoro: `_sonando`, el título que la isla ya había anunciado, es un campo de instancia,
+así que la isla renacía sin él, `Medios` se volvía a enganchar y `OnMedios` creía que la
+canción era nueva. Ahora también sobrevive, y **mudarse es mudarse, no volver a
+presentarse**. La traza lo dice sola: la línea de la canción se imprime justo antes de
+asomar, y tras el arreglo ya no aparece en ninguna mudanza.
+
 Eso destapó lo que ese camino se llevaba por delante sin que importase: **`Rehacer()`
 perdía el pomodoro.** Daba igual cuando solo pasaba al enchufar un monitor; con esto
 pasaría cada vez que cruzas de pantalla con el ratón. Comprobado con capturas en las dos

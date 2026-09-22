@@ -210,6 +210,13 @@ void Element::SlideTo(float xDip, float yDip, Motion::Kind kind) {
     m_host->Animator().Offset(m_visual, {xDip, yDip, 0.0f}, kind);
 }
 
+void Element::ScaleTo(float scale, Motion::Kind kind) {
+    if (!m_visual || !m_host) return;
+    const Motion::Animator& animator = m_host->Animator();
+    animator.BindCenterPoint(m_visual);
+    animator.Scale(m_visual, {scale, scale, 1.0f}, kind);
+}
+
 void Element::MorphTo(const Rect& frame, float radiusDip, Motion::Kind kind) {
     if (m_layer) {
         // Con superficie propia no hay transición posible: animar el tamaño obligaría a

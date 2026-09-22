@@ -428,3 +428,68 @@ TEST_CASE("un repositorio en Enfoque y parado sale en Necesita decisión al camb
     REQUIRE(state.ApplyLocal(local, kNow));
     CHECK(state.CountOf(App::Lens::NeedsDecision) == 1);
 }
+
+TEST_CASE("la pila de la revisión: primero los desajustes y después los sin clasificar") {
+    // Es de las que se equivocan en silencio: una pila a la que le falte alguien no da un
+    // error, da una revisión más corta — y una revisión más corta se parece muchísimo a una
+    // revisión terminada.
+    App::State state;
+    std::vector<Model::Repo> repos;
+    repos.push_back(MakeRepo("R_parado", L"yo/parado", "2026-01-01T00:00:00Z"));
+    repos.push_back(MakeRepo("R_nuevo", L"yo/nuevo", "2026-09-20T00:00:00Z"));
+    repos.push_back(MakeRepo("R_ordenado", L"yo/ordenado", "2026-09-19T00:00:00Z"));
+
+    std::vector<Model::Local> locals;
+    // En Enfoque y sin un push desde enero: eso es Mismatch::FocusDormant, o sea "Enfoque
+    // sin actividad", que es uno de los tres casos que pide CLAUDE.md.
+    Model::Local parado;
+    parado.repoId = "R_parado";
+    parado.priority = Model::Priority::Focus;
+    locals.push_back(parado);
+    // Este ya está clasificado y al día: no tiene nada que decidir y no entra.
+    Model::Local ordenado;
+    ordenado.repoId = "R_ordenado";
+    ordenado.priority = Model::Priority::Secondary;
+    locals.push_back(ordenado);
+    // Y R_nuevo se queda sin fila local, que es como nacen: sin clasificar.
+
+    state.Load(repos, locals, kNow);
+
+    const std::vector<std::string> queue = App::ReviewQueue(state);
+    REQUIRE(queue.size() == 2);
+    // El desajuste primero: es una decisión que ya se tomó y se quedó vieja, y eso urge
+    // más que una que todavía no se ha tomado.
+    CHECK(queue[0] == "R_parado");
+    CHECK(queue[1] == "R_nuevo");
+}
+
+TEST_CASE("la pila de la revisión no enseña dos veces al mismo ni mira la vista elegida") {
+    // Un repositorio archivado con pushes recientes es un desajuste Y está clasificado; uno
+    // sin clasificar y dormido sale una sola vez aunque encaje en dos preguntas.
+    App::State state;
+    std::vector<Model::Repo> repos;
+    repos.push_back(MakeRepo("R_archivado", L"yo/archivado", "2026-09-20T00:00:00Z"));
+    repos.push_back(MakeRepo("R_sinnada", L"yo/sinnada", nullptr));
+    repos.push_back(MakeRepo("R_ido", L"yo/ido", "2026-09-18T00:00:00Z"));
+    repos[2].goneAt = kNow;
+
+    std::vector<Model::Local> locals;
+    Model::Local archivado;
+    archivado.repoId = "R_archivado";
+    archivado.priority = Model::Priority::Archived;
+    locals.push_back(archivado);
+
+    state.Load(repos, locals, kNow);
+    // Puesto en una vista que no tiene nada dentro: la revisión es de toda la cuenta, no de
+    // lo que se esté mirando.
+    state.SetLens(App::Lens::Someday);
+    state.SetQuery(L"no existe este texto");
+
+    const std::vector<std::string> queue = App::ReviewQueue(state);
+    REQUIRE(queue.size() == 2);
+    CHECK(queue[0] == "R_archivado");
+    CHECK(queue[1] == "R_sinnada");
+    // El que se fue de la cuenta no entra: una lista para decidir no puede tener dentro
+    // cosas sobre las que ya no se puede decidir.
+    for (const std::string& id : queue) CHECK(id != "R_ido");
+}

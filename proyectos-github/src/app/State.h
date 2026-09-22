@@ -206,4 +206,22 @@ private:
     int m_counts[9] = {};
 };
 
+// Lo que la revisión semanal pregunta, y en el orden en que lo pregunta.
+//
+// Son los de "Necesita decisión" y los de "Sin clasificar". Los de "Enfoque sin actividad"
+// que pide CLAUDE.md ya están dentro de los primeros, porque eso es exactamente
+// Model::Mismatch::FocusDormant: pedirlos aparte sería enseñar la misma tarjeta dos veces.
+//
+// Primero los desajustes y después los sin clasificar, y no es un orden cualquiera: un
+// repositorio en Enfoque que lleva un mes parado es una decisión que ya se tomó y se quedó
+// vieja, y uno recién aparecido es una que todavía no se ha tomado. Lo primero urge más.
+// Dentro de cada grupo manda el orden de la lista, que es el del último push.
+//
+// Devuelve IDENTIFICADORES y no posiciones, por lo mismo que el inspector de la fase 5: el
+// estado se reconstruye entero después de cada guardado y de cada sincronización, así que
+// una posición apuntada al empezar apuntaría a otro repositorio en la tercera tarjeta, y
+// lo haría sin dar el menor error. Y no mira la vista elegida ni la búsqueda: la revisión
+// es de toda la cuenta, no de lo que se esté mirando.
+std::vector<std::string> ReviewQueue(const State& state);
+
 }  // namespace App

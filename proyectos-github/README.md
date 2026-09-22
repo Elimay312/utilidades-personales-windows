@@ -14,14 +14,18 @@ resulta que corre en Windows.
 
 ## Estado
 
-**Fase 6 de 8 terminada.** Ya sirve para lo que existe: al abrirla aparece la lista de los
+**Fase 7 de 8 terminada.** Ya sirve para lo que existe: al abrirla aparece la lista de los
 repositorios de la cuenta —barra lateral con los grupos de prioridad y las vistas
 inteligentes, tarjetas con el siguiente paso, búsqueda en vivo—, y al abrir uno, la tarjeta
 se transforma en el inspector, donde se le pone prioridad, estado, siguiente paso y
 novedades. Y ya se decide con ella: las tarjetas se arrastran hasta su grupo o se cambian
 con las teclas 1-4, se reordenan a mano dentro del suyo, Ctrl+K abre la paleta de comandos y
 Ctrl+Z deshace. En Enfoque no caben más de cinco: el sexto se para con un temblor y hay que
-elegir cuál baja. La sincronización con GitHub ocurre detrás, sin que la ventana la espere. Medido
+elegir cuál baja. Y con **Ctrl+Mayús+R** la lista se aleja y llega la revisión semanal: una
+pila de tarjetas con los repositorios que piden una decisión, que se pasa entera con el
+teclado y termina en un resumen de cómo quedó cada grupo — con un recordatorio opcional que
+avisa el día y la hora que se elija.
+La sincronización con GitHub ocurre detrás, sin que la ventana la espere. Medido
 contra la cuenta del autor —109 repositorios— y con la caché llena, **la ventana está en
 pantalla con la lista en 106 ms** y filtrar mientras se escribe cuesta **0,006 ms por
 pulsación**.
@@ -38,10 +42,13 @@ sincronización, el tema claro/oscuro siguiendo al del sistema, el kit de compon
 si no una hoja que explica los permisos y la recoge—, el cliente de la API, la caché en
 SQLite, la sincronización en segundo plano, la vista principal, el inspector con sus notas,
 el modo repo, la copia de seguridad a un JSON, el arrastre entre grupos con su hueco y su
-vuelta a casa, el menú de cada tarjeta, la paleta de comandos y deshacer.
+vuelta a casa, el menú de cada tarjeta, la paleta de comandos, deshacer, la revisión semanal
+con su pila de tarjetas y su resumen, y el recordatorio que la abre desde una notificación
+de Windows.
 
-Lo que no hay todavía: la revisión semanal (fase 7) y el pulido final (fase 8). El plan
-completo está en [`PROMPTS.md`](PROMPTS.md).
+Lo que no hay todavía: el pulido final (fase 8) — la auditoría de animaciones, el arranque
+por debajo de 300 ms en frío, el esquema `brujula://`, el icono y la pantalla «Acerca de».
+El plan completo está en [`PROMPTS.md`](PROMPTS.md).
 
 ## Compilar y ejecutar
 

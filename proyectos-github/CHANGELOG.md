@@ -10,6 +10,91 @@ lo dice.
 
 ## Sin publicar
 
+### Fase 7 — Revisión semanal
+
+Ctrl+Mayús+R: la lista se aleja y llega una pila de tarjetas, una por repositorio que
+necesita una decisión. Se pasa entera con el teclado —1-4 la clasifican, E edita el
+siguiente paso sin salir, Espacio la manda al final, Esc termina— y al acabar sale un
+resumen de cómo quedó cada grupo. Con un recordatorio opcional que avisa el día y la hora
+que se elija.
+
+La segunda fase que se prueba **con la aplicación en uso**, y salieron cuatro fallos que
+ninguna captura enseñaba. Dos eran de esta fase y dos son reglas del kit mordiendo por el
+lado contrario al que se aprendieron.
+
+**Lo que hay**
+
+- **`Views::Review`**, hijo de `Views::Main` y no capa flotante del Host: las capas se
+  cierran todas juntas cuando la ventana pierde el foco, y una revisión a medias que
+  desaparece por mirar el navegador un momento perdería por dónde iba. Es la misma razón
+  por la que `Views::DragCard` tampoco es una capa.
+- **La pila la decide `App::ReviewQueue`**, que es puro y tiene prueba: primero los
+  desajustes de «Necesita decisión» y después los «Sin clasificar». «Enfoque sin actividad»
+  no se pide aparte porque ya ES uno de los desajustes —`Mismatch::FocusDormant`— y pedirlo
+  dos veces enseñaría la misma tarjeta dos veces. Devuelve identificadores y no posiciones:
+  el estado se reconstruye entero después de cada guardado.
+- **Dos caras que se alternan.** La que sale tiene que seguir viéndose mientras entra la
+  siguiente, o entre una decisión y la otra hay un hueco en blanco — y con veinte
+  repositorios en dos minutos ese hueco es la mitad del tiempo.
+- **La tarjeta no decide nada**: pregunta a `App::ApplyPriority`, que ahora devuelve si
+  pudo. Con un «no» —Enfoque lleno— la tarjeta tiembla y se queda, la hoja de la fase 6 sale
+  por encima y, cuando alguien elige quién baja, la tarjeta sale volando entonces.
+- **Barra de progreso** de tres DIP arriba y **resumen animado** al terminar: cuántos se
+  decidieron y una barra por grupo, entrando escalonadas veinte milisegundos.
+- **Recordatorio** (`Shell::Balloon`): un globo del área de notificación, no una
+  `ToastNotification` de WinRT. Una aplicación sin empaquetar necesitaría un AppUserModelID
+  en un acceso directo del menú Inicio y un servidor COM registrado para enterarse del clic;
+  eso es un instalador, y esto es un .exe que se copia. El icono se añade para el globo y se
+  quita en cuanto el globo se va.
+
+**Los cuatro fallos que salieron de usarla**
+
+- **La tarjeta que entra salía diminuta.** Al salir volando hacia su diana encogía con una
+  animación de escala; la cara se reutiliza dos decisiones después y `Visual().Scale({1,1,1})`
+  no bastaba para devolverla: **escribir una propiedad que tuvo una animación encima no la
+  deja escrita**. Es la misma lección de la fase 6 en su tercera visita. Se quitó la escala
+  entera: la tarjeta sale volando con desplazamiento y fundido, que es lo que dice hacia
+  dónde va; el tamaño no añadía nada y sí un modo de fallo.
+- **El campo del siguiente paso no dejaba escribir ni una letra.** La revisión es un modo y
+  se quedaba con todas las teclas, y `Shell::Window` se come el `WM_CHAR` de cualquier tecla
+  consumida —lo que desde la fase 5 evita que un atajo de una letra se escriba dentro del
+  campo que acaba de abrir—. Mientras se edita, todo lo que el campo no quiera se devuelve
+  SIN consumir; solo Esc se consume.
+- **El texto del renglón se leía a través del campo.** El campo es un pozo translúcido que
+  se coloca justo encima, así que «Sin siguiente paso — pulsa E para escribirlo» salía
+  cruzado con lo que se escribía. Mientras se edita, la tarjeta no pinta ese renglón.
+- **El bloque estaba pegado al título** con media pantalla de negro debajo del pie, y los
+  fantasmas de la pila no se veían. La tarjeta, la pila y el pie van centrados en lo que
+  queda, y los fantasmas asoman trece DIP y son opacos: debajo de la de delante está su
+  sombra, y un fantasma translúcido bajo una sombra es el mismo gris que el fondo.
+
+**Y uno que no se ve nunca**
+
+El marcador de «ya sonó hoy» del recordatorio se guardaba con el día **UTC** y el disparo
+mira la hora **local**. Un aviso del lunes a las nueve de la noche se marcaba como del
+martes, y al cruzar la medianoche UTC el marcador dejaba de coincidir y volvía a sonar esa
+misma noche: dos avisos del mismo recordatorio. El día se escribe ahora del mismo reloj con
+el que se decidió disparar.
+
+**Medido**
+
+- Los 268 tests pasan, dos nuevos sobre `App::ReviewQueue`.
+- Compila sin warnings con `/W4 /permissive-`.
+- `auditar.ps1`: las once reglas limpias.
+- Probado contra la cuenta real de 109 repositorios: la pila entera, el límite de Enfoque
+  con su hoja y su relevo, editar el siguiente paso, saltar, el resumen y la vuelta a la
+  lista. La base de datos se respaldó antes y se restauró después.
+
+**Lo que no se ha podido comprobar**, cinco cosas, cuatro heredadas y una nueva: la nitidez
+a otras escalas —`WM_DPICHANGED` sigue sin dispararse: esta máquina tiene una sola pantalla
+al 100 %, comprobado con `GetDpiForWindow` desde un proceso DPI-aware—, el IME de verdad, el
+panel táctil de precisión, los tres cuadros de archivo, y **el globo del recordatorio
+pulsado con el ratón**: el aviso se vio salir y el camino entero se recorrió mandando su
+mensaje a la cola de la ventana, pero esta máquina tiene otra aplicación reteniendo el
+primer plano y no se pudo hacer clic en la notificación de verdad.
+
+---
+
 ### Fase 6 — Priorizar
 
 La fase que convierte una lista en algo con lo que se decide: arrastrar tarjetas entre

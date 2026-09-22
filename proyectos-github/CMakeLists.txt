@@ -178,6 +178,11 @@ add_executable(brujula WIN32
   # tarjeta levantada está en views/Card.cpp, al lado de la que dibuja— y esto no: es una
   # vista entera, con su campo, su lista y su manera de filtrar.
   src/views/Palette.cpp
+  # Fase 7. La revisión semanal: una pantalla entera con su pila de tarjetas, su barra de
+  # progreso y su resumen, y el globo del área de notificación que la recuerda. Lo que
+  # decide quién entra en la pila está en app/State.cpp y tiene prueba.
+  src/views/Review.cpp
+  src/shell/Notify.cpp
   # La hoja de la credencial, de la fase 3. Se queda.
   src/views/Welcome.cpp
   # El catálogo solo existe en Debug: es una pantalla de revisión, no una función del

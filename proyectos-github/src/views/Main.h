@@ -22,6 +22,7 @@
 #include "views/Card.h"
 #include "views/Chrome.h"
 #include "views/Inspector.h"
+#include "views/Review.h"
 
 namespace Views {
 
@@ -58,6 +59,15 @@ public:
     void DropCardInto(Model::Priority priority);
     void CancelDrop();
     void RefuseDrop();
+
+    // --- La revisión semanal -------------------------------------------------------------
+    //
+    // Ctrl+Mayús+R: la lista se aleja y llega la pila de tarjetas. Quien monta las tarjetas
+    // es App —es quien lee SQLite y quien sabe redactar por qué un repositorio necesita una
+    // decisión—; aquí solo se enciende el modo, se apaga y se devuelve la lista a su sitio.
+    void BeginReview(std::vector<Review::Card> cards);
+    Review* Weekly() const { return m_review; }
+    bool Reviewing() const { return m_review != nullptr && m_review->Running(); }
 
     int SelectedSlot() const;
     // Elegir una tarjeta y abrirle el inspector. Lo pide la paleta de comandos.
@@ -129,6 +139,10 @@ private:
     // abrir el inspector las recoloca SIN recolocar el propio inspector: ese viaja con un
     // muelle, y un SetFrame a mitad de camino lo dejaría clavado en su destino.
     void LayoutColumns();
+    void EndReview();
+    // La lista se aleja, o vuelve. Un fundido a secas no dice "esto se ha ido detrás", dice
+    // "esto se ha apagado", y lo que pide la fase es lo primero.
+    void Recede(bool away);
     Ui::Rect InspectorFrame() const;
     // Dónde está la tarjeta elegida, o un rectángulo vacío si no se ve. Es el otro extremo
     // de la transición compartida.
@@ -139,6 +153,7 @@ private:
     Sidebar* m_sidebar = nullptr;
     RepoList* m_content = nullptr;
     Inspector* m_inspector = nullptr;
+    Review* m_review = nullptr;
     // La única tarjeta que puede estar en el aire. Se crea al arrancar y vive escondida.
     DragCard* m_drag = nullptr;
 

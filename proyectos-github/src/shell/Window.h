@@ -60,6 +60,11 @@ public:
         // sería un puntero cruzando hilos, y el día que el mensaje llegue tarde apuntará a
         // algo que ya no existe.
         std::function<void()> onSync;
+
+        // El área de notificación contesta: el globo del recordatorio se pulsó, se cerró o
+        // se cansó de esperar. Este SÍ lleva carga, y no es una excepción a la regla de
+        // arriba: no viene de otro hilo, viene del shell, y lo que trae es qué pasó.
+        std::function<void(LPARAM)> onNotify;
     };
 
     // El aviso que publica ThemeWatcher desde su hilo.
@@ -68,6 +73,8 @@ public:
     static constexpr UINT kFlushMessage = WM_APP + 1;
     // El que publica el hilo de sincronización de la fase 3.
     static constexpr UINT kSyncMessage = WM_APP + 2;
+    // El que manda el área de notificación con lo que le pase al globo del recordatorio.
+    static constexpr UINT kNotifyMessage = WM_APP + 3;
 
     bool Create(HINSTANCE instance, const wchar_t* title, float widthDip, float heightDip);
     void Show(int showCommand);

@@ -87,6 +87,15 @@ public:
     // un muelle reasignaría la textura en cada fotograma.
     void SetFrame(const Rect& frame);
     void SlideTo(float xDip, float yDip, Motion::Kind kind);
+    // Acercarse o alejarse, desde el centro y sin tocar el marco. Lo estrena la revisión
+    // semanal, donde la lista se va hacia atrás mientras llega la pila de tarjetas; un
+    // fundido a secas no dice "esto se ha ido detrás", dice "esto se ha apagado".
+    //
+    // El centro se ata con una expresión y se queda atado, que es lo que hace que siga
+    // siendo el centro aunque el elemento cambie de tamaño después. La escala NO toca el
+    // marco: el hit-test y la maquetación siguen hablando del tamaño de verdad, que es
+    // justo lo que se quiere de algo que está apagado detrás de otra pantalla.
+    void ScaleTo(float scale, Motion::Kind kind);
     // La transición compartida: sitio, tamaño y radio del material a la vez y con el mismo
     // muelle. Es lo que convierte una tarjeta en el inspector, y lo que la deshace.
     //

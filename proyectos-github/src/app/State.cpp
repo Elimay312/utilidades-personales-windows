@@ -344,4 +344,21 @@ int State::SlotOfId(const std::string& id) const {
     return -1;
 }
 
+std::vector<std::string> ReviewQueue(const State& state) {
+    std::vector<std::string> queue;
+    // Dos pasadas sobre la misma lista y no una con dos cubos: Entries() ya viene ordenada
+    // por Earlier, así que recorrerla dos veces sale ordenada dentro de cada grupo sin
+    // volver a ordenar nada.
+    for (const Entry& entry : state.Entries()) {
+        if (InLens(entry, Lens::NeedsDecision)) queue.push_back(entry.repo.id);
+    }
+    for (const Entry& entry : state.Entries()) {
+        // InLens ya deja fuera los que se fueron de la cuenta: una pila para decidir no
+        // puede tener dentro cosas sobre las que ya no se puede decidir.
+        if (InLens(entry, Lens::NeedsDecision)) continue;
+        if (InLens(entry, Lens::Unsorted)) queue.push_back(entry.repo.id);
+    }
+    return queue;
+}
+
 }  // namespace App

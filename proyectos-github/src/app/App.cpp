@@ -31,6 +31,28 @@ constexpr char kLensSetting[] = "vista";
 // Dónde clona el usuario sus repositorios, y si los nuevos nacen con el modo repo puesto.
 constexpr char kReposRootSetting[] = "carpeta_repos";
 constexpr char kRepoModeSetting[] = "modo_repo_omision";
+// El recordatorio de la revisión: "día:hora" con el día de Windows (0 = domingo). Vacío o
+// ausente es "no recordar", que es como nace.
+constexpr char kReminderSetting[] = "recordatorio";
+// Y el día en que sonó por última vez, en YYYY-MM-DD. Va a la tabla y no a una variable
+// porque su trabajo es sobrevivir a cerrar la aplicación: sin él, abrirla dos veces el
+// viernes por la tarde da dos avisos del mismo recordatorio.
+constexpr char kReminderFiredSetting[] = "recordatorio_ultimo";
+
+// Cada cuánto se mira el reloj. Cinco minutos y no el segundo exacto, a propósito: un
+// temporizador de una semana se lo come una suspensión del equipo sin avisar, y para un
+// recordatorio semanal llegar hasta cinco minutos tarde no significa nada. Solo corre
+// mientras hay un recordatorio puesto.
+//
+// ponytail: comprobación cada 5 min; si algún día hiciera falta al minuto, el reloj es el
+// mismo y lo único que cambia es este número.
+constexpr int kReminderCheckMs = 5 * 60 * 1000;
+
+const wchar_t* kWeekdays[] = {L"domingo", L"lunes",   L"martes", L"miércoles",
+                              L"jueves",  L"viernes", L"sábado"};
+// Las horas que se ofrecen. Seis y no veinticuatro: un menú con las veinticuatro es una
+// lista por la que hay que desplazarse para elegir algo que da igual a la media hora.
+constexpr int kReminderHours[] = {9, 12, 15, 17, 19, 21};
 
 Model::Instant Now() {
     return std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now());
@@ -151,6 +173,10 @@ bool Application::Init(HINSTANCE instance) {
     m_scene.Layout(m_window.WidthDip(), m_window.HeightDip(), m_window.Scale());
     ApplyTheme(0.0f);
     RefreshChrome(m_sync.Snapshot());
+    // Y el reloj del recordatorio, que solo se pone en marcha si hay uno puesto. Va al
+    // final porque lo primero que hace es mirar la hora, y para dar un aviso hace falta que
+    // la pantalla ya exista.
+    ArmReminder();
     m_host.FlushNow();
     return true;
 }
@@ -193,6 +219,7 @@ void Application::LoadFromCache() {
     if (Model::Result<std::string> mode = repos.Setting(kRepoModeSetting); mode.IsOk()) {
         m_repoModeDefault = !mode.Value().empty();
     }
+    LoadReminder();
 }
 
 void Application::SaveLens(Lens lens) {
@@ -542,13 +569,13 @@ void Application::SetPriority(Model::Priority priority) {
     ApplyPriority(m_inspectorRepo, priority);
 }
 
-void Application::ApplyPriority(const std::string& repoId, Model::Priority priority) {
+bool Application::ApplyPriority(const std::string& repoId, Model::Priority priority) {
     const Entry* entry = m_state.EntryOf(repoId);
     if (entry == nullptr) {
         // El repositorio ya no está —una sincronización lo quitó mientras se arrastraba—. La
         // tarjeta que hubiera en el aire vuelve a su sitio igual.
         if (m_main) m_main->CancelDrop();
-        return;
+        return false;
     }
 
     // Se levanta antes de decidir nada: si viene de un arrastre ya está levantada y esto no
@@ -560,7 +587,7 @@ void Application::ApplyPriority(const std::string& repoId, Model::Priority prior
         // Ya estaba ahí. Se deja caer en su grupo igual: quien acaba de arrastrarla hasta
         // allí tiene que ver que llegó, no que se le queda la tarjeta en la mano.
         if (m_main) m_main->DropCardInto(priority);
-        return;
+        return true;
     }
 
     if (priority == Model::Priority::Focus) {
@@ -576,7 +603,7 @@ void Application::ApplyPriority(const std::string& repoId, Model::Priority prior
         if (!plan.fits) {
             if (m_main) m_main->RefuseDrop();
             AskWhoLeavesFocus(repoId, plan.demote);
-            return;
+            return false;
         }
     }
 
@@ -584,6 +611,7 @@ void Application::ApplyPriority(const std::string& repoId, Model::Priority prior
     local.priority = priority;
     SaveLocal(std::move(local));
     if (m_main) m_main->DropCardInto(priority);
+    return true;
 }
 
 void Application::AskWhoLeavesFocus(const std::string& candidateId,
@@ -642,6 +670,11 @@ void Application::AskWhoLeavesFocus(const std::string& candidateId,
             SaveLocal(beforeUp);
         });
         Toast(said);
+        // Si esto venía de la revisión semanal, la tarjeta se quedó temblando esperando
+        // una respuesta. Ya la hay: que salga hacia Enfoque y entre la siguiente.
+        if (m_main && m_main->Weekly()) {
+            m_main->Weekly()->Accepted(candidateId, Model::Priority::Focus);
+        }
     });
 
     m_host.ApplyTheme(m_theme.Tokens(), 0.0f);
@@ -764,6 +797,7 @@ void Application::ShowSettings(float x, float y) {
     entries.push_back({m_repoModeDefault ? L"Modo repo por omisión: sí"
                                          : L"Modo repo por omisión: no",
                        [this] { ToggleRepoModeDefault(); }});
+    entries.push_back({ReminderText(), [this, x, y] { ShowReminderMenu(x, y); }});
     entries.push_back({L"Exportar una copia de seguridad…", [this] { ExportBackup(); }});
     entries.push_back({L"Importar una copia…", [this] { ImportBackup(); }});
 
@@ -1050,11 +1084,8 @@ void Application::ShowPalette() {
     }
 
     actions.push_back({L"Sincronizar ahora", L"Ctrl+R", [this] { m_sync.Start(); }});
-    actions.push_back({L"Empezar la revisión semanal", L"Ctrl+Mayús+R", [this] {
-                           // Dice la verdad en vez de no estar: la revisión es de la fase 7, y
-                           // una acción que no aparece se busca; una que avisa, no.
-                           Toast(L"La revisión semanal todavía no está: llega en la fase 7.");
-                       }});
+    actions.push_back(
+        {L"Empezar la revisión semanal", L"Ctrl+Mayús+R", [this] { StartReview(); }});
     actions.push_back({L"Deshacer", L"Ctrl+Z", [this] { UndoLast(); }});
 
     for (const Entry& entry : m_state.Entries()) {
@@ -1066,6 +1097,258 @@ void Application::ShowPalette() {
     m_host.PushLayer<Views::Palette>(
         Ui::Host::LayerOptions{/*modal*/ true, /*lightDismiss*/ true, /*scrim*/ true},
         std::move(actions));
+    m_host.Layout(m_window.WidthDip(), m_window.HeightDip(), m_window.Scale());
+    m_host.ApplyTheme(m_theme.Tokens(), 0.0f);
+    m_host.FlushNow();
+}
+
+// ------------------------------------------------------------- La revisión semanal --
+
+Views::Review::Card Application::ReviewCardOf(const Entry& entry) {
+    Views::Review::Card card;
+    card.repoId = entry.repo.id;
+    card.name = entry.repo.name;
+    card.where = entry.repo.nameWithOwner;
+    card.nextStep = entry.local.nextStep;
+    card.priority = entry.local.priority;
+    card.activity = entry.activity;
+
+    // Por qué está en la pila. Se redacta AQUÍ y no en la vista, como el estado del modo
+    // repo y el del indicador de sincronización: las vistas no traducen estados.
+    switch (entry.mismatch) {
+    case Model::Mismatch::FocusDormant:
+        card.why = L"EN ENFOQUE Y SIN ACTIVIDAD";
+        break;
+    case Model::Mismatch::ArchivedButActive:
+        card.why = L"ARCHIVADO, PERO LE SIGUEN LLEGANDO PUSHES";
+        break;
+    case Model::Mismatch::None:
+        card.why = L"SIN CLASIFICAR";
+        break;
+    }
+
+    card.meta = Ui::NameOf(entry.activity);
+    if (!entry.repo.language.empty()) card.meta += L" · " + entry.repo.language;
+    card.meta += L" · ";
+    card.meta += entry.daysSincePush.has_value() ? AgoDays(*entry.daysSincePush)
+                                                 : L"sin actividad";
+    if (entry.repo.openIssues > 0 || entry.repo.openPrs > 0) {
+        card.meta += L" · " + std::to_wstring(entry.repo.openIssues) + L" issues, " +
+                     std::to_wstring(entry.repo.openPrs) + L" PR";
+    }
+
+    if (!entry.repo.commitTitle.empty()) {
+        card.commit = entry.repo.commitTitle;
+        if (entry.repo.commitDate.has_value()) {
+            card.commit = Model::ToWide(Model::FormatDay(*entry.repo.commitDate)) + L" — " +
+                          card.commit;
+        }
+    }
+
+    // Las tres últimas novedades y no todas: lo que hace falta para recordar dónde se
+    // quedó, no el historial. Se leen de SQLite aquí y no viven en App::State por lo mismo
+    // que las del inspector — son listas, y con 109 repositorios serían quinientas filas
+    // cargadas al arrancar para una pantalla que casi nunca se abre.
+    if (m_db.IsOpen()) {
+        Store::Repos repos(m_db);
+        if (Model::Result<std::vector<Model::Novedad>> all = repos.NovedadesOf(entry.repo.id);
+            all.IsOk()) {
+            for (const Model::Novedad& one : all.Value()) {
+                if (card.novedades.size() >= 3) break;
+                card.novedades.push_back(Model::ToWide(one.day) + L" — " + one.text);
+            }
+        }
+    }
+    return card;
+}
+
+void Application::StartReview() {
+    if (m_main == nullptr) return;
+    if (m_main->Reviewing()) {
+        Toast(L"La revisión ya está en marcha. Esc para salir.");
+        return;
+    }
+
+    const std::vector<std::string> queue = ReviewQueue(m_state);
+    if (queue.empty()) {
+        Toast(L"No hay nada que revisar: todo está clasificado y ninguno se ha desajustado.");
+        return;
+    }
+
+    std::vector<Views::Review::Card> cards;
+    cards.reserve(queue.size());
+    for (const std::string& id : queue) {
+        const Entry* entry = m_state.EntryOf(id);
+        if (entry != nullptr) cards.push_back(ReviewCardOf(*entry));
+    }
+    m_main->BeginReview(std::move(cards));
+}
+
+void Application::WireReview() {
+    Views::Review* review = m_main ? m_main->Weekly() : nullptr;
+    if (review == nullptr) return;
+
+    review->OnDecide([this](const std::string& repoId, Model::Priority priority) {
+        // El repositorio pudo irse de la cuenta mientras duraba la revisión. La tarjeta
+        // sale igual: quedarse temblando sobre algo que ya no existe no es decir "no".
+        if (m_state.EntryOf(repoId) == nullptr) return true;
+        return ApplyPriority(repoId, priority);
+    });
+    review->OnNextStep([this](const std::string& repoId, const std::wstring& text) {
+        const Entry* entry = m_state.EntryOf(repoId);
+        if (entry == nullptr || entry->local.nextStep == text) return;
+        // Por el camino de siempre: primero SQLite y después la pantalla, y con él viene
+        // gratis el modo repo y la entrada de deshacer.
+        Model::Local local = entry->local;
+        local.nextStep = text;
+        SaveLocal(std::move(local));
+    });
+}
+
+// ------------------------------------------------------------------ El recordatorio --
+
+std::wstring Application::ReminderText() const {
+    if (m_reminderDay < 0) return L"Recordar la revisión: nunca";
+    return L"Recordar la revisión: " + std::wstring(kWeekdays[m_reminderDay]) + L" a las " +
+           std::to_wstring(m_reminderHour) + L":00";
+}
+
+void Application::LoadReminder() {
+    m_reminderDay = -1;
+    m_reminderHour = 9;
+    if (!m_db.IsOpen()) return;
+
+    Store::Repos repos(m_db);
+    if (Model::Result<std::string> saved = repos.Setting(kReminderSetting); saved.IsOk()) {
+        const std::string& text = saved.Value();
+        const std::size_t colon = text.find(':');
+        // Tolerante, como el parser de PROYECTO.md y por lo mismo: es texto que acaba en
+        // una caché del usuario, y un ajuste ilegible no puede impedir que la aplicación
+        // abra. Lo que no se entiende es "no recordar".
+        if (colon != std::string::npos) {
+            const int day = std::atoi(text.substr(0, colon).c_str());
+            const int hour = std::atoi(text.substr(colon + 1).c_str());
+            if (day >= 0 && day <= 6 && hour >= 0 && hour <= 23) {
+                m_reminderDay = day;
+                m_reminderHour = hour;
+            }
+        }
+    }
+    if (Model::Result<std::string> last = repos.Setting(kReminderFiredSetting); last.IsOk()) {
+        m_reminderFired = last.Value();
+    }
+}
+
+void Application::SetReminder(int weekday, int hour) {
+    m_reminderDay = weekday;
+    m_reminderHour = hour;
+    if (m_db.IsOpen()) {
+        Store::Repos repos(m_db);
+        (void)repos.SetSetting(kReminderSetting,
+                               weekday < 0 ? std::string()
+                                           : std::to_string(weekday) + ":" +
+                                                 std::to_string(hour));
+    }
+    ArmReminder();
+    Toast(weekday < 0 ? L"No se recordará la revisión."
+                      : L"Se avisará los " + std::wstring(kWeekdays[weekday]) + L" a las " +
+                            std::to_wstring(hour) +
+                            L":00, siempre que Brújula esté abierta.");
+}
+
+void Application::ArmReminder() {
+    if (!m_reminder) {
+        const auto queue = m_host.Queue();
+        if (!queue) return;
+        m_reminder = queue.CreateTimer();
+        m_reminder.Interval(std::chrono::milliseconds(kReminderCheckMs));
+        m_reminder.IsRepeating(true);
+        m_reminder.Tick([this](auto&&, auto&&) { CheckReminder(); });
+    }
+    if (m_reminderDay < 0) {
+        m_reminder.Stop();
+        return;
+    }
+    m_reminder.Start();
+    // Y se mira YA, sin esperar los cinco minutos: abrir la aplicación un viernes por la
+    // tarde tiene que dar el aviso de ese viernes, no el del siguiente.
+    CheckReminder();
+}
+
+void Application::CheckReminder() {
+    if (m_reminderDay < 0) return;
+
+    SYSTEMTIME local{};
+    GetLocalTime(&local);
+    if (static_cast<int>(local.wDayOfWeek) != m_reminderDay) return;
+    // Pasada la hora, no A la hora: con la aplicación cerrada a las cinco y abierta a las
+    // siete, el aviso sigue teniendo sentido. Al día siguiente ya no, y de eso se encarga
+    // la comprobación del día de arriba.
+    if (static_cast<int>(local.wHour) < m_reminderHour) return;
+
+    // El día se escribe del MISMO reloj con el que se decidió disparar, que es el local. Con
+    // Model::FormatDay —que da el día UTC, como debe— el aviso de un lunes a las nueve de la
+    // noche se marcaba como del martes, y al cruzar la medianoche UTC el marcador dejaba de
+    // coincidir y volvía a sonar esa misma noche. Dos avisos del mismo recordatorio.
+    const auto two = [](int value) {
+        return (value < 10 ? std::string("0") : std::string()) + std::to_string(value);
+    };
+    const std::string today = std::to_string(local.wYear) + "-" + two(local.wMonth) + "-" +
+                              two(local.wDay);
+    if (m_reminderFired == today) return;
+    m_reminderFired = today;
+    if (m_db.IsOpen()) {
+        Store::Repos repos(m_db);
+        (void)repos.SetSetting(kReminderFiredSetting, today);
+    }
+
+    // Y no se avisa de nada si no hay nada que revisar: un recordatorio que dice "no hay
+    // nada" es el que hace que la gente apague los recordatorios.
+    const std::size_t pending = ReviewQueue(m_state).size();
+    if (pending == 0) return;
+
+    const std::wstring body =
+        std::to_wstring(pending) +
+        (pending == 1 ? L" repositorio espera una decisión." : L" repositorios esperan una "
+                                                               L"decisión.");
+    if (!m_balloon.Show(m_window.Handle(), L"Revisión semanal", body)) {
+        // Sin globo —notificaciones apagadas, o el shell dijo que no— el aviso se da por
+        // dentro, que es lo que hace el resto del programa de todas maneras.
+        Toast(L"Toca la revisión semanal: " + body + L" Ctrl+Mayús+R.");
+    }
+}
+
+void Application::ShowReminderMenu(float x, float y) {
+    std::vector<Ui::Menu::Entry> entries;
+    entries.push_back({m_reminderDay < 0 ? L"No recordar (ahora)" : L"No recordar",
+                       [this] { SetReminder(-1, m_reminderHour); }});
+    for (int day = 0; day < 7; ++day) {
+        std::wstring label = kWeekdays[day];
+        if (day == m_reminderDay) label += L" (ahora)";
+        entries.push_back({std::move(label), [this, day, x, y] {
+                               // Y ahora la hora. Dos menús encadenados y no una hoja con
+                               // treinta y un botones: elegir día y hora son dos preguntas,
+                               // y juntarlas en una pantalla es una rejilla que hay que leer.
+                               std::vector<Ui::Menu::Entry> hours;
+                               for (const int hour : kReminderHours) {
+                                   std::wstring text = std::to_wstring(hour) + L":00";
+                                   if (hour == m_reminderHour) text += L" (ahora)";
+                                   hours.push_back({std::move(text), [this, day, hour] {
+                                                        SetReminder(day, hour);
+                                                    }});
+                               }
+                               m_host.PushLayer<Ui::Menu>(
+                                   Ui::Host::LayerOptions{false, true, false},
+                                   std::move(hours), x, y);
+                               m_host.Layout(m_window.WidthDip(), m_window.HeightDip(),
+                                             m_window.Scale());
+                               m_host.ApplyTheme(m_theme.Tokens(), 0.0f);
+                               m_host.FlushNow();
+                           }});
+    }
+
+    m_host.PushLayer<Ui::Menu>(Ui::Host::LayerOptions{false, true, false}, std::move(entries),
+                               x, y);
     m_host.Layout(m_window.WidthDip(), m_window.HeightDip(), m_window.Scale());
     m_host.ApplyTheme(m_theme.Tokens(), 0.0f);
     m_host.FlushNow();
@@ -1106,6 +1389,7 @@ void Application::WireView() {
     m_main->OnUndo([this] { UndoLast(); });
     m_main->OnPalette([this] { ShowPalette(); });
     WireInspector();
+    WireReview();
 }
 
 void Application::OpenInGitHub(int slot) {
@@ -1131,10 +1415,16 @@ void Application::WireInput() {
             return true;
         }
 #endif
-        // Ctrl+R, de la tabla de atajos de CLAUDE.md. Se queda aquí y no en la vista porque
-        // quien sabe sincronizar es App: la vista pide, no hace.
+        // Ctrl+R y Ctrl+Mayús+R, de la tabla de atajos de CLAUDE.md. Se quedan aquí y no en
+        // la vista porque quien sabe sincronizar y quien sabe montar la pila de la revisión
+        // es App: la vista pide, no hace. Y el Mayús se mira PRIMERO: con la comprobación
+        // al revés, Ctrl+Mayús+R sincronizaría y la revisión no se abriría nunca.
         if (key.virtualKey == 'R' && Input::Has(key.modifiers, Input::Modifiers::Control)) {
-            m_sync.Start();
+            if (Input::Has(key.modifiers, Input::Modifiers::Shift)) {
+                StartReview();
+            } else {
+                m_sync.Start();
+            }
             return true;
         }
         return m_host.Input().Key(key);
@@ -1179,6 +1469,16 @@ void Application::WireInput() {
     };
 
     m_window.callbacks.onFlush = [this] { m_host.FlushNow(); };
+
+    // El globo del recordatorio. Pulsarlo abre la revisión, y para eso hay que traer la
+    // ventana delante: puede estar minimizada o detrás, que es justo cuando un recordatorio
+    // sirve para algo. Se puede porque el clic viene del shell y nos cede el primer plano.
+    m_window.callbacks.onNotify = [this](LPARAM lparam) {
+        if (!m_balloon.OnMessage(lparam)) return;
+        if (IsIconic(m_window.Handle())) ShowWindow(m_window.Handle(), SW_RESTORE);
+        SetForegroundWindow(m_window.Handle());
+        StartReview();
+    };
 }
 
 // ------------------------------------------------------------ El puente con el hilo --
@@ -1331,6 +1631,12 @@ int Application::Run() {
 }
 
 void Application::Shutdown() {
+    // El reloj y el globo, antes que nada: el globo cuelga del HWND, y un icono del área de
+    // notificación cuyo dueño ya no existe se queda ahí hasta que alguien pasa el ratón por
+    // encima. Es el único rastro que esta aplicación puede dejar fuera de su ventana.
+    if (m_reminder) m_reminder.Stop();
+    m_balloon.Hide();
+
     // PRIMERO la sincronización, y Close() no vuelve hasta haber unido sus hilos. Un
     // trabajador que sobreviva a la ventana es el cuelgue más probable de toda la fase: se
     // despertaría con un HWND muerto y una base cerrada debajo.

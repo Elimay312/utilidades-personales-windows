@@ -21,6 +21,7 @@
 #include "compositor/Motion.h"
 #include "compositor/Scene.h"
 #include "github/Sync.h"
+#include "shell/Notify.h"
 #include "shell/ThemeWatcher.h"
 #include "shell/Window.h"
 #include "store/Db.h"
@@ -67,7 +68,10 @@ private:
     // arrastrar hasta la barra lateral, el menú contextual y la paleta. Es lo que hace que
     // "no se puede tener más en Enfoque que el límite" sea cierto y no cinco veces cierto:
     // con la comprobación copiada en cada sitio, el sexto entra por el camino que se olvidó.
-    void ApplyPriority(const std::string& repoId, Model::Priority priority);
+    // Devuelve si se pudo: false es "Enfoque está lleno", y el único que lo mira es la
+    // revisión semanal, que necesita saber si la tarjeta sale volando o se queda temblando.
+    // Los otros cuatro caminos ya lo ven en la pantalla y no preguntan.
+    bool ApplyPriority(const std::string& repoId, Model::Priority priority);
     // Enfoque está lleno: la hoja que pregunta cuál baja a Secundario.
     void AskWhoLeavesFocus(const std::string& candidateId,
                            const std::vector<std::string>& demote);
@@ -76,6 +80,29 @@ private:
     // El menú contextual de una tarjeta, con todo lo que se puede hacer con ella.
     void ShowCardMenu(int slot, float x, float y);
     void ShowPalette();
+
+    // --- La revisión semanal --------------------------------------------------------------
+    //
+    // App monta la pila y contesta a lo que la vista pregunta; la vista no toca SQLite ni
+    // sabe qué es un desajuste. Quiénes entran y en qué orden lo decide App::ReviewQueue,
+    // que es puro y tiene prueba: una pila a la que le falte alguien no da un error, da una
+    // revisión más corta — y una revisión más corta se parece mucho a una terminada.
+    void StartReview();
+    void WireReview();
+    // De un repositorio a una tarjeta de la pila: aquí se redacta todo lo que la vista
+    // enseña, incluido por qué está ahí.
+    Views::Review::Card ReviewCardOf(const Entry& entry);
+
+    // --- El recordatorio ------------------------------------------------------------------
+    void ShowReminderMenu(float x, float y);
+    void SetReminder(int weekday, int hour);
+    void LoadReminder();
+    // Arranca o para el reloj según haya recordatorio puesto. Se llama al cargar y al
+    // cambiarlo: un reloj despertando al hilo cada cinco minutos para nada sería tener un
+    // tic, que es justo lo que esta aplicación no tiene.
+    void ArmReminder();
+    void CheckReminder();
+    std::wstring ReminderText() const;
     // Elegir un repositorio y abrirle el inspector, venga de donde venga. Cambia de vista si
     // hace falta: buscar algo en la paleta y que no aparezca porque estaba filtrado sería
     // encontrarlo y perderlo en el mismo gesto.
@@ -185,6 +212,16 @@ private:
     std::wstring m_account;
     // La vista guardada se lee una sola vez, al arrancar. Ver LoadFromCache.
     bool m_lensLoaded = false;
+
+    // --- El recordatorio de la revisión ---------------------------------------------------
+    // El día es el de Windows (0 = domingo) y -1 es "no recordar". El día en que sonó por
+    // última vez se guarda como texto en los ajustes y no en memoria: sin eso, abrir la
+    // aplicación dos veces el viernes por la tarde da dos avisos del mismo recordatorio.
+    Shell::Balloon m_balloon;
+    int m_reminderDay = -1;
+    int m_reminderHour = 9;
+    std::string m_reminderFired;
+    winrt::Windows::System::DispatcherQueueTimer m_reminder{nullptr};
 
     std::vector<Undo> m_undo;
     // Deshacer no se apunta a sí mismo. Sin esto, la primera vuelta atrás dejaría en la pila

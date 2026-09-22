@@ -32,6 +32,11 @@ int HideDelayMs() {
     return static_cast<int>(Motion::SettleMs(Motion::SpringFor(Motion::Kind::Standard))) + 80;
 }
 
+// Cuánto se aleja la lista cuando entra la revisión semanal. Poco: lo que tiene que decir
+// es "esto sigue estando, detrás", y una lista que se va al treinta por ciento se lee como
+// otra pantalla que llegó por un lado.
+constexpr float kRecedeScale = 0.94f;
+
 // Qué tecla produce la barra en la distribución de teclado de ahora mismo. En un teclado
 // estadounidense es VK_OEM_2 a secas y en uno español es Mayús+7, así que preguntarlo es lo
 // único que hace que el atajo "/" de CLAUDE.md exista en los dos. Con la tecla escrita a
@@ -78,6 +83,11 @@ bool Main::OnAttach() {
     // debajo de los botones de la ventana.
     m_inspector = Add<Inspector>();
     m_inspector->SetVisible(false);
+    // La revisión tapa la ventana entera, así que va por encima de la lista y del panel —y
+    // por debajo de la barra de título, que es lo único que no puede desaparecer: sin ella
+    // no habría por dónde cerrar la ventana.
+    m_review = Add<Review>();
+    m_review->OnFinished([this] { EndReview(); });
     // El último, y por eso el de arriba: los botones de la ventana no pueden quedar debajo
     // de nada.
     m_chrome = Add<Chrome>();
@@ -201,6 +211,11 @@ void Main::DropCardAt(const Rect& target) {
 }
 
 void Main::LiftCard(int slot) {
+    // Durante la revisión no se levanta nada. Los caminos que cambian una prioridad son los
+    // mismos —App::ApplyPriority llama a esto sin saber quién se lo pidió— y la tarjeta de
+    // la lista saldría volando por encima de la pantalla de revisión, que es lo único que
+    // se está mirando. La que vuela ahí es la de la pila, y la anima ella.
+    if (Reviewing()) return;
     // Ya hay una en el aire: viene de un arrastre, y esa manda.
     if (m_lifted || m_state == nullptr || m_drag == nullptr || m_content == nullptr) return;
     const App::Entry* entry = m_state->At(slot);
@@ -289,6 +304,42 @@ void Main::LayoutColumns() {
             Rect{left, 0.0f, std::max(width - left - reserved, 1.0f), height});
     }
     if (m_chrome) m_chrome->SetFrame(Rect{0.0f, 0.0f, width, Caption::kBarHeight});
+    // La ventana entera, esté corriendo o no: así al empezar ya tiene su tamaño y la
+    // primera tarjeta entra desde donde tiene que entrar y no desde una esquina.
+    if (m_review) m_review->SetFrame(Rect{0.0f, 0.0f, width, height});
+}
+
+// ------------------------------------------------------------- La revisión semanal --
+
+void Main::BeginReview(std::vector<Review::Card> cards) {
+    if (m_review == nullptr || cards.empty() || m_review->Running()) return;
+
+    // El inspector se cierra ANTES: la revisión va a tapar la ventana entera, y un panel
+    // abierto debajo se quedaría abierto al volver, con la columna estrecha y sin que nadie
+    // recuerde haberlo dejado así.
+    CloseInspector();
+    // Y el foco se suelta: con el campo de búsqueda enfocado, el enrutador le daría las
+    // teclas a él antes que a nadie y la revisión no vería ni un uno.
+    if (Attached()) HostRef().Input().Focus(nullptr, false);
+
+    Recede(true);
+    m_review->Begin(std::move(cards));
+}
+
+void Main::EndReview() {
+    Recede(false);
+    if (m_content) m_content->FocusList();
+}
+
+void Main::Recede(bool away) {
+    if (!Attached()) return;
+    const float fade = HostRef().Animator().FadeMs(Motion::Kind::Expressive);
+    Ui::Element* behind[] = {m_sidebar, m_content, m_inspector};
+    for (Ui::Element* one : behind) {
+        if (one == nullptr) continue;
+        one->ScaleTo(away ? kRecedeScale : 1.0f, Motion::Kind::Expressive);
+        one->SetOpacity(away ? 0.0f : 1.0f, fade);
+    }
 }
 
 void Main::OnArrange() {
@@ -442,6 +493,12 @@ void Main::SetSyncing(bool running) {
 
 bool Main::OnKey(const Input::Key& e) {
     if (!e.down || m_content == nullptr) return false;
+
+    // La revisión es un MODO, no una capa por la que se cuelan los atajos de la lista de
+    // detrás: mientras corre se queda con todo el teclado. Lo único que deja pasar son las
+    // teclas con Alt, porque Alt+F4 y Alt+Espacio son de Windows y no nuestras — y Ctrl+R,
+    // que App mira antes que el enrutador y por tanto antes que esto.
+    if (Reviewing()) return m_review->Keys(e);
 
     // Mientras se escribe, las letras son letras. Sin esta comprobación, la «j» de «bruja»
     // movería la selección de la lista en vez de escribirse, y la «n» de «pantalla» abriría

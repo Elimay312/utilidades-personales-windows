@@ -199,12 +199,104 @@ El plan completo está en `PROMPTS.md`.
 - [x] Fase 4 — Vista principal: barra lateral, lista y clasificación
 - [x] Fase 5 — Inspector, notas y PROYECTO.md
 - [x] Fase 6 — Priorizar: arrastrar, límite de Enfoque, atajos y paleta
-- [ ] Fase 7 — Revisión semanal
+- [x] Fase 7 — Revisión semanal
 - [ ] Fase 8 — Pulido final y rendimiento
 
 Al terminar una fase: marcarla aquí, anotar decisiones abajo y hacer commit.
 
 ## Decisiones y notas
+
+### Fase 7 — 21 de septiembre de 2026
+
+El detalle con todas las mediciones está en `CHANGELOG.md`. Aquí van solo las decisiones
+que condicionan lo que venga después.
+
+**La revisión NO es una capa flotante del Host.** Es un hijo de `Views::Main` que ocupa la
+ventana entera, por lo mismo que `Views::DragCard`: las capas se cierran todas juntas
+cuando la ventana pierde el foco —`onDeactivate` llama a `PopAllLayers`— y una revisión a
+medias que desaparece por mirar el navegador un momento perdería por dónde iba. Va por
+encima de la lista y del inspector y por DEBAJO de `Views::Chrome`, que es lo único que no
+puede taparse: sin la barra de título no hay por dónde cerrar la ventana.
+
+**Quién entra en la pila es una función pura con prueba: `App::ReviewQueue`.** Primero los
+desajustes de «Necesita decisión» y después los «Sin clasificar». Los tres casos que pide
+este documento son DOS listas y no tres, porque «Enfoque sin actividad» ya ES uno de los
+desajustes (`Model::Mismatch::FocusDormant`) y pedirlo aparte enseñaría la misma tarjeta dos
+veces. Devuelve identificadores y no posiciones, como el inspector de la fase 5 y por el
+mismo motivo: el estado se reconstruye entero después de cada guardado.
+
+**La revisión es un MODO y se queda con el teclado entero — menos mientras se escribe.**
+`Views::Main::OnKey` le pasa todo mientras corre, y ella consume todo salvo las teclas con
+Alt (Alt+F4 y Alt+Espacio son de Windows). Pero con el campo del siguiente paso abierto,
+todo lo que el campo no quiera se devuelve **SIN consumir**: `Shell::Window` se come el
+`WM_CHAR` de cualquier tecla consumida —lo que desde la fase 5 evita que un atajo de una
+letra se escriba dentro del campo que acaba de abrir— así que consumirlas aquí es un campo
+de texto en el que no se puede escribir. Pasó exactamente eso.
+
+**El campo de texto vive FUERA de la tarjeta.** La tarjeta sale volando; un campo dentro se
+iría volando con lo escrito a medias. Se coloca justo encima del renglón del siguiente paso
+—las dos posiciones salen de `CardView::StepRect`, que es una sola función— y mientras está
+puesto la tarjeta NO pinta ese renglón: el campo es un pozo translúcido y lo de debajo se
+leía a través.
+
+**Nada de la tarjeta se anima con escala, y no es una simplificación.** La escala de salida
+hacia la diana dejaba la cara encogida al reutilizarla dos decisiones después: escribir una
+propiedad que tuvo una animación encima no la deja escrita —la lección de la fase 6, en su
+tercera visita—. Se quitó entera en vez de pelearla: lo que una tarjeta que sale tiene que
+decir es hacia dónde va, y eso lo dice el viaje.
+
+**`App::ApplyPriority` ahora devuelve si pudo.** Es el único llamador que lo mira: la
+revisión necesita saber si la tarjeta sale volando o se queda temblando. Los otros cuatro
+caminos lo ven en la pantalla y no preguntan. Cuando la hoja del límite de Enfoque acaba
+eligiendo, es ella quien avisa a la revisión (`Review::Accepted`) — y por identificador, no
+«la de delante», porque entre la pregunta y la respuesta puede haber pasado cualquier cosa.
+
+**El recordatorio es un globo del área de notificación, no una toast de WinRT.** Una
+aplicación sin empaquetar necesita un AppUserModelID registrado en un acceso directo del
+menú Inicio para que el sistema le acepte una toast, y un servidor COM registrado para
+enterarse del clic. Eso es un instalador, y Brújula es un .exe que se copia. El icono se
+añade para enseñar el globo y se quita en cuanto el globo se va: esto no es una aplicación
+de bandeja. **Solo suena con la aplicación abierta**, que es la limitación honesta; la
+alternativa es una tarea del Programador de tareas que arranque `brujula.exe --revision`, y
+ese argumento es de la fase 8.
+
+**El reloj del recordatorio mira la hora cada cinco minutos y solo si hay uno puesto.** Un
+temporizador de una semana se lo come una suspensión del equipo sin avisar, y para un aviso
+semanal llegar cinco minutos tarde no significa nada. Y el día en que sonó se guarda en la
+tabla de ajustes con el día **LOCAL**, no con `Model::FormatDay`, que da el UTC: un aviso
+del lunes a las nueve de la noche se marcaba como del martes y, al cruzar la medianoche
+UTC, volvía a sonar esa misma noche.
+
+**`Ui::Element::ScaleTo` es nuevo y es del kit.** La lista se aleja al 0,94 mientras llega
+la pila; un fundido a secas no dice «esto se ha ido detrás», dice «esto se ha apagado». No
+toca el marco, así que el hit-test y la maquetación siguen hablando del tamaño de verdad.
+
+**`Gfx::Morph` sigue sin llamadores.** La fase 5 lo reservó para esta fase «para una pila de
+tarjetas que no reciben entrada mientras vuelan», y no hizo falta: las tarjetas de la
+revisión son dueñas de su superficie y se mueven con `SlideTo`, que es un desplazamiento en
+la GPU y no dos capas de píxeles cruzándose. Queda para quien lo necesite o para borrarlo.
+
+**Y una medida para la fase 8: el texto se ve «un toque borroso», y no es de esta fase.**
+Se persiguió con capturas a 1:1 y no hay remuestreo por ningún lado: el borde de la tarjeta
+pasa de fondo a tarjeta en UN píxel, mide 620 px justos, y el mismo estilo de texto sale
+idéntico dentro de la tarjeta y fuera de ella. Lo que se ve es el **suavizado en gris** que
+la fase 1 eligió porque ClearType no existe sobre una superficie con alfa premultiplicado
+(`Gfx::Surface` pone `D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE`), y se nota aquí más que en ningún
+otro sitio porque la revisión es la primera pantalla con texto de 26 DIP. Lo que queda por
+probar, y es trabajo de pulido: unos `IDWriteRenderingParams` propios con más contraste y
+otra gamma, que es lo que endurece el gris sin tocar la decisión de la fase 1.
+
+*Y un aviso para quien mida esto:* PowerShell es DPI-unaware, así que `GetDpiForWindow` y
+`GetClientRect` desde ahí devuelven lo del sistema y no lo de la ventana. Hay que llamar
+antes a `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` o se persigue un fantasma.
+
+**Falta comprobar cinco cosas**, cuatro heredadas y una nueva: la nitidez a otras escalas
+—`WM_DPICHANGED` sigue sin dispararse, y esta vez está comprobado por qué: esta máquina
+tiene una sola pantalla al 100 %, medido con `GetDpiForWindow` desde un proceso DPI-aware—,
+el IME de verdad, el panel táctil de precisión, los tres cuadros de archivo, y **el globo
+del recordatorio pulsado con el ratón**: se vio salir y el camino entero se recorrió
+mandando su mensaje a la cola de la ventana, pero otra aplicación retiene el primer plano en
+este equipo y no se pudo hacer clic en la notificación de verdad.
 
 ### Fase 6 — 21 de septiembre de 2026
 

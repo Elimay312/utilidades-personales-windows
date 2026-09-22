@@ -350,6 +350,34 @@ TEST_CASE("a reminder falls due once, at its minute, and not before or after") {
   CHECK(store->DueReminders(due, due + 20).empty());
 }
 
+TEST_CASE("an event written after all its reminders went by says so once, as it starts") {
+  Open store;
+  const Date day = Day(2026, 9, 23);
+  store->Create(EventAt(L"Prueba", day, 16 * 60 + 5, 17 * 60));
+  store.settle();
+  // Written at 16:00 for 16:05, with the local calendar's ten minutes: 15:55 had gone already.
+  const auto writtenAt = [&](const char* local) {
+    store->Run([&] {
+      const std::string sql = std::string("UPDATE events SET updated_at = "
+                                          "CAST(strftime('%s', '2026-09-23 ") + local + "', 'utc') AS INTEGER)";
+      store->db().Exec(sql.c_str());
+    });
+    store.settle();
+  };
+  writtenAt("16:00");
+  // The app checks from the minute it last looked, which is after the event was written.
+  std::vector<Reminder> found = store->DueReminders(WallMinute(day, 16 * 60), WallMinute(day, 17 * 60));
+  REQUIRE(found.size() == 1);
+  CHECK(found[0].minutesBefore == 0);
+  CHECK(found[0].at == WallMinute(day, 16 * 60 + 5));
+
+  // Written in time, the ten minutes are enough, and there is nothing extra at the start.
+  writtenAt("15:00");
+  found = store->DueReminders(WallMinute(day, 15 * 60), WallMinute(day, 17 * 60));
+  REQUIRE(found.size() == 1);
+  CHECK(found[0].minutesBefore == 10);
+}
+
 TEST_CASE("an event's own reminders win over its calendar's, and none means none") {
   Open store;
   const Date day = Day(2026, 9, 23);

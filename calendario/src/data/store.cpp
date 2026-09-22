@@ -263,7 +263,8 @@ std::vector<Reminder> Store::DueReminders(long long from, long long to) {
 
   std::optional<Stmt> stmt = db_.Prepare(
       "SELECT e.uid, e.title, e.location, e.start_day, e.start_min, e.end_min, e.recurrence, "
-      "       COALESCE(e.reminders, c.reminders), c.color "
+      "       COALESCE(e.reminders, c.reminders), c.color, "
+      "       CAST(strftime('%s', e.updated_at, 'unixepoch', 'localtime') AS INTEGER) / 60 "
       "FROM events e JOIN calendars c ON c.id = e.calendar_id "
       "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
       "  AND COALESCE(e.reminders, c.reminders) != '' "
@@ -302,8 +303,18 @@ std::vector<Reminder> Store::DueReminders(long long from, long long to) {
         if (rule.empty()) break;
         continue;
       }
-      for (const int lead : leads) {
-        const long long due = WallMinute(day, startMin.value_or(0)) - lead;
+      // Written when every one of its reminders had already gone by -- "a las 4:05" typed at
+      // 16:00 with the calendar's 30 minutes -- it would never say a word. Then it says it once,
+      // as it starts. Only with a time: an all day event would do it at midnight.
+      const long long starts = WallMinute(day, startMin.value_or(0));
+      const long long written = stmt->Int(9);
+      const bool late = startMin && written < starts &&
+                        std::all_of(leads.begin(), leads.end(),
+                                    [&](int lead) { return starts - lead <= written; });
+      std::vector<int> dueLeads = leads;
+      if (late) dueLeads.push_back(0);
+      for (const int lead : dueLeads) {
+        const long long due = starts - lead;
         if (due <= from || due > to) continue;
         Reminder reminder;
         reminder.uid = stmt->Wide(0);

@@ -124,13 +124,33 @@ propios con más contraste y otra gamma.
   desaparezca de la pila siguiente y aparezca en «Pospuestos»—, el resumen y la vuelta a la
   lista. La base de datos se respaldó antes y se restauró después.
 
-**Lo que no se ha podido comprobar**, cinco cosas, cuatro heredadas y una nueva: la nitidez
-a otras escalas —`WM_DPICHANGED` sigue sin dispararse: esta máquina tiene una sola pantalla
-al 100 %, comprobado con `GetDpiForWindow` desde un proceso DPI-aware—, el IME de verdad, el
-panel táctil de precisión, los tres cuadros de archivo, y **el globo del recordatorio
-pulsado con el ratón**: el aviso se vio salir y el camino entero se recorrió mandando su
-mensaje a la cola de la ventana, pero esta máquina tiene otra aplicación reteniendo el
-primer plano y no se pudo hacer clic en la notificación de verdad.
+**Segunda pasada, con entrada real (22 de septiembre)**
+
+Cerrado el navegador que retenía el primer plano, se repitió todo con teclado y ratón de
+verdad. Dos fallos más, los dos heredados:
+
+- **Ctrl+K no abría la paleta desde la lista** (fase 6). `Ui::List::OnKey` trata la `J` y la
+  `K` como «abajo» y «arriba» sin mirar los modificadores, y la lista tiene el foco al
+  arrancar: Ctrl+K subía la selección y se comía el atajo. Ahora una letra con Control no es
+  de la lista — ni de la revisión, que tenía lo mismo con su `E` y su `P`.
+- **El nombre de la aplicación salía como «BrÃºjula»** (fase 1). `rc.exe` lee un `.rc` sin
+  BOM con la página de códigos del sistema; el UTF-8 se compilaba como CP1252 y la mojibake
+  se veía en las propiedades del archivo y en la cabecera de la notificación. Un
+  `#pragma code_page(65001)` y arreglado. No daba ningún error al compilar.
+
+Y dos falsos positivos del arnés que conviene no repetir: la estructura `INPUT` de
+`SendInput` mide 40 bytes en x64 y sin la parte del ratón en la unión sale de 32, con lo que
+la llamada devuelve cero y no llega ni una tecla; y entre dos ejecuciones del script la
+ventana pierde la activación y `onDeactivate` se lleva menús, hojas y paleta.
+
+Verificado con entrada real: Ctrl+Mayús+R, E y escribir, Espacio, 1, P, Esc, Ctrl+K con su
+acción, y **el globo del recordatorio pulsado con el ratón**, que trae la ventana al frente
+y abre la revisión.
+
+**Lo que no se ha podido comprobar**, cuatro cosas, todas heredadas: la nitidez
+a otras escalas —`WM_DPICHANGED` no se puede disparar aquí: una sola pantalla al 100 %,
+comprobado con `GetDpiForWindow` desde un proceso DPI-aware—, el IME de verdad, el panel
+táctil de precisión y los tres cuadros de archivo.
 
 ---
 

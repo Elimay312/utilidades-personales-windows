@@ -599,8 +599,13 @@ bool Review::CancelEdit() {
 bool Review::Keys(const Input::Key& e) {
     if (!e.down || !m_running) return false;
     // Lo único que no es nuestro: Alt+F4 y Alt+Espacio son de Windows, y comérselas dejaría
-    // una pantalla de la que no se puede salir cerrando la ventana.
-    if (e.system || Input::Has(e.modifiers, Input::Modifiers::Alt)) return false;
+    // una pantalla de la que no se puede salir cerrando la ventana. Y una letra con Control
+    // tampoco es nuestra: aquí la E y la P son letras sueltas, y dejar que Ctrl+E abriera
+    // el campo de texto sería el mismo descuido que tenía Ui::List con la J y la K.
+    if (e.system || Input::Has(e.modifiers, Input::Modifiers::Alt) ||
+        Input::Has(e.modifiers, Input::Modifiers::Control)) {
+        return false;
+    }
 
     // Mientras se escribe, las teclas son letras. El campo ya se ha quedado las suyas antes
     // de llegar aquí —el enrutador va primero al que tiene el foco—, así que lo que cae por

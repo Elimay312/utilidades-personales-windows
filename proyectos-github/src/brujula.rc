@@ -1,5 +1,14 @@
 #include <windows.h>
 
+// Este archivo va en UTF-8 y hay que DECIRLO. rc.exe lee los .rc sin BOM con la página de
+// códigos del sistema —CP1252 aquí— así que sin esta línea «Brújula» se compila como
+// «BrÃºjula» y sale así en las propiedades del archivo y, lo que se ve de verdad, en la
+// cabecera de la notificación del recordatorio. No da ningún error al compilar.
+//
+// #pragma y no un BOM: el BOM también sirve, pero es invisible en el editor y cualquiera
+// lo pierde al guardar con otra herramienta. Esto se lee.
+#pragma code_page(65001)
+
 // Solo versión. El icono llega en la fase 8, y el manifiesto va como archivo suelto en
 // CMakeLists para que link.exe lo funda con el trustInfo que genera él: si aquí hubiera
 // también un RT_MANIFEST habría dos, y haría falta /MANIFEST:NO.

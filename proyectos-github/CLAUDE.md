@@ -339,13 +339,45 @@ decidir todavía es una decisión y mueve la barra; pero no entra en ningún gru
 resumen lo dice por separado — sin eso pondría «106 decididos» encima de unas barras que
 suman 104.
 
-**Falta comprobar cinco cosas**, cuatro heredadas y una nueva: la nitidez a otras escalas
-—`WM_DPICHANGED` sigue sin dispararse, y esta vez está comprobado por qué: esta máquina
-tiene una sola pantalla al 100 %, medido con `GetDpiForWindow` desde un proceso DPI-aware—,
-el IME de verdad, el panel táctil de precisión, los tres cuadros de archivo, y **el globo
-del recordatorio pulsado con el ratón**: se vio salir y el camino entero se recorrió
-mandando su mensaje a la cola de la ventana, pero otra aplicación retiene el primer plano en
-este equipo y no se pudo hacer clic en la notificación de verdad.
+### Fase 7, segunda pasada — 22 de septiembre de 2026
+
+Con el Brave cerrado, la máquina por fin dejó traer la ventana al frente y mandarle entrada
+de verdad (`SendInput`). Se repitió todo con teclado y ratón reales y salieron **dos fallos
+más, los dos heredados**, además de confirmar que lo que parecía roto no lo estaba.
+
+**Ctrl+K no abría la paleta desde la lista, y venía de la fase 6.** `Ui::List::OnKey` trata
+la `J` y la `K` como «abajo» y «arriba» al estilo vim **sin mirar los modificadores**, y la
+lista tiene el foco nada más arrancar. Así que Ctrl+K subía la selección, se comía la tecla
+y `Views::Main` no llegaba a verla nunca: la paleta solo se abría con el foco en otro sitio.
+La regla es la que las teclas 1-4 de la vista principal ya cumplían y la que `Ui::Field`
+cumple en sus seis letras — **una letra con Control es de otro**— y ahora la cumple también
+la lista, y la revisión con su `E` y su `P`.
+
+**El nombre de la aplicación salía como «BrÃºjula», y venía de la fase 1.** `rc.exe` lee un
+`.rc` sin BOM con la página de códigos del sistema, así que el UTF-8 de `brujula.rc` se
+compilaba como CP1252 y la mojibake acababa en las propiedades del archivo y —donde se ve de
+verdad— en la cabecera de la notificación del recordatorio. Se arregla con
+`#pragma code_page(65001)` dentro del archivo, que es la solución que se lee; un BOM también
+vale y lo pierde cualquiera al guardar con otra herramienta. No da ningún error al compilar,
+y por eso llevaba seis fases ahí.
+
+**Y lo que NO estaba roto**, aunque lo pareciera con el arnés de pruebas: Ctrl+Mayús+R, la
+paleta, el globo. Dos falsos positivos con la misma causa y conviene saberla: la estructura
+`INPUT` de `SendInput` mide **40 bytes en x64** y sin la parte del ratón en la unión sale de
+32, con lo que la llamada devuelve cero y no llega ni una tecla — sin error visible. El
+segundo: entre dos ejecuciones del script la ventana pierde la activación y `onDeactivate`
+se lleva por delante menús, hojas y la paleta, así que una cadena de clics tiene que ir en
+una sola ejecución.
+
+**Comprobado con entrada real**: Ctrl+Mayús+R abre la revisión; E abre el campo y lo escrito
+se guarda; Espacio salta; 1 clasifica; P aplaza; Esc vuelve a la lista; Ctrl+K abre la
+paleta y su acción abre la revisión; y **el globo del recordatorio, pulsado con el ratón,
+trae la ventana al frente y abre la revisión**.
+
+**Falta comprobar cuatro cosas**, las cuatro heredadas: la nitidez a otras escalas
+—`WM_DPICHANGED` no se puede disparar aquí: una sola pantalla al 100 %, medido con
+`GetDpiForWindow` desde un proceso DPI-aware—, el IME de verdad, el panel táctil de
+precisión y los tres cuadros de archivo.
 
 ### Fase 6 — 21 de septiembre de 2026
 

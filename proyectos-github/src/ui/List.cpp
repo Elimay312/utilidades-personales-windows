@@ -654,13 +654,25 @@ bool List::OnKey(const Input::Key& e) {
     // la de lo que se ve, que es de lo que iba todo esto.
     const int step = m_columns;
 
+    // La J y la K son LETRAS, y una letra con Control es de otro. Sin esto, Ctrl+K con la
+    // lista enfocada —que es como arranca la aplicación— subía la selección y se comía el
+    // atajo de la paleta de comandos antes de que Views::Main llegara a verlo: la paleta no
+    // se abría nunca desde la lista. Es la misma regla que las teclas 1-4 de la vista
+    // principal ya cumplían, y que Ui::Field cumple en cada una de sus seis letras.
+    const bool plain = !Input::Has(e.modifiers, Input::Modifiers::Control) &&
+                       !Input::Has(e.modifiers, Input::Modifiers::Alt);
+
     switch (e.virtualKey) {
-    case VK_DOWN:
     case 'J':
+        if (!plain) return false;
+        [[fallthrough]];
+    case VK_DOWN:
         MoveSelection(std::min(m_selected < 0 ? 0 : m_selected + step, m_count - 1));
         return true;
-    case VK_UP:
     case 'K':
+        if (!plain) return false;
+        [[fallthrough]];
+    case VK_UP:
         MoveSelection(std::max(m_selected <= 0 ? 0 : m_selected - step, 0));
         return true;
     case VK_LEFT:

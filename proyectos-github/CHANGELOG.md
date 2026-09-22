@@ -298,6 +298,11 @@ Una aguja de brújula sobre el azul de acento, inclinada al nordeste —recta y 
 como un triángulo cualquiera— con nueve tamaños de 16 a 256. Se genera con un script y el
 `.ico` se guarda en el repositorio: compilar no depende de tener PowerShell.
 
+Comprobado abriéndola de verdad: dice «Brújula», «Versión 0.8.0», la cuenta conectada y
+«Último arranque: 234 ms, de los que 128 esperando a la tarjeta gráfica». Y por el camino
+salió gratis una de las cuatro cosas que llevaban tres fases sin comprobarse: un clic que se
+fue de renglón abrió el cuadro de guardar la copia de seguridad, que se pintó entero.
+
 La versión vive en `src/app/Version.h`, que incluyen el `.rc` y la aplicación. Con el número
 escrito en los dos sitios no falla nada el día que se suba uno y no el otro: simplemente las
 propiedades del archivo dicen una cosa y la aplicación otra, y nadie se entera hasta que

@@ -377,9 +377,12 @@ así que se ve entera. Bajar `kStandard` a la mitad lo deja en 1,3 s, así que e
 funciona; cuál es el número bueno es algo que hay que sentir con la aplicación delante, y
 por eso no se ha tocado a ciegas por tercera vez.
 
-**Falta comprobar cuatro cosas**, las cuatro heredadas y ninguna nueva: la nitidez a otras
+**Falta comprobar tres cosas**, las tres heredadas y ninguna nueva: la nitidez a otras
 escalas —`WM_DPICHANGED` sigue sin poder dispararse: una sola pantalla al 100 %—, el IME de
-verdad, el panel táctil de precisión y los tres cuadros de archivo. Y el texto «un toque
+verdad y el panel táctil de precisión. **Los cuadros de archivo salen de la lista**: el de
+guardar la copia de seguridad se abrió y se pintó entero durante esta fase, por accidente
+—un clic que se fue de renglón en el menú de ajustes—, que es como acabaron
+comprobándose después de tres fases esperando una máquina que dejara enfocar la ventana. Y el texto «un toque
 borroso» de la fase 7 sigue pendiente de decidir: la hipótesis viva sigue siendo el suavizado
 en gris, y lo que hay que probar son unos `IDWriteRenderingParams` propios — pero esta fase
 encontró y quitó una causa real de borrosidad que no estaba en aquella lista (la escala

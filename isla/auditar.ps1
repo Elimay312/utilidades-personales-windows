@@ -69,7 +69,9 @@ $reglas = @(
 
     # ShowWindow y SetWindowPos sobre la ventana PROPIA son necesarios y no estan aqui.
     # Lo que se prohibe es lo que solo tiene sentido sobre ventanas de otros.
-    @{ n = '15 tocar ventanas ajenas';       p = 'EnumWindows|EnumChildWindows|PrintWindow|SetForegroundWindow|ShowWindowAsync|AttachThreadInput|DWMWA_CLOAK\b' }
+    # AllowSetForegroundWindow NO es SetForegroundWindow: no pone a nadie delante, le deja a
+    # quien aviso hacerlo una vez (s.3.7). Sin el (?<!Allow) la regla se la confundia.
+    @{ n = '15 tocar ventanas ajenas';       p = 'EnumWindows|EnumChildWindows|PrintWindow|(?<!Allow)SetForegroundWindow|ShowWindowAsync|AttachThreadInput|DWMWA_CLOAK\b' }
 
     @{ n = '16 matar procesos';              p = 'TerminateProcess|TerminateThread|EndTask|ExitWindowsEx|NtTerminate' }
 )
@@ -133,6 +135,14 @@ if ($otras) {
     Write-Output ("  {0,-34} {1}" -f 'solo el nombre del dispositivo', 'si, solo PKEY_Device_FriendlyName')
 } else {
     Write-Output ("  {0,-34} {1}" -f 'solo el nombre del dispositivo', 'no se lee ninguna propiedad')
+}
+
+# Ceder el primer plano, si, pero solo al PID de quien aviso: nunca a cualquiera.
+$cualquiera = $codigo | Where-Object { $_.Texto -match 'ASFW_ANY|AllowSetForegroundWindow\(\s*(uint\.MaxValue|-1|0xFFFFFFFF)' }
+if ($cualquiera) {
+    $fallos++
+    Write-Output ("  {0,-34} INCUMPLE (s.3.7)" -f 'primer plano solo a quien aviso')
+    $cualquiera | ForEach-Object { Write-Output ("      {0}:{1}  {2}" -f $_.Fichero, $_.Linea, $_.Texto.Trim()) }
 }
 
 # El buzon de avisos (SEGURIDAD.md s.3.7, enmienda del 22-09-2026). Si hay tuberia, tiene que

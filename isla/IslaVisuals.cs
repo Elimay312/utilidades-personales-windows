@@ -23,7 +23,11 @@ namespace Isla;
 /// El titular de la isla: lo unico que cabe en la pastilla asomada. Si lleva caratula
 /// es que habla de musica; si no, el texto se pega al borde izquierdo.
 /// </summary>
-internal readonly record struct Aviso(string Texto, bool ConCaratula);
+/// <para>
+/// <c>Color</c> distinto de cero es el aviso de otra app (SEGURIDAD.md s.3.7): lleva un punto de
+/// su color delante, en vez de la miniatura.
+/// </para>
+internal readonly record struct Aviso(string Texto, bool ConCaratula, uint Color = 0);
 
 /// <summary>Que hay bajo el raton dentro del panel abierto.</summary>
 internal enum Zona
@@ -135,6 +139,24 @@ internal sealed unsafe class IslaVisuals : IDisposable
 
     private const uint D3D11SdkVersion = 7;
 
+    // --- el aviso de otra app (s.3.7) ------------------------------------------------
+    // El punto del titular, y la segunda burbuja que queda junto a la brasa mientras el aviso
+    // espera respuesta: la isla principal sigue siendo de lo que suena.
+    private const float PuntoCompacto = 10f;
+    private const float BurbujaLado = 8f;
+    private const float BurbujaHueco = 6f;
+
+    // La tarjeta, sobre el panel abierto de 380x180.
+    private const float TarjPuntoY = 22f;
+    private const float TarjAppX = 34f;
+    private const float TarjAppY = 15f;
+    private const float TarjTituloY = 38f;
+    private const float TarjLineaY = 66f;
+    private const float TarjBotonY = 124f;
+    private const float TarjBotonAlto = 34f;
+    private const float TarjBotonHueco = 8f;
+    private const float TarjBotonPx = 12f;
+
 
     private readonly Compositor _compositor;
     private readonly DesktopWindowTarget _target;
@@ -173,11 +195,24 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private readonly CompositionRoundedRectangleGeometry _forma;
     private readonly CompositionRoundedRectangleGeometry _formaBorde;
     private readonly float _scale;
+    private readonly float _anchoVentana;
     private CompositionGraphicsDevice? _graphics;
+
+    private readonly CompositionPropertySet _vista;
+    private SpriteVisual _puntoCompacto;
+    private readonly SpriteVisual _burbuja;
+    private ContainerVisual _tarjeta;
+    private SpriteVisual _tarjPunto;
+    private SpriteVisual _tarjApp;
+    private SpriteVisual _tarjTitulo;
+    private SpriteVisual _tarjLinea;
+    private readonly List<ContainerVisual> _botones = [];
+    private int _numBotones;
 
     public IslaVisuals(HWND hwnd, float scale, float anchoVentana)
     {
         _scale = scale;
+        _anchoVentana = anchoVentana;
 
         EnsureDispatcherQueue();
         _compositor = new Compositor();
@@ -247,7 +282,10 @@ internal sealed unsafe class IslaVisuals : IDisposable
         // ponytail: cuadrado gris cuando la cancion no trae caratula. Un icono
         // generico quedaria mejor, pero eso es un recurso que hay que empaquetar.
         _grisCaratula = _compositor.CreateColorBrush(Color.FromArgb(38, 255, 255, 255));
+        _vista = _compositor.CreatePropertySet();
+        _vista.InsertScalar("Aviso", 0f);
         _contenido = Contenido();
+        _tarjeta = Tarjeta();
         _compacto = FilaCompacta();
 
         // Borde interior de 1 px. Sin el, un panel oscuro parece un agujero en la
@@ -263,6 +301,16 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _borde.RelativeSizeAdjustment = Vector2.One;
         _borde.Shapes.Add(trazo);
         _panel.Children.InsertAtTop(_borde);
+
+        // La burbuja va en la raiz, fuera del clip del panel: vive a su lado, no dentro.
+        _burbuja = _compositor.CreateSpriteVisual();
+        _burbuja.Size = new Vector2(S(BurbujaLado), S(BurbujaLado));
+        _burbuja.Opacity = 0f;
+        CompositionEllipseGeometry circulo = _compositor.CreateEllipseGeometry();
+        circulo.Center = new Vector2(S(BurbujaLado) * 0.5f, S(BurbujaLado) * 0.5f);
+        circulo.Radius = circulo.Center;
+        _burbuja.Clip = _compositor.CreateGeometricClip(circulo);
+        _root.Children.InsertAtTop(_burbuja);
 
         Expresiones(anchoVentana);
     }
@@ -293,10 +341,18 @@ internal sealed unsafe class IslaVisuals : IDisposable
         // El contenido entra con la misma rampa y ademas crece un poco. Escalar desde
         // el centro del panel -- que tambien se esta moviendo -- es lo que hace que
         // parezca que sale de dentro y no que aparece pegado encima.
-        Expresion(_contenido, "Opacity", pleno);
-        Expresion(_contenido, "CenterPoint", "Vector3(P.Size.X * 0.5, P.Size.Y * 0.5, 0)");
-        Expresion(_contenido, "Scale",
-            $"Vector3(Lerp(0.92, 1, {entrada}), Lerp(0.92, 1, {entrada}), 1)");
+        //
+        // Abierta ensena la ficha de lo que suena o la tarjeta del aviso, segun V.Aviso: cruzan
+        // con la misma rampa, asi que cambiar de una a otra no es un corte.
+        Expresion(_contenido, "Opacity", $"({pleno}) * (1 - V.Aviso)");
+        Expresion(_tarjeta, "Opacity", $"({pleno}) * V.Aviso");
+        Expresion(_aura, "Opacity", "1 - V.Aviso");
+        foreach (ContainerVisual capa in new[] { _contenido, _tarjeta })
+        {
+            Expresion(capa, "CenterPoint", "Vector3(P.Size.X * 0.5, P.Size.Y * 0.5, 0)");
+            Expresion(capa, "Scale",
+                $"Vector3(Lerp(0.92, 1, {entrada}), Lerp(0.92, 1, {entrada}), 1)");
+        }
     }
 
     /// <summary>
@@ -424,6 +480,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
     {
         ExpressionAnimation e = _compositor.CreateExpressionAnimation(expresion);
         e.SetReferenceParameter("P", _panel);
+        e.SetReferenceParameter("V", _vista);
         destino.StartAnimation(propiedad, e);
     }
 
@@ -547,7 +604,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// arranca hasta 92, asi que el aviso que existe para decir que ha cambiado no
     /// decia nada.
     /// </summary>
-    [MemberNotNull(nameof(_cajaCompacta), nameof(_miniatura), nameof(_rotCompacto))]
+    [MemberNotNull(nameof(_cajaCompacta), nameof(_miniatura), nameof(_rotCompacto), nameof(_puntoCompacto))]
     private ContainerVisual FilaCompacta()
     {
         ContainerVisual raiz = _compositor.CreateContainerVisual();
@@ -569,7 +626,136 @@ internal sealed unsafe class IslaVisuals : IDisposable
         raiz.Children.InsertAtTop(_cajaCompacta);
 
         _rotCompacto = Hueco(Vector2.Zero, _cajaCompacta);
+
+        _puntoCompacto = Circulo(PuntoCompacto);
+        _puntoCompacto.Offset = new Vector3(S(CompMargen * 2f), S(28f - PuntoCompacto * 0.5f), 0);
+        raiz.Children.InsertAtTop(_puntoCompacto);
         return raiz;
+    }
+
+    private SpriteVisual Circulo(float lado)
+    {
+        SpriteVisual v = _compositor.CreateSpriteVisual();
+        v.Size = new Vector2(S(lado), S(lado));
+        CompositionEllipseGeometry g = _compositor.CreateEllipseGeometry();
+        g.Center = new Vector2(S(lado) * 0.5f, S(lado) * 0.5f);
+        g.Radius = g.Center;
+        v.Clip = _compositor.CreateGeometricClip(g);
+        return v;
+    }
+
+    private CompositionColorBrush Pintura(uint rgb, byte alfa = 255) =>
+        _compositor.CreateColorBrush(Color.FromArgb(alfa, (byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb));
+
+    /// <summary>
+    /// La tarjeta del aviso de otra app: su punto de color, de quien es, el titulo, la linea y
+    /// hasta cuatro botones. Nace vacia y la llena MostrarAviso.
+    /// </summary>
+    [MemberNotNull(nameof(_tarjPunto), nameof(_tarjApp), nameof(_tarjTitulo), nameof(_tarjLinea))]
+    private ContainerVisual Tarjeta()
+    {
+        ContainerVisual raiz = _compositor.CreateContainerVisual();
+        raiz.RelativeSizeAdjustment = Vector2.One;
+        raiz.Opacity = 0f;
+        _panel.Children.InsertAtTop(raiz);
+
+        _tarjPunto = Circulo(10f);
+        _tarjPunto.Offset = new Vector3(S(Margen), S(TarjPuntoY - 5f), 0);
+        raiz.Children.InsertAtTop(_tarjPunto);
+        _tarjApp = Hueco(new Vector2(S(TarjAppX), S(TarjAppY)), raiz);
+        _tarjTitulo = Hueco(new Vector2(S(Margen), S(TarjTituloY)), raiz);
+        _tarjLinea = Hueco(new Vector2(S(Margen), S(TarjLineaY)), raiz);
+
+        for (int i = 0; i < 4; i++)
+        {
+            ContainerVisual boton = _compositor.CreateContainerVisual();
+            boton.Clip = _compositor.CreateGeometricClip(_compositor.CreateRoundedRectangleGeometry());
+            SpriteVisual fondo = _compositor.CreateSpriteVisual();
+            fondo.RelativeSizeAdjustment = Vector2.One;
+            boton.Children.InsertAtTop(fondo);
+            boton.Children.InsertAtTop(_compositor.CreateSpriteVisual());
+            raiz.Children.InsertAtTop(boton);
+            _botones.Add(boton);
+        }
+        return raiz;
+    }
+
+    /// <summary>
+    /// Pinta el aviso que espera respuesta, o nada. Los botones se reparten el ancho; el primero
+    /// es el que se espera que pulses y va mas encendido.
+    /// </summary>
+    public void MostrarAviso(AvisoApp? a)
+    {
+        _tarjPunto.Brush = a is null || a.Color == 0 ? null : Pintura(a.Color);
+        Rotular(_tarjApp, a?.App ?? string.Empty, AppPx, false, 0.38f);
+        float ancho = S(380f - Margen * 2f);
+        Rotular(_tarjTitulo, a is null ? string.Empty : Cabe(a.Titulo, ancho, S(TituloPx)), TituloPx, true, 1f);
+        Rotular(_tarjLinea, a is null ? string.Empty : Cabe(a.Linea, ancho, S(ArtistaPx)), ArtistaPx, false, 0.62f);
+
+        _numBotones = a?.Botones.Count ?? 0;
+        float cada = _numBotones == 0 ? 0f : (380f - Margen * 2f - (_numBotones - 1) * TarjBotonHueco) / _numBotones;
+        for (int i = 0; i < _botones.Count; i++)
+        {
+            ContainerVisual boton = _botones[i];
+            SpriteVisual fondo = (SpriteVisual)boton.Children.First();
+            SpriteVisual rotulo = (SpriteVisual)boton.Children.Last();
+            if (a is null || i >= _numBotones)
+            {
+                boton.Size = Vector2.Zero;
+                Rotular(rotulo, string.Empty, TarjBotonPx, true, 1f);
+                continue;
+            }
+
+            boton.Size = new Vector2(S(cada), S(TarjBotonAlto));
+            boton.Offset = new Vector3(S(Margen + i * (cada + TarjBotonHueco)), S(TarjBotonY), 0);
+            var forma = (CompositionRoundedRectangleGeometry)((CompositionGeometricClip)boton.Clip).Geometry;
+            forma.Size = boton.Size;
+            forma.CornerRadius = new Vector2(S(TarjBotonAlto * 0.5f), S(TarjBotonAlto * 0.5f));
+            fondo.Brush = _compositor.CreateColorBrush(Color.FromArgb(i == 0 ? (byte)64 : (byte)26, 255, 255, 255));
+            Rotular(rotulo, Cabe(a.Botones[i].Texto, S(cada - 12f), S(TarjBotonPx)), TarjBotonPx, true, i == 0 ? 1f : 0.85f);
+            rotulo.Offset = new Vector3((boton.Size.X - rotulo.Size.X) * 0.5f, (boton.Size.Y - rotulo.Size.Y) * 0.5f, 0);
+        }
+    }
+
+    /// <summary>Que ensena el panel abierto: la ficha de lo que suena, o la tarjeta del aviso.</summary>
+    public void VistaAviso(bool aviso) => _vista.InsertScalar("Aviso", aviso ? 1f : 0f);
+
+    /// <summary>El boton de la tarjeta bajo el punto, en coordenadas del panel abierto, o -1.</summary>
+    public int GolpeBoton(Vector2 p)
+    {
+        for (int i = 0; i < _numBotones; i++)
+        {
+            Vector3 o = _botones[i].Offset;
+            Vector2 t = _botones[i].Size;
+            if (p.X >= o.X && p.X < o.X + t.X && p.Y >= o.Y - S(4f) && p.Y < o.Y + t.Y + S(4f)) return i;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// La segunda burbuja, junto a la brasa, mientras un aviso espera: un punto de su color.
+    /// Si no hay nada sonando no hay brasa a su lado, y se queda en el centro.
+    /// </summary>
+    public void Burbuja(uint? color, bool visible, bool conPrincipal)
+    {
+        if (color is uint rgb) _burbuja.Brush = Pintura(rgb == 0 ? 0xFFFFFFu : rgb);
+        float x = _anchoVentana * 0.5f - S(BurbujaLado) * 0.5f
+                  + (conPrincipal ? S(IslaWindow.Medidas(Estado.Brasa).W * 0.5f + BurbujaHueco + BurbujaLado * 0.5f) : 0f);
+        _burbuja.Offset = new Vector3(x, 0f, 0f);
+        Fundir(_burbuja, visible ? 1f : 0f);
+    }
+
+    /// <summary>La isla principal, apagada cuando en la brasa no hay nada suyo que ensenar.</summary>
+    public void Principal(bool visible) => Fundir(_grupo, visible ? 1f : 0f);
+
+    private void Fundir(Visual v, float objetivo)
+    {
+        if (Math.Abs(v.Opacity - objetivo) < 0.001f) return;
+        ScalarKeyFrameAnimation a = _compositor.CreateScalarKeyFrameAnimation();
+        a.InsertKeyFrame(1f, objetivo);
+        a.Duration = TimeSpan.FromMilliseconds(160);
+        v.StartAnimation("Opacity", a);
+        v.Opacity = objetivo;
     }
 
     /// <summary>
@@ -580,8 +766,11 @@ internal sealed unsafe class IslaVisuals : IDisposable
     {
         bool mini = a.ConCaratula && hayCaratula;
         _miniatura.Brush = mini ? _caratula.Brush : null;
+        _puntoCompacto.Brush = a.Color != 0 ? Pintura(a.Color) : null;
 
-        float x = mini ? CompMargen * 2f + CompMiniLado : CompMargen * 2f;
+        float x = mini ? CompMargen * 2f + CompMiniLado
+                : a.Color != 0 ? CompMargen * 2f + PuntoCompacto + 8f
+                : CompMargen * 2f;
         _cajaCompacta.Offset = new Vector3(S(x), S(CompTextoY), 0);
 
         if (a.Texto == _textoCompacto) return;

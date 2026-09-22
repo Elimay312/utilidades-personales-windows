@@ -13,6 +13,24 @@ está en el mensaje de su commit.
 
 Todo lo que hay. Falta probarlo en otros equipos y con otras aplicaciones de música.
 
+### Los recordatorios de Agenda, en la isla
+
+**La primera entrada que abre la isla**, con su enmienda escrita y commiteada antes que el
+código (SEGURIDAD.md §3.7). Un buzón por tubería con nombre donde una app de la casa deja un
+aviso —título, línea, color y hasta cuatro botones— y espera a saber cuál se pulsó. Hoy lo usa
+Agenda, como la isla de Xiaomi: el recordatorio asoma 8 s y se queda como un punto de su color
+junto a la isla; pasar el ratón por el punto abre la tarjeta.
+
+- **Se daba por hecho que .NET rechazaba clientes remotos, y no.** `NamedPipeServerStream` no
+  pone `PIPE_REJECT_REMOTE_CLIENTS`: se miró en su código fuente antes de escribir la enmienda.
+  La tubería lleva una ACL propia que deniega el SID `NETWORK`, y `auditar.ps1` comprueba que
+  sigue ahí.
+- **Abrir trae a Agenda al frente sin que la isla toque su ventana.** Quien pulsa es la isla,
+  así que es la isla la que puede ceder el primer plano: `AllowSetForegroundWindow` al proceso
+  que está al otro lado de la tubería, una vez y solo a ese —nunca `ASFW_ANY`—.
+- **Arreglado de paso:** `Ctrl+Alt+I` desde la asomada nunca llegaba a abierta, porque la
+  asomada caducaba en el tic siguiente. Ahora el atajo renueva su plazo.
+
 ### Arreglado: el separador volvió a ser un punto, y no «A-circunfleja punto»
 
 Mojibake, y de cosecha propia: para ajustar un número se usó `Get-Content | Set-Content` de

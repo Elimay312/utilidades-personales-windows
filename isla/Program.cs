@@ -33,6 +33,10 @@ internal static class Program
         IslaConfig config = Config.Cargar();
         Config.AplicarAutoArranque(config.AutoArranque);
 
+        // El buzon de avisos de las apps de la casa (SEGURIDAD.md s.3.7). Una vez por proceso:
+        // la ventana se rehace, el buzon no.
+        Avisos.Arrancar();
+
         if (IslaWindow.Create(config) is null)
         {
             Console.Error.WriteLine("[isla] no se pudo crear la ventana.");

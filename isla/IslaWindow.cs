@@ -140,6 +140,20 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// <summary>Cambiaste de altavoces. Tambien lo manda COM.</summary>
     private const uint WM_APP_DISPOSITIVO = 0x8005;
 
+    /// <summary>El buzon cambio: llego un aviso de otra app, o se fue uno (SEGURIDAD.md s.3.7).</summary>
+    private const uint WM_APP_AVISO = 0x8006;
+
+    /// <summary>
+    /// Lo que se queda asomado un aviso de otra app antes de recogerse en su burbuja. Mas que
+    /// una cancion: es algo que hay que leer, no reconocer.
+    /// </summary>
+    private const int MsAsomoAviso = 8000;
+
+    // La zona caliente de la burbuja, en unidades logicas. Pequena, como la de la brasa, y con
+    // prioridad sobre ella: la burbuja cae dentro de la franja de la isla principal.
+    private const int LogicalBurbujaAncho = 36;
+    private const int LogicalBurbujaAlto = 14;
+
     private const int MA_NOACTIVATE = 3;
 
     private static readonly HWND HWND_TOPMOST = new(-1);
@@ -151,6 +165,12 @@ internal sealed unsafe class IslaWindow : IDisposable
     private static IslaWindow? _instancia;
     private static bool _rehacerPendiente;
     private static bool _rehaciendo;
+
+    /// <summary>
+    /// El ultimo aviso de otra app que ya se anuncio. Estatico, como los avisos del buzon: si
+    /// rehacerse lo olvidara, cada cruce de pantalla volveria a asomar el mismo aviso.
+    /// </summary>
+    private static long _anunciado;
 
     private readonly IslaConfig _config;
     private readonly HMONITOR _monitor;
@@ -200,6 +220,10 @@ internal sealed unsafe class IslaWindow : IDisposable
     private bool _apartada;
     private DateTime _regionCuando;
     private Estado _regionEstado = Estado.Brasa;
+
+    /// <summary>Si el panel abierto ensena la tarjeta del aviso en vez de lo que suena.</summary>
+    private bool _vistaAviso;
+    private AvisoApp? _enTarjeta;
 
     public static IslaWindow? Create(IslaConfig config)
     {
@@ -290,6 +314,11 @@ internal sealed unsafe class IslaWindow : IDisposable
         // El camino normal: COM avisa en cuanto cambia el nivel o el dispositivo. El tic
         // de 8 Hz solo queda como red por si el aviso se cae.
         Audio.Escuchar(_hwnd, WM_APP_VOLUMEN, WM_APP_DISPOSITIVO);
+
+        // El buzon vive fuera de la ventana y sobrevive a rehacerla; aqui solo se le dice a
+        // donde avisar, y se recoge lo que ya estuviera esperando sin volver a anunciarlo.
+        Avisos.Ventana(_hwnd, WM_APP_AVISO);
+        OnAvisos();
 
         Console.WriteLine($"[isla] {NombreDe(_monitor)} al {_dpi * 100 / 96}%, ventana {_w}x{h} en {_x},{_y}");
         Console.WriteLine($"[isla] pantallas: {string.Join(", ", Monitores().Select(NombreDe))}");
@@ -443,6 +472,10 @@ internal sealed unsafe class IslaWindow : IDisposable
 
             case WM_APP_DISPOSITIVO:
                 isla?.OnDispositivo();
+                return new LRESULT(0);
+
+            case WM_APP_AVISO:
+                isla?.OnAvisos();
                 return new LRESULT(0);
 
             case WM_LBUTTONDOWN:
@@ -613,9 +646,10 @@ internal sealed unsafe class IslaWindow : IDisposable
         Vigilar();
         if (_visible && _actual == Estado.Brasa) Latir();
 
-        // La zona crece al estar abierta: eso es la histeresis, y sale gratis.
-        RECT z = ZonaCaliente(_hover);
-        bool dentro = p.X >= z.left && p.X < z.right && p.Y >= z.top && p.Y < z.bottom;
+        // La zona crece al estar abierta: eso es la histeresis, y sale gratis. La burbuja del
+        // aviso tiene la suya, y va primero porque cae dentro de la de la isla principal.
+        bool enBurbuja = !_hover && _enTarjeta is not null && Dentro(ZonaBurbuja(), p);
+        bool dentro = enBurbuja || Dentro(ZonaCaliente(_hover), p);
 
         if (!dentro)
         {
@@ -634,8 +668,32 @@ internal sealed unsafe class IslaWindow : IDisposable
         // opaca antes de 300 ms.
         if (++_seguidos < TicksParaAbrir) return;
         _hover = true;
+        // Por la burbuja se abre el aviso; por la isla, lo que suena. Sin nada sonando, la
+        // isla solo puede estar abierta por el aviso.
+        Vista(_enTarjeta is not null && (enBurbuja || !HayPrincipal()));
         Aplicar();
     }
+
+    private static bool Dentro(RECT z, System.Drawing.Point p) =>
+        p.X >= z.left && p.X < z.right && p.Y >= z.top && p.Y < z.bottom;
+
+    private RECT ZonaBurbuja()
+    {
+        int cx = _x + _w / 2 + (HayPrincipal()
+            ? (int)Scale(Medidas(Estado.Brasa).W * 0.5f + 10f)
+            : 0);
+        int medio = (int)(Scale(LogicalBurbujaAncho) / 2);
+        return new RECT { left = cx - medio, right = cx + medio, top = _y, bottom = _y + (int)Scale(LogicalBurbujaAlto) };
+    }
+
+    private void Vista(bool aviso)
+    {
+        _vistaAviso = aviso;
+        _visuals.VistaAviso(aviso);
+    }
+
+    /// <summary>Lo que la isla principal tiene que ensenar por si misma: algo sonando o un pomodoro.</summary>
+    private bool HayPrincipal() => Medios.Ultima is not null || _hayPomodoro;
 
     private void OnOnda() => Latir();
 
@@ -655,6 +713,13 @@ internal sealed unsafe class IslaWindow : IDisposable
         // El atajo tambien sirve para invocarla cuando no suena nada.
         Ensenar(true);
         _base = (Estado)(((int)_base + 1) % 3);
+        // Asomada por el atajo tiene que durar lo que dura un asomo. Sin esto el tic la
+        // devolvia a la brasa en 120 ms -- su caducidad era la del ultimo aviso, ya pasada -- y
+        // la segunda pulsacion volvia a empezar: el atajo no llegaba nunca a abierta.
+        if (_base == Estado.Asomada) _finAsomo = DateTime.UtcNow.AddSeconds(AsomoSegundos);
+        // Con un aviso esperando, el atajo abre el aviso: es lo que pide atencion, y sin esto
+        // solo se llegaria a el con el raton.
+        if (_base == Estado.Abierta) Vista(_enTarjeta is not null);
         Console.WriteLine($"[isla] atajo -> {_base}");
         Aplicar();
     }
@@ -666,7 +731,8 @@ internal sealed unsafe class IslaWindow : IDisposable
     private void OnMedios()
     {
         Cancion? c = Medios.Ultima;
-        Ensenar(c is not null);
+        Ensenar(c is not null || _enTarjeta is not null);
+        Burbuja();
 
         if (c is null) { _sonando = null; return; }
 
@@ -703,6 +769,47 @@ internal sealed unsafe class IslaWindow : IDisposable
     }
 
     // --- los avisos ----------------------------------------------------------------
+
+    /// <summary>
+    /// El buzon cambio. Un aviso nuevo asoma con su punto de color y se recoge en la burbuja
+    /// junto a la brasa; la tarjeta ensena siempre el mas antiguo que espera, que es el que
+    /// lleva mas tiempo sin contestar. Llega por PostMessage desde el pool de hilos.
+    /// </summary>
+    private void OnAvisos()
+    {
+        IReadOnlyList<AvisoApp> pendientes = Avisos.Pendientes;
+        _enTarjeta = pendientes.Count > 0 ? pendientes[0] : null;
+        _visuals.MostrarAviso(_enTarjeta);
+
+        AvisoApp? nuevo = pendientes.LastOrDefault(a => a.Numero > _anunciado);
+        if (nuevo is not null)
+        {
+            _anunciado = pendientes.Max(a => a.Numero);
+            string texto = nuevo.Linea.Length == 0 ? nuevo.Titulo : $"{nuevo.Titulo}   ·   {nuevo.Linea}";
+            Avisar(texto, MsAsomoAviso, nuevo.Color == 0 ? 0xFFFFFFu : nuevo.Color);
+        }
+
+        if (_enTarjeta is null && _vistaAviso)
+        {
+            // Contestado: si el panel estaba en el aviso, vuelve a lo que suena, o se recoge.
+            Vista(false);
+            if (!HayPrincipal()) { _hover = false; _base = Estado.Brasa; Aplicar(); }
+        }
+
+        Ensenar(HayPrincipal() || _enTarjeta is not null || _transitorio is not null);
+        Burbuja();
+    }
+
+    /// <summary>
+    /// La burbuja solo se ve con la isla recogida: asomada o abierta, el aviso esta dentro. Y
+    /// la isla principal, en brasa, se apaga cuando no tiene nada suyo.
+    /// </summary>
+    private void Burbuja()
+    {
+        bool brasa = _actual == Estado.Brasa;
+        _visuals.Burbuja(_enTarjeta?.Color, _enTarjeta is not null && brasa, HayPrincipal());
+        _visuals.Principal(!brasa || HayPrincipal());
+    }
 
     /// <summary>
     /// El titular: lo unico que se ve en la pastilla asomada. Manda el aviso
@@ -801,9 +908,9 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// lo mismo que cualquier asomo; los de audio piden menos para irse a la vez que el
     /// HUD (ver <see cref="MsAvisoAudio"/>).
     /// </summary>
-    private void Avisar(string texto, int ms = AsomoSegundos * 1000)
+    private void Avisar(string texto, int ms = AsomoSegundos * 1000, uint color = 0)
     {
-        _transitorio = new Aviso(texto, false);
+        _transitorio = new Aviso(texto, false, color);
         _finTransitorio = DateTime.UtcNow.AddMilliseconds(ms);
         Ensenar(true);
         Asomar(ms);
@@ -853,7 +960,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         {
             _transitorio = null;
             RefrescarTitular();
-            if (Medios.Ultima is null && !_hayPomodoro) Ensenar(false);
+            if (!HayPrincipal() && _enTarjeta is null) Ensenar(false);
         }
 
         if (_hayPomodoro)
@@ -1103,6 +1210,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         _actual = efectivo;
 
         _visuals.GoTo(efectivo, abriendo);
+        Burbuja();
 
         // Al CRECER la region se pone ya, o recortaria lo que esta creciendo. Al
         // ENCOGERSE hay que esperar a que el muelle termine, o se recortaria la
@@ -1138,6 +1246,16 @@ internal sealed unsafe class IslaWindow : IDisposable
     private void OnPulsar(LPARAM lParam)
     {
         Vector2 p = _visuals.EnPanel(Punto(lParam), _w);
+
+        // En la tarjeta del aviso solo hay botones, y el que se pulse vuelve por la tuberia a
+        // la app que lo mando. Que significa es cosa suya (SEGURIDAD.md s.3.7).
+        if (_vistaAviso)
+        {
+            int boton = _visuals.GolpeBoton(p);
+            if (_enTarjeta is not null && boton >= 0 && boton < _enTarjeta.Botones.Count)
+                Avisos.Responder(_enTarjeta.Numero, _enTarjeta.Botones[boton].Id);
+            return;
+        }
 
         switch (_visuals.Golpe(p))
         {

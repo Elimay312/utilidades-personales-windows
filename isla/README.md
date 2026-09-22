@@ -58,9 +58,32 @@ cruzar el borde de camino al botón de cerrar no la despierta.
 | `Ctrl+Alt+T` | Arranca un pomodoro. Otra vez lo cancela |
 | Llevar el ratón a otra pantalla | La isla se muda ahí (~375 ms) **en el estado en que estaba**: no vuelve a presentarse |
 | Cambiar el volumen, o de altavoces | Asoma con el número y por dónde sale: `Volumen 48 % · LG ULTRAWIDE (NVI…` |
+| Un recordatorio de [Agenda](../calendario/README.md) | Asoma 8 s con el título y la hora, y después queda **un punto** de su color junto a la isla |
+| Ratón sobre el punto, o `Ctrl+Alt+I` con un aviso esperando | Se abre la tarjeta del aviso con sus botones |
 
 Un botón que la sesión no admite **no se dibuja**: con Brave solo sale play/pausa, porque
 declara `IsPreviousEnabled` e `IsNextEnabled` a `false`.
+
+### Avisos de otras apps: el buzón
+
+La isla principal es lo que está pasando ahora; el punto de al lado es lo que te está
+esperando. Hoy solo lo usa Agenda: sus recordatorios llegan aquí en vez de como toast, y la
+tarjeta ofrece **Terminado**, **5 min**, **10 min** y **Abrir**. Qué significa cada botón es
+cosa de la app que avisó; la isla solo le dice cuál se pulsó.
+
+Por dentro es una tubería con nombre, `\\.\pipe\IslaDinamica.avisos`. La app escribe una
+línea de JSON y espera en la misma conexión:
+
+```json
+{"app":"Agenda","titulo":"Pagar la luz","linea":"en 2 min","color":"#34C38F",
+ "botones":[{"id":"hecho","texto":"Terminado"},{"id":"abrir","texto":"Abrir"}]}
+```
+
+Al pulsar un botón la isla contesta `{"boton":"hecho"}` y cierra; si la app corta antes, el
+aviso se retira. Cuatro KB por aviso, tres esperando a la vez, solo texto, nadie fuera de tu
+sesión ni de esta máquina, y la consola solo dice qué app avisó. Las razones y los límites
+exactos están en [SEGURIDAD.md §3.7](SEGURIDAD.md). **Cada proyecto funciona solo:** sin la
+isla, Agenda saca su toast; sin Agenda, a la isla no le llega nada.
 
 ---
 
@@ -229,6 +252,7 @@ junto—. Ahora avisa COM, que no cuesta nada y no llega medio segundo tarde.
 | `IslaVisuals.cs` | El árbol de composición: la caja, el titular, la ficha, la onda. |
 | `Medios.cs` | El puente con el canal de medios de Windows. |
 | `Audio.cs` | El pico, el nivel y el nombre del dispositivo de salida. Solo lectura, y por evento. |
+| `Avisos.cs` | El buzón: la tubería, su ACL, y la validación de cada aviso que entra. |
 | `Texto.cs` | DirectWrite. Un formato por tamaño físico y peso. |
 | `Config.cs` | `isla.json` y el autoarranque. |
 | `NativeMethods.txt` | **La lista cerrada de P/Invokes.** Si no está aquí, no compila. |
@@ -358,4 +382,5 @@ lee `GetCursorPos` entre muestras antes de culpar al código.
   Cabe lo que cabe, y la parte útil va delante.
 - **Sin forma de salir por interfaz.** Hoy es `Stop-Process`.
 - **Las notificaciones de otras apps** no van a estar: `UserNotificationListener` exige
-  identidad de paquete, y aunque no la exigiera está prohibido por la regla 13.
+  identidad de paquete, y aunque no la exigiera está prohibido por la regla 13. Lo que sí
+  llega es lo que una app deja a propósito en el [buzón](#avisos-de-otras-apps-el-buzón).

@@ -158,3 +158,9 @@ IPropertyStore
 PKEY_Device_FriendlyName
 PropVariantClear
 STGM
+
+// --- el buzon de avisos (SEGURIDAD.md 3.7) ---
+// Quien esta al otro lado de la tuberia de un aviso, y cederle el primer plano UNA vez al
+// pulsar uno de sus botones, para que "Abrir" pueda traer su ventana delante. Nunca ASFW_ANY.
+GetNamedPipeClientProcessId
+AllowSetForegroundWindow

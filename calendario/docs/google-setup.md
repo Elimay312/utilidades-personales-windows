@@ -93,11 +93,17 @@ eso ese valor no da acceso a nada por sí solo. Aun así no va al repositorio.
 
 ## 5. Pega las dos cadenas
 
-Crea o edita este archivo:
+En el repositorio hay una plantilla, [`config.example.json`](../config.example.json), con todas
+las claves y sus valores por defecto. **Ábrela, cópiala y guárdala como:**
 
 ```
 %LOCALAPPDATA%\Agenda\config.local.json
 ```
+
+que en esta máquina es `C:\Users\elima\AppData\Local\Agenda\config.local.json`. La carpeta ya
+existe, porque ahí vive la base de datos.
+
+Lo mínimo que hace falta es el bloque `google`; el resto puede faltar:
 
 ```json
 {
@@ -107,6 +113,10 @@ Crea o edita este archivo:
   }
 }
 ```
+
+La plantilla se versiona porque no tiene nada dentro; **`config.local.json` no**, y además no
+vive en la carpeta del proyecto. Guárdalo en **UTF-8 sin BOM**: con BOM el JSON no parsea y
+Agenda arranca como si no hubiera credenciales.
 
 Si el archivo ya existe con otras claves —el atajo, por ejemplo—, **añade** el bloque `google`
 en vez de reemplazar el contenido: Agenda fusiona `config.json` y `config.local.json`, así que

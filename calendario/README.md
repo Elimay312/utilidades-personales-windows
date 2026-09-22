@@ -242,6 +242,10 @@ PowerShell conviene lanzarlo con `Start-Process ... -Wait` si hace falta esperar
 | `google.clientId` | — | El ID de cliente OAuth. Sin él, Agenda es un calendario local y el menú de la bandeja no menciona Google. |
 | `google.clientSecret` | — | El secreto de cliente. Va en `config.local.json`, nunca en el repositorio. |
 
+`config.example.json` es la plantilla con todas las claves y sus valores por defecto: se copia,
+se rellena y se guarda como `config.local.json` en `%LOCALAPPDATA%\Agenda`. La plantilla se
+versiona porque no lleva nada dentro; el archivo con los valores, no.
+
 ```json
 {
   "hotkey": "Ctrl+Alt+Space",

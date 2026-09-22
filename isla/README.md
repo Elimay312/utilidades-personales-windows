@@ -58,24 +58,28 @@ cruzar el borde de camino al botón de cerrar no la despierta.
 | `Ctrl+Alt+T` | Arranca un pomodoro. Otra vez lo cancela |
 | Llevar el ratón a otra pantalla | La isla se muda ahí (~375 ms) **en el estado en que estaba**: no vuelve a presentarse |
 | Cambiar el volumen, o de altavoces | Asoma con el número y por dónde sale: `Volumen 48 % · LG ULTRAWIDE (NVI…` |
-| Un recordatorio de [Agenda](../calendario/README.md) | Asoma 8 s con el título y la hora, y después queda **un punto** de su color junto a la isla |
-| Ratón sobre el punto, o `Ctrl+Alt+I` con un aviso esperando | Se abre la tarjeta del aviso con sus botones |
+| Un recordatorio de [Agenda](../calendario/README.md) | Sale de detrás del borde, junto a la isla, asoma 8 s con el título y la hora, y se recoge en **su burbuja**: un círculo negro con el día del evento, escondida como la brasa, de la que solo asoma el aro de su color |
+| Ratón sobre la burbuja | Baja entera; si te quedas, crece desde ella la tarjeta del aviso con sus botones |
+| `Ctrl+Alt+I` con un aviso esperando | Abierta enseña la tarjeta del aviso |
 
 Un botón que la sesión no admite **no se dibuja**: con Brave solo sale play/pausa, porque
 declara `IsPreviousEnabled` e `IsNextEnabled` a `false`.
 
 ### Avisos de otras apps: el buzón
 
-La isla principal es lo que está pasando ahora; el punto de al lado es lo que te está
-esperando. Hoy solo lo usa Agenda: sus recordatorios llegan aquí en vez de como toast, y la
-tarjeta ofrece **Terminado**, **5 min**, **10 min** y **Abrir**. Qué significa cada botón es
-cosa de la app que avisó; la isla solo le dice cuál se pulsó.
+La isla principal es lo que está pasando ahora; la burbuja de al lado es lo que te está
+esperando. **Son dos espacios, y cada cosa vuelve al suyo**: lo que abre la burbuja nace en
+ella, lleva el color de la app que avisó y al cerrarse se recoge en ella; lo que suena nace y
+se recoge en el centro, con el color de su carátula. Hoy solo lo usa Agenda: sus
+recordatorios llegan aquí en vez de como toast, y la tarjeta ofrece **Terminado**, **5 min**,
+**10 min** y **Abrir**. Qué significa cada botón es cosa de la app que avisó; la isla solo le
+dice cuál se pulsó.
 
 Por dentro es una tubería con nombre, `\\.\pipe\IslaDinamica.avisos`. La app escribe una
 línea de JSON y espera en la misma conexión:
 
 ```json
-{"app":"Agenda","titulo":"Pagar la luz","linea":"en 2 min","color":"#34C38F",
+{"app":"Agenda","titulo":"Pagar la luz","linea":"en 2 min","color":"#34C38F","insignia":"22",
  "botones":[{"id":"hecho","texto":"Terminado"},{"id":"abrir","texto":"Abrir"}]}
 ```
 

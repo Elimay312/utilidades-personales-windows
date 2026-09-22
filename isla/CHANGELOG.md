@@ -18,8 +18,19 @@ Todo lo que hay. Falta probarlo en otros equipos y con otras aplicaciones de mú
 **La primera entrada que abre la isla**, con su enmienda escrita y commiteada antes que el
 código (SEGURIDAD.md §3.7). Un buzón por tubería con nombre donde una app de la casa deja un
 aviso —título, línea, color y hasta cuatro botones— y espera a saber cuál se pulsó. Hoy lo usa
-Agenda, como la isla de Xiaomi: el recordatorio asoma 8 s y se queda como un punto de su color
-junto a la isla; pasar el ratón por el punto abre la tarjeta.
+Agenda, como la isla de Xiaomi: el recordatorio sale de detrás del borde, asoma 8 s y se recoge
+en su burbuja junto a la isla —un círculo con el día del evento en el color de su calendario—.
+La burbuja se esconde como la brasa y solo asoma su aro; con el ratón encima baja, y si te
+quedas crece desde ella la tarjeta.
+
+- **Dos espacios, y cada cosa vuelve al suyo.** Lo que abre la burbuja nace en ella, lleva el
+  color del aviso y al cerrarse se recoge en ella; lo que suena, en el centro y con el color de
+  su carátula. Antes el aviso se cerraba en la isla principal, con el aura de la canción, y la
+  burbuja reaparecía al lado: parecían dos cosas distintas.
+- **El punto del primer intento no se veía.** Medía 8 px y quedaba fuera de la región de la
+  ventana, que en reposo son los 140 × 5 de la brasa: Windows lo recortaba entero. El hover
+  funcionaba porque lee el cursor, así que se podía abrir algo que no estaba. Ahora la región
+  suma la burbuja, y solo ella.
 
 - **Se daba por hecho que .NET rechazaba clientes remotos, y no.** `NamedPipeServerStream` no
   pone `PIPE_REJECT_REMOTE_CLIENTS`: se miró en su código fuente antes de escribir la enmienda.

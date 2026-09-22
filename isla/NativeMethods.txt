@@ -104,6 +104,10 @@ SetCapture
 ReleaseCapture
 CreateRectRgn
 SetWindowRgn
+// Con un aviso esperando, la region es la brasa MAS la burbuja, y nada entre las dos
+// (SEGURIDAD.md 3.7). DeleteObject suelta la region auxiliar de esa union.
+CombineRgn
+DeleteObject
 
 // --- Medidor de pico de la SALIDA de audio (SEGURIDAD.md �3.3) ---
 // GetPeakValue devuelve UN float. No hay ningun IAudioCaptureClient aqui, ni

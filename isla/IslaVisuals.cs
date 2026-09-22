@@ -140,11 +140,13 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private const uint D3D11SdkVersion = 7;
 
     // --- el aviso de otra app (s.3.7) ------------------------------------------------
-    // El punto del titular, y la segunda burbuja que queda junto a la brasa mientras el aviso
-    // espera respuesta: la isla principal sigue siendo de lo que suena.
+    // El punto del titular, y lo que va dentro de la burbuja que queda junto a la brasa
+    // mientras el aviso espera respuesta (sus medidas, en IslaWindow): la insignia de la app
+    // en su color, o un punto si no mando ninguna.
     private const float PuntoCompacto = 10f;
-    private const float BurbujaLado = 8f;
-    private const float BurbujaHueco = 6f;
+    private const float InsigniaPx = 13f;
+    private const float PuntoBurbuja = 8f;
+    private const float AroBurbuja = 1.5f;
 
     // La tarjeta, sobre el panel abierto de 380x180.
     private const float TarjPuntoY = 22f;
@@ -200,7 +202,16 @@ internal sealed unsafe class IslaVisuals : IDisposable
 
     private readonly CompositionPropertySet _vista;
     private SpriteVisual _puntoCompacto;
-    private readonly SpriteVisual _burbuja;
+    private readonly ContainerVisual _burbuja;
+    private readonly SpriteVisual _insignia;
+    private readonly SpriteVisual _puntoBurbuja;
+    private readonly SpriteVisual _aroBurbuja;
+    private long _burbujaDe;
+    private float _burbujaX = float.NaN;
+    private float _burbujaY = float.NaN;
+    private bool _ladoBurbuja;
+    private readonly SpriteVisual _suplente;
+    private uint _tinteCancion;
     private ContainerVisual _tarjeta;
     private SpriteVisual _tarjPunto;
     private SpriteVisual _tarjApp;
@@ -284,6 +295,8 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _grisCaratula = _compositor.CreateColorBrush(Color.FromArgb(38, 255, 255, 255));
         _vista = _compositor.CreatePropertySet();
         _vista.InsertScalar("Aviso", 0f);
+        _vista.InsertScalar("Lado", 0f);
+        _vista.InsertScalar("Dx", 0f);
         _contenido = Contenido();
         _tarjeta = Tarjeta();
         _compacto = FilaCompacta();
@@ -302,15 +315,42 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _borde.Shapes.Add(trazo);
         _panel.Children.InsertAtTop(_borde);
 
-        // La burbuja va en la raiz, fuera del clip del panel: vive a su lado, no dentro.
-        _burbuja = _compositor.CreateSpriteVisual();
-        _burbuja.Size = new Vector2(S(BurbujaLado), S(BurbujaLado));
+        // La burbuja va en la raiz, fuera del clip del panel: vive a su lado, no dentro. Negra
+        // como la brasa y con un aro del color del aviso: sin el, un circulo negro sobre una
+        // pestana oscura es un agujero, y escondida es lo unico que asoma.
+        float lado = S(IslaWindow.BurbujaLado);
+        _burbuja = _compositor.CreateContainerVisual();
+        _burbuja.Size = new Vector2(lado, lado);
+        _burbuja.CenterPoint = new Vector3(lado * 0.5f, lado * 0.5f, 0);
         _burbuja.Opacity = 0f;
-        CompositionEllipseGeometry circulo = _compositor.CreateEllipseGeometry();
-        circulo.Center = new Vector2(S(BurbujaLado) * 0.5f, S(BurbujaLado) * 0.5f);
-        circulo.Radius = circulo.Center;
-        _burbuja.Clip = _compositor.CreateGeometricClip(circulo);
+        // El aro es un circulo de color con el negro encima, 1,5 mas pequeno por cada lado: con
+        // un trazo de ShapeVisual dentro de este contenedor no se pintaba nada.
+        _aroBurbuja = Circulo(IslaWindow.BurbujaLado);
+        _burbuja.Children.InsertAtTop(_aroBurbuja);
+        SpriteVisual fondo = Circulo(IslaWindow.BurbujaLado - AroBurbuja * 2f);
+        fondo.Offset = new Vector3(S(AroBurbuja), S(AroBurbuja), 0);
+        fondo.Brush = _compositor.CreateColorBrush(Color.FromArgb(255, 0, 0, 0));
+        _burbuja.Children.InsertAtTop(fondo);
+        _insignia = _compositor.CreateSpriteVisual();
+        _burbuja.Children.InsertAtTop(_insignia);
+        _puntoBurbuja = Circulo(PuntoBurbuja);
+        _puntoBurbuja.Offset = new Vector3((lado - S(PuntoBurbuja)) * 0.5f, (lado - S(PuntoBurbuja)) * 0.5f, 0);
+        _burbuja.Children.InsertAtTop(_puntoBurbuja);
         _root.Children.InsertAtTop(_burbuja);
+
+        // El suplente de la brasa: su misma linea negra, quieta en el centro, mientras el panel
+        // esta prestado al aviso. Debajo del panel, que al volver a la burbuja pasa por encima.
+        (float bw, float bh, float br, _) = IslaWindow.Medidas(Estado.Brasa);
+        _suplente = _compositor.CreateSpriteVisual();
+        _suplente.Size = new Vector2(S(bw), S(bh));
+        _suplente.Offset = new Vector3((anchoVentana - S(bw)) * 0.5f, 0f, 0f);
+        CompositionRoundedRectangleGeometry linea = _compositor.CreateRoundedRectangleGeometry();
+        linea.Size = _suplente.Size;
+        linea.CornerRadius = new Vector2(S(br), S(br));
+        _suplente.Clip = _compositor.CreateGeometricClip(linea);
+        _suplente.Brush = _compositor.CreateColorBrush(Color.FromArgb(255, 0, 0, 0));
+        _suplente.Opacity = 0f;
+        _root.Children.InsertAtBottom(_suplente);
 
         Expresiones(anchoVentana);
     }
@@ -326,8 +366,11 @@ internal sealed unsafe class IslaVisuals : IDisposable
         Expresion(_formaBorde, "Size", "P.Size");
 
         // Centrado. La ventana es fija y ancha; la pastilla se estrecha dentro de ella.
+        // En el espacio de la burbuja (V.Lado) el panel nace y muere donde esta ella, y vuelve al
+        // centro a medida que se ensancha: de 28 de ancho, que es la burbuja, a 320, la asomada.
         string centro = $"({F(anchoVentana)} - P.Size.X) * 0.5";
-        Expresion(_panel, "Offset", $"Vector3({centro}, 0, 0)");
+        string hacia = $"(1 - Clamp((P.Size.X - {F(S(IslaWindow.BurbujaLado))}) / {F(S(320f - IslaWindow.BurbujaLado))}, 0, 1))";
+        Expresion(_panel, "Offset", $"Vector3({centro} + V.Lado * V.Dx * {hacia}, 0, 0)");
 
         string entrada = Rampa(CristalDesde, CristalRango);
         Expresion(_cristal, "Opacity", entrada);
@@ -346,7 +389,9 @@ internal sealed unsafe class IslaVisuals : IDisposable
         // con la misma rampa, asi que cambiar de una a otra no es un corte.
         Expresion(_contenido, "Opacity", $"({pleno}) * (1 - V.Aviso)");
         Expresion(_tarjeta, "Opacity", $"({pleno}) * V.Aviso");
-        Expresion(_aura, "Opacity", "1 - V.Aviso");
+        // En el espacio de la burbuja el aura lleva el color del aviso; fuera de el, la tarjeta
+        // no se pinta sobre el color de una cancion.
+        Expresion(_aura, "Opacity", "1 - V.Aviso * (1 - V.Lado)");
         foreach (ContainerVisual capa in new[] { _contenido, _tarjeta })
         {
             Expresion(capa, "CenterPoint", "Vector3(P.Size.X * 0.5, P.Size.Y * 0.5, 0)");
@@ -386,6 +431,13 @@ internal sealed unsafe class IslaVisuals : IDisposable
         float nivel = _medio > 0.002f
             ? Math.Clamp(0.5f + (pico - _medio) / _medio * 3.4f, 0f, 1f)
             : 0f;
+
+        if (_estado == Estado.Brasa && _ladoBurbuja)
+        {
+            // Recogida en la burbuja no hay tira que respire: la burbuja no es de la musica.
+            Enderezar();
+            return;
+        }
 
         if (_estado == Estado.Brasa)
         {
@@ -436,10 +488,11 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// Lleva al estado pedido. <paramref name="abriendo"/> elige el muelle: con rebote
     /// al crecer, sin rebote al encogerse.
     /// </summary>
-    public void GoTo(Estado estado, bool abriendo, bool instantaneo = false)
+    public void GoTo(Estado estado, bool abriendo, bool instantaneo = false,
+                     (float W, float H, float R, float Lift)? forma = null)
     {
         _estado = estado;
-        (float w, float h, float r, float lift) = IslaWindow.Medidas(estado);
+        (float w, float h, float r, float lift) = forma ?? IslaWindow.Medidas(estado);
         Vector2 tam = new(S(w), S(h));
 
         // El latido escala el panel en X, asi que el centro tiene que estar en su medio
@@ -450,6 +503,11 @@ internal sealed unsafe class IslaVisuals : IDisposable
 
         if (instantaneo)
         {
+            // Un muelle a medio camino le ganaria al valor puesto a mano.
+            _panel.StopAnimation("Size");
+            _forma.StopAnimation("CornerRadius");
+            _formaBorde.StopAnimation("CornerRadius");
+            _grupo.StopAnimation("Offset.Y");
             _panel.Size = tam;
             _forma.CornerRadius = radio;
             _formaBorde.CornerRadius = radio;
@@ -733,17 +791,133 @@ internal sealed unsafe class IslaVisuals : IDisposable
     }
 
     /// <summary>
-    /// La segunda burbuja, junto a la brasa, mientras un aviso espera: un punto de su color.
-    /// Si no hay nada sonando no hay brasa a su lado, y se queda en el centro.
+    /// La segunda burbuja, junto a la brasa, mientras un aviso espera: la insignia en su color,
+    /// o un punto. Si no hay nada sonando no hay brasa a su lado, y se queda en el centro. Entra
+    /// fundiendose y creciendo un poco, como algo que llega y no como algo que ya estaba.
     /// </summary>
-    public void Burbuja(uint? color, bool visible, bool conPrincipal)
+    public void Burbuja(AvisoApp? a, bool visible, bool conPrincipal, bool fuera)
     {
-        if (color is uint rgb) _burbuja.Brush = Pintura(rgb == 0 ? 0xFFFFFFu : rgb);
-        float x = _anchoVentana * 0.5f - S(BurbujaLado) * 0.5f
-                  + (conPrincipal ? S(IslaWindow.Medidas(Estado.Brasa).W * 0.5f + BurbujaHueco + BurbujaLado * 0.5f) : 0f);
-        _burbuja.Offset = new Vector3(x, 0f, 0f);
+        if (a is not null && a.Numero != _burbujaDe)
+        {
+            _burbujaDe = a.Numero;
+            PintarBurbuja(a);
+        }
+
+        // En reposo se esconde como la brasa: solo asoma su borde de abajo, con el aro de su
+        // color. Con el raton cerca baja entera, con los muelles del morph.
+        float lado = S(IslaWindow.BurbujaLado);
+        (float x, float y) = SitioBurbuja(conPrincipal, fuera);
+
+        bool entra = visible && _burbuja.Opacity < 0.5f;
         Fundir(_burbuja, visible ? 1f : 0f);
+        // Entra desde detras del borde. Offset solo se escribe si cambia la X: escribirlo
+        // pararia el muelle de la Y a media carrera.
+        if (entra || x != _burbujaX)
+        {
+            _burbujaX = x;
+            _burbuja.Offset = new Vector3(x, entra ? -lado : _burbujaY, 0f);
+        }
+        if (entra || y != _burbujaY)
+        {
+            _burbujaY = y;
+            _burbuja.StartAnimation("Offset.Y", fuera
+                ? MuelleEscalar(y, DampingAbrir, PeriodoAbrir)
+                : MuelleEscalar(y, DampingCerrar, PeriodoCerrar));
+        }
     }
+
+    private void PintarBurbuja(AvisoApp a)
+    {
+        uint rgb = a.Color == 0 ? 0xFFFFFFu : a.Color;
+        _aroBurbuja.Brush = Pintura(rgb, 200);
+        if (_insignia.Brush is CompositionMaskBrush vieja)
+        {
+            _insignia.Brush = null;
+            Soltar(vieja.Mask);
+            vieja.Dispose();
+        }
+
+        if (a.Insignia.Length == 0)
+        {
+            _insignia.Size = Vector2.Zero;
+            _puntoBurbuja.Brush = Pintura(rgb);
+            return;
+        }
+
+        // El texto sale blanco de Texto; con el como mascara, se pinta del color del aviso.
+        float px = S(InsigniaPx);
+        Vector2 tam = Texto.Medir(a.Insignia, px, true, false);
+        CompositionMaskBrush pincel = _compositor.CreateMaskBrush();
+        pincel.Source = Pintura(rgb);
+        pincel.Mask = PincelTexto(a.Insignia, px, true, 1f, tam);
+        float lado = S(IslaWindow.BurbujaLado);
+        _insignia.Size = tam;
+        _insignia.Offset = new Vector3(MathF.Round((lado - tam.X) * 0.5f), MathF.Round((lado - tam.Y) * 0.5f), 0);
+        _insignia.Brush = pincel;
+        _puntoBurbuja.Brush = null;
+    }
+
+    private void Tintar(uint rgb)
+    {
+        Color tinte = Color.FromArgb(56, (byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
+        _degradado.ColorStops[0].Color = rgb == 0 ? Color.FromArgb(0, 0, 0, 0) : tinte;
+        _degradado.ColorStops[1].Color = Color.FromArgb(0, tinte.R, tinte.G, tinte.B);
+    }
+
+    /// <summary>
+    /// De quien es la isla: del contenido, en el centro, o del aviso, que nace y muere en la
+    /// burbuja y lleva su color. Al tomarla el aviso, el panel se pone en el sitio y la forma
+    /// de la burbuja (eso lo hace quien llama, con GoTo) y la burbuja de verdad se apaga ya: si
+    /// se fundiera, se verian dos.
+    /// </summary>
+    public void Espacio(bool burbuja, float dx, uint color, bool conPrincipal)
+    {
+        _ladoBurbuja = burbuja;
+        _vista.InsertScalar("Lado", burbuja ? 1f : 0f);
+        _vista.InsertScalar("Dx", dx);
+        Tintar(burbuja ? (color == 0 ? 0xFFFFFFu : color) : _tinteCancion);
+        if (!burbuja)
+        {
+            // Devuelta a media vuelta: el panel vuelve a la brasa con su muelle y el suplente
+            // se va a la vez.
+            Fundir(_suplente, 0f);
+            return;
+        }
+        _burbuja.StopAnimation("Opacity");
+        _burbuja.Opacity = 0f;
+        _grupo.StopAnimation("Opacity");
+        _grupo.Opacity = 1f;
+        // La isla principal no se va a ninguna parte porque el aviso use el panel: su linea
+        // sigue en el centro, quieta, hasta que el panel vuelva a ser suyo.
+        _suplente.StopAnimation("Opacity");
+        _suplente.Opacity = conPrincipal ? 1f : 0f;
+        Enderezar();
+    }
+
+    /// <summary>
+    /// El panel ya se recogio en la burbuja: la burbuja de verdad aparece justo ahi, sin
+    /// entrada, y la isla principal vuelve a su sitio fundiendose, si tiene algo que ensenar.
+    /// </summary>
+    public void Relevo(bool conPrincipal, bool fuera)
+    {
+        (float x, float y) = SitioBurbuja(conPrincipal, fuera);
+        _burbuja.StopAnimation("Opacity");
+        _burbuja.StopAnimation("Offset.Y");
+        _burbuja.Opacity = 1f;
+        _burbuja.Offset = new Vector3(x, y, 0f);
+        _burbujaX = x;
+        _burbujaY = y;
+        // El panel vuelve a ser la brasa exactamente donde estaba el suplente: se cambian sin
+        // que se note, sin fundido.
+        _grupo.StopAnimation("Opacity");
+        _grupo.Opacity = conPrincipal ? 1f : 0f;
+        _suplente.StopAnimation("Opacity");
+        _suplente.Opacity = 0f;
+    }
+
+    private (float X, float Y) SitioBurbuja(bool conPrincipal, bool fuera) =>
+        (_anchoVentana * 0.5f + S(IslaWindow.BurbujaDx(conPrincipal)) - S(IslaWindow.BurbujaLado) * 0.5f,
+         S(fuera ? IslaWindow.BurbujaY : IslaWindow.BurbujaAsoma - IslaWindow.BurbujaLado));
 
     /// <summary>La isla principal, apagada cuando en la brasa no hay nada suyo que ensenar.</summary>
     public void Principal(bool visible) => Fundir(_grupo, visible ? 1f : 0f);
@@ -836,9 +1010,9 @@ internal sealed unsafe class IslaVisuals : IDisposable
 
         // El aura se tine del color de la caratula. Alfa bajo a proposito: tiene que
         // notarse que la cancion cambio, no leerse como un fondo de color.
-        Color tinte = Color.FromArgb(56, (byte)(c.Tinte >> 16), (byte)(c.Tinte >> 8), (byte)c.Tinte);
-        _degradado.ColorStops[0].Color = c.Tinte == 0 ? Color.FromArgb(0, 0, 0, 0) : tinte;
-        _degradado.ColorStops[1].Color = Color.FromArgb(0, tinte.R, tinte.G, tinte.B);
+        // Mientras la isla es del aviso, el aura es del aviso: la de la cancion espera.
+        _tinteCancion = c.Tinte;
+        if (!_ladoBurbuja) Tintar(c.Tinte);
 
         Tiempos(c.Posicion, c.Duracion);
 

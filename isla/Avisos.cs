@@ -18,11 +18,12 @@ internal sealed record Boton(string Id, string Texto);
 ///
 /// <para>
 /// <c>Pid</c> es el proceso al otro lado de la tuberia, y solo sirve para cederle el primer plano
-/// al pulsar un boton.
+/// al pulsar un boton. <c>Insignia</c> es lo que va dentro de la burbuja: vacia o 1-2 letras o
+/// digitos.
 /// </para>
 /// </summary>
 internal sealed record AvisoApp(long Numero, string App, string Titulo, string Linea, uint Color,
-                                IReadOnlyList<Boton> Botones, uint Pid = 0);
+                                IReadOnlyList<Boton> Botones, uint Pid = 0, string Insignia = "");
 
 /// <summary>
 /// El buzon: una tuberia con nombre donde otra app deja un aviso y espera a que la persona pulse
@@ -261,7 +262,8 @@ internal static partial class Avisos
                 titulo,
                 Cadena(raiz, "linea", MaxLinea),
                 Color(Cadena(raiz, "color", 7)),
-                botones);
+                botones,
+                Insignia: Insignia(Cadena(raiz, "insignia", 3)));
         }
         catch (JsonException)
         {
@@ -277,6 +279,13 @@ internal static partial class Avisos
         s = s.Trim();
         return s.Length <= max ? s : s[..max];
     }
+
+    /// <summary>
+    /// 1 o 2 letras o digitos, o nada. Se lee con uno de mas para poder rechazar lo largo entero
+    /// en vez de recortarlo (SEGURIDAD.md s.3.7, la insignia).
+    /// </summary>
+    private static string Insignia(string s) =>
+        s.Length is >= 1 and <= 2 && s.All(char.IsLetterOrDigit) ? s : string.Empty;
 
     private static uint Color(string hex)
     {

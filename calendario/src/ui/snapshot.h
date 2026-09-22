@@ -13,6 +13,7 @@ namespace agenda {
 inline constexpr std::wstring_view kSnapshotViews[] = {
     L"popup",         // the panel as it opens
     L"popup-creado",  // and a moment after Enter, with the notice up and the card still rising
+    L"popup-sin-conexion",  // and with the dot up, which is the only thing being offline shows
 };
 
 inline bool KnowsSnapshotView(std::wstring_view view) {

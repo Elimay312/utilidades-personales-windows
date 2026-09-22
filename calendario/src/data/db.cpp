@@ -217,6 +217,8 @@ bool Db::SetUserVersion(int version) {
 
 std::int64_t Db::LastInsertId() const { return sqlite3_last_insert_rowid(db_); }
 
+int Db::Changes() const { return db_ == nullptr ? 0 : sqlite3_changes(db_); }
+
 // --- Transaction -------------------------------------------------------------------------
 
 bool Transaction::Begin() {

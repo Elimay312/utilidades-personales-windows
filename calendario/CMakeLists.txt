@@ -119,6 +119,7 @@ add_executable(Agenda WIN32
   src/app/tray.cpp
   src/core/config.cpp
   src/core/log.cpp
+  src/sync/google.cpp
   src/sync/http.cpp
   src/sync/oauth.cpp
   src/ui/components.cpp
@@ -139,7 +140,8 @@ target_link_libraries(Agenda PRIVATE agenda_nlp agenda_data nlohmann_json::nlohm
   d2d1 d3d11 dxgi dcomp dwmapi dwrite imm32 windowscodecs
   # La fase 5: winhttp habla con Google, crypt32 cifra el refresh token con DPAPI, bcrypt hace
   # el PKCE (aleatorio y SHA-256) y ws2_32 escucha el redirect en 127.0.0.1.
-  winhttp crypt32 bcrypt ws2_32)
+  # comctl32 es el TaskDialog con el que se avisa antes de abrir el navegador.
+  winhttp crypt32 bcrypt ws2_32 comctl32)
 # El manifiesto (DPI Per-Monitor v2) entra por agenda.rc, no por el generado por el linker.
 target_link_options(Agenda PRIVATE /MANIFEST:NO)
 

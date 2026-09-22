@@ -1,5 +1,7 @@
 #include "ui/popup_window.h"
 
+#include "sync/google.h"
+
 #include <dwmapi.h>
 #include <imm.h>
 #include <windowsx.h>
@@ -358,6 +360,10 @@ void PopupWindow::Show() {
   strikeOn_ = false;
   KillTimer(hwnd_, kToastTimer);
   Reload();
+  // Opening the popup is the best moment to ask Google: somebody is about to read the day. A
+  // minute of grace, because opening and closing it three times in a row is not three reasons
+  // to sync. It does not block -- the panel is on screen either way in under 100 ms.
+  if (sync_ != nullptr) sync_->Nudge(std::chrono::seconds(60));
   hoverDay_ = -1;
   hoverPrev_ = false;
   hoverNext_ = false;
@@ -554,6 +560,9 @@ void PopupWindow::Invalidate() {
 }
 
 void PopupWindow::Reload() {
+  // The dot is read here and not watched for, because Reload is what both doors lead to: the
+  // popup opening, and the worker saying something changed.
+  model_.offline = sync_ != nullptr && sync_->Offline();
   if (store_ == nullptr || !store_->IsOpen()) return;
   // Today's list is also where the tasks with no date at all land, so nothing that was created
   // is left with nowhere to be seen.
@@ -594,6 +603,9 @@ bool PopupWindow::CreateFromInput() {
 
   const std::wstring typed = model_.input.text();
   const DayItem created = store_->Create(draft);
+  // Straight up, and only the queue -- not a whole pass. Somebody who just wrote something down
+  // wants it on their phone, not a download of the year.
+  if (sync_ != nullptr) sync_->Push();
 
   // Jump to the day it landed on first: SelectDay rereads the list, and doing it afterwards
   // would wipe the card that has not been written yet. A task with no date lands on today,
@@ -629,6 +641,7 @@ void PopupWindow::UndoCreate() {
   if (!undo_ || store_ == nullptr) return;
   const Undone taken = *undo_;
   store_->Remove(taken.uid, taken.isTask);
+  if (sync_ != nullptr) sync_->Push();
 
   std::erase_if(model_.day, [&taken](const DayItem& item) { return item.uid == taken.uid; });
   if (model_.enterUid == taken.uid) {
@@ -689,6 +702,7 @@ bool PopupWindow::ToggleCardAt(float x, float y) {
 
     item.done = !item.done;
     store_->SetDone(item.uid, item.done);
+    if (sync_ != nullptr) sync_->Push();
     model_.strikeUid = item.uid;
     // Start from where the line is drawn right now, which is the state it had a moment ago.
     model_.strikeT = item.done ? 0.0f : 1.0f;

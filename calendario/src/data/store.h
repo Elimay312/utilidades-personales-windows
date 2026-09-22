@@ -77,6 +77,12 @@ class Store {
   // One column that already existed instead of a settings store nobody asked for.
   std::string DefaultCalendar(bool isTask);
 
+  // The calendars the tray menu offers, in the order Google lists them. Read on the interface
+  // thread, like everything the menu needs: it opens under the mouse and cannot wait.
+  std::vector<CalendarInfo> Calendars(bool tasklists);
+  // Moves the flag. Queued, because it is a write, and the menu is already closed by then.
+  void SetDefaultCalendar(const std::string& id, bool isTask);
+
   struct Failure {
     std::wstring uid;
     std::wstring message;
@@ -108,11 +114,15 @@ class Store {
   // "Something changed, come and look." Once per pass, not once per event.
   void Touch() { Notify(); }
 
+  // Says out loud that something could not be done. Public because the synchronisation has the
+  // one case the popup has to hear about: a change Google refused for good, which would
+  // otherwise disappear from the queue with nobody any the wiser.
+  void Report(const std::wstring& uid, std::wstring_view message);
+
  private:
   void StartWorker();
   void StopWorker();
   void Enqueue(std::function<void()> job);
-  void Report(const std::wstring& uid, std::wstring_view message);
   void Notify();
   bool QueueOp(const char* entity, const std::wstring& uid, const char* op);
 

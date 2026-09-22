@@ -54,6 +54,20 @@ void DrawHeader(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
                          layout.headerTop + layout.headerHeight},
              brush);
 
+  // The offline dot, between the month and the arrows: the one place in the header with room
+  // that is not the title. Secondary colour and half the size of a day's dot, because nothing
+  // is wrong -- what was written is in the cache and goes up by itself when the network is
+  // back. Something louder would be asking the user to do something about it, and there is
+  // nothing to do.
+  if (model.offline) {
+    const D2D1_RECT_F arrow = layout.prevArrow();
+    const float radius = std::round(2.0f * layout.type);
+    const D2D1_POINT_2F center{arrow.left - layout.gap - radius,
+                               layout.headerTop + layout.headerHeight / 2.0f};
+    brush->SetColor(theme.textSecondary);
+    FillCircle(target, center, radius, brush);
+  }
+
   DrawChevron(target, theme, layout, brush, layout.prevArrow(), true, model.prevHover, style);
   DrawChevron(target, theme, layout, brush, layout.nextArrow(), false, model.nextHover, style);
 }

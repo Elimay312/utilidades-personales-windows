@@ -1,5 +1,6 @@
 #include <windows.h>
 
+#include <commctrl.h>  // TaskDialog
 #include <shellapi.h>  // CommandLineToArgvW, Shell_NotifyIconW constants
 #include <windowsx.h>  // GET_X_LPARAM
 
@@ -14,6 +15,7 @@
 #include "core/log.h"
 #include "core/paths.h"
 #include "data/store.h"
+#include "sync/google.h"
 #include "ui/popup_window.h"
 #include "ui/snapshot.h"
 
@@ -29,6 +31,9 @@ struct App {
   PopupWindow popup;
   Tray tray;
   Store store;
+  // Only built when there are credentials, and it holds a reference to the store, so it cannot
+  // be a plain member: it has to be born after the cache is open.
+  std::optional<sync::GoogleSync> sync;
 };
 
 // Shortcut names and config keys are ASCII, so widening them is this and nothing more.
@@ -46,6 +51,40 @@ UINT ReadMilliseconds(const nlohmann::json& parent, const char* key, UINT fallba
   const auto found = parent.find(key);
   if (found == parent.end() || !found->is_number_unsigned()) return fallback;
   return found->get<UINT>();
+}
+
+// The one thing CLAUDE.md says to stop and ask about before doing: opening the browser. The
+// asking happens here, on the interface thread, in front of a window. The synchronisation
+// thread is only told once the answer is yes -- it has no window to ask with, and that is why
+// GoogleSync::Connect does not ask.
+void ConnectToGoogle(HWND owner, App& app) {
+  if (!app.sync) return;
+
+  static constexpr wchar_t kTitle[] = L"Conectar Agenda con Google";
+  static constexpr wchar_t kMain[] = L"Se va a abrir tu navegador";
+  static constexpr wchar_t kBody[] =
+      L"Agenda abrirá la página de permisos de Google y esperará la respuesta en 127.0.0.1. "
+      L"Pide leer y escribir eventos y tareas, y leer la lista de calendarios para saber sus "
+      L"nombres y sus colores.\n\n"
+      L"Como la aplicación es tuya y no está verificada, Google mostrará un aviso: entra en "
+      L"«Configuración avanzada» y continúa.";
+
+  int pressed = 0;
+  const HRESULT asked = TaskDialog(owner, nullptr, kTitle, kMain, kBody,
+                                   TDCBF_YES_BUTTON | TDCBF_NO_BUTTON, TD_INFORMATION_ICON,
+                                   &pressed);
+  if (FAILED(asked)) {
+    // TaskDialog needs common controls v6 in the manifest. If that ever goes away the question
+    // still gets asked: what must not happen is the browser opening without one.
+    LogError(L"google: TaskDialog falló (0x{:08X}), se pregunta con un MessageBox",
+             static_cast<unsigned>(asked));
+    pressed = MessageBoxW(owner, kBody, kTitle, MB_YESNO | MB_ICONQUESTION);
+  }
+  if (pressed != IDYES) {
+    LogInfo(L"google: el usuario dijo que no, el navegador no se abre");
+    return;
+  }
+  app.sync->Connect();
 }
 
 LRESULT CALLBACK AppWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -70,9 +109,32 @@ LRESULT CALLBACK AppWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
 
         case WM_CONTEXTMENU: {
           const POINT at{GET_X_LPARAM(wparam), GET_Y_LPARAM(wparam)};
-          switch (app->tray.ShowMenu(at)) {
+          // Asked for at the moment of the click and not kept: which calendars there are, and
+          // which one is the default, change underneath the menu on every pass.
+          TrayState state;
+          if (app->sync) {
+            state.configured = app->sync->Configured();
+            state.connected = app->sync->Connected();
+            if (state.connected) state.calendars = app->store.Calendars(/*tasklists=*/false);
+          }
+
+          const UINT command = app->tray.ShowMenu(at, state);
+          if (command >= kTrayCalendarFirst) {
+            const size_t index = command - kTrayCalendarFirst;
+            if (index < state.calendars.size()) {
+              app->store.SetDefaultCalendar(state.calendars[index].id, /*isTask=*/false);
+            }
+            return 0;
+          }
+          switch (command) {
             case kTrayOpen:
               app->popup.Show();
+              break;
+            case kTrayConnect:
+              ConnectToGoogle(hwnd, *app);
+              break;
+            case kTrayDisconnect:
+              if (app->sync) app->sync->Disconnect();
               break;
             case kTrayExit:
               PostQuitMessage(0);
@@ -201,6 +263,19 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   if (app.store.Open(AppDataDir() / L"agenda.db")) {
     app.store.SetNotifyWindow(app.popup.hwnd());
     app.popup.SetStore(&app.store);
+
+    // The credentials the user pasted into config.local.json. Missing is the normal state of a
+    // fresh install: Agenda stays a calendar that lives on this machine, and the tray menu says
+    // nothing about Google rather than offering something that cannot work.
+    sync::OAuthConfig credentials;
+    if (const auto google = config.find("google");
+        google != config.end() && google->is_object()) {
+      credentials.clientId = ReadString(*google, "clientId", "");
+      credentials.clientSecret = ReadString(*google, "clientSecret", "");
+    }
+    app.sync.emplace(app.store, std::move(credentials));
+    app.popup.SetSync(&*app.sync);
+    app.sync->Start();
   } else {
     // Said out loud and not swallowed: a popup that quietly forgets everything typed into it
     // is worse than one that admits it cannot save.
@@ -232,6 +307,9 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     DispatchMessageW(&message);
   }
 
+  // The network goes first. Cancelling closes the request handle from this thread, so quitting
+  // in the middle of a pass is a moment and not the thirty seconds of a receive timeout.
+  if (app.sync) app.sync->Stop();
   UnregisterHotKey(hwnd, kHotkeyId);
   app.tray.Remove();
   CoUninitialize();

@@ -9,6 +9,16 @@
       <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
     </windowsSettings>
   </application>
+  <!-- Lo pide TaskDialog, que es con lo que se avisa antes de abrir el navegador para
+       conectar con Google. Sin esta dependencia devuelve error y no dice por que. No cambia
+       el aspecto de nada mas: la aplicacion no usa un solo control estandar. -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls"
+                        version="6.0.0.0" processorArchitecture="amd64"
+                        publicKeyToken="6595b64144ccf1df" language="*"/>
+    </dependentAssembly>
+  </dependency>
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
       <!-- Windows 10 y 11 -->

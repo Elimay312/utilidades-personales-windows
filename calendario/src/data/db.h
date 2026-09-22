@@ -96,6 +96,10 @@ class Db {
   bool SetUserVersion(int version);
 
   std::int64_t LastInsertId() const;
+  // How many rows the last statement touched. The difference between "the update did nothing"
+  // and "the update did something" is not in the return code, and it is the only way to say
+  // whether anything was actually adopted.
+  int Changes() const;
   sqlite3* handle() const { return db_; }
 
   // What went wrong last, ready to be shown. Logged as well, so nothing is lost when nobody

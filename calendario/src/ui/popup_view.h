@@ -49,6 +49,11 @@ struct PopupModel {
   std::wstring toast;
   float toastT = 0.0f;
 
+  // There is a Google account and the last thing tried did not reach it. A dot in the header
+  // and nothing else: what was written is safe in the cache and goes up on its own when the
+  // network comes back, so this is information and not a problem to solve.
+  bool offline = false;
+
   // Hover and focus, each walking to its target over kStateMs.
   float dayHover[kGridCells] = {};
   float prevHover = 0.0f;

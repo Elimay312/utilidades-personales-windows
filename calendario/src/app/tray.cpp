@@ -64,11 +64,39 @@ void Tray::Warn(const wchar_t* title, const wchar_t* text) {
   Shell_NotifyIconW(NIM_MODIFY, &data);
 }
 
-UINT Tray::ShowMenu(POINT at) const {
+UINT Tray::ShowMenu(POINT at, const TrayState& state) const {
   HMENU menu = CreatePopupMenu();
   if (menu == nullptr) return kTrayNone;
 
   AppendMenuW(menu, MF_STRING, kTrayOpen, L"Abrir");
+
+  // Nothing about Google appears at all without credentials. An entry that would only ever say
+  // "you have not set this up" is worse than no entry: it makes a setup step look like a
+  // feature that is broken.
+  HMENU calendars = nullptr;
+  if (state.configured) {
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    if (state.connected) {
+      AppendMenuW(menu, MF_STRING, kTrayDisconnect, L"Desconectar de Google");
+    } else {
+      AppendMenuW(menu, MF_STRING, kTrayConnect, L"Conectar con Google…");
+    }
+
+    if (!state.calendars.empty()) {
+      calendars = CreatePopupMenu();
+      if (calendars != nullptr) {
+        for (size_t index = 0; index < state.calendars.size(); ++index) {
+          const CalendarInfo& calendar = state.calendars[index];
+          const UINT flags = MF_STRING | (calendar.isDefault ? MF_CHECKED : MF_UNCHECKED);
+          AppendMenuW(calendars, flags, kTrayCalendarFirst + static_cast<UINT>(index),
+                      calendar.title.c_str());
+        }
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(calendars),
+                    L"Calendario por defecto");
+      }
+    }
+  }
+
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, kTrayExit, L"Salir");
   SetMenuDefaultItem(menu, kTrayOpen, FALSE);

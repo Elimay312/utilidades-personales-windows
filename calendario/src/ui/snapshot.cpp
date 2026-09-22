@@ -41,8 +41,9 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
   // "popup-creado" is the same panel a moment after Enter. A still of something that lasts a
   // hundred and sixty milliseconds is the only way to judge it without filming the screen.
   const bool justCreated = view == L"popup-creado";
+  const bool offline = view == L"popup-sin-conexion";
   if (!KnowsSnapshotView(view)) {
-    LogError(L"--render-snapshot only knows 'popup' and 'popup-creado', got '{}'", view);
+    LogError(L"--render-snapshot does not know the view '{}'", view);
     return false;
   }
 
@@ -66,6 +67,7 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
   // Made-up data and not the user's cache: a committed PNG has to change when the design does
   // and not when somebody writes something down that morning.
   FillSampleData(model);
+  model.offline = offline;
   if (justCreated) {
     DayItem fresh;
     fresh.uid = L"sample-nuevo";

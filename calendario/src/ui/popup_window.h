@@ -12,12 +12,18 @@
 #include <string>
 #include <string_view>
 
+#include <chrono>
+
 #include "data/store.h"
 #include "ui/paint.h"
 #include "ui/popup_view.h"
 #include "ui/theme.h"
 
 namespace agenda {
+
+namespace sync {
+class GoogleSync;
+}
 
 // The popup window: WS_POPUP with no redirection bitmap, its content composed by
 // DirectComposition over a premultiplied swap chain so the acrylic DWM paints behind it shows
@@ -41,6 +47,8 @@ class PopupWindow {
   // Where the popup reads its day from and sends its writes. Owned by the app, not by the
   // window, because phase 5 hangs the Google sync off the same store.
   void SetStore(Store* store) { store_ = store; }
+  // Declared and not included: the popup asks it two questions and never looks inside.
+  void SetSync(sync::GoogleSync* sync) { sync_ = sync; }
 
   void Toggle();
   void Show();
@@ -131,6 +139,7 @@ class PopupWindow {
   };
   std::optional<Undone> undo_;
   Store* store_ = nullptr;
+  sync::GoogleSync* sync_ = nullptr;
   ULONGLONG lastTick_ = 0;
   std::wstring parsed_;  // the text the preview in the model was built from
 

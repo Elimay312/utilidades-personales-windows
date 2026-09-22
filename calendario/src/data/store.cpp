@@ -304,6 +304,52 @@ std::string Store::DefaultCalendar(bool isTask) {
   return isTask ? kLocalTaskListId : kLocalCalendarId;
 }
 
+std::vector<CalendarInfo> Store::Calendars(bool tasklists) {
+  std::vector<CalendarInfo> out;
+  if (!db_.IsOpen()) return out;
+  if (std::optional<Stmt> stmt = db_.Prepare(
+          "SELECT id, title, is_primary FROM calendars "
+          "WHERE kind = ? AND visible = 1 ORDER BY sort, title")) {
+    stmt->Bind(1, tasklists ? "tasklist" : "calendar");
+    while (stmt->Step()) {
+      CalendarInfo info;
+      info.id = stmt->Text(0);
+      info.title = stmt->Wide(1);
+      info.isDefault = stmt->Int(2) != 0;
+      out.push_back(std::move(info));
+    }
+  }
+  return out;
+}
+
+void Store::SetDefaultCalendar(const std::string& id, bool isTask) {
+  Enqueue([this, id, isTask] {
+    Transaction tx(db_);
+    if (!tx.Begin()) return;
+    const char* kind = isTask ? "tasklist" : "calendar";
+    bool ok = false;
+    if (std::optional<Stmt> stmt =
+            db_.Prepare("UPDATE calendars SET is_primary = 0 WHERE kind = ?")) {
+      stmt->Bind(1, kind);
+      stmt->Step(&ok);
+    }
+    if (ok) {
+      if (std::optional<Stmt> stmt = db_.Prepare(
+              "UPDATE calendars SET is_primary = 1 WHERE id = ? AND kind = ?")) {
+        stmt->Bind(1, id);
+        stmt->Bind(2, kind);
+        stmt->Step(&ok);
+      }
+    }
+    if (!ok || !tx.Commit()) {
+      LogError(L"store: no se pudo cambiar el calendario por defecto");
+      return;
+    }
+    LogInfo(L"store: lo nuevo va ahora a {}", ToWide(id));
+    Notify();
+  });
+}
+
 DayItem Store::Create(const Draft& draft) {
   DayItem item;
   item.uid = NewUid();

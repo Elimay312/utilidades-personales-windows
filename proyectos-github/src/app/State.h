@@ -204,6 +204,16 @@ public:
     // el mismo después de recargar.
     int SlotOfId(const std::string& id) const;
 
+    // El identificador del repositorio que se llama así, o vacío. Lo pregunta el arranque
+    // por URL y por línea de órdenes, que traen un NOMBRE y no un id: el id es un node id
+    // de GraphQL y nadie lo va a escribir en un lanzador.
+    //
+    // Primero "dueño/nombre" y después el nombre a secas, las dos veces sin distinguir
+    // mayúsculas — que es como GitHub trata los nombres. El orden importa: con dos
+    // repositorios llamados igual en dos cuentas, "dueño/nombre" dice cuál, y el nombre
+    // solo se queda con el primero, que es lo mejor que se puede hacer con lo que se pidió.
+    std::string IdOfName(const std::wstring& name) const;
+
 private:
     void Recompute();
     void Recount();

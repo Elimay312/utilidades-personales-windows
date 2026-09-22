@@ -113,6 +113,31 @@ Las cuatro que hay —nlohmann/json, SQLite, doctest y lo que traiga el SDK— e
 `FetchContent` con la versión fijada, y SQLite además con el hash SHA-256 de su archivo.
 Nada apunta a una rama. Una dependencia nueva se consulta antes.
 
+### 10. Lo que llega de fuera del equipo no manda
+
+Desde la fase 8 hay una puerta que no abre el usuario: el esquema `brujula://`. Un esquema
+propio lo puede disparar **cualquier página web** —el navegador pregunta, y hay gente que
+dice que sí— y el `WM_COPYDATA` con el que una segunda instancia entrega lo que abrir se lo
+puede mandar cualquiera que sepa el nombre de nuestra clase de ventana.
+
+Lo que entra por ahí es **un nombre de repositorio o nada**. Se filtra con una lista blanca
+—letras, cifras y `-_./`, una sola barra, sin empezar por punto, tope de 200 caracteres— que
+vive en `App::LooksLikeRepoName`, es pura, está en `brujula_core` y tiene pruebas con
+`../../Windows/System32` dentro. Se valida en los **dos** caminos de entrada, no solo en el
+que viene de nuestro propio `wWinMain`.
+
+Y se usa para una sola cosa: buscar ese nombre en la caché. No abre archivos, no compone
+rutas y no llega a ninguna petición de red. Si algún día llegara a alguna de esas tres, esta
+regla es la que habría que volver a leer.
+
+### 11. El registro solo se toca dentro de la clave de Brújula
+
+Registrar `brujula://` escribe en `HKCU\Software\Classes\brujula` y en ningún otro sitio.
+En HKCU y no en HKLM porque Brújula es un `.exe` que se copia y no un instalador — HKLM
+pediría elevación, que la regla 8 prohíbe. Se lee antes de escribir, así que un arranque
+normal no toca el registro. Y no se borra al salir: un esquema que solo funciona con la
+aplicación abierta no sirve para abrirla.
+
 ---
 
 ## Cómo se comprueba

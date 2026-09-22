@@ -1,5 +1,7 @@
 #include "shell/Window.h"
 
+#include "app/Version.h"
+
 #include <imm.h>
 #include <windowsx.h>
 
@@ -81,6 +83,11 @@ bool Window::Create(HINSTANCE instance, const wchar_t* title, float widthDip, fl
     wc.lpfnWndProc = &Window::Thunk;
     wc.hInstance = instance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    // El icono, grande y pequeño. LoadIconW se queda con el tamaño que el sistema pide para
+    // cada sitio —barra de tareas, Alt+Tab, esquina— del grupo que hay en el .rc; y no hace
+    // falta destruirlo, los iconos cargados de un recurso son del módulo.
+    wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(BRUJULA_ICON));
+    wc.hIconSm = wc.hIcon;
     // Sin pincel de fondo: el contenido es del compositor. Un pincel aquí pintaría un
     // rectángulo opaco por debajo y taparía la Mica, que es exactamente el destello
     // blanco que el criterio de aceptación prohíbe.
@@ -544,6 +551,29 @@ LRESULT Window::Proc(UINT message, WPARAM wparam, LPARAM lparam) {
     case kNotifyMessage:
         if (callbacks.onNotify) callbacks.onNotify(lparam);
         return 0;
+
+    case WM_COPYDATA: {
+        // Lo que llega es memoria de otro proceso prestada solo mientras dura la llamada, y
+        // puede venir de cualquiera que sepa el nombre de nuestra clase de ventana. Se
+        // comprueba el sello, se comprueba que el tamaño sea un número entero de caracteres
+        // y se copia con un largo explícito: sin eso, una cadena sin cero final se leería
+        // hasta el final de la página.
+        const auto* data = reinterpret_cast<const COPYDATASTRUCT*>(lparam);
+        if (data == nullptr || data->dwData != kOpenRepoCopyData) break;
+        if (data->lpData == nullptr || data->cbData < sizeof(wchar_t)) break;
+        if (data->cbData % sizeof(wchar_t) != 0) break;
+
+        const auto* text = static_cast<const wchar_t*>(data->lpData);
+        const std::size_t units = data->cbData / sizeof(wchar_t);
+        std::wstring name(text, units);
+        // El emisor manda el cero final dentro del tamaño. Se recorta aquí y no se confía
+        // en que esté: lo que decide qué es un nombre válido es App::LooksLikeRepoName.
+        if (const std::size_t end = name.find(L'\0'); end != std::wstring::npos) {
+            name.resize(end);
+        }
+        if (!name.empty() && callbacks.onOpenRepo) callbacks.onOpenRepo(name);
+        return TRUE;
+    }
 
     case WM_SETTINGCHANGE:
         if (wparam == SPI_SETCLIENTAREAANIMATION) {

@@ -342,6 +342,26 @@ std::vector<std::uint64_t> State::Keys() const {
 
 int State::CountOf(Lens lens) const { return m_counts[static_cast<int>(lens)]; }
 
+std::string State::IdOfName(const std::wstring& name) const {
+    if (name.empty()) return std::string();
+
+    const auto lower = [](std::wstring text) {
+        for (wchar_t& c : text) {
+            if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c + 32);
+        }
+        return text;
+    };
+    const std::wstring wanted = lower(name);
+
+    for (const Entry& entry : m_entries) {
+        if (lower(entry.repo.nameWithOwner) == wanted) return entry.repo.id;
+    }
+    for (const Entry& entry : m_entries) {
+        if (lower(entry.repo.name) == wanted) return entry.repo.id;
+    }
+    return std::string();
+}
+
 int State::SlotOfId(const std::string& id) const {
     for (std::size_t slot = 0; slot < m_visible.size(); ++slot) {
         if (m_entries[static_cast<std::size_t>(m_visible[slot])].repo.id == id) {

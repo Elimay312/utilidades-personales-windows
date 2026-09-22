@@ -79,12 +79,15 @@ private:
     float m_remainder = 0.0f;
 };
 
-// El escalonado de los que entran: los 20 ms por elemento de CLAUDE.md, con techo. Sin el
-// techo, una lista de 500 tardaría diez segundos en terminar de aparecer.
+// El escalonado de los que entran, con techo. Sin el techo, una lista de 500 tardaría diez
+// segundos en terminar de aparecer.
 //
-// El techo bajó de 200 a 120 en la fase 6 por lo mismo que los periodos de los muelles: con
-// veinticinco tarjetas entrando, los 200 ms de la última duraban más que el propio muelle y
-// eran la mitad de lo que se notaba al cambiar de vista.
-float StaggerMs(int indexInBatch, float stepMs = 20.0f, float capMs = 120.0f);
+// **45 ms por elemento, no 20.** Un escalonado existe para que la lista se lea como una
+// secuencia y no como un bloque, y por debajo de unos 40 ms no se distingue de que entren
+// todas a la vez: cuesta el retardo y no compra el ritmo, que es la definición exacta de
+// una animación que no cumple ninguna función. Lo publicado pone el punto dulce entre 40 y
+// 80 ms. Los 20 de la fase 1 y el techo de 120 de la fase 6 eran otra vez el error de
+// afinar hacia abajo hasta que la animación deja de existir.
+float StaggerMs(int indexInBatch, float stepMs = 45.0f, float capMs = 180.0f);
 
 }  // namespace Ui

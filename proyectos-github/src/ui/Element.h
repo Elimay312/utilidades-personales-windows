@@ -96,6 +96,15 @@ public:
     // marco: el hit-test y la maquetación siguen hablando del tamaño de verdad, que es
     // justo lo que se quiere de algo que está apagado detrás de otra pantalla.
     void ScaleTo(float scale, Motion::Kind kind);
+    // La vuelta de ScaleTo, SIN animar y parando lo que hubiera puesto.
+    //
+    // Y no es una simplificación, es un arreglo: un visual con una animación de escala
+    // encima se rasteriza filtrado aunque la animación acabe en 1,0 exacto —lo midió la
+    // fase 7 en la tarjeta de la revisión, con recortes a 1:1—, así que un muelle de vuelta
+    // dejaba toda la lista un poco borrosa para siempre después de la primera revisión
+    // semanal. Y encima era una animación que no miraba nadie: lo que vuelve está en
+    // opacidad cero y lo que se ve llegar es el fundido.
+    void ResetScale();
     // La transición compartida: sitio, tamaño y radio del material a la vez y con el mismo
     // muelle. Es lo que convierte una tarjeta en el inspector, y lo que la deshace.
     //

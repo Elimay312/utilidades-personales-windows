@@ -16,6 +16,8 @@
 #include "store/Repos.h"
 #include "ui/Controls.h"
 #include "ui/Overlays.h"
+#include "app/Launch.h"
+#include "app/Version.h"
 #include "views/Palette.h"
 
 namespace App {
@@ -47,6 +49,35 @@ constexpr char kReminderFiredSetting[] = "recordatorio_ultimo";
 // ponytail: comprobación cada 5 min; si algún día hiciera falta al minuto, el reloj es el
 // mismo y lo único que cambia es este número.
 constexpr int kReminderCheckMs = 5 * 60 * 1000;
+
+// Cuánto se tardó desde que Windows creó el proceso hasta que la ventana se enseñó con los
+// datos ya pintados. Va a la tabla de ajustes, que es el mismo papel de cuaderno de
+// laboratorio que la fase 3 le dio para los tiempos de la sincronización: un número que se
+// puede volver a mirar meses después vale más que uno medido una tarde con un cronómetro.
+constexpr char kStartupSetting[] = "ms_arranque";
+// Y cuánto de ese total fue el hilo de UI parado esperando al dispositivo de Direct3D.
+// Van los dos juntos porque solo juntos dicen algo: un arranque que sube sin que suba esta
+// línea es culpa nuestra, y uno que sube con ella es el controlador de la tarjeta.
+constexpr char kGpuWaitSetting[] = "ms_arranque_gpu";
+
+// Desde la creación del PROCESO, no desde wWinMain. Lo que se quiere saber es lo que espera
+// quien hace doble clic, y ahí dentro está el cargador resolviendo importaciones, que en
+// frío es justo la parte cara. GetProcessTimes lo da sin instrumentar nada.
+double MsSinceProcessStart() {
+    FILETIME creation{}, exit{}, kernel{}, user{};
+    if (!GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user)) return 0.0;
+
+    FILETIME nowFile{};
+    GetSystemTimeAsFileTime(&nowFile);
+
+    const auto to100ns = [](const FILETIME& time) {
+        return (static_cast<unsigned long long>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
+    };
+    const unsigned long long started = to100ns(creation);
+    const unsigned long long now = to100ns(nowFile);
+    if (now <= started) return 0.0;
+    return static_cast<double>(now - started) / 10000.0;
+}
 
 const wchar_t* kWeekdays[] = {L"domingo", L"lunes",   L"martes", L"miércoles",
                               L"jueves",  L"viernes", L"sábado"};
@@ -112,20 +143,30 @@ const wchar_t* NameOf(Github::Stage stage) {
 }  // namespace
 
 bool Application::Init(HINSTANCE instance) {
-    // STA antes que nada: el compositor se cuelga del apartamento de este hilo.
+    // **Lo primero de todo, antes incluso del apartamento.**
+    //
+    // Crear el dispositivo de Direct3D son 166-272 ms medidos de los ~280 que tarda el
+    // arranque entero: cargar el controlador de la tarjeta. Y no necesita ni ventana, ni
+    // compositor, ni nada de lo que viene detrás, así que se pone a correr en un hilo y el
+    // resto de esta función le va quitando trabajo al camino crítico. Ver
+    // Gfx::Device::BeginCreate.
+    m_device.BeginCreate();
+
+    // STA: el compositor se cuelga del apartamento de este hilo.
     winrt::init_apartment(winrt::apartment_type::single_threaded);
 
     // La ventana nace oculta. Todo lo que sigue ocurre antes de que se vea un píxel.
     if (!m_window.Create(instance, L"Brújula", kInitialWidthDip, kInitialHeightDip)) return false;
     if (!m_scene.Create(m_window.Handle())) return false;
-    if (!m_device.Create(m_scene.Compositor())) return false;
-    if (!m_text.Create(m_device.Write())) return false;
 
+    // --- Lo que NO necesita dibujar va aquí, mientras el hilo carga el controlador ------
+    //
+    // El orden de estas líneas es el arreglo de rendimiento de la fase 8, y no un capricho:
+    // todas estaban detrás del dispositivo y ninguna lo necesita. En frío, abrir el archivo
+    // de SQLite es lo segundo más caro del arranque, y desde aquí no cuesta nada porque
+    // ocurre dentro de los 200 ms que el otro hilo está tardando de todas formas.
     m_animator.Attach(m_scene.Compositor());
     m_theme.Create(m_window.Handle(), Shell::Window::kThemeMessage);
-
-    if (!m_host.Create(m_scene, m_device, m_animator, m_text, m_window.Handle())) return false;
-    m_host.ApplyTheme(m_theme.Tokens(), 0.0f);
 
     // La caché. El trabajador la abre y la migra; esta conexión es la de lectura del hilo de
     // UI, y las dos conviven porque la base está en WAL.
@@ -142,6 +183,14 @@ bool Application::Init(HINSTANCE instance) {
     // línea: la interfaz no espera a la red, así que lo que se pinta en el primer fotograma
     // ya está aquí.
     LoadFromCache();
+
+    // --- Y aquí se espera al hilo: de esta línea en adelante todo dibuja ---------------
+    if (!m_device.FinishCreate(m_scene.Compositor())) return false;
+    if (!m_text.Create(m_device.Write())) return false;
+
+    if (!m_host.Create(m_scene, m_device, m_animator, m_text, m_window.Handle())) return false;
+    m_host.ApplyTheme(m_theme.Tokens(), 0.0f);
+
     InstallMain();
 
     m_window.callbacks.onLayout = [this](float width, float height, float scale) {
@@ -167,6 +216,9 @@ bool Application::Init(HINSTANCE instance) {
 
     m_window.callbacks.onSync = [this] { OnSyncMessage(); };
 
+    // Otra Brújula arrancó con un brujula:// y nos lo pasó antes de morirse. Ver main.cpp.
+    m_window.callbacks.onOpenRepo = [this](const std::wstring& name) { OpenRepoByName(name); };
+
     WireInput();
 
     // El primer fotograma completo, con la ventana todavía escondida.
@@ -177,6 +229,15 @@ bool Application::Init(HINSTANCE instance) {
     // final porque lo primero que hace es mirar la hora, y para dar un aviso hace falta que
     // la pantalla ya exista.
     ArmReminder();
+    RegisterUrlScheme();
+
+    // Y lo que se pidió por la línea de órdenes, AHORA: ya hay caché leída y ya hay vista,
+    // así que el inspector se abre en el primer fotograma y no un parpadeo después.
+    if (!m_pendingRepo.empty()) {
+        OpenRepoByName(m_pendingRepo);
+        m_pendingRepo.clear();
+    }
+
     m_host.FlushNow();
     return true;
 }
@@ -789,6 +850,38 @@ void Application::OpenFolderOf(const std::string& repoId) {
 
 // --------------------------------------------------------------------------- Ajustes --
 
+// Quién es esto y qué versión es. Una hoja y no una ventana aparte: la aplicación entera
+// se dibuja dentro de una sola ventana desde la fase 1 —sin superficie de redirección no hay
+// controles hijos— y una segunda ventana sería otra escena, otro tema y otro DPI que
+// mantener para enseñar cuatro líneas.
+//
+// Lleva los números que esta fase midió, y no por presumir: cuando dentro de seis meses el
+// arranque se sienta lento, lo primero que hace falta saber es contra qué compararlo, y la
+// tabla de ajustes guarda el de HOY. Aquí se lee sin abrir SQLite.
+void Application::ShowAbout() {
+    std::wstring body = L"Versión " BRUJULA_VERSION_WSTR;
+    body += L"\n\nPrioriza tus repositorios de GitHub y recuerda cuál era el siguiente paso.";
+    if (!m_account.empty()) body += L"\n\nConectado como " + m_account + L".";
+
+    if (m_db.IsOpen()) {
+        Store::Repos repos(m_db);
+        const auto leer = [&repos](const char* clave) -> std::wstring {
+            Model::Result<std::string> value = repos.Setting(clave);
+            return value.IsOk() ? Model::ToWide(value.Value()) : std::wstring();
+        };
+        const std::wstring arranque = leer(kStartupSetting);
+        const std::wstring gpu = leer(kGpuWaitSetting);
+        if (!arranque.empty()) {
+            body += L"\n\nÚltimo arranque: " + arranque + L" ms";
+            if (!gpu.empty()) body += L", de los que " + gpu + L" esperando a la tarjeta gráfica";
+            body += L".";
+        }
+    }
+
+    Ui::Sheet* sheet = Ask(L"Brújula", std::move(body), L"Cerrar", std::wstring());
+    sheet->OnAccept([this, sheet] { m_host.PopLayer(sheet); });
+}
+
 void Application::ShowSettings(float x, float y) {
     std::vector<Ui::Menu::Entry> entries;
     entries.push_back({m_reposRoot.empty() ? L"Elegir la carpeta de repositorios…"
@@ -800,6 +893,7 @@ void Application::ShowSettings(float x, float y) {
     entries.push_back({ReminderText(), [this, x, y] { ShowReminderMenu(x, y); }});
     entries.push_back({L"Exportar una copia de seguridad…", [this] { ExportBackup(); }});
     entries.push_back({L"Importar una copia…", [this] { ImportBackup(); }});
+    entries.push_back({L"Acerca de Brújula…", [this] { ShowAbout(); }});
 
     m_host.PushLayer<Ui::Menu>(Ui::Host::LayerOptions{false, true, false}, std::move(entries),
                                x, y);
@@ -1382,6 +1476,69 @@ void Application::ShowReminderMenu(float x, float y) {
     m_host.FlushNow();
 }
 
+// **El esquema brujula:// se registra en HKCU y apuntando a ESTE ejecutable.**
+//
+// En HKCU y no en HKLM porque Brújula es un .exe que se copia, no un instalador: HKLM pide
+// elevación y esto tiene que funcionar haciendo doble clic. Y se reescribe en cada arranque
+// si cambió, que es lo que hace que siga funcionando después de mover la carpeta — un
+// esquema apuntando a una ruta que ya no existe abre un cuadro de error del shell, y el
+// usuario no tiene ni de dónde agarrarlo para arreglarlo.
+//
+// No se pregunta antes: es lo que la fase 8 pide y es reversible borrando la clave. Y no se
+// borra al salir: un esquema que solo funciona con la aplicación abierta no sirve para
+// arrancarla, que es justo para lo que está.
+void Application::RegisterUrlScheme() {
+    wchar_t exe[MAX_PATH] = {};
+    const DWORD length = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return;
+
+    const std::wstring command = L"\"" + std::wstring(exe) + L"\" \"%1\"";
+
+    const auto write = [](const wchar_t* subkey, const wchar_t* name, const std::wstring& value) {
+        HKEY key = nullptr;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, subkey, 0, nullptr, 0, KEY_READ | KEY_WRITE,
+                            nullptr, &key, nullptr) != ERROR_SUCCESS) {
+            return false;
+        }
+        // Se lee antes de escribir: lo normal es que ya esté bien, y entonces esto son dos
+        // lecturas del registro en el arranque y ni una escritura.
+        wchar_t current[1024] = {};
+        DWORD size = sizeof(current);
+        DWORD type = 0;
+        const bool same =
+            RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<BYTE*>(current), &size) ==
+                ERROR_SUCCESS &&
+            type == REG_SZ && value == current;
+        if (!same) {
+            RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
+                           static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
+        }
+        RegCloseKey(key);
+        return true;
+    };
+
+    // "URL:..." en el valor por omisión y un "URL Protocol" vacío: así es como el shell
+    // reconoce un esquema propio, y sin el segundo la clave se ignora sin dar ningún error.
+    write(L"Software\\Classes\\brujula", nullptr, L"URL:Brújula");
+    write(L"Software\\Classes\\brujula", L"URL Protocol", std::wstring());
+    write(L"Software\\Classes\\brujula\\shell\\open\\command", nullptr, command);
+}
+
+void Application::OpenRepoByName(const std::wstring& name) {
+    // Se vuelve a filtrar aquí aunque main.cpp ya lo hiciera: por este camino entra también
+    // lo que manda otra instancia por WM_COPYDATA, y eso puede mandarlo cualquiera. La regla
+    // es la misma de la fase 5 con la ruta de la API — lo que viene de fuera se valida donde
+    // se usa, no donde se recogió.
+    if (!LooksLikeRepoName(name)) return;
+
+    const std::string id = m_state.IdOfName(name);
+    if (id.empty()) {
+        Toast(L"No hay ningún repositorio «" + name + L"» en la caché.");
+        return;
+    }
+    RevealRepo(id);
+}
+
 void Application::RevealRepo(const std::string& repoId) {
     if (m_main == nullptr) return;
     // Si no se ve desde donde estamos —otra vista, o una búsqueda puesta— se va a Todos.
@@ -1437,6 +1594,22 @@ void Application::WireInput() {
 
     m_window.callbacks.onKey = [this](const Input::Key& key) {
         if (!key.down) return false;
+#ifndef NDEBUG
+        // Modo lento, ×5 a todo lo que se mueve. Existe para mirar una transición despacio y
+        // ver si salta, que es el criterio de aceptación de esta fase, y no está en la tabla
+        // de atajos de CLAUDE.md a propósito: no se compila en Release.
+        //
+        // El multiplicador es de Motion y no del Animator porque también lo miran el
+        // desplazamiento por teclado y los dos temporizadores que esperan a que un muelle
+        // acabe; uno solo que se quedara a velocidad normal escondería justo el salto que se
+        // está buscando.
+        if (key.virtualKey == VK_F10) {
+            const bool lento = Motion::TimeScale() == 1.0f;
+            Motion::SetTimeScale(lento ? Motion::kSlowMotion : 1.0f);
+            Toast(lento ? L"Modo lento ×5" : L"Velocidad normal");
+            return true;
+        }
+#endif
 #if BRUJULA_CATALOGO
         if (key.virtualKey == VK_F12) {
             ToggleCatalog();
@@ -1653,6 +1826,17 @@ void Application::ApplyTheme(float crossfadeMs) {
 
 int Application::Run() {
     m_window.Show(SW_SHOW);
+
+    // Se mide AQUÍ y no al final de Init: lo que cuenta es el instante en que hay algo que
+    // mirar, y hasta esta línea la ventana estaba oculta a propósito. Se apunta antes de
+    // arrancar la red, que es lo primero que pasa después.
+    if (m_db.IsOpen()) {
+        Store::Repos repos(m_db);
+        repos.SetSetting(kStartupSetting,
+                         std::to_string(static_cast<int>(MsSinceProcessStart())));
+        repos.SetSetting(kGpuWaitSetting,
+                         std::to_string(static_cast<int>(m_device.WaitedMs())));
+    }
     // Y solo ahora se empieza a hablar con la red: lo que hay en la caché ya está pintado.
     m_sync.Start();
     return m_window.Run();

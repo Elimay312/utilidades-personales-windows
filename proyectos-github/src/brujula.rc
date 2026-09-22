@@ -1,5 +1,7 @@
 #include <windows.h>
 
+#include "app/Version.h"
+
 // Este archivo va en UTF-8 y hay que DECIRLO. rc.exe lee los .rc sin BOM con la página de
 // códigos del sistema —CP1252 aquí— así que sin esta línea «Brújula» se compila como
 // «BrÃºjula» y sale así en las propiedades del archivo y, lo que se ve de verdad, en la
@@ -9,13 +11,18 @@
 // lo pierde al guardar con otra herramienta. Esto se lee.
 #pragma code_page(65001)
 
-// Solo versión. El icono llega en la fase 8, y el manifiesto va como archivo suelto en
-// CMakeLists para que link.exe lo funda con el trustInfo que genera él: si aquí hubiera
-// también un RT_MANIFEST habría dos, y haría falta /MANIFEST:NO.
+// El manifiesto va como archivo suelto en CMakeLists para que link.exe lo funda con el
+// trustInfo que genera él: si aquí hubiera también un RT_MANIFEST habría dos, y haría falta
+// /MANIFEST:NO.
+
+// La aguja de brújula. La ruta es relativa a ESTE archivo, que es como rc.exe resuelve.
+// El .ico se genera con un script y se guarda en el repositorio: compilar no depende de
+// tener PowerShell ni de que el script siga existiendo.
+BRUJULA_ICON ICON "brujula.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0, 1, 0, 0
-PRODUCTVERSION 0, 1, 0, 0
+FILEVERSION BRUJULA_VERSION_MAJOR, BRUJULA_VERSION_MINOR, BRUJULA_VERSION_PATCH, 0
+PRODUCTVERSION BRUJULA_VERSION_MAJOR, BRUJULA_VERSION_MINOR, BRUJULA_VERSION_PATCH, 0
 FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
 #ifdef _DEBUG
 FILEFLAGS VS_FF_DEBUG
@@ -32,11 +39,11 @@ BEGIN
         BLOCK "0c0a04b0"
         BEGIN
             VALUE "FileDescription", "Brújula, priorizador de repositorios"
-            VALUE "FileVersion", "0.1.0.0"
+            VALUE "FileVersion", BRUJULA_VERSION_STR ".0"
             VALUE "InternalName", "brujula"
             VALUE "OriginalFilename", "brujula.exe"
             VALUE "ProductName", "Brújula"
-            VALUE "ProductVersion", "0.1.0"
+            VALUE "ProductVersion", BRUJULA_VERSION_STR
         END
     END
     BLOCK "VarFileInfo"

@@ -14,7 +14,7 @@ resulta que corre en Windows.
 
 ## Estado
 
-**Fase 7 de 8 terminada.** Ya sirve para lo que existe: al abrirla aparece la lista de los
+**Las ocho fases, terminadas.** Ya sirve para lo que existe: al abrirla aparece la lista de los
 repositorios de la cuenta —barra lateral con los grupos de prioridad y las vistas
 inteligentes, tarjetas con el siguiente paso, búsqueda en vivo—, y al abrir uno, la tarjeta
 se transforma en el inspector, donde se le pone prioridad, estado, siguiente paso y
@@ -48,9 +48,43 @@ vuelta a casa, el menú de cada tarjeta, la paleta de comandos, deshacer, la rev
 con su pila de tarjetas y su resumen, y el recordatorio que la abre desde una notificación
 de Windows.
 
-Lo que no hay todavía: el pulido final (fase 8) — la auditoría de animaciones, el arranque
-por debajo de 300 ms en frío, el esquema `brujula://`, el icono y la pantalla «Acerca de».
-El plan completo está en [`PROMPTS.md`](PROMPTS.md).
+La fase 8 volvió sobre el movimiento y encontró que se había estado afinando el número
+equivocado. `Period` de Composition y `duration` de `Spring(duration:bounce:)` de Apple son
+lo mismo —los dos fijan ωn = 2π/T— así que el periodo **es** la duración perceptual, y es el
+mando. Lo que se afinaba antes era el tiempo de asentamiento, del que Apple dice
+expresamente que no se use porque no es predecible. Con eso corregido los cuatro muelles
+suben a 130 / 200 / 250 / 340 ms, y el cruce de color de un estado —hover, foco, la píldora
+de prioridad— se separa de ellos: eran **34 ms, dos fotogramas**, o sea un corte. Alargarlo
+no cuesta nada, porque un fundido de color no retrasa ningún clic.
+
+Y **la rueda del ratón ya no patina.** Mandaba un impulso al `InteractionTracker` y dejaba
+que DWM decidiera dónde parar; una rueda no tiene velocidad que medir, tiene muescas, y cada
+muesca es una distancia que Windows ya define. Ahora cada una suma su distancia a un destino
+exacto y se llega en 200 ms clavados — cinco muescas recorren cinco muescas, y la lista no
+se pasa de largo el repositorio que buscabas. Con duración fija y no con muelle, que es la
+única excepción de toda la aplicación: medido, un muelle dentro del `InteractionTracker`
+deja la lista moviéndose un segundo y medio por una sola muesca.
+
+Y cambiar entre lista y cuadrícula ya no desliza cada tarjeta hasta su columna nueva: con la celda a un tercio de ancho, unas pasaban por encima de otras durante segundo y medio. Ahora la rejilla se recoloca de golpe y lo que se funde es la columna entera, en menos de 200 ms.
+
+Desde fuera se abre con `brujula.exe --repo NOMBRE` o con `brujula://repo/NOMBRE`, que dejan
+ese repositorio abierto en el inspector; si ya hay una Brújula corriendo, la segunda le pasa
+el nombre y se muere. Tiene icono, y «Acerca de» dice la versión y **cuánto tardó el último
+arranque**.
+
+**El arranque se midió, y el objetivo de 300 ms en frío no se puede cumplir.** No es una
+excusa: `D3D11CreateDevice` tarda 172 ms en esta máquina y es casi todo. Con un banco aparte,
+precargar las DLL no cambia nada y darle el adaptador ya elegido tampoco, así que no es el
+cargador — es el controlador de la tarjeta inicializándose. Lo que sí se hizo es lanzarlo en
+un hilo en la primera línea del arranque y quitarle al camino crítico la ventana, la escena,
+el tema y leer la caché entera: de 269 ms de media a 246, en caliente. Bajar más significaría
+enseñar la ventana antes de tener texto, que es dejar de cumplir «primer fotograma con
+datos». Los números están en [`CHANGELOG.md`](CHANGELOG.md).
+
+Lo que sigue sin comprobarse, por no tener con qué: la nitidez a otras escalas de DPI —esta
+máquina tiene una sola pantalla al 100 %—, el IME con un método de entrada de verdad, el
+panel táctil de precisión y los tres cuadros de archivo. El plan completo está en
+[`PROMPTS.md`](PROMPTS.md).
 
 ## Compilar y ejecutar
 

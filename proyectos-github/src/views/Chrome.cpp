@@ -54,9 +54,10 @@ public:
         if (!Attached()) return;
 
         if (Gfx::Material* material = MaterialOf()) {
-            // Muelle rígido: es una interacción pequeña, la primera fila de la tabla.
+            // El cruce de tinta, que no acompaña a ningún muelle: ver Motion::kInkMs.
+            // Con FadeMs(Snappy) esto duraba 34 ms y el botón se encendía de golpe.
             HostRef().Animator().Opacity(material->Visual(), hovered ? 1.0f : 0.0f,
-                                         HostRef().Animator().FadeMs(Motion::Kind::Snappy));
+                                         HostRef().Animator().InkMs());
         }
         // Repintar solo cuando el glifo cambia de color o de forma. Sobre el rojo de cerrar
         // el glifo se vuelve blanco, y maximizada la ventana el botón enseña restaurar: si

@@ -12,10 +12,24 @@ namespace num = winrt::Windows::Foundation::Numerics;
 namespace Motion {
 
 namespace {
+// Uno salvo que alguien pulse F10 en Debug. No hace falta que sea atómico: lo escribe el
+// hilo de UI desde el manejador de teclas y lo leen las llamadas que crean animaciones,
+// que son de ese mismo hilo. DWM ya tiene la duración horneada en el objeto de animación
+// cuando la recibe.
+float g_timeScale = 1.0f;
+
+// TODA duración pasa por aquí —periodos, fundidos y retardos—, y por eso el multiplicador
+// va aquí y no en cada llamada: una sola que se olvidara correría a velocidad normal
+// dentro del modo lento, que es la manera más fina de esconder justo el salto que se
+// estaba buscando.
 std::chrono::milliseconds Ms(float value) {
-    return std::chrono::milliseconds(static_cast<long long>(std::lround(value)));
+    return std::chrono::milliseconds(static_cast<long long>(std::lround(value * g_timeScale)));
 }
 }  // namespace
+
+float TimeScale() { return g_timeScale; }
+
+void SetTimeScale(float scale) { g_timeScale = scale > 0.0f ? scale : 1.0f; }
 
 void Animator::Attach(const wuc::Compositor& compositor) {
     m_compositor = compositor;
@@ -31,6 +45,19 @@ void Animator::RefreshSystemPreference() {
 
 float Animator::FadeMs(Kind kind) const {
     return Resolve(kind, m_systemAnimations).fadeMs;
+}
+
+float Animator::InkMs() const {
+    // Sin animaciones del sistema se sigue fundiendo, y con la duración corta de siempre:
+    // lo que esa opción pide es que no se MUEVA nada, no que los colores parpadeen.
+    return m_systemAnimations ? kInkMs : kReducedFadeMs;
+}
+
+float Animator::SettleMs(Kind kind) const {
+    // Sin animaciones del sistema no hay muelle que esperar: el valor ya está escrito, y lo
+    // único que queda corriendo es el fundido.
+    if (!m_systemAnimations) return kReducedFadeMs;
+    return Motion::SettleMs(SpringFor(kind)) * g_timeScale;
 }
 
 wuc::CompositionEasingFunction Animator::Ease() const {

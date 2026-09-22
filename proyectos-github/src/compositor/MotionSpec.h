@@ -20,26 +20,64 @@ enum class Kind {
 
 struct Spring {
     float dampingRatio = 1.0f;
-    // OJO: es el periodo NO amortiguado del muelle, no lo que dura la animación. Un
-    // muelle de 350 ms de periodo no tarda 350 ms en llegar; ver SettleMs.
+    // El periodo NO amortiguado del muelle, que es también su DURACIÓN PERCEPTUAL: el
+    // tiempo tras el cual el movimiento se lee como terminado aunque todavía le quede un
+    // rabo de milímetros. Es el mando con el que se afina — ver la tabla de abajo—; lo que
+    // tarda en quedarse completamente quieto es otra cosa y se llama SettleMs.
     float periodMs = 0.0f;
 
     constexpr bool operator==(const Spring&) const = default;
 };
 
-// Los periodos bajaron en la fase 6, con la aplicación ya llena de datos y en uso: con los
-// de la fase 1 —120, 220, 300 y 350— cambiar de proyecto se sentía lento, que es justo lo
-// contrario de para lo que existe esta aplicación. Las amortiguaciones no se tocan: son las
-// que dan el carácter de cada muelle, y lo que sobraba era el tiempo.
-inline constexpr Spring kSnappy{0.9f, 80.0f};
-inline constexpr Spring kStandard{0.85f, 130.0f};
-inline constexpr Spring kSmooth{0.8f, 165.0f};
-inline constexpr Spring kExpressive{0.75f, 195.0f};
+// LOS PERIODOS SON LA DURACIÓN PERCEPTUAL, y eso no es una manera de hablar: Composition
+// define Period como «el tiempo que tarda el muelle en completar una oscilación» y Apple
+// define Spring(duration:bounce:) con rigidez (2π/duration)² y masa 1. Las dos cosas fijan
+// la misma ωn = 2π/T, así que `periodMs` ES el `duration` de Apple y `dampingRatio` es su
+// `1 - bounce`. La tabla de Brújula ya hablaba ese idioma sin saberlo.
+//
+// Y de ahí sale la corrección de la fase 8. Las fases 1 y 6 afinaron contra SettleMs, que
+// es lo que Apple llama *settling duration* y de lo que dice explícitamente que no se
+// afina: «depends on many different factors and can be unpredictable». Lo que se afina es
+// el periodo, porque es el número que se eligió para ser predecible. Afinando el otro, la
+// fase 6 dejó los cuatro muelles entre 80 y 195 ms de duración perceptual — los tres
+// presets de iOS están los tres en 500— y lo que se sintió al usarla no fue rapidez sino
+// un corte. Que es lo que quiere decir «tosco».
+//
+// Los de ahora: ni los 120/220/300/350 de la fase 1, que se sintieron lentos para ir de un
+// proyecto a otro, ni los 80/130/165/195 de la fase 6, que no llegan a moverse. Y la
+// escala se ABRE —de 2,4× entre el primero y el último a 2,6×— porque lo que de verdad
+// pide tiempo es la distancia recorrida: un anillo de foco que crece un 4 % y una hoja
+// modal que cruza la pantalla no pueden estar a un factor de dos.
+//
+// Las amortiguaciones siguen sin tocarse desde la fase 1. En el idioma de Apple son
+// rebotes de 0,10 / 0,15 / 0,20 / 0,25, y los tres presets de iOS van de 0 a 0,3: la tabla
+// está entera dentro de ese rango y por encima de 0,3 el movimiento se lee como un dibujo
+// animado.
+inline constexpr Spring kSnappy{0.9f, 130.0f};
+inline constexpr Spring kStandard{0.85f, 200.0f};
+inline constexpr Spring kSmooth{0.8f, 250.0f};
+inline constexpr Spring kExpressive{0.75f, 340.0f};
+
+// Cuánto rebota cada muelle en el idioma de Apple, para poder compararlo con lo publicado
+// sin hacer la cuenta a mano. Solo lo usan las pruebas y quien lea la tabla.
+constexpr float BounceOf(Spring spring) { return 1.0f - spring.dampingRatio; }
 
 // El fundido que sustituye al movimiento cuando "Mostrar animaciones en Windows" está
 // apagado. Corto a propósito: quien apaga las animaciones no quiere media transición,
 // quiere que el cambio ya esté hecho.
 inline constexpr float kReducedFadeMs = 120.0f;
+
+// El cruce de color de un ESTADO: hover, pulsado, el anillo de foco, la píldora que cambia
+// de prioridad, el botón de ventana que se ilumina. No acompaña a ningún muelle, así que no
+// sale de SettleMs — y salía. Con la tabla de la fase 6 eso dejaba el fundido del hover en
+// 34 ms, DOS fotogramas a 60 Hz: un corte de color, que es exactamente lo que se siente
+// como tosco. Y alargarlo no cuesta nada de lo que a esta aplicación le importa: un fundido
+// de color no retrasa ni un clic, porque nadie espera a que termine para poder pulsar.
+inline constexpr float kInkMs = 120.0f;
+
+// El multiplicador del modo lento de depuración (F10 en Debug). Cinco: con ×2 un salto de
+// un fotograma sigue siendo un fotograma.
+inline constexpr float kSlowMotion = 5.0f;
 
 // El temblor del límite de Enfoque: cuánto dura y cuánto se aparta. Corto y poco, las dos
 // cosas: un rechazo de medio segundo se lee como que la aplicación se ha quedado pensando, y
@@ -70,9 +108,13 @@ constexpr Spring SpringFor(Kind kind) {
     return kStandard;
 }
 
-// Cuánto tarda de verdad en asentarse, dentro del 2 %: 4/(ζ·ωn) con ωn = 2π/T.
-// Sirve para elegir a ojo y para que las pruebas avisen si alguien toca la tabla y se le
-// va a dos segundos sin darse cuenta.
+// Cuánto tarda de verdad en quedarse quieto, dentro del 2 %: 4/(ζ·ωn) con ωn = 2π/T.
+//
+// NO es el mando de afinar —eso es periodMs, ver arriba—. Sirve para lo que de verdad
+// necesita saber cuándo ha acabado del todo: el temporizador que esconde el inspector y el
+// que tira la tarjeta de la revisión, que si disparan antes dejan el elemento a medio
+// viaje. Y para que una prueba avise si alguien sube un periodo a ojo y se le va a dos
+// segundos sin darse cuenta.
 float SettleMs(Spring spring);
 
 }  // namespace Motion

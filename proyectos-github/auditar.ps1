@@ -173,6 +173,41 @@ if (-not $nombre) {
     Regla '11. Solo se escribe PROYECTO.md' 'bien'
 }
 
+# 12. Lo que entra por brujula:// y por WM_COPYDATA pasa SIEMPRE por la lista blanca, y el
+#     registro solo se toca dentro de nuestra propia clave.
+#
+#     La regla existe desde la fase 8 porque esa fase abrio la primera puerta que no
+#     controla el usuario: un esquema propio lo dispara cualquier pagina web, y el
+#     WM_COPYDATA lo manda cualquiera que sepa el nombre de nuestra clase de ventana. Se
+#     mira por tres sitios:
+#
+#       a) los dos caminos de entrada —RepoFromUrl y OpenRepoByName— llaman a
+#          LooksLikeRepoName. Validar solo en uno deja el otro abierto, y el otro es el que
+#          no viene de nuestro propio main;
+#       b) toda escritura en el registro va bajo Software\Classes\brujula. Cualquier otra
+#          subclave seria la aplicacion tocando cosas del sistema que no son suyas;
+#       c) no se escribe en HKLM ni en HKEY_LOCAL_MACHINE, que ademas pediria elevacion y
+#          chocaria con la regla 8.
+$filtra = Buscar 'LooksLikeRepoName'
+$enUrl = Buscar 'LooksLikeRepoName\(name\)\s*\?'
+$enMensaje = Buscar 'if\s*\(!LooksLikeRepoName'
+$claves = Buscar 'RegCreateKeyExW?\s*\(\s*HKEY_[A-Z_]+'
+$clavesMalas = @($claves | Where-Object { $_ -notmatch 'HKEY_CURRENT_USER' })
+$rutasRegistro = Buscar 'L"Software\\\\Classes[^"]*"'
+$rutasMalas = @($rutasRegistro | Where-Object { $_ -notmatch 'Classes\\\\brujula' })
+
+if (-not $filtra) {
+    Regla '12. Lo de fuera pasa por la lista blanca' 'FALLA' 'no encuentro LooksLikeRepoName'
+} elseif (-not $enUrl -or -not $enMensaje) {
+    Regla '12. Lo de fuera pasa por la lista blanca' 'FALLA' 'uno de los dos caminos de entrada no valida'
+} elseif ($clavesMalas) {
+    Regla '12. Lo de fuera pasa por la lista blanca' 'FALLA' $clavesMalas[0]
+} elseif ($rutasMalas) {
+    Regla '12. Lo de fuera pasa por la lista blanca' 'FALLA' $rutasMalas[0]
+} else {
+    Regla '12. Lo de fuera pasa por la lista blanca' 'bien'
+}
+
 # --- Salida ------------------------------------------------------------------------
 
 Write-Output ''

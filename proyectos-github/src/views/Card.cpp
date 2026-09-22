@@ -256,8 +256,12 @@ void DragCard::Refuse() {
     // Se apaga DESPUÉS de temblar, no mientras: un temblor a medio desvanecer no se ve, y lo
     // que tiene que quedar claro es que ese sitio no la admite. El retardo va dentro de la
     // animación, así que lo lleva DWM y no hace falta un temporizador en este hilo.
-    animator.OpacityDelayed(Visual(), 0.0f, animator.FadeMs(Motion::Kind::Standard),
-                            Motion::kShakeMs);
+    //
+    // Y sin animaciones del sistema no hay temblor, así que tampoco hay nada que esperar:
+    // el retardo se quita. Dejarlo dejaba la tarjeta un tercio de segundo parada en el aire
+    // sin que pasara nada, que es peor que no animar — es no animar Y hacer esperar.
+    const float delay = animator.Enabled() ? Motion::kShakeMs : 0.0f;
+    animator.OpacityDelayed(Visual(), 0.0f, animator.FadeMs(Motion::Kind::Standard), delay);
 }
 
 void DragCard::HideNow() {

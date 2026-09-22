@@ -25,6 +25,17 @@ namespace Motion {
 using Vec2 = winrt::Windows::Foundation::Numerics::float2;
 using Vec3 = winrt::Windows::Foundation::Numerics::float3;
 
+// El modo lento de depuración: multiplica TODO lo que dura algo —periodos, fundidos,
+// retardos y los dos temporizadores que esperan a que un muelle acabe—. Vale 1 salvo que
+// alguien pulse F10 en una compilación de Debug.
+//
+// Es global y mutable a propósito, que es lo que no se hace normalmente y aquí es lo
+// correcto: es un mando de la aplicación ENTERA, y pasarlo por parámetro obligaría a
+// llevarlo encima a Gfx::Scroller y a dos vistas que no tienen ningún otro motivo para
+// saber que existe. Solo lo escribe el manejador de teclas.
+float TimeScale();
+void SetTimeScale(float scale);
+
 class Animator {
 public:
     void Attach(const winrt::Windows::UI::Composition::Compositor& compositor);
@@ -33,8 +44,19 @@ public:
     void RefreshSystemPreference();
     bool Enabled() const { return m_systemAnimations; }
 
-    // Cuánto dura el fundido que acompaña a cada muelle.
+    // Cuánto dura el fundido que acompaña a cada muelle. Con el modo lento aplicado.
     float FadeMs(Kind kind) const;
+
+    // El cruce de color de un estado —hover, pulsado, foco—, que no acompaña a ningún
+    // muelle. Ver Motion::kInkMs: sacarlo de FadeMs(Snappy) dejaba el hover en dos
+    // fotogramas.
+    float InkMs() const;
+
+    // Cuándo se ha quedado quieto del todo, con el modo lento aplicado. Lo preguntan los
+    // dos temporizadores que esperan a que un muelle termine para esconder lo que viajó:
+    // sin el multiplicador, el modo lento los dispararía a mitad del viaje y el elemento
+    // desaparecería en el aire, que es justo el salto que el modo lento existe para ver.
+    float SettleMs(Kind kind) const;
 
     void Offset(const winrt::Windows::UI::Composition::Visual& visual,
                 const winrt::Windows::Foundation::Numerics::float3& value, Kind kind) const;

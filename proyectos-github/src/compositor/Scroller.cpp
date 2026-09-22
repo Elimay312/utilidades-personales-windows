@@ -11,18 +11,27 @@ namespace Gfx {
 
 namespace {
 
-// Cuánto frena la inercia por fotograma. Con 0,98 la lista sigue viajando sola y se siente
-// resbaladiza; con 0,92 una muesca tardaba todavía cerca de un segundo en pararse, que con
-// la aplicación en uso se sentía como que la lista tira de más. Con 0,85 se para en poco
-// más de medio segundo y sigue habiendo inercia.
+// **La rueda va con DURACIÓN FIJA y no con muelle, y es el único sitio de la aplicación
+// donde eso es lo correcto.**
 //
-// La DISTANCIA de una muesca no cambia al tocar esto: kVelocityPerDip se deriva del mismo
-// número, así que lo que se acorta es el tiempo y no lo que recorre.
-constexpr float kDecay = 0.85f;
-
-// De DIP a velocidad. Con decaimiento exponencial por fotograma, lo que recorre un
-// impulso es v/60/(1-decay), así que para recorrer D hay que empujar con D*60*(1-decay).
-constexpr float kVelocityPerDip = 60.0f * (1.0f - kDecay);
+// La regla de la fase 1 dice muelles para todo lo interrumpible, y una ráfaga de muescas es
+// justo eso. Pero un muelle dentro de un InteractionTracker no termina cuando su periodo
+// dice. Medido en la fase 8, contando cada cuántos milisegundos cambian los píxeles de la
+// columna:
+//
+//     sin animar                     se acabó antes del primer fotograma
+//     muelle, periodo 60 ms          ~1000 ms de movimiento
+//     muelle, periodo 180 ms         ~1500 ms de movimiento
+//
+// Tres veces el periodo no da tres veces el tiempo, así que ahí dentro no hay solo el
+// muelle que le pasamos. Y milésima arriba o abajo, una sola muesca que deja la lista
+// moviéndose un segundo y medio es exactamente lo que se sintió como deslizarse sobre el
+// hielo. Con una duración escrita, termina cuando dice que termina.
+//
+// Lo que se pierde al no ser muelle —retomar la VELOCIDAD al reapuntar a mitad— aquí casi
+// no se nota: cada muesca reapunta desde donde esté la lista, y doscientos milisegundos son
+// más corto que el hueco entre dos muescas de una mano girando la rueda.
+constexpr float kWheelMs = 200.0f;
 
 }  // namespace
 
@@ -61,6 +70,7 @@ Scroller::~Scroller() {
 bool Scroller::Create(const wuc::Compositor& compositor, const Motion::Animator& animator,
                       const wuc::Visual& content, Listener listener) {
     m_compositor = compositor;
+    m_animator = &animator;
     m_listener = std::move(listener);
 
     m_owner = winrt::make_self<Owner>();
@@ -77,7 +87,8 @@ bool Scroller::Create(const wuc::Compositor& compositor, const Motion::Animator&
 
     m_tracker.MinPosition({0.0f, 0.0f, 0.0f});
     m_tracker.MaxPosition({0.0f, 0.0f, 0.0f});
-    m_tracker.PositionInertiaDecayRate(Motion::Vec3{kDecay, kDecay, kDecay});
+    // PositionInertiaDecayRate ya no se toca porque no queda inercia que decaer: desde la
+    // fase 8 la rueda va a un destino y no a una velocidad. Ver Scroller::By.
 
     animator.BindScroll(content, m_tracker);
     return true;
@@ -88,6 +99,11 @@ void Scroller::SetExtent(float contentDip, float viewportDip) {
     m_max = std::max(contentDip - viewportDip, 0.0f);
     m_tracker.MaxPosition({0.0f, m_max, 0.0f});
 
+    // El destino también se recorta, y no sobra: es lo único que vuelve a atar m_target a
+    // la realidad cuando la lista encoge debajo. Sin esto, filtrar hasta dejar cuatro
+    // repositorios y dar una muesca hacia arriba partiría de un destino que ya no existe.
+    m_target = std::clamp(m_target, 0.0f, m_max);
+
     // Si la lista encogió por debajo de donde estábamos mirando, hay que subir o se ve
     // un hueco al final.
     if (m_position > m_max) To(m_max, false);
@@ -95,29 +111,61 @@ void Scroller::SetExtent(float contentDip, float viewportDip) {
 
 void Scroller::By(float deltaDip) {
     if (!m_tracker || deltaDip == 0.0f) return;
-    // Impulso y no destino: dos muescas seguidas suman velocidad y la lista llega más
-    // lejos que el doble de una. Eso es la inercia, y no hay que programarla.
-    m_tracker.TryUpdatePositionWithAdditionalVelocity({0.0f, deltaDip * kVelocityPerDip, 0.0f});
+
+    // **La rueda manda DESTINO y no velocidad, y esto deshace la decisión de la fase 2.**
+    //
+    // Aquella decía que un impulso da inercia de verdad y que dos muescas seguidas llegan
+    // más lejos que el doble de una. Las dos cosas son ciertas, y las dos están mal para
+    // una rueda: una rueda no tiene velocidad que medir, tiene muescas, y cada muesca es
+    // una distancia que Windows ya define — SPI_GETWHEELSCROLLLINES, que es de donde sale
+    // deltaDip. Convertirla en un empujón y dejar que DWM decidiera dónde parar es
+    // exactamente lo que se sintió al usarla: se scrollea y se pierden los proyectos,
+    // porque la lista sigue viajando después de soltar la rueda.
+    //
+    // Un panel táctil de precisión sí tiene velocidad de verdad que pasar, y entonces esto
+    // sería otra rama. Pero esta aplicación no recibe esos eventos —le llegan muescas de
+    // WM_MOUSEWHEEL— así que hoy esa rama no tendría a nadie dentro.
+    //
+    // Se suma sobre m_target y no sobre la posición actual: con cinco muescas seguidas,
+    // partir de donde está la lista perdería lo que a las anteriores les queda por recorrer
+    // y cinco muescas se quedarían en tres. Sumando sobre el destino, cinco muescas
+    // recorren exactamente cinco muescas, que es lo único que se le pide a una rueda.
+    Target(m_target + deltaDip, true);
 }
 
 void Scroller::To(float positionDip, bool animate) {
+    // Navegar con el teclado y recolocar cuando la lista encoge. Va con la misma duración
+    // fija que la rueda, y por el mismo motivo: lo que se mueve es la misma lista dentro
+    // del mismo tracker, y darle dos maneras distintas de llegar sería que la flecha abajo
+    // y la muesca de rueda se sintieran como dos aplicaciones.
+    Target(positionDip, animate);
+}
+
+void Scroller::Target(float positionDip, bool animate) {
     if (!m_tracker) return;
     const float target = std::clamp(positionDip, 0.0f, m_max);
+    m_target = target;
 
-    if (!animate) {
+    // Sin animaciones del sistema, ir y estar: quien apaga "Mostrar animaciones" pide que
+    // no se mueva nada, y una lista deslizándose es lo más que se mueve en esta pantalla.
+    if (!animate || (m_animator != nullptr && !m_animator->Enabled())) {
         m_tracker.TryUpdatePosition({0.0f, target, 0.0f});
         return;
     }
 
-    // Con muelle: navegar con el teclado tiene que deslizarse, no saltar. Y como es un
-    // muelle, reapuntarlo a mitad de camino retoma valor y velocidad.
-    const Motion::Spring spring = Motion::SpringFor(Motion::Kind::Smooth);
-    auto animation = m_compositor.CreateSpringVector3Animation();
-    animation.DampingRatio(spring.dampingRatio);
-    animation.Period(std::chrono::milliseconds(static_cast<long long>(spring.periodMs)));
-    // Con el tipo escrito: FinalValue toma un IReference y una lista entre llaves no
-    // sabe a cuál de las sobrecargas ir.
-    animation.FinalValue(Motion::Vec3{0.0f, target, 0.0f});
+    // Sale deprisa y frena largo, la misma curva que los fundidos del kit: es la que hace
+    // que un movimiento parezca que LLEGA en vez de que aparece.
+    //
+    // La duración pasa por Motion::TimeScale porque esta animación se monta a mano y no por
+    // Motion::Animator: sin esto, el modo lento de depuración dejaba el desplazamiento
+    // corriendo a velocidad normal dentro de una pantalla a cámara lenta, que es justo el
+    // sitio donde un salto se esconde.
+    auto animation = m_compositor.CreateVector3KeyFrameAnimation();
+    animation.Duration(
+            std::chrono::milliseconds(static_cast<long long>(kWheelMs * Motion::TimeScale())));
+    animation.InsertKeyFrame(1.0f, Motion::Vec3{0.0f, target, 0.0f},
+                             m_compositor.CreateCubicBezierEasingFunction({0.16f, 1.0f},
+                                                                          {0.3f, 1.0f}));
     m_tracker.TryUpdatePositionWithAnimation(animation);
 }
 

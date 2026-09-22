@@ -136,22 +136,37 @@ Parser tolerante: si el archivo no tiene frontmatter o tiene campos desconocidos
 
 ### Movimiento
 
-| Uso | Muelle | Asienta en |
-|---|---|---|
-| Interacciones pequeñas (hover, pulsar, marcar) | rígido: amortiguación 0,9, periodo 80 ms | 57 ms |
-| Paneles e inspector | estándar: amortiguación 0,85, periodo 130 ms | 97 ms |
-| Reordenar y mover tarjetas entre grupos | suave: amortiguación 0,8, periodo 165 ms | 131 ms |
-| Hojas modales y revisión semanal | expresivo: amortiguación 0,75, periodo 195 ms | 166 ms |
+| Uso | Muelle | Rebote | Asienta en |
+|---|---|---|---|
+| Interacciones pequeñas (hover, pulsar, marcar) | rígido: amortiguación 0,9, periodo 130 ms | 0,10 | 92 ms |
+| Paneles e inspector | estándar: amortiguación 0,85, periodo 200 ms | 0,15 | 150 ms |
+| Reordenar y mover tarjetas entre grupos | suave: amortiguación 0,8, periodo 250 ms | 0,20 | 199 ms |
+| Hojas modales y revisión semanal | expresivo: amortiguación 0,75, periodo 340 ms | 0,25 | 289 ms |
 
-Los periodos son los de la fase 6. Los de la fase 1 —120, 220, 300 y 350— asentaban entre 85
-y 297 ms y con la aplicación en uso se sentían lentos para ir de un proyecto a otro, que es
-justo para lo que existe. Las amortiguaciones no se tocaron: el carácter de cada muelle es
-suyo, y lo que sobraba era el tiempo. Se cambian en `compositor/MotionSpec.h`, que es el
-único sitio donde están escritos, y las pruebas fijan los cuatro.
+**El periodo ES la duración perceptual, y es el único mando con el que se afina.**
+Composition define `Period` como el tiempo que tarda el muelle en completar una oscilación,
+y Apple define `Spring(duration:bounce:)` con rigidez `(2π/duration)²` y masa 1: las dos
+cosas fijan la misma ωn, así que `periodMs` es su `duration` y `dampingRatio` es su
+`1 - bounce`. «Asienta en» es la *settling duration*, que Apple dice expresamente que no se
+use para afinar porque depende de demasiadas cosas — las fases 1 y 6 la usaron, y por eso
+hubo que volver. Se cambian en `compositor/MotionSpec.h`, que es el único sitio donde están
+escritos, y las pruebas fijan los cuatro.
+
+**El cruce de color de un estado no sale de ningún muelle:** son 120 ms fijos
+(`Motion::kInkMs`), para el hover, el pulsado, el anillo de foco y la píldora de prioridad.
+Salía de `SettleMs × 0,6` del muelle rígido, y con la tabla de la fase 6 eso eran 34 ms —dos
+fotogramas— o sea un corte. Alargarlo no cuesta nada de lo que aquí importa: un fundido de
+color no retrasa ningún clic.
+
+**En Debug, F10 multiplica por cinco todo lo que dura algo** —periodos, fundidos, retardos y
+los temporizadores que esperan a que un muelle acabe— para poder mirar una transición
+despacio. No se compila en Release, y por eso no está en la tabla de atajos.
 
 - Pulsar un control lo escala a 0,97; soltarlo vuelve con muelle rígido.
 - **Transiciones compartidas:** al abrir un repo, su tarjeta se transforma en el inspector (posición, tamaño y radio a la vez, con fundido cruzado del contenido). Al cerrar, vuelve a su sitio.
-- Listas: los elementos que entran aparecen con fundido + desplazamiento de 8 px escalonado 20 ms; los que cambian de posición se deslizan, nunca saltan.
+- Listas: los elementos que entran aparecen con fundido + desplazamiento de 8 px escalonado **45 ms** (techo 180); los que cambian de posición se deslizan, nunca saltan. Por debajo de unos 40 ms el escalonado no se distingue de que entren todas a la vez: cuesta el retardo y no compra el ritmo.
+- **Cambiar de lista a cuadrícula no desliza las celdas: funde la columna entera.** Lo que cambia no es dónde está cada tarjeta, es la forma de la rejilla, y deslizar con la celda ya a un tercio de ancho hace que unas pasen por encima de otras.
+- **El desplazamiento de la rueda va a un DESTINO, no a una velocidad.** Cada muesca suma su distancia —la que dice `SPI_GETWHEELSCROLLLINES`— sobre el destino y se llega en **200 ms de duración fija**. Sin inercia, a propósito: una rueda no tiene velocidad que medir, tiene muescas. Y sin muelle, que es la única excepción a la regla de arriba: un muelle dentro de un `InteractionTracker` no termina cuando su periodo dice —medido, una muesca dejaba la lista moviéndose un segundo y medio— y aquí lo que hace falta es que termine.
 - **Respetar "Mostrar animaciones en Windows"** (`SPI_GETCLIENTAREAANIMATION`): si está desactivado, sustituir movimientos por fundidos cortos.
 - Objetivo: 60 fps constantes (y la frecuencia del monitor si es mayor) incluso con los 120 repos visibles.
 
@@ -162,6 +177,20 @@ suyo, y lo que sobraba era el tiempo. Se cambian en `compositor/MotionSpec.h`, q
 - **Inspector (panel derecho):** prioridad, estado, siguiente paso editable, novedades con fecha, últimos commits, issues/PRs abiertos, botones para abrir en GitHub y en la carpeta local.
 - **Revisión semanal:** modo a pantalla completa que presenta una tarjeta por repo que necesita decisión; con 1-4 asignas prioridad, E editas el siguiente paso, espacio salta. Cada decisión anima la tarjeta hacia su grupo.
 - **Paleta de comandos (Ctrl+K):** buscar repos y ejecutar acciones escribiendo.
+
+## Cómo se abre desde fuera
+
+- `brujula.exe --repo NOMBRE` y `brujula://repo/NOMBRE` abren ese repositorio directamente
+  en el inspector. El nombre es `nombre` o `dueño/nombre`, sin distinguir mayúsculas.
+- **Solo hay una Brújula a la vez.** Si ya está abierta, la segunda le pasa el nombre por
+  `WM_COPYDATA`, la trae al frente y se muere. Dos procesos serían dos conexiones de
+  escritura a la misma caché.
+- El esquema se registra en `HKCU\Software\Classes\brujula` al arrancar, apuntando al
+  ejecutable que se está ejecutando, y se reescribe si la ruta cambió.
+- **Lo que llega por ahí es texto de un desconocido** —un esquema propio lo dispara
+  cualquier página web— así que pasa por `App::LooksLikeRepoName`, que es una lista blanca
+  con pruebas. Solo se usa para buscar en la caché: no abre archivos, no compone rutas y no
+  llega a ninguna petición.
 
 ## Atajos
 
@@ -202,11 +231,131 @@ El plan completo está en `PROMPTS.md`.
 - [x] Fase 5 — Inspector, notas y PROYECTO.md
 - [x] Fase 6 — Priorizar: arrastrar, límite de Enfoque, atajos y paleta
 - [x] Fase 7 — Revisión semanal
-- [ ] Fase 8 — Pulido final y rendimiento
+- [x] Fase 8 — Pulido final y rendimiento
 
 Al terminar una fase: marcarla aquí, anotar decisiones abajo y hacer commit.
 
 ## Decisiones y notas
+
+### Fase 8 — 22 de septiembre de 2026
+
+El detalle con todas las mediciones está en `CHANGELOG.md`. Aquí van solo las decisiones
+que condicionan lo que venga después.
+
+**`periodMs` y `dampingRatio` SON los dos parámetros de Apple, y las fases 1 y 6 afinaron el
+número equivocado.** Composition define `Period` como el tiempo de una oscilación y Apple
+define `Spring(duration:bounce:)` con rigidez `(2π/duration)²` y masa 1: las dos fijan la
+misma ωn, así que el periodo es la *duración perceptual* y la amortiguación es `1 - bounce`.
+`SettleMs` es la *settling duration*, de la que Apple dice expresamente que no se afina
+porque «depends on many different factors and can be unpredictable». Afinando esa, la fase 6
+dejó los cuatro muelles entre 80 y 195 ms de duración perceptual cuando los tres presets de
+iOS están los tres en 500 — y lo que se siente con eso no es rapidez, es un corte. La regla,
+para todo lo que venga: **el mando es el periodo**, y «asienta en» es una consecuencia que
+solo sirve para saber cuándo se puede tirar un elemento.
+
+**Y lo que más se notaba no era el muelle, era el fundido de la tinta.** `Resolve()` calcula
+el fundido como `SettleMs × 0,6`, y eso está bien para el fundido que ACOMPAÑA a un muelle
+—el contenido tiene que leerse mientras la forma se asienta— pero el cruce de color de un
+hover no acompaña a nada. Con la tabla de la fase 6 eran 34 ms: dos fotogramas. Ahora hay
+`Motion::kInkMs` aparte. Lo que hace que esto sea gratis y no un compromiso: **un fundido de
+color no retrasa ningún clic**, así que alargarlo no toca el criterio de quien usa esto, que
+es «¿estorba para trabajar rápido?».
+
+**La rueda manda destino y no velocidad, y eso deshace una decisión de la fase 2.** Aquella
+mandaba un impulso al `InteractionTracker` para que DWM calculara la inercia. Es cierto que
+da inercia de verdad y es cierto que dos muescas suman, y las dos cosas están mal para una
+rueda: **una rueda no tiene velocidad que medir, tiene muescas**, y cada una es una
+distancia que Windows ya define. Lo reportado al usarla fue exacto — «se desliza sobre el
+hielo»— y el repositorio que se buscaba quedaba atrás. `Scroller::By` suma sobre `m_target`
+y no sobre la posición: partiendo de dónde está, cinco muescas seguidas pierden lo que a las
+anteriores les queda por recorrer y se quedan en tres. Un panel táctil de precisión sí
+tendría velocidad que pasar, y entonces esto sería otra rama; hoy no llega ese evento, así
+que esa rama no tendría a nadie dentro.
+
+**Cambiar la FORMA de la rejilla se funde, no se desliza — y eso corrige la fase 4.**
+Aquella dijo «el tamaño de una celda no se anima, y la posición sí», con una razón buena
+—animar el tamaño reasigna la textura de cada celda en cada fotograma— y una consecuencia
+que no se vio hasta usarlo: entre lista y cuadrícula la celda pasa a un TERCIO de ancho, así
+que con el ancho ya puesto y la posición viajando, las que van a la segunda y la tercera
+columna cruzan POR ENCIMA de las de la primera, y como las tarjetas son translúcidas se leen
+tres textos superpuestos. Medido: **1,4 segundos** de tarjetas cruzándose, con el estado
+final correcto y el camino pareciendo que la vista se ha roto. Ahora se recoloca de golpe y
+lo que se anima es la columna apareciendo: **una sola animación de opacidad en vez de una
+por celda**, y queda igual al estado final antes de los 200 ms. La regla que queda: cuando
+lo que cambia es la FORMA de un contenedor y no el sitio de sus hijos, se funde.
+
+**La rueda va con duración fija, y es la única excepción a «muelles para todo lo
+interrumpible».** No es una preferencia: es que un muelle dentro de un `InteractionTracker`
+no termina cuando su periodo dice. Medido contando cada cuántos milisegundos cambian los
+píxeles de la columna, una sola muesca dejaba la lista moviéndose **1500 ms** con un muelle
+de periodo 180 que debería asentar en 115; bajando el periodo a 60 se quedaba en 1000, así
+que ahí dentro no corre solo lo que se le pasa. Con 200 ms escritos, acaba en 200 — y una
+ráfaga de cinco muescas, 190 ms después de la última. Lo que se pierde es retomar la
+velocidad al reapuntar, y a esa escala no se nota: 200 ms son menos que el hueco entre dos
+muescas de una mano.
+
+**Escribir la identidad no basta: hay que PARAR la animación.** `Views::Main::Recede`
+devolvía la lista de 0,94 a 1,0 con un muelle, y eso dejaba una animación de escala colgando
+del visual — lo que la fase 7 ya midió que basta para que el texto se rasterice filtrado. Era
+además una animación que **no mira nadie**, porque lo que vuelve está en opacidad cero hasta
+que el fundido lo trae. De ahí `Ui::Element::ResetScale`, que para la escala Y el
+`CenterPoint` —`ScaleTo` lo ata con una expresión, que es otra animación— y escribe la
+identidad. Es la regla de la fase 6 («parar antes de escribir») aplicada a una propiedad
+que se creía a salvo por acabar en 1,0 exacto.
+
+**El modo lento de depuración es global y mutable, y es lo correcto aquí.**
+`Motion::TimeScale()` lo miran `Motion::Animator`, `Gfx::Scroller` y **los dos temporizadores
+que esperan a que un muelle acabe** para esconder lo que viajó. Ese último es el que importa:
+sin él, el modo lento haría desaparecer el inspector a mitad de su viaje, que es exactamente
+el fotograma que se estaba yendo a mirar. Pasarlo por parámetro obligaría a llevarlo encima
+a dos vistas y al scroller sin ningún otro motivo para conocerse.
+
+**El arranque no puede bajar de 300 ms en frío, y eso está medido, no supuesto.**
+`D3D11CreateDevice` tarda **172 ms** en esta máquina y es casi todo el arranque. Con un banco
+aparte: WARP tarda 20, precargar `d3d11.dll` y `dxgi.dll` no cambia nada (162) y darle el
+adaptador ya elegido tampoco (162). O sea que **no es el cargador ni la enumeración de
+adaptadores: es el controlador de la tarjeta inicializándose**, y no se le puede pedir que
+tarde menos. Lo que sí se hizo: `Gfx::Device::BeginCreate()` lo lanza en un hilo en la
+primera línea de `Init` y el resto de la función le quita al camino crítico la ventana, la
+escena, el tema y **abrir SQLite y leer la caché entera**, que estaban todos detrás del
+dispositivo sin necesitarlo. De 269 ms de media a 246, con la espera al dispositivo bajando
+de 172 a 120-146. La única manera de bajar más es que el primer fotograma no necesite
+Direct2D — o sea, enseñar la ventana antes de tener texto, que es dejar de cumplir «primer
+fotograma con datos». Queda escrito para quien lo quiera decidir.
+
+**`ms_arranque` y `ms_arranque_gpu` van a la tabla de ajustes**, como la fase 3 hizo con los
+pases de la sincronización y la 5 con sus milisegundos. Van los dos juntos porque solo
+juntos dicen algo: un arranque que sube sin que suba el segundo es culpa nuestra, y uno que
+sube con él es el controlador. La hoja de «Acerca de» los enseña, que es donde se miran sin
+abrir SQLite.
+
+**Lo que llega por `brujula://` es texto de un desconocido.** Un esquema propio lo dispara
+cualquier página web que alguien abra sin mirar; el navegador pregunta y hay gente que dice
+que sí. Por eso el parser es puro, vive en `brujula_core` y tiene pruebas con
+`../../Windows/System32` dentro, y por eso es **lista blanca y no lista negra**: una lista
+negra hay que acertarla entera y una blanca solo hay que acertarla una vez. Se vuelve a
+validar al recibir el `WM_COPYDATA`, porque por ahí entra cualquiera que sepa el nombre de
+nuestra clase de ventana — es la misma regla que la fase 5 le puso a la ruta de la API.
+
+**Una sola instancia, y el traspaso por `WM_COPYDATA`.** Dos procesos serían dos conexiones
+de escritura a la misma caché y dos hilos sincronizando la misma cuenta. `WM_COPYDATA` y no
+un mensaje propio con un puntero dentro: ese puntero sería de otro proceso y aquí no apunta
+a nada — es el mismo motivo por el que `Github::Sync` publica un aviso vacío desde la fase 3,
+visto desde el otro lado.
+
+**La versión vive en `src/app/Version.h` y la incluye el `.rc`.** rc.exe sabe incluir
+cabeceras mientras no tengan C++ dentro, así que el número se escribe una vez. Con dos
+copias no falla nada el día que se suba una y no la otra: simplemente las propiedades del
+archivo dicen una cosa y la aplicación otra, y nadie se entera hasta que hace falta saber qué
+versión tiene alguien delante.
+
+**Falta comprobar cuatro cosas**, las cuatro heredadas y ninguna nueva: la nitidez a otras
+escalas —`WM_DPICHANGED` sigue sin poder dispararse: una sola pantalla al 100 %—, el IME de
+verdad, el panel táctil de precisión y los tres cuadros de archivo. Y el texto «un toque
+borroso» de la fase 7 sigue pendiente de decidir: la hipótesis viva sigue siendo el suavizado
+en gris, y lo que hay que probar son unos `IDWriteRenderingParams` propios — pero esta fase
+encontró y quitó una causa real de borrosidad que no estaba en aquella lista (la escala
+residual de `Recede`), así que conviene volver a mirarlo antes de tocar el suavizado.
 
 ### Fase 7 — 21 de septiembre de 2026
 

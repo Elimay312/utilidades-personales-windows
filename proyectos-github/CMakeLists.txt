@@ -100,6 +100,10 @@ add_library(brujula_core STATIC
   # significa que dos textos coincidan son tres decisiones que, cuando se equivocan, dejan
   # una lista más corta —y una lista más corta se parece muchísimo a una lista correcta—.
   src/app/State.cpp
+  # Fase 8. Lo que llega por brujula:// lo escribe cualquiera —una página web puede
+  # disparar un esquema propio— así que decidir qué se acepta es una función con pruebas
+  # y no un if dentro de wWinMain.
+  src/app/Launch.cpp
   src/store/Db.cpp
   src/store/Schema.cpp
   src/store/Repos.cpp
@@ -250,6 +254,7 @@ add_executable(brujula_tests
   tests/time_test.cpp
   tests/rules_test.cpp
   tests/state_test.cpp
+  tests/launch_test.cpp
   tests/store_test.cpp
   tests/query_test.cpp
   tests/parse_test.cpp

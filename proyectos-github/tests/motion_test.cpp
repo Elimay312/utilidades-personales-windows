@@ -14,10 +14,10 @@
 using Motion::Kind;
 
 TEST_CASE("la tabla de muelles es la de CLAUDE.md") {
-    CHECK(Motion::SpringFor(Kind::Snappy) == Motion::Spring{0.9f, 80.0f});
-    CHECK(Motion::SpringFor(Kind::Standard) == Motion::Spring{0.85f, 130.0f});
-    CHECK(Motion::SpringFor(Kind::Smooth) == Motion::Spring{0.8f, 165.0f});
-    CHECK(Motion::SpringFor(Kind::Expressive) == Motion::Spring{0.75f, 195.0f});
+    CHECK(Motion::SpringFor(Kind::Snappy) == Motion::Spring{0.9f, 130.0f});
+    CHECK(Motion::SpringFor(Kind::Standard) == Motion::Spring{0.85f, 200.0f});
+    CHECK(Motion::SpringFor(Kind::Smooth) == Motion::Spring{0.8f, 250.0f});
+    CHECK(Motion::SpringFor(Kind::Expressive) == Motion::Spring{0.75f, 340.0f});
 }
 
 TEST_CASE("los muelles van de más seco a más suelto, en ese orden") {
@@ -32,21 +32,56 @@ TEST_CASE("los muelles van de más seco a más suelto, en ese orden") {
     CHECK(Motion::kSmooth.periodMs < Motion::kExpressive.periodMs);
 }
 
-TEST_CASE("el periodo no es la duración, y ninguno se va de tiempo") {
-    // Period es el periodo NO amortiguado. Con 4/(damping * 2*pi/Period) los cuatro
-    // asientan entre 57 y 166 ms desde que la fase 6 los secó. La prueba está para que si
-    // alguien sube un periodo a ojo y lo pone en 2 segundos, se entere aquí y no al
-    // abrir la app.
-    CHECK(Motion::SettleMs(Motion::kSnappy) == doctest::Approx(56.6f).epsilon(0.01));
-    CHECK(Motion::SettleMs(Motion::kStandard) == doctest::Approx(97.4f).epsilon(0.01));
-    CHECK(Motion::SettleMs(Motion::kSmooth) == doctest::Approx(131.3f).epsilon(0.01));
-    CHECK(Motion::SettleMs(Motion::kExpressive) == doctest::Approx(165.5f).epsilon(0.01));
-
-    // El techo son 200 ms y no 350: con la aplicación en uso, todo lo que pase de ahí se
-    // siente lento al cambiar de proyecto, que es lo que dijo quien la usa.
-    for (const Kind kind : {Kind::Snappy, Kind::Standard, Kind::Smooth, Kind::Expressive}) {
-        CHECK(Motion::SettleMs(Motion::SpringFor(kind)) < 200.0f);
+TEST_CASE("el periodo ES la duración perceptual, y cae donde lo pone lo publicado") {
+    // Este es el mando con el que se afina, y la prueba que lo dice. Las fases 1 y 6 lo
+    // afinaron mirando SettleMs y se salieron por abajo: 80-195 ms de duración perceptual,
+    // cuando los tres presets de iOS están los tres en 500.
+    //
+    // Las bandas son las publicadas: micro-interacción alrededor de 150 ms, cambio de
+    // maquetación entre 200 y 350. El techo de 350 se queda: por encima empieza a estorbar
+    // para ir de un proyecto a otro, que es lo que se midió usando la aplicación.
+    CHECK(Motion::kSnappy.periodMs >= 100.0f);
+    CHECK(Motion::kSnappy.periodMs <= 200.0f);
+    for (const Kind kind : {Kind::Standard, Kind::Smooth, Kind::Expressive}) {
+        CHECK(Motion::SpringFor(kind).periodMs >= 200.0f);
+        CHECK(Motion::SpringFor(kind).periodMs <= 350.0f);
     }
+}
+
+TEST_CASE("los rebotes están dentro de lo que no parece un dibujo animado") {
+    // En el idioma de Apple, bounce = 1 - amortiguación. Sus tres presets van de 0 a 0,3 y
+    // por encima de 0,3 el movimiento se lee como decoración. Los cuatro de aquí caen
+    // dentro, y esa es toda la comprobación: son el carácter de la tabla y no se tocan.
+    for (const Kind kind : {Kind::Snappy, Kind::Standard, Kind::Smooth, Kind::Expressive}) {
+        const float bounce = Motion::BounceOf(Motion::SpringFor(kind));
+        CHECK(bounce > 0.0f);
+        CHECK(bounce <= 0.3f);
+    }
+}
+
+TEST_CASE("el asentado es una consecuencia, no un mando, y ninguno se va de tiempo") {
+    // 4/(ζ · 2π/T). Está aquí para que si alguien sube un periodo a ojo y lo pone en dos
+    // segundos se entere en esta línea y no abriendo la aplicación.
+    CHECK(Motion::SettleMs(Motion::kSnappy) == doctest::Approx(91.96f).epsilon(0.01));
+    CHECK(Motion::SettleMs(Motion::kStandard) == doctest::Approx(149.79f).epsilon(0.01));
+    CHECK(Motion::SettleMs(Motion::kSmooth) == doctest::Approx(198.94f).epsilon(0.01));
+    CHECK(Motion::SettleMs(Motion::kExpressive) == doctest::Approx(288.60f).epsilon(0.01));
+
+    for (const Kind kind : {Kind::Snappy, Kind::Standard, Kind::Smooth, Kind::Expressive}) {
+        CHECK(Motion::SettleMs(Motion::SpringFor(kind)) < 300.0f);
+    }
+}
+
+TEST_CASE("el cruce de tinta no sale de ningún muelle") {
+    // Hover, pulsado, foco y píldora. Salía de FadeMs(Snappy) y con la tabla de la fase 6
+    // eso eran 34 ms: dos fotogramas a 60 Hz, o sea un corte. Tiene que ser bastante más
+    // largo que eso y bastante más corto que un cambio de tema, que sí es una pantalla
+    // entera cruzándose.
+    CHECK(Motion::kInkMs >= 100.0f);
+    CHECK(Motion::kInkMs < Motion::kThemeCrossfadeMs);
+    // Y NO es el fundido del muelle rígido: si algún día coincidieran por accidente, esta
+    // línea avisa de que se han vuelto a atar.
+    CHECK(Motion::kInkMs != doctest::Approx(Motion::Resolve(Kind::Snappy, true).fadeMs));
 }
 
 TEST_CASE("con animaciones, el fundido termina antes que el muelle") {

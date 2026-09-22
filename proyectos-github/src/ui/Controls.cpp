@@ -161,7 +161,7 @@ void Button::OnStateChanged() {
     // Hover y pulsado son propiedades de la GPU: el color del material y la escala. La
     // textura no se toca, y por eso pasar el ratón por una lista no repinta nada.
     if (Gfx::Material* material = MaterialOf()) {
-        material->SetColor(Fill(Tokens()), animator, animator.FadeMs(Motion::Kind::Snappy));
+        material->SetColor(Fill(Tokens()), animator, animator.InkMs());
     }
     animator.Scale(Visual(), Pressed() ? Motion::Vec3{kPressScale, kPressScale, 1.0f}
                                        : Motion::Vec3{1.0f, 1.0f, 1.0f},
@@ -289,8 +289,7 @@ void Pill::SetPriority(Priority priority) {
     if (Attached()) {
         if (Gfx::Material* material = MaterialOf()) {
             material->SetColor(WithAlpha(ColorOf(m_priority, Tokens()), kPillFillAlpha),
-                               HostRef().Animator(),
-                               HostRef().Animator().FadeMs(Motion::Kind::Snappy));
+                               HostRef().Animator(), HostRef().Animator().InkMs());
         }
     }
     Invalidate();

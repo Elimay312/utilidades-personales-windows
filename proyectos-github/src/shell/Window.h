@@ -11,6 +11,7 @@
 #include <Windows.h>
 
 #include <functional>
+#include <string>
 
 #include "shell/Caption.h"
 #include "shell/Input.h"
@@ -65,6 +66,11 @@ public:
         // se cansó de esperar. Este SÍ lleva carga, y no es una excepción a la regla de
         // arriba: no viene de otro hilo, viene del shell, y lo que trae es qué pasó.
         std::function<void(LPARAM)> onNotify;
+
+        // Otra Brújula arrancó con un repositorio que abrir y nos lo pasa antes de morirse.
+        // Ver main.cpp: viene de OTRO proceso, así que llega por WM_COPYDATA, que es el
+        // único mensaje que el sistema copia de un espacio de direcciones al otro.
+        std::function<void(const std::wstring&)> onOpenRepo;
     };
 
     // El aviso que publica ThemeWatcher desde su hilo.
@@ -75,6 +81,11 @@ public:
     static constexpr UINT kSyncMessage = WM_APP + 2;
     // El que manda el área de notificación con lo que le pase al globo del recordatorio.
     static constexpr UINT kNotifyMessage = WM_APP + 3;
+
+    // El sello del WM_COPYDATA de "abre este repositorio". No es seguridad —cualquiera
+    // puede ponerlo— pero sí evita interpretar como un nombre de repositorio el
+    // WM_COPYDATA que otra aplicación mande por otro motivo.
+    static constexpr ULONG_PTR kOpenRepoCopyData = 0x42524A31;  // 'BRJ1'
 
     bool Create(HINSTANCE instance, const wchar_t* title, float widthDip, float heightDip);
     void Show(int showCommand);

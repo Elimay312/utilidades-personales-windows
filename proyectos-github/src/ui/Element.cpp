@@ -217,6 +217,16 @@ void Element::ScaleTo(float scale, Motion::Kind kind) {
     animator.Scale(m_visual, {scale, scale, 1.0f}, kind);
 }
 
+void Element::ResetScale() {
+    if (!m_visual) return;
+    // El CenterPoint también: ScaleTo lo ata con una expresión, que es una animación más
+    // colgando del visual. Con la escala en 1 el centro da igual, así que se suelta entero.
+    m_visual.StopAnimation(L"Scale");
+    m_visual.StopAnimation(L"CenterPoint");
+    m_visual.Scale({1.0f, 1.0f, 1.0f});
+    m_visual.CenterPoint({0.0f, 0.0f, 0.0f});
+}
+
 void Element::MorphTo(const Rect& frame, float radiusDip, Motion::Kind kind) {
     if (m_layer) {
         // Con superficie propia no hay transición posible: animar el tamaño obligaría a
@@ -418,7 +428,7 @@ void Element::UpdateRing() {
 
     Motion::Animator& animator = m_host->Animator();
     const bool show = m_focused && m_host->Input().FocusRingVisible();
-    const float fade = animator.FadeMs(Motion::Kind::Snappy);
+    const float fade = animator.InkMs();
 
     if (show) {
         // Desde 1,04 y con muelle rígido. Se escribe el valor inicial a mano porque el

@@ -87,8 +87,8 @@ Rect ChipRect(const Rect& box, int index) {
 // Cuánto se espera antes de esconder la pantalla al terminar: lo que tarda el muelle
 // expresivo en asentarse, con un poco de margen. Sale de la tabla y no de un número
 // escrito a mano, así que afinar el muelle en la fase 8 lo arrastra solo.
-int HideDelayMs() {
-    return static_cast<int>(Motion::SettleMs(Motion::SpringFor(Motion::Kind::Expressive))) + 80;
+int HideDelayMs(const Motion::Animator& animator) {
+    return static_cast<int>(animator.SettleMs(Motion::Kind::Expressive)) + 80;
 }
 
 }  // namespace
@@ -423,7 +423,6 @@ void Review::Finish() {
     if (!m_hide && Attached()) {
         if (const auto queue = HostRef().Queue()) {
             m_hide = queue.CreateTimer();
-            m_hide.Interval(std::chrono::milliseconds(HideDelayMs()));
             m_hide.IsRepeating(false);
             m_hide.Tick([this](auto&&, auto&&) {
                 // Se comprueba otra vez: entre el fundido y el temporizador puede haberse
@@ -433,6 +432,8 @@ void Review::Finish() {
         }
     }
     if (m_hide) {
+        // El intervalo, en cada final y no al crear: ver Views::Main::CloseInspector.
+        m_hide.Interval(std::chrono::milliseconds(HideDelayMs(HostRef().Animator())));
         m_hide.Stop();
         m_hide.Start();
     } else {

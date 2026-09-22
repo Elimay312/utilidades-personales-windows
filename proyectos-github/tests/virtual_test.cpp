@@ -208,12 +208,14 @@ TEST_CASE("el tirón elástico cede cada vez menos y nunca se desboca") {
 
 TEST_CASE("el escalonado de entrada tiene techo") {
     CHECK(Ui::StaggerMs(0) == doctest::Approx(0.0f));
-    CHECK(Ui::StaggerMs(1) == doctest::Approx(20.0f));  // los 20 ms de CLAUDE.md
-    CHECK(Ui::StaggerMs(5) == doctest::Approx(100.0f));
-    // Sin techo, el elemento 499 empezaría a aparecer diez segundos después del primero.
-    CHECK(Ui::StaggerMs(499) == doctest::Approx(120.0f));
-    // Y el techo llega pronto a propósito: a partir del sexto, todos entran a la vez.
-    CHECK(Ui::StaggerMs(6) == doctest::Approx(120.0f));
+    // 45 ms por elemento: dentro de los 40-80 que hacen que la secuencia se LEA. Con los 20
+    // de antes el retardo se pagaba y el ritmo no llegaba.
+    CHECK(Ui::StaggerMs(1) == doctest::Approx(45.0f));
+    CHECK(Ui::StaggerMs(3) == doctest::Approx(135.0f));
+    // Sin techo, el elemento 499 empezaría a aparecer veintidós segundos después del primero.
+    CHECK(Ui::StaggerMs(499) == doctest::Approx(180.0f));
+    // Y el techo llega pronto a propósito: a partir del cuarto, todos entran a la vez.
+    CHECK(Ui::StaggerMs(4) == doctest::Approx(180.0f));
 }
 
 TEST_CASE("la cuadrícula redondea hacia arriba y nunca deja a nadie fuera") {

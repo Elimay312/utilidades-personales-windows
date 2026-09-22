@@ -28,8 +28,8 @@ constexpr float kMinContentWidth = 320.0f;
 // estándar en asentarse, con un poco de margen. Sale de la tabla y no de un número escrito a
 // mano, así que afinar el muelle en la fase 8 lo arrastra solo. Al disparar se comprueba que
 // sigue cerrado, por si se reabrió entre medias.
-int HideDelayMs() {
-    return static_cast<int>(Motion::SettleMs(Motion::SpringFor(Motion::Kind::Standard))) + 80;
+int HideDelayMs(const Motion::Animator& animator) {
+    return static_cast<int>(animator.SettleMs(Motion::Kind::Standard)) + 80;
 }
 
 // Cuánto se aleja la lista cuando entra la revisión semanal. Poco: lo que tiene que decir
@@ -337,7 +337,16 @@ void Main::Recede(bool away) {
     Ui::Element* behind[] = {m_sidebar, m_content, m_inspector};
     for (Ui::Element* one : behind) {
         if (one == nullptr) continue;
-        one->ScaleTo(away ? kRecedeScale : 1.0f, Motion::Kind::Expressive);
+        if (away) {
+            one->ScaleTo(kRecedeScale, Motion::Kind::Expressive);
+        } else {
+            // La vuelta NO se anima, y quitarla arregla dos cosas a la vez: era una escala
+            // que nadie veía —lo que vuelve está en opacidad cero hasta que el fundido lo
+            // trae— y dejaba un muelle colgando del visual, que basta para que el texto de
+            // toda la lista se rasterice filtrado a partir de la primera revisión. Ver
+            // Ui::Element::ResetScale.
+            one->ResetScale();
+        }
         one->SetOpacity(away ? 0.0f : 1.0f, fade);
     }
 }
@@ -420,7 +429,6 @@ void Main::CloseInspector() {
     if (!m_hideInspector && Attached()) {
         if (const auto queue = HostRef().Queue()) {
             m_hideInspector = queue.CreateTimer();
-            m_hideInspector.Interval(std::chrono::milliseconds(HideDelayMs()));
             m_hideInspector.IsRepeating(false);
             m_hideInspector.Tick([this](auto&&, auto&&) {
                 // Se comprueba otra vez: entre el muelle y el temporizador puede haberse
@@ -430,6 +438,12 @@ void Main::CloseInspector() {
         }
     }
     if (m_hideInspector) {
+        // El intervalo se pone en CADA cierre y no al crear el temporizador: con el modo
+        // lento de depuración encendido a mitad de sesión, uno puesto una sola vez se
+        // quedaría con los 230 ms de antes y escondería el panel a mitad de su viaje — que
+        // es justo el fotograma que el modo lento existe para poder mirar.
+        m_hideInspector.Interval(
+            std::chrono::milliseconds(HideDelayMs(HostRef().Animator())));
         m_hideInspector.Stop();
         m_hideInspector.Start();
     } else {

@@ -107,17 +107,39 @@ void List::SetLayout(int columns, float cellHeightDip, float gapDip, bool animat
     if (!Attached()) return;
 
     Reextend();
-    // Las que ya están se deslizan a su celda nueva. El TAMAÑO no se anima y es a
-    // propósito: animarlo reasignaría la textura de cada celda en cada fotograma, que es
-    // justo lo que la fase 1 midió que no había que hacer. Cambia de golpe y se mueve con
-    // muelle, que es lo que se lee como "la rejilla ha fluido".
+
+    // **Cambiar la FORMA de la rejilla no se desliza: se funde.** Y esto deshace la
+    // decisión de la fase 4, que dijo «el tamaño de una celda no se anima, y la posición
+    // sí», con una razón buena —animar el tamaño reasigna la textura de cada celda en cada
+    // fotograma— y una consecuencia que no se vio hasta usarlo.
+    //
+    // Entre lista y cuadrícula la celda pasa a un TERCIO de ancho. Con el ancho puesto ya y
+    // la posición viajando, las que van a la segunda y la tercera columna cruzan por encima
+    // de las de la primera, y como las tarjetas son translúcidas se leen tres textos
+    // superpuestos. Medido: **1,4 segundos** de tarjetas cruzándose, y el estado final es
+    // correcto pero por el camino parece que la vista se ha roto. Lo reportó quien la usa,
+    // con una captura de en medio del viaje.
+    //
+    // Lo que cambia aquí no es dónde está CADA tarjeta: es la forma de toda la rejilla. Eso
+    // se lee como un cambio de plano, no como un viaje, así que se recoloca de golpe y lo
+    // que se anima es la columna entera apareciendo. Es una sola animación de opacidad
+    // sobre un visual en vez de una por celda, y dura lo que dura un fundido.
     for (Row& row : m_rows) {
         if (row.index < 0) continue;
         // Sin PaintRow detrás: la celda cambia de tamaño siempre que se llega aquí —es lo
         // que hace esta función— y de repintarla se encarga ya PlaceRow.
-        PlaceRow(row, row.index, animate);
+        PlaceRow(row, row.index, false);
     }
-    Recycle(animate);
+    Recycle(false);
+
+    if (animate && m_content) {
+        Motion::Animator& animator = HostRef().Animator();
+        // Se escribe el cero a mano porque el fundido retoma desde donde esté: sin esto, la
+        // segunda vez seguida no habría nada que animar.
+        m_content.StopAnimation(L"Opacity");
+        m_content.Opacity(0.0f);
+        animator.Opacity(m_content, 1.0f, animator.FadeMs(Motion::Kind::Standard));
+    }
 }
 
 void List::SetPadding(float horizontalDip, float verticalDip) {

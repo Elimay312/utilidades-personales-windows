@@ -42,6 +42,14 @@ namespace App {
 
 class Application {
 public:
+    // El sello del WM_COPYDATA con el que una segunda instancia nos pasa qué abrir. Vive
+    // aquí porque lo usan main.cpp (al mandarlo) y Shell::Window (al filtrarlo).
+    static constexpr ULONG_PTR kOpenRepoCopyData = Shell::Window::kOpenRepoCopyData;
+
+    // Qué repositorio se pidió abrir al arrancar: --repo NOMBRE o brujula://repo/NOMBRE.
+    // Se guarda y no se abre todavía porque cuando esto se llama no hay ni ventana.
+    void SetPendingRepo(std::wstring name) { m_pendingRepo = std::move(name); }
+
     bool Init(HINSTANCE instance);
     int Run();
     void Shutdown();
@@ -109,6 +117,13 @@ private:
     // hace falta: buscar algo en la paleta y que no aparezca porque estaba filtrado sería
     // encontrarlo y perderlo en el mismo gesto.
     void RevealRepo(const std::string& repoId);
+    // Por NOMBRE y no por identificador: es lo que traen la URL y la línea de órdenes, y
+    // nadie va a escribir un node id de GraphQL en un lanzador. Si no está en la caché lo
+    // dice con un aviso, que es más útil que no hacer nada: casi siempre significa que ese
+    // repositorio todavía no se ha sincronizado.
+    void OpenRepoByName(const std::wstring& name);
+    // Deja registrado brujula:// en HKCU apuntando a ESTE ejecutable. Ver App.cpp.
+    void RegisterUrlScheme();
     void SetProjectState(Model::State state);
     void SetNextStep(const std::wstring& text);
     void AddNovedad(const std::wstring& text);
@@ -137,6 +152,8 @@ private:
 
     // --- Los ajustes del pie de la barra lateral -----------------------------------------
     void ShowSettings(float x, float y);
+    // La hoja de «Acerca de»: quién es esto, qué versión y cuánto tardó en abrirse.
+    void ShowAbout();
     void ChooseReposRoot();
     void ExportBackup();
     void ImportBackup();
@@ -212,6 +229,8 @@ private:
     // regla 5). Lo único que ahorra es tener que encenderlo a mano cada vez.
     bool m_repoModeDefault = false;
     std::wstring m_account;
+    // Lo que se pidió abrir al arrancar, hasta que haya ventana donde abrirlo.
+    std::wstring m_pendingRepo;
     // La vista guardada se lee una sola vez, al arrancar. Ver LoadFromCache.
     bool m_lensLoaded = false;
 

@@ -823,42 +823,57 @@ bool GoogleSync::PullTasks(const std::wstring& auth, const std::string& listId) 
 
 void GoogleSync::AdoptLocalRows() {
   store_.Run([&] {
-    const std::string calendar = store_.DefaultCalendar(/*isTask=*/false);
-    const std::string list = store_.DefaultCalendar(/*isTask=*/true);
-    // Nothing to adopt into yet.
-    if (calendar == kLocalCalendarId && list == kLocalTaskListId) return;
+    // Asked for explicitly instead of through Store::DefaultCalendar, because until this
+    // function has run there may be TWO rows of a kind flagged as the default -- the seeded
+    // placeholder and the one that just came down -- and that question would be answered by
+    // whichever identifier happens to sort first.
+    const auto realOne = [&](const char* kind) {
+      std::string id;
+      if (std::optional<Stmt> stmt = store_.db().Prepare(
+              "SELECT id FROM calendars WHERE kind = ? AND is_primary = 1 AND visible = 1 "
+              "AND id NOT IN (?, ?) ORDER BY sort, id LIMIT 1")) {
+        stmt->Bind(1, kind);
+        stmt->Bind(2, kLocalCalendarId);
+        stmt->Bind(3, kLocalTaskListId);
+        if (stmt->Step()) id = stmt->Text(0);
+      }
+      return id;
+    };
+
+    const std::string calendar = realOne("calendar");
+    const std::string list = realOne("tasklist");
+    if (calendar.empty() && list.empty()) return;  // no account behind them yet
 
     Transaction tx(store_.db());
     if (!tx.Begin()) return;
     int moved = 0;
 
-    if (calendar != kLocalCalendarId) {
+    // Moving what was created without an account, and retiring the placeholder, are one thing
+    // and not two. Doing the second only when the first moved something is what left this
+    // machine with two calendars flagged as the default: there was nothing local to move.
+    const auto adopt = [&](const std::string& target, const char* placeholder, const char* sql) {
+      if (target.empty()) return;
+      if (std::optional<Stmt> stmt = store_.db().Prepare(sql)) {
+        stmt->Bind(1, target);
+        stmt->Bind(2, placeholder);
+        stmt->Step();
+        moved += store_.db().Changes();
+      }
+      // The placeholder stops being offered. It is not deleted: the schema will not let a
+      // calendar go while anything still points at it, and there is no reason to find that out
+      // the hard way.
       if (std::optional<Stmt> stmt = store_.db().Prepare(
-              "UPDATE events SET calendar_id = ? WHERE calendar_id = ?")) {
-        stmt->Bind(1, calendar);
-        stmt->Bind(2, kLocalCalendarId);
+              "UPDATE calendars SET is_primary = 0, visible = 0 WHERE id = ?")) {
+        stmt->Bind(1, placeholder);
         stmt->Step();
-        moved += store_.db().Changes();
       }
-    }
-    if (list != kLocalTaskListId) {
-      if (std::optional<Stmt> stmt =
-              store_.db().Prepare("UPDATE tasks SET list_id = ? WHERE list_id = ?")) {
-        stmt->Bind(1, list);
-        stmt->Bind(2, kLocalTaskListId);
-        stmt->Step();
-        moved += store_.db().Changes();
-      }
-    }
+    };
+
+    adopt(calendar, kLocalCalendarId, "UPDATE events SET calendar_id = ? WHERE calendar_id = ?");
+    adopt(list, kLocalTaskListId, "UPDATE tasks SET list_id = ? WHERE list_id = ?");
 
     if (moved > 0) {
-      // The placeholders stop being offered once there is a real account behind them. They are
-      // not deleted: the schema will not let a calendar go while anything still points at it,
-      // and there is no reason to find out the hard way.
-      store_.db().RunOnce(
-          "UPDATE calendars SET is_primary = 0, visible = 0 "
-          "WHERE id IN ('local', 'local-tasks')");
-      LogInfo(L"sync: {} cosas creadas sin cuenta se suben al calendario elegido", moved);
+      LogInfo(L"sync: {} cosas creadas sin cuenta pasan al calendario elegido", moved);
     }
     tx.Commit();
   });

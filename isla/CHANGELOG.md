@@ -13,6 +13,24 @@ está en el mensaje de su commit.
 
 Todo lo que hay. Falta probarlo en otros equipos y con otras aplicaciones de música.
 
+### Arreglado: el separador volvió a ser un punto, y no «A-circunfleja punto»
+
+Mojibake, y de cosecha propia: para ajustar un número se usó `Get-Content | Set-Content` de
+PowerShell 5.1, y `Get-Content` sin `-Encoding` lee en la página ANSI del sistema. El
+fichero era UTF-8, así que cada carácter no ASCII salió leído como CP1252 y se reescribió
+como UTF-8. De regalo, `Set-Content -Encoding utf8` le puso un BOM que ningún otro fichero
+del proyecto tiene.
+
+**No era solo el aviso de volumen:** se llevó por delante seis líneas, dos de ellas de
+código que ya estaba escrito y funcionando —el separador del título de canción y el del
+aviso de batería—. Reparado invirtiendo exactamente la transformación (encode cp1252,
+decode utf-8), que además sirve de comprobación: si algún carácter no ASCII no viniera de
+ese ida y vuelta, el encode lanza en vez de estropearlo más. El proyecto queda sin un solo
+mojibake: solo `§`, `«»`, `·`, `í` y los puntos suspensivos, todos donde deben estar.
+
+**La regla que deja:** nunca editar fuentes con `Get-Content`/`Set-Content` de PowerShell
+5.1. Corrompe sin avisar y el diff parece inocente.
+
 ### El volumen, con nombre y apellidos — y la isla se muda contigo
 
 **Trabajo en colaboración con el [HUD](../hud/README.md).** Los dos proyectos leen el

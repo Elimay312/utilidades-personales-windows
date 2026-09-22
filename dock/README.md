@@ -32,11 +32,11 @@ las convenciones están en [CLAUDE.md](CLAUDE.md).
 | Gesto | Qué pasa |
 |---|---|
 | Pasar por encima | El icono crece y sale su nombre. La curva empuja a los vecinos. |
-| Clic | Si no está abierta, la lanza. Si su ventana es la que tienes delante, la esconde con efecto genio. Si no —minimizada, tapada, o en otra pantalla—, la saca del icono con el mismo genio al revés. |
+| Clic | Si no está abierta, la lanza. Si su ventana **se está viendo**, la esconde con efecto genio —lo que se ve, tenga el foco o no: con varias pantallas el foco no dice lo que estás mirando—. Si no —minimizada, o tapada por otra—, la saca del icono con el mismo genio al revés. |
 | Clic en una carpeta | Se despliega en rejilla, 5 por fila. Se puede entrar en subcarpetas y volver. |
 | Clic derecho | Menú: los documentos recientes de esa app, quitarla del dock —o anclarla, si solo estaba abierta—, y salir. |
 | Clic central | Una instancia nueva, aunque ya haya ventana. |
-| Rueda | La lista de ventanas de esa app, con miniatura de la elegida y una ✕ para cerrarla. |
+| Rueda | La lista de ventanas de esa app, con miniatura de la elegida y una ✕ para cerrarla. Con la lista abierta, el clic sobre **el icono** abre la elegida: no hay que bajar el ratón al título. |
 | Arrastrar un icono | Reordena. Sacándolo del dock, lo quita. |
 | Soltar un fichero encima | Sobre un icono, lo abre con esa app. En el hueco de la derecha, lo añade al dock. |
 | `Ctrl+Alt+…` | Rota entre perfiles de dock, si los hay configurados. |
@@ -45,6 +45,10 @@ Y por su cuenta: **enseña las apps abiertas aunque no las hayas anclado**, detr
 separador y como hace la barra de tareas; se esconde **solo cuando una ventana lo tapa de
 verdad**; se aparta del todo si hay algo a pantalla completa; y reserva su hueco en el
 escritorio declarándose AppBar.
+
+Y **escondido solo se revela desde el filo de la pantalla**: suya es la franja de 3 px del
+borde inferior, y por encima el ratón pasa de largo. Así no salta al *acercarte* ni tapa lo
+que vive pegado abajo —el botón de un chat, la barra de una tienda—.
 
 ---
 
@@ -151,6 +155,7 @@ barras invertidas en JSON. La excepción son las URLs, que se quedan como están
 | Script o documento | `"C:/scripts/backup.ps1"` |
 | App de la Store | `"shell:AppsFolder/<AppUserModelID>"` |
 | Dirección o protocolo | `"https://claude.ai"`, `"ms-settings:display"` |
+| Juego de Steam | `"steam://rungameid/19680"` — sale al soltar su acceso directo en el dock |
 | Carpeta virtual | `"shell:RecycleBinFolder"` |
 
 Con `"arguments"` se le pasan parámetros:
@@ -162,6 +167,13 @@ Con `"arguments"` se le pasan parámetros:
 
 El icono de una dirección es **el de la app que la va a abrir**, que es lo que enseña el
 propio Windows.
+
+Un juego de Steam es el caso raro: su acceso directo no nombra ningún ejecutable, solo
+`steam://rungameid/19680`. Para saber si está abierto, el dock lee dos ficheros de texto de
+Steam —**solo los del juego que ya anclaste**, nunca la biblioteca entera— y de ahí saca su
+carpeta. Sin eso, el juego anclado no se encendía nunca y al abrirlo salía un segundo icono
+en la zona de apps sin anclar. Está en `SEGURIDAD.md` §3.8, con `Steam\userdata` prohibido
+por escrito.
 
 ### Apps abiertas sin anclar
 
@@ -297,6 +309,7 @@ Están comentadas en el código donde tocan, pero conviene tenerlas a mano:
 | `Icons.cs` | Extrae iconos del shell. Caché en memoria compartida entre docks. |
 | `Config.cs` | `dock.json`, `dock.local.json`, perfiles y pantallas. |
 | `Running.cs` | El inventario de ventanas, y de ahí salen las abiertas sin anclar. |
+| `Steam.cs` | En qué carpeta está instalado un juego, para poder cruzarlo con su ventana. |
 | `WindowActions.cs` | Las cuatro cosas que se le hacen a una ventana ajena. |
 | `WindowCapture.cs` | `PrintWindow`. Lo usan el genio y las miniaturas. |
 | `AppBar.cs` | El registro como barra de herramientas de escritorio. |
@@ -356,6 +369,16 @@ prueba se equivocó más veces que el código**. Ejemplos reales:
   reproduciéndose detrás.
 - `WindowFromPoint` ignora `HTTRANSPARENT`, así que decía que el dock recogía clics que en
   realidad dejaba pasar.
+- **Una captura de pantalla no ve el dock.** Se pinta solo con Composition y
+  `CopyFromScreen` devuelve el escritorio sin él, con el dock revelado y la región de 122 px
+  puesta. Lo que sí se puede preguntar desde fuera es la región (`GetWindowRgnBox`) y el
+  hit-test.
+- **PowerShell corre sin conciencia de DPI.** Con pantallas a distinta escala,
+  `GetWindowRect` vuelve virtualizado y los rectángulos no cuadran con los monitores. Hace
+  falta `SetThreadDpiAwarenessContext(PER_MONITOR_AWARE_V2)` o la sonda miente.
+- **El stdout del dock va con buffer.** Contar las líneas del log *antes* de actuar y
+  saltárselas con `-Skip` esconde justo las que se acaban de escribir. Se lee el fichero
+  entero.
 
 **Antes de creerte que algo está roto, comprueba que la sonda mide lo que crees.** Y cuando
 arregles algo, mete el fallo a propósito otra vez y comprueba que la prueba lo detecta: si

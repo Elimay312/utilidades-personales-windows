@@ -254,6 +254,16 @@ con la misma sonda: mediana de 3,57 ms pero **50,8 ms en el peor caso**, en el h
 100 %, 650×325 al 125 %, 910×455 al 175 %. Por eso mudarse de pantalla puede permitirse ser
 bruto en vez de mover la ventana y recalcular medidas a mano.
 
+**Para que dos avisos se vayan a la vez hay que igualar el final, no el principio.** El
+aviso de volumen de la isla y la cápsula del HUD empiezan juntos, pero el HUD tarda ~370 ms
+en salir (340 de animación) y la isla ~150 (muelle de periodo 55). Copiarle el número al
+vecino —primer intento— dejaba **162 ms** de diferencia. Medido muestreando los dos a la vez
+—el HUD por `IsWindowVisible`, la isla por píxeles, porque no se esconde sino que se
+retrae—: **20, 30 y 48 ms en tres pasadas, y el signo cambia entre ellas**, o sea el suelo
+de ruido del muestreo. El 1815 sale de una resta a mano sobre el `msAutoocultar` del HUD,
+con su `ponytail:` al lado: no se lee `hud.json` porque acoplaría los dos procesos justo
+donde presumen de no conocerse.
+
 **`CreateHostBackdropBrush` no muestrea nada en una app Win32 sin empaquetar.** Se crea
 sin lanzar excepción y se pinta **negro**. Con un azul (0,90,220) detrás, el panel daba
 (11,11,13) — el tinte sobre negro. Y el control descarta que sea cosa de esta app: la

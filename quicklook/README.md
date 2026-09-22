@@ -13,6 +13,24 @@ viene en el SDK.
 
 ---
 
+## Qué hace
+
+| Gesto | Qué pasa |
+|---|---|
+| `Espacio` con un archivo marcado en el Explorador | Abre el panel sobre él. Otro espacio y se va. |
+| `Espacio` con el foco en un campo de texto | **Escribe un espacio.** Renombrar con F2, la caja de búsqueda y la barra de direcciones siguen funcionando. |
+| `Esc`, clic fuera, la ✕, o irse a otra app | Cierra el panel. |
+| Marcar otro archivo sin cerrar | La tarjeta **morfa** al nuevo en vez de parpadear. |
+| Rueda | Desplaza el texto, o pasa página en un PDF. |
+| `Shift` + rueda | Hojea entre los archivos marcados, sin tocar lo que el Explorador tiene seleccionado. El pie dice `2 de 5`. |
+| Clic derecho sobre el panel | *Salir de QuickLook*. |
+
+Qué sabe enseñar: imágenes, PDF, vídeo, audio con su carátula, texto y código, y la
+miniatura de los documentos de Office. Lo que no tiene miniatura cae a una ficha con su
+icono, nombre, tamaño y fecha.
+
+---
+
 ## Estado
 
 **M4 — el morph.** El espacio abre el panel sobre el archivo seleccionado y enseña su
@@ -61,6 +79,42 @@ dotnet publish -c Release -o "$env:LOCALAPPDATA\QuickLook\app"
 
 No se ejecuta desde `bin\`, igual que en el dock: un `dotnet clean` se llevaría la config
 por delante.
+
+Lanzado desde una terminal escribe en la consola. Con `QL_LOG=1` añade la traza con marca
+de tiempo, que es la que se usa para calibrar las sondas:
+
+```powershell
+$env:QL_LOG = "1"
+& "$env:LOCALAPPDATA\QuickLook\app\QuickLook.exe"
+```
+
+---
+
+## Configurar: `quicklook.json`
+
+Vive en `%LOCALAPPDATA%\QuickLook\quicklook.json`, un nivel por encima de `app\`. Se copia
+a mano del que hay junto al ejecutable. **Admite comentarios y comas finales**, y se relee
+sola cuando cambia de fecha: no hace falta reiniciar.
+
+```jsonc
+{
+  "autoStart": false,     // arrancar al iniciar sesion (HKCU\...\Run)
+  "panelWidth": 0.62,     // tamano maximo del panel, en fraccion del area de trabajo
+  "panelHeight": 0.72,    // los dos se recortan a [0,2 - 0,95]
+  "videoMuted": true,     // el video entra mudo: es un vistazo, no una reproduccion
+  "audioPlays": true      // el audio si suena, porque ahi el sonido es el contenido
+}
+```
+
+**El programa no escribe este archivo, ni ningún otro.** Y no es una limitación: el único
+estado que necesita recordar entre sesiones es si arranca solo, y eso vive en el registro,
+donde lo ves y lo quitas desde la pestaña Inicio del Administrador de tareas. Como no
+escribe nada, la regla de auditoría que prohíbe escribir archivos puede seguir siendo un
+`grep` a secas, sin excepciones.
+
+Si el JSON tiene una coma de más, se sigue con lo anterior y se dice en la traza: un error
+de tecleo no puede dejarte sin programa. Y los tamaños se recortan porque un `panelWidth`
+de 5 daría un panel más grande que la pantalla, imposible de cerrar con el ratón.
 
 ---
 

@@ -89,7 +89,7 @@ Y al reportar: si algo no se pudo medir, se dice. Nada de dar por bueno lo que n
   que dice para qué es: ahí es donde mira un auditor.
 - **Finales de línea LF.** El repo guarda LF; escribir CRLF hace que git vea el fichero
   entero como cambiado.
-- **El fichero grande es `DockWindow.cs`** (~2600 líneas) y está bien así: es una ventana con
+- **El fichero grande es `DockWindow.cs`** (~2900 líneas) y está bien así: es una ventana con
   su `WndProc`, y partirla por partirla solo añadiría saltos.
 
 ---

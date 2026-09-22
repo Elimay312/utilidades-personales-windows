@@ -95,6 +95,8 @@ Options ParseOptions(int argc, const wchar_t* const* argv, std::wstring_view env
       }
       options.panelWidth = parsed->first;
       options.panelHeight = parsed->second;
+    } else if (Flag(arg, L"--text=", value)) {
+      options.text = value;
     } else if (Flag(arg, L"--out=", value)) {
       if (value.empty()) {
         options.error = L"--out expects a file path";

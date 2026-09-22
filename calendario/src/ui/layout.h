@@ -106,6 +106,7 @@ struct PanelLayout {
   float inputHeight = 0.0f;
   float inputRadius = 0.0f;
   float inputPad = 0.0f;
+  float previewHeight = 0.0f;
 
   float panelRadius = 0.0f;
   float cardRadius = 0.0f;
@@ -145,6 +146,14 @@ struct PanelLayout {
   D2D1_RECT_F input() const {
     return D2D1_RECT_F{contentLeft, inputTop, contentRight, inputTop + inputHeight};
   }
+
+  // The live preview sits on top of the capsule, over the tail of the list. It is not given
+  // room of its own: reserving a row would shrink the month grid for good, and the grid must
+  // not move the moment someone starts typing.
+  D2D1_RECT_F preview() const {
+    const float bottom = inputTop - gap;
+    return D2D1_RECT_F{contentLeft, bottom - previewHeight, contentRight, bottom};
+  }
 };
 
 inline constexpr bool Inside(const D2D1_RECT_F& rect, float x, float y) {
@@ -182,6 +191,7 @@ inline PanelLayout MakeLayout(D2D1_SIZE_F size) {
   out.inputRadius = out.inputHeight / 2.0f;
   out.inputPad = at(18.0f);
   out.inputTop = out.height - out.padding - out.inputHeight;
+  out.previewHeight = at(30.0f);
 
   const float breath = at(8.0f);
   const float listBottom = out.inputTop - breath;

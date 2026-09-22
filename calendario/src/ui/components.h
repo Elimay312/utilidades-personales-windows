@@ -27,10 +27,18 @@ void DrawEventCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush,
                    const D2D1_RECT_F& rect, const SampleEvent& event, int more);
 
-// The capsule: placeholder, text, selection, IME composition and caret.
+// The capsule: placeholder, text, selection, IME composition and caret. `accent` is a second
+// brush, and not the scratch one, because the recognised spans hand it to DirectWrite as a
+// drawing effect: it has to still hold the accent colour when the layout is finally drawn.
 void DrawTextInput(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush,
-                   const PopupModel& model);
+                   ID2D1SolidColorBrush* accent, const PopupModel& model);
+
+// What the line will become, above the capsule: a card like an event card, with the same bar
+// of colour down the left, saying "Mañana · 17:00–18:00 · Dentista" or "Tarea sin fecha".
+void DrawPreviewCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                     const PanelLayout& layout, ID2D1SolidColorBrush* brush,
+                     const PopupModel& model);
 
 // Where in the text a click at panel coordinate `x` lands, so the mouse can place the caret.
 size_t InputIndexAt(const Fonts& fonts, const PanelLayout& layout, const PopupModel& model,

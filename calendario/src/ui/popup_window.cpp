@@ -512,6 +512,13 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
 }
 
 void PopupWindow::Invalidate() {
+  // Every edit funnels through here, and nothing else does: typing, deleting, pasting and the
+  // IME all end in an Invalidate, while the sixteen millisecond animation tick does not change
+  // the text. So this one guard is the whole "reparse when it changed" rule.
+  if (model_.input.text() != parsed_) {
+    parsed_ = model_.input.text();
+    model_.preview = nlp::ParseInput(parsed_, nlp::Now{TodayLocal(), NowMinuteLocal()});
+  }
   if (swapChain_) Render();
 }
 

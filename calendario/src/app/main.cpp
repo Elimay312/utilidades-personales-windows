@@ -121,7 +121,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     const bool written = RenderSnapshot(options.snapshotView, options.theme,
                        D2D1_SIZE_F{static_cast<float>(options.panelWidth),
                                    static_cast<float>(options.panelHeight)},
-                       options.snapshotOut);
+                       options.text, options.snapshotOut);
     CoUninitialize();
     return written ? 0 : 2;
   }

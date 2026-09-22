@@ -69,6 +69,21 @@ bool BuildInputLayout(const Fonts& fonts, const PanelLayout& panel, const PopupM
   return true;
 }
 
+// Light up what the parser understood. DrawTextLayout takes an ID2D1Brush set as a drawing
+// effect straight off, so a span is one call and no renderer of our own. The in-flight IME
+// text is spliced in at the caret, which pushes everything after it along.
+void ApplySpans(const InputLayout& input, const PopupModel& model, ID2D1Brush* accent) {
+  if (!input.layout) return;
+  const size_t caret = model.input.caret();
+  const size_t shift = model.composition.size();
+  for (const nlp::Span& span : model.preview.spans) {
+    const size_t offset = span.offset + (span.offset >= caret ? shift : 0);
+    input.layout->SetDrawingEffect(accent,
+                                   DWRITE_TEXT_RANGE{static_cast<UINT32>(offset),
+                                                     static_cast<UINT32>(span.length)});
+  }
+}
+
 }  // namespace
 
 void DrawMonthGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
@@ -153,9 +168,34 @@ void DrawEventCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
              D2D1_RECT_F{rect.left + kCardTitleLeft * type, rect.top, right, rect.bottom}, brush);
 }
 
+void DrawPreviewCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                     const PanelLayout& layout, ID2D1SolidColorBrush* brush,
+                     const PopupModel& model) {
+  const D2D1_RECT_F rect = layout.preview();
+  const float type = layout.type;
+
+  brush->SetColor(theme.surface);
+  FillRound(target, rect, layout.cardRadius, brush);
+
+  // The same bar an event card wears: the accent when this will be an event, muted when it
+  // will be a task, so the shape of what Enter would create reads before the words do.
+  target->PushAxisAlignedClip(
+      D2D1_RECT_F{rect.left, rect.top, rect.left + layout.barWidth, rect.bottom},
+      D2D1_ANTIALIAS_MODE_ALIASED);
+  brush->SetColor(model.preview.kind == nlp::Kind::Event ? theme.accent : theme.textSecondary);
+  FillRound(target, rect, layout.cardRadius, brush);
+  target->PopAxisAlignedClip();
+
+  brush->SetColor(theme.textPrimary);
+  DrawTextIn(target, fonts.event.Get(), nlp::PreviewText(model.preview, model.today),
+             D2D1_RECT_F{rect.left + kCardTextLeft * type, rect.top,
+                         rect.right - kCardRightPad * type, rect.bottom},
+             brush);
+}
+
 void DrawTextInput(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush,
-                   const PopupModel& model) {
+                   ID2D1SolidColorBrush* accent, const PopupModel& model) {
   const D2D1_RECT_F rect = layout.input();
 
   brush->SetColor(theme.surface);
@@ -169,6 +209,7 @@ void DrawTextInput(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
 
   InputLayout input;
   if (!BuildInputLayout(fonts, layout, model, input)) return;
+  ApplySpans(input, model, accent);
 
   target->PushAxisAlignedClip(input.inner, D2D1_ANTIALIAS_MODE_ALIASED);
 

@@ -9,11 +9,13 @@ Las decisiones de producto, el stack y el sistema de diseño están en [CLAUDE.m
 
 ## Estado
 
-**En desarrollo, fase 2.** Agenda se queda residente en la bandeja, el atajo abre un popup con
-fondo acrylic en la esquina inferior derecha del monitor de trabajo, y el popup ya muestra el
+**En desarrollo, fase 3.** Agenda se queda residente en la bandeja, el atajo abre un popup con
+fondo acrylic en la esquina inferior derecha del monitor de trabajo, y el popup muestra el
 mes, los eventos del día y el campo de texto. El panel se adapta al monitor: su alto es el
-42 % del área de trabajo, entre 380 y 560 DIP, y todo lo de dentro escala con él. Los eventos son **datos de ejemplo en
-memoria**: todavía no hay SQLite, ni parser, ni sincronización, y pulsar Enter no hace nada.
+42 % del área de trabajo, entre 380 y 560 DIP, y todo lo de dentro escala con él. Al escribir,
+Agenda ya **entiende lo que lee**: resalta los trozos que reconoce y muestra encima una tarjeta
+con lo que se va a crear. Los eventos son **datos de ejemplo en memoria**: todavía no hay
+SQLite ni sincronización, y **pulsar Enter no guarda nada**.
 
 | Tema oscuro | Tema claro |
 |---|---|
@@ -73,7 +75,60 @@ globo en la bandeja y sigue funcionando: se abre desde el icono.
   último que sí (31 de enero más un mes es 28 de febrero).
 - La lista muestra hasta dos eventos del día; si hay más, el segundo lleva un `+N` a la
   derecha. Un día sin eventos dice «Sin eventos».
-- **Enter todavía no hace nada.** El parser de lenguaje natural llega en la fase 3.
+- Lo que se escribe se entiende al vuelo, pero **Enter todavía no guarda nada**: falta el
+  almacenamiento, que llega en la fase 4.
+
+### Escribir en lenguaje natural
+
+Se escribe la frase entera de corrido, en español o en inglés, sin importar el orden ni los
+acentos ni las mayúsculas. Los trozos que Agenda reconoce se pintan en azul dentro del campo, y
+lo que queda sin pintar es el título. Encima aparece una tarjeta con lo que se va a crear:
+
+![La vista previa en vivo de Agenda](docs/img/popup-preview.png)
+
+| Escribes | Sale |
+|---|---|
+| `mañana 5pm dentista` | 📅 Mañana · 17:00–18:00 · Dentista |
+| `hoy 17:00 dentista` | 📅 Hoy · 17:00–18:00 · Dentista |
+| `dentista el viernes a las 3 de la tarde por 2h` | 📅 Viernes · 15:00–17:00 · Dentista |
+| `pasado mañana 9 reunión con Ana` | 📅 Pasado mañana · 09:00–10:00 · Reunión con Ana |
+| `de 3 a 5 repaso` | 📅 Hoy · 15:00–17:00 · Repaso |
+| `el 25 almuerzo` | ☑ Tarea · 25 Oct · Almuerzo |
+| `en 3 días pagar el arriendo` | ☑ Tarea · Viernes · Pagar el arriendo |
+| `comprar leche` | ☑ Tarea sin fecha · Comprar leche |
+| `t: pagar luz el lunes` | ☑ Tarea · Lunes · Pagar luz |
+| `gym cada lunes 7am` | 📅 Lunes · 07:00–08:00 · Cada semana · Gym |
+
+La fecha se escribe como «Hoy», «Mañana», «Pasado mañana» o el día de la semana si cae dentro
+de los próximos siete días, y como `25 Oct` si queda más lejos.
+
+Lo que entiende:
+
+- **Fechas:** `hoy`, `mañana`, `pasado mañana`, `lunes`…`domingo`, `próximo lunes`, `el 25`,
+  `en 3 días`. En inglés: `today`, `tomorrow`, `day after tomorrow`, `monday`…`sunday`,
+  `next monday`, `on the 25th`, `in 3 days`.
+- **Horas:** `5pm`, `5 pm`, `17:00`, `17h`, `a las 5`, `5 de la tarde`, `mediodía`,
+  `medianoche`. En inglés: `at 5`, `noon`, `midnight`.
+- **Duración:** `por 2h`, `30 min`, `de 3 a 5`. En inglés: `for 2h`, `from 3 to 5`.
+- **Repetición:** `cada lunes`, `todos los días` (`every monday`, `every day`), que se guardan
+  como una regla RRULE.
+- **Prefijos:** `t:` o `!` al principio obligan a que sea una tarea; `e:` obliga a que sea un
+  evento.
+
+Las reglas cuando la frase no lo dice todo:
+
+- Si hay hora, sale un **evento** de una hora. Si no la hay, sale una **tarea**. El prefijo
+  manda sobre las dos.
+- Una hora sin `am` ni `pm` se entiende **entre las 8:00 y las 20:00**: `a las 3` son las 15:00
+  y `a las 9` son las 9:00.
+- Si esa hora ya pasó y no se escribió fecha, se usa la de mañana. Pero si la fecha está
+  escrita, se respeta: `hoy 17:00` sigue siendo hoy aunque sean las once de la noche.
+- `el 25` es el próximo 25 que haya: el de este mes si no ha pasado, y si no el del siguiente,
+  saltando de año en diciembre y saltando los meses que no tienen ese día.
+- Un día de la semana suelto puede ser hoy (`martes` un martes es hoy); `próximo martes` es
+  siempre la semana que viene.
+- Lo que no se entiende no se pierde: se queda en el título. `25:00 reunión` es una tarea
+  titulada «25:00 reunión», no las once de la noche.
 
 ### Opciones de línea de comandos
 
@@ -87,6 +142,10 @@ globo en la bandeja y sigue funcionando: se abre desde el icono.
 - `--panel=WxH` fuerza el tamaño del panel en DIP, por ejemplo `--panel=453x560`, en vez de
   calcularlo desde el monitor. Sirve para juzgar en una pantalla un tamaño que esa pantalla no
   produciría, y vale tanto para la app como para `--render-snapshot`.
+- `--text=...` deja el campo de texto ya escrito. Solo tiene sentido con `--render-snapshot`,
+  que es la única forma de ver la vista previa en un PNG. Si la frase lleva espacios hay que
+  entrecomillarla, y en PowerShell las comillas van **dentro** del argumento:
+  `Start-Process ... -ArgumentList '--render-snapshot=popup','"--text=mañana 5pm dentista"'`.
 - Si el monitor indicado no está conectado, se registra el error y el proceso termina con
   código **2**. No hay fallback silencioso a otro monitor. Si ya hay otra instancia
   ejecutándose, termina con código **1**.
@@ -96,6 +155,7 @@ globo en la bandeja y sigue funcionando: se abre desde el icono.
 ```
 build\debug\Agenda.exe --render-snapshot=popup --theme=dark  --out=docs\img\popup.png
 build\debug\Agenda.exe --render-snapshot=popup --theme=light --out=docs\img\popup-claro.png
+build\debug\Agenda.exe --render-snapshot=popup "--text=mañana 5pm dentista" --out=docs\img\popup-preview.png
 ```
 
 Renderiza la vista fuera de pantalla con Direct2D sobre un bitmap WIC, guarda el PNG y sale.
@@ -103,8 +163,8 @@ Así se revisa el diseño: **no con capturas del escritorio**. No necesita monit
 instancia esté libre, así que funciona con la app abierta. Si falta `--out`, escribe
 `shot.png`. Como el acrylic no existe fuera de pantalla, el PNG lleva detrás un gris neutro
 que hace su papel, más claro u oscuro según el tema. La captura fija el 22 de septiembre de
-2026 como «hoy» y el panel en su tamaño base de 340×420, para que el PNG solo cambie cuando
-cambie el diseño y no cuando cambie el monitor.
+2026 a las 10:00 como «ahora» y el panel en su tamaño base de 340×420, para que el PNG solo
+cambie cuando cambie el diseño y no cuando cambien el monitor ni la hora.
 
 Ojo: por eso mismo la captura se renderiza siempre a 96 ppp y **no sirve para revisar el
 escalado**. Los fallos de DPI solo se ven con la app abierta en un monitor escalado.
@@ -142,7 +202,7 @@ visuales), el popup aparece y desaparece sin animación.
 src/
   app/      entrada (wWinMain), atajo global, bandeja, monitores y argumentos
   ui/       ventana popup, render D2D, composición, animación y capturas
-  nlp/      parser de lenguaje natural, sin dependencias de interfaz
+  nlp/      parser de lenguaje natural (biblioteca estática, sin nada de interfaz dentro)
   data/     SQLite, modelos y repositorios
   sync/     OAuth y clientes de Google Calendar y Tasks
   core/     logging, configuración, rutas y utilidades
@@ -158,7 +218,7 @@ docs/       capturas y decisiones de arquitectura
 | 0 | Esqueleto que compila, documentación, logging, configuración y regla de monitores | Hecha |
 | 1 | Ventana popup con fondo acrylic, atajo global e icono en la bandeja | Hecha |
 | 2 | Sistema de diseño y vista de mes compacta con datos de ejemplo | Hecha |
-| 3 | Parser de lenguaje natural con vista previa en vivo | Pendiente |
+| 3 | Parser de lenguaje natural con vista previa en vivo | Hecha |
 | 4 | Almacenamiento en SQLite: eventos, tareas y caché local | Pendiente |
 | 5 | Sincronización con Google Calendar y Google Tasks (OAuth) | Pendiente |
 | 6 | Expansión animada a la app completa con vistas de día, semana y mes | Pendiente |

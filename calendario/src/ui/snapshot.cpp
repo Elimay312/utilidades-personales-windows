@@ -30,11 +30,12 @@ constexpr int kMarginDip = 24;  // grey visible around the panel, so the corners
 // A fixed day, so docs/img only changes when the design does and not when the calendar turns.
 constexpr Date kSnapshotToday{std::chrono::year{2026}, std::chrono::September,
                               std::chrono::day{22}};
+constexpr int kSnapshotMinute = 10 * 60;  // and a fixed hour, for the same reason
 
 }  // namespace
 
 bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F panel,
-                    const std::filesystem::path& out) {
+                    std::wstring_view text, const std::filesystem::path& out) {
   if (view != L"popup") {
     LogError(L"--render-snapshot only knows 'popup', got '{}'", view);
     return false;
@@ -51,10 +52,16 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
   Fonts fonts;
   if (!fonts.Create(layout)) return false;
 
-  // How the popup looks the instant it opens: the input focused and waiting, nothing typed.
+  // How the popup looks the instant it opens: the input focused and waiting, nothing typed,
+  // unless --text says otherwise. The hour is pinned like the day, so a PNG of the preview
+  // does not change with the hour it was taken at.
   PopupModel model = MakeModel(kSnapshotToday);
   model.focus = 1.0f;
   model.caretOn = true;
+  if (!text.empty()) {
+    model.input.Insert(text);
+    model.preview = nlp::ParseInput(text, nlp::Now{kSnapshotToday, kSnapshotMinute});
+  }
 
   const UINT width = static_cast<UINT>(layout.width) + 2 * kMarginDip;
   const UINT height = static_cast<UINT>(layout.height) + 2 * kMarginDip;

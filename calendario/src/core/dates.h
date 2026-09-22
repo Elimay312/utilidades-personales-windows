@@ -18,6 +18,10 @@ inline constexpr int kGridCells = kGridRows * kGridCols;
 // Monday first, as the week reads in Spanish: L M X J V S D.
 inline constexpr std::wstring_view kWeekdayInitials[7] = {L"L", L"M", L"X", L"J", L"V", L"S", L"D"};
 
+// Spelled out for the preview card, which has room for the whole word.
+inline constexpr std::wstring_view kWeekdayNames[7] = {
+    L"Lunes", L"Martes", L"Miércoles", L"Jueves", L"Viernes", L"Sábado", L"Domingo"};
+
 // Spelled out here instead of asked to GetLocaleInfoEx, so a snapshot taken on a machine set to
 // English still says "Septiembre".
 inline constexpr std::wstring_view kMonthNames[12] = {
@@ -65,6 +69,15 @@ inline Date TodayLocal() {
   return Date{std::chrono::year{local.tm_year + 1900},
               std::chrono::month{static_cast<unsigned>(local.tm_mon) + 1u},
               std::chrono::day{static_cast<unsigned>(local.tm_mday)}};
+}
+
+// Minutes since midnight. The parser needs it to know whether an hour has already gone by, and
+// this is the only place in the project that reads the clock.
+inline int NowMinuteLocal() {
+  const std::time_t now = std::time(nullptr);
+  std::tm local{};
+  localtime_s(&local, &now);
+  return local.tm_hour * 60 + local.tm_min;
 }
 
 }  // namespace agenda

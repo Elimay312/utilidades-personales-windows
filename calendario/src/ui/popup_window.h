@@ -103,6 +103,7 @@ class PopupWindow {
   bool inputFocused_ = true;
   bool caretVisible_ = true;
   ULONGLONG lastTick_ = 0;
+  std::wstring parsed_;  // the text the preview in the model was built from
 
   ComPtr<ID3D11Device> d3d_;
   ComPtr<IDXGISwapChain1> swapChain_;

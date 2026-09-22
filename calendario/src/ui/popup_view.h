@@ -5,6 +5,7 @@
 #include <string>
 
 #include "core/dates.h"
+#include "nlp/parser.h"
 #include "ui/paint.h"
 #include "ui/text_input.h"
 #include "ui/theme.h"
@@ -21,6 +22,10 @@ struct PopupModel {
   TextInput input;
   std::wstring composition;  // in-flight IME text, drawn underlined at the caret
   bool caretOn = true;
+
+  // What the input says right now, reread on every change. Its spans light up inside the
+  // capsule and the rest of it becomes the preview card above.
+  nlp::ParsedInput preview;
 
   // Hover and focus, each walking to its target over kStateMs.
   float dayHover[kGridCells] = {};

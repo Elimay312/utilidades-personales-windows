@@ -92,10 +92,12 @@ void DrawGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
   target->PopAxisAlignedClip();
 }
 
+// `list` is the room the cards actually get: the whole list normally, and whatever is left
+// above the preview card while someone is typing.
 void DrawEventList(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush,
-                   const PopupModel& model) {
-  const D2D1_RECT_F list = layout.list();
+                   const PopupModel& model, const D2D1_RECT_F& list) {
+  const float room = list.bottom - list.top;
   const std::vector<SampleEvent> events = SampleEvents(model.selected);
 
   if (events.empty()) {
@@ -104,14 +106,18 @@ void DrawEventList(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
     return;
   }
 
-  const int shown = (std::min)(static_cast<int>(events.size()), layout.visibleCards);
+  const int fits = std::clamp(
+      static_cast<int>((room + layout.gap) / (layout.cardHeight + layout.gap)), 0,
+      layout.visibleCards);
+  const int shown = (std::min)(static_cast<int>(events.size()), fits);
+  if (shown == 0) return;
+
   const float stride = layout.cardHeight + layout.gap;
   // The cards sit in the middle of whatever room the grid left, so the leftover never piles up
   // against the capsule.
-  const float top = list.top + std::max(0.0f, (layout.listHeight - (static_cast<float>(shown) *
-                                                                        stride -
-                                                                    layout.gap)) /
-                                                  2.0f);
+  const float top =
+      list.top +
+      std::max(0.0f, (room - (static_cast<float>(shown) * stride - layout.gap)) / 2.0f);
 
   for (int i = 0; i < shown; ++i) {
     const float cardTop = top + static_cast<float>(i) * stride;
@@ -129,6 +135,11 @@ void DrawPopup(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme
                const PanelLayout& layout, const PopupModel& model, bool acrylic) {
   ComPtr<ID2D1SolidColorBrush> brush;
   if (FAILED(target->CreateSolidColorBrush(theme.panel, &brush))) return;
+
+  // A brush of its own, because the input hands it to DirectWrite as a drawing effect and it
+  // has to still be the accent colour by the time the layout is drawn.
+  ComPtr<ID2D1SolidColorBrush> accent;
+  if (FAILED(target->CreateSolidColorBrush(theme.accent, &accent))) return;
 
   // ClearType needs opaque pixels under the glyphs, and this panel is translucent over the
   // acrylic, so both the window and the snapshot antialias text in greyscale.
@@ -153,8 +164,17 @@ void DrawPopup(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme
   DrawHeader(target, fonts, theme, layout, brush.Get(), model, rounded.Get());
   DrawWeekdays(target, fonts, theme, layout, brush.Get());
   DrawGrid(target, fonts, theme, layout, brush.Get(), model);
-  DrawEventList(target, fonts, theme, layout, brush.Get(), model);
-  DrawTextInput(target, fonts, theme, layout, brush.Get(), model);
+  // While there is something written, the list gives way to the preview: the grid stays put
+  // and only the cards nobody is looking at move out of the way.
+  const bool previewing = !model.input.empty();
+  D2D1_RECT_F list = layout.list();
+  if (previewing) {
+    list.bottom = std::max(list.top, layout.preview().top - layout.gap);
+  }
+
+  DrawEventList(target, fonts, theme, layout, brush.Get(), model, list);
+  if (previewing) DrawPreviewCard(target, fonts, theme, layout, brush.Get(), model);
+  DrawTextInput(target, fonts, theme, layout, brush.Get(), accent.Get(), model);
 }
 
 }  // namespace agenda

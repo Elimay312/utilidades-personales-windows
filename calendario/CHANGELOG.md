@@ -9,6 +9,28 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- Fase 3: parser de lenguaje natural en `src/nlp/`, compilado como biblioteca estática
+  (`agenda_nlp`) sin nada de interfaz dentro. Entiende español e inglés a la vez, sin detectar
+  idioma: fechas relativas (`hoy`, `mañana`, `pasado mañana`, días de la semana, `próximo
+  lunes`, `el 25`, `en 3 días`), horas (`5pm`, `17:00`, `17h`, `a las 5`, `5 de la tarde`,
+  `mediodía`), duraciones (`por 2h`, `30 min`, `de 3 a 5`), recurrencia básica traducida a
+  RRULE (`cada lunes`, `todos los días`) y los prefijos `t:`, `!` y `e:`. El «ahora» entra
+  como parámetro, así que los tests no dependen del reloj de la máquina.
+- Fase 3: las reglas de ambigüedad de CLAUDE.md, tal cual. Una hora sin `am`/`pm` cae entre
+  las 8:00 y las 20:00; si la hora ya pasó y no se escribió fecha, se usa la del día
+  siguiente, pero una fecha explícita se respeta aunque su hora quede atrás. Con hora sale un
+  evento de 60 minutos, sin hora una tarea, y el prefijo manda sobre las dos cosas.
+- Fase 3: 55 tests de Catch2 para el parser, con los ocho casos que CLAUDE.md nombra y los
+  límites que duelen: acentos y su ausencia, mayúsculas, `25:00` y `13pm`, `el 31` en un mes
+  de treinta, el 25 de diciembre saltando de año, y «mañana» escrito a las 23:59.
+- Fase 3: vista previa en vivo. Los tokens reconocidos se pintan en color de acento dentro de
+  la cápsula, y encima aparece una tarjeta que dice qué se va a crear —`📅 Mañana ·
+  17:00–18:00 · Dentista`, `☑ Tarea · Lunes · Pagar luz` o `☑ Tarea sin fecha`—. La tarjeta se
+  superpone al final de la lista de eventos mientras se escribe, en vez de reservar una fila
+  fija, para que la rejilla del mes no se mueva al empezar a teclear. **Enter sigue sin hacer
+  nada: todavía no se guarda.**
+- Fase 3: `--text=...` precarga el campo de texto en `--render-snapshot`, que es la única
+  forma de revisar la vista previa en un PNG.
 - Fase 2: el panel se adapta al monitor. Su alto es el 42 % del área de trabajo, recortado
   entre 380 y 560 DIP, y el ancho sale de la proporción 340:420 del diseño. Todo lo de dentro
   escala uno a uno con él —letras, círculos de los días, tarjetas y espacios—, así que un panel

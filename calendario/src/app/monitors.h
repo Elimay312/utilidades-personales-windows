@@ -21,12 +21,13 @@ struct Options {
   std::wstring snapshotView;  // --render-snapshot=<view>, empty when the app should just run
   std::wstring snapshotOut;   // --out=<file.png>, defaults to shot.png
   std::wstring theme;         // --theme=dark|light, empty means follow the system
+  std::wstring text;          // --text=..., what a snapshot should have typed in the input
   int panelWidth = 0;         // --panel=WxH for a snapshot; zero means the design size
   int panelHeight = 0;
   std::wstring error;         // non-empty means: log it and exit with code 2
 };
 
-// Reads --monitor=N, --render-snapshot=<view>, --out=<file> and --theme=dark|light, falling
+// Reads --monitor=N, --render-snapshot=<view>, --out=<file>, --text=... and --theme, falling
 // back to the AGENDA_DEV_MONITOR value passed in and then to kDefaultMonitor. argv[0] is
 // skipped and unknown arguments are ignored.
 Options ParseOptions(int argc, const wchar_t* const* argv, std::wstring_view envMonitor);

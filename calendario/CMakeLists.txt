@@ -43,6 +43,13 @@ endif()
 
 set(AGENDA_WARNINGS /W4 /permissive- /utf-8)
 
+# El parser vive aparte porque no depende de la interfaz: ni Direct2D, ni Win32, ni ventanas.
+# Eso es lo que deja que los tests lo prueben directo, sin abrir nada.
+add_library(agenda_nlp STATIC src/nlp/parser.cpp)
+target_include_directories(agenda_nlp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_options(agenda_nlp PRIVATE ${AGENDA_WARNINGS})
+target_compile_definitions(agenda_nlp PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+
 add_executable(Agenda WIN32
   src/app/main.cpp
   src/app/monitors.cpp
@@ -62,7 +69,7 @@ target_compile_options(Agenda PRIVATE ${AGENDA_WARNINGS})
 target_compile_definitions(Agenda PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 # user32, shell32, ole32 y uuid ya vienen en CMAKE_C_STANDARD_LIBRARIES de MSVC. dwrite entra
 # con el texto de la fase 2 e imm32 con el IME del campo de entrada.
-target_link_libraries(Agenda PRIVATE nlohmann_json::nlohmann_json
+target_link_libraries(Agenda PRIVATE agenda_nlp nlohmann_json::nlohmann_json
   d2d1 d3d11 dxgi dcomp dwmapi dwrite imm32 windowscodecs)
 # El manifiesto (DPI Per-Monitor v2) entra por agenda.rc, no por el generado por el linker.
 target_link_options(Agenda PRIVATE /MANIFEST:NO)
@@ -71,6 +78,7 @@ enable_testing()
 add_executable(agenda_tests
   tests/test_args.cpp
   tests/test_dates.cpp
+  tests/test_nlp.cpp
   tests/test_popup.cpp
   tests/test_text_input.cpp
   src/app/monitors.cpp
@@ -78,5 +86,5 @@ add_executable(agenda_tests
 target_include_directories(agenda_tests PRIVATE src)
 target_compile_options(agenda_tests PRIVATE ${AGENDA_WARNINGS})
 target_compile_definitions(agenda_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_link_libraries(agenda_tests PRIVATE Catch2::Catch2WithMain)
+target_link_libraries(agenda_tests PRIVATE agenda_nlp Catch2::Catch2WithMain)
 add_test(NAME unit COMMAND agenda_tests)

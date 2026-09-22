@@ -69,3 +69,10 @@ TEST_CASE("without --render-snapshot the app just runs") {
   CHECK(options.snapshotView.empty());
   CHECK(options.snapshotOut.empty());
 }
+
+TEST_CASE("--text preloads the input so a snapshot can show the preview") {
+  const agenda::Options options = Parse({L"--render-snapshot=popup", L"--text=hoy 5pm cita"});
+  CHECK(options.error.empty());
+  CHECK(options.text == L"hoy 5pm cita");
+  CHECK(Parse({}).text.empty());
+}

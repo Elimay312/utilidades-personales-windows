@@ -120,6 +120,7 @@ add_executable(Agenda WIN32
   src/core/config.cpp
   src/core/log.cpp
   src/sync/http.cpp
+  src/sync/oauth.cpp
   src/ui/components.cpp
   src/ui/paint.cpp
   src/ui/popup_view.cpp
@@ -135,7 +136,10 @@ target_compile_definitions(Agenda PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_A
 # con el texto de la fase 2 e imm32 con el IME del campo de entrada. winhttp entra con la
 # fase 5.
 target_link_libraries(Agenda PRIVATE agenda_nlp agenda_data nlohmann_json::nlohmann_json
-  d2d1 d3d11 dxgi dcomp dwmapi dwrite imm32 windowscodecs winhttp)
+  d2d1 d3d11 dxgi dcomp dwmapi dwrite imm32 windowscodecs
+  # La fase 5: winhttp habla con Google, crypt32 cifra el refresh token con DPAPI, bcrypt hace
+  # el PKCE (aleatorio y SHA-256) y ws2_32 escucha el redirect en 127.0.0.1.
+  winhttp crypt32 bcrypt ws2_32)
 # El manifiesto (DPI Per-Monitor v2) entra por agenda.rc, no por el generado por el linker.
 target_link_options(Agenda PRIVATE /MANIFEST:NO)
 

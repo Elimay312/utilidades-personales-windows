@@ -20,6 +20,7 @@ client_secret*.json
 .env
 .env.*
 tokens.json
+token.bin
 
 # Datos y salidas locales
 *.db

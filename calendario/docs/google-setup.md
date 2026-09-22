@@ -2,7 +2,8 @@
 
 Las credenciales las creas **tú**, en tu propia cuenta. Agenda no trae ninguna y nunca se
 guarda un `client_secret` en el repositorio: `config.local.json`, `client_secret*.json` y
-`tokens.json` están en `.gitignore` desde la fase 4.
+`token.bin` están en `.gitignore`. Además, nada de esto vive en la carpeta del proyecto: las
+credenciales y el token van a `%LOCALAPPDATA%\Agenda`.
 
 Son quince minutos y se hacen una sola vez. Al final tendrás dos cadenas que pegar en un
 archivo.
@@ -107,7 +108,7 @@ Google…» no aparece habilitado, mira `%LOCALAPPDATA%\Agenda\agenda.log`.
 5. La pestaña dirá que ya puedes cerrarla. La primera sincronización empieza sola.
 
 El token de actualización se guarda cifrado con **DPAPI** en
-`%LOCALAPPDATA%\Agenda\tokens.json`. Va atado a tu usuario de Windows: copiar ese archivo a
+`%LOCALAPPDATA%\Agenda\token.bin`. Va atado a tu usuario de Windows: copiar ese archivo a
 otro equipo o a otra cuenta no sirve de nada, hay que volver a conectar.
 
 ---
@@ -124,6 +125,6 @@ otro equipo o a otra cuenta no sirve de nada, hay que volver a conectar.
 
 ## Cómo desconectar
 
-Borra `%LOCALAPPDATA%\Agenda\tokens.json` y, si quieres retirarle el permiso a la aplicación,
+Borra `%LOCALAPPDATA%\Agenda\token.bin` y, si quieres retirarle el permiso a la aplicación,
 entra en [myaccount.google.com/permissions](https://myaccount.google.com/permissions) y quita
 `Agenda`. La caché local se queda como estaba; nada de lo que has creado desaparece.

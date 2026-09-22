@@ -13,6 +13,30 @@ está en el mensaje de su commit.
 
 Todo lo que hay. Falta probarlo en otros equipos y con otras aplicaciones de música.
 
+### Arreglado: el layout en la pantalla del portátil
+
+Medido en esta máquina, `DISPLAY1` a 1920×1080 y al 100 %, ventana 520×260 en 700,0.
+Dos cosas se pisaban, y las dos se veían al usarla aquí.
+
+- **El nombre de la app se metía en la onda.** Spotify de la Store no se llama «Spotify»:
+  llega `SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify`, que es el AUMID, y §3.1 dice que se
+  pinta tal cual, sin ir a buscar un nombre más corto. En la ficha abierta esa línea no tenía
+  tope y cruzaba las cuatro barras. Ahora acaba antes de la onda —10 px de aire, 202 de
+  ancho— con puntos suspensivos, igual que el aviso de volumen en la pastilla:
+  `SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spo…` y las barras libres. El artista, si no cabe,
+  hace lo mismo antes del borde.
+- **La línea de la principal asomaba por encima del aviso.** Con las dos en el centro, la
+  brasa son 140×5 pegados al borde y la pastilla del aviso nace 8 px más abajo. Esos 5 px
+  quedaban sueltos, como un trozo roto en el lomo de la pastilla y de la tarjeta. Mientras
+  el aviso está desplegado la línea se apaga, y no vuelve hasta que el muelle ha terminado
+  de recogerlo en la burbuja: si volviera antes, asomaría otra vez durante el cierre. La
+  región se va con ella; un rectángulo invisible de 140×5 se comería el borde.
+- **La burbuja se quedaba encima de la ficha.** Su sitio se calculaba siempre contra los
+  140 de la brasa, así que al abrir la principal el aro caía dentro del panel. Ahora usa el
+  ancho de la principal en ese momento. Medido con el panel abierto: el borde derecho en
+  x=1150 y el círculo de la burbuja a partir de x=1158, que son los 8 px de aire. El verde
+  del aro, ya dentro del trazo, empieza en x=1160.
+
 ### Los recordatorios de Agenda, en la isla
 
 **La primera entrada que abre la isla**, con su enmienda escrita y commiteada antes que el

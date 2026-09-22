@@ -102,6 +102,9 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private const float ArtistaPx = 11.5f;
     private const float AppY = 68f;
     private const float AppPx = 10f;
+    // La onda empieza en OndaX. El nombre para antes, con aire: el AUMID de la Store
+    // llega entero (SEGURIDAD.md 3.1, se pinta tal cual) y sin este tope se mete en las barras.
+    private const float AppAncho = OndaX - TextoX - 10f;
 
     private const float BarraX = 16f;
     private const float BarraY = 118f;
@@ -674,8 +677,12 @@ internal sealed unsafe class IslaVisuals : IDisposable
         raiz.Children.InsertAtTop(_cajaTitulo);
 
         _rotTitulo = Hueco(Vector2.Zero, _cajaTitulo);
-        _rotArtista = Hueco(new Vector2(S(TextoX), S(ArtistaY)), raiz);
-        _rotApp = Hueco(new Vector2(S(TextoX), S(AppY)), raiz);
+        // Caja con clip, como el titulo: Cabe pone los puntos, y el clip impide que un
+        // pixel de mas llegue a la onda o al borde redondeado.
+        ContainerVisual cajaArtista = Caja(raiz, TextoX, ArtistaY, TituloAncho, ArtistaPx);
+        _rotArtista = Hueco(Vector2.Zero, cajaArtista);
+        ContainerVisual cajaApp = Caja(raiz, TextoX, AppY, AppAncho, AppPx);
+        _rotApp = Hueco(Vector2.Zero, cajaApp);
 
         // La barra de progreso: carril recortado y un relleno que escala en X desde la
         // izquierda. Escalar y no redimensionar es lo que permite que la anime el
@@ -931,8 +938,23 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _puntoBurbuja.Brush = null;
     }
 
-    /// <summary>La isla principal, apagada cuando en la brasa no hay nada suyo que ensenar.</summary>
-    public void Principal(bool visible) => Fundir(_grupo, visible ? 1f : 0f);
+    /// <summary>
+    /// La isla principal, apagada cuando en la brasa no hay nada suyo que ensenar, o cuando
+    /// el aviso ocupa el centro. <paramref name="instantaneo"/> al apagarla: un fundido la
+    /// dejaria un instante asomando por encima de la pastilla.
+    /// </summary>
+    public void Principal(bool visible, bool instantaneo = false)
+    {
+        float objetivo = visible ? 1f : 0f;
+        if (!instantaneo)
+        {
+            Fundir(_grupo, objetivo);
+            return;
+        }
+
+        _grupo.StopAnimation("Opacity");
+        _grupo.Opacity = objetivo;
+    }
 
     private void Fundir(Visual v, float objetivo)
     {
@@ -981,10 +1003,10 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// esto corre en el hilo de UI. Para 43 caracteres son 6 medidas en vez de 43.
     /// </para>
     /// </summary>
-    private static string Cabe(string s, float ancho, float px)
+    private static string Cabe(string s, float ancho, float px, bool grueso = true)
     {
         if (string.IsNullOrEmpty(s) || ancho <= 0f) return s;
-        if (Texto.Medir(s, px, grueso: true).X <= ancho) return s;
+        if (Texto.Medir(s, px, grueso).X <= ancho) return s;
 
         const string Puntos = "…";
 
@@ -993,11 +1015,22 @@ internal sealed unsafe class IslaVisuals : IDisposable
         while (bajo < alto)
         {
             int medio = (bajo + alto + 1) / 2;
-            if (Texto.Medir(s[..medio] + Puntos, px, grueso: true).X <= ancho) bajo = medio;
+            if (Texto.Medir(s[..medio] + Puntos, px, grueso).X <= ancho) bajo = medio;
             else alto = medio - 1;
         }
 
         return bajo == 0 ? Puntos : s[..bajo].TrimEnd() + Puntos;
+    }
+
+    /// <summary>Una caja que recorta el texto a su rectangulo. El hijo se pinta en (0, 0).</summary>
+    private ContainerVisual Caja(ContainerVisual padre, float x, float y, float ancho, float px)
+    {
+        ContainerVisual caja = _compositor.CreateContainerVisual();
+        caja.Size = new Vector2(S(ancho), S(px) * 1.7f);
+        caja.Offset = new Vector3(S(x), S(y), 0);
+        caja.Clip = _compositor.CreateInsetClip();
+        padre.Children.InsertAtTop(caja);
+        return caja;
     }
 
     private SpriteVisual Hueco(Vector2 en, ContainerVisual padre)
@@ -1012,8 +1045,8 @@ internal sealed unsafe class IslaVisuals : IDisposable
     public void Mostrar(Cancion c)
     {
         Rotular(_rotTitulo, c.Titulo, TituloPx, true, 1f);
-        Rotular(_rotArtista, c.Artista, ArtistaPx, false, 0.62f);
-        Rotular(_rotApp, c.App, AppPx, false, 0.38f);
+        Rotular(_rotArtista, Cabe(c.Artista, S(TituloAncho), S(ArtistaPx), grueso: false), ArtistaPx, false, 0.62f);
+        Rotular(_rotApp, Cabe(c.App, S(AppAncho), S(AppPx), grueso: false), AppPx, false, 0.38f);
         Marquesina(_rotTitulo, _cajaTitulo.Size.X);
 
         CompositionBrush? arteVieja = _caratula.Brush;

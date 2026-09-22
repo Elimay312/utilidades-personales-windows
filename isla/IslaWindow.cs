@@ -157,9 +157,13 @@ internal sealed unsafe class IslaWindow : IDisposable
     public const float BurbujaAsoma = 8f;
     private const float BurbujaHueco = 8f;
 
-    /// <summary>Cuanto se aparta el centro de la burbuja del centro de la ventana, en logicas.</summary>
-    public static float BurbujaDx(bool conPrincipal) =>
-        conPrincipal ? Medidas(Estado.Brasa).W * 0.5f + BurbujaHueco + BurbujaLado * 0.5f : 0f;
+    /// <summary>
+    /// Cuanto se aparta el centro de la burbuja del centro de la ventana, en logicas.
+    /// El ancho es el de la principal ahora: con el de la brasa siempre, al abrir el
+    /// panel la burbuja se queda encima de la ficha.
+    /// </summary>
+    public static float BurbujaDx(bool conPrincipal, Estado principal) =>
+        conPrincipal ? Medidas(principal).W * 0.5f + BurbujaHueco + BurbujaLado * 0.5f : 0f;
 
     private const int MA_NOACTIVATE = 3;
 
@@ -232,11 +236,15 @@ internal sealed unsafe class IslaWindow : IDisposable
     private Estado _regionAviso = Estado.Brasa;
     // Con que se hizo la ultima region: si lleva burbuja y si la brasa estaba a su lado.
     private (bool Burbuja, bool Principal) _regionBurbuja;
+    // La linea de la principal, visible. Se apaga mientras el aviso ocupa el centro: si no,
+    // sus 5 px de alto asoman por encima de la pastilla, pegados al borde.
+    private bool _lineaVisible = true;
 
     // --- la isla del aviso (SEGURIDAD.md s.3.7) -----------------------------------------------
     // Otra isla, no un modo de la principal: en reposo es la burbuja junto a la brasa, asoma con
     // un aviso nuevo y se abre en su tarjeta. Solo una de las dos se despliega a la vez, porque
-    // ocupan el mismo sitio; la otra se queda en su linea o en su burbuja.
+    // ocupan el mismo centro. Mientras el aviso esta desplegado la linea se apaga; si abres la
+    // principal, la burbuja se aparta a su lado.
     private Estado _avisoEstado = Estado.Brasa;
     private bool _avisoVisible;
     // Abierta con el atajo: se queda aunque el raton no este encima, como la principal.
@@ -728,7 +736,7 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// </summary>
     private RECT Burbuja(int margen)
     {
-        int cx = _w / 2 + (int)Scale(BurbujaDx(HayPrincipal()));
+        int cx = _w / 2 + (int)Scale(BurbujaDx(HayPrincipal(), _actual));
         int medio = (int)Scale(BurbujaLado * 0.5f) + margen;
         float alto = _burbujaFuera ? BurbujaY + BurbujaLado : BurbujaAsoma;
         return new RECT { left = cx - medio, right = cx + medio, top = 0, bottom = (int)Scale(alto) + margen };
@@ -886,8 +894,8 @@ internal sealed unsafe class IslaWindow : IDisposable
 
     /// <summary>
     /// La isla del aviso al estado pedido; <see cref="Estado.Brasa"/> es la burbuja. Las dos
-    /// islas desplegadas ocuparian el mismo sitio, asi que al desplegarse esta la principal se
-    /// recoge en su linea, que sigue ahi.
+    /// desplegadas ocuparian el mismo centro, asi que al desplegarse esta la principal vuelve
+    /// a la brasa y su linea se apaga hasta que el aviso se recoge.
     /// </summary>
     private void AvisoA(Estado e)
     {
@@ -923,6 +931,10 @@ internal sealed unsafe class IslaWindow : IDisposable
         {
             _regionCuando = DateTime.UtcNow.AddMilliseconds(380);
         }
+
+        // Aplicar ya lo hizo si la principal tuvo que recogerse. Si ya estaba en la brasa,
+        // sin esto la linea seguiria asomando por encima de la pastilla.
+        Burbuja();
     }
 
     private void SacarBurbuja(bool fuera)
@@ -941,13 +953,40 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// </summary>
     private void Burbuja()
     {
-        _visuals.AvisoDx(Scale(BurbujaDx(HayPrincipal())));
-        _visuals.Principal(_actual != Estado.Brasa || HayPrincipal());
+        _visuals.AvisoDx(Scale(BurbujaDx(HayPrincipal(), _actual)));
+
+        bool ver = LineaCabe();
+        bool cambioLinea = ver != _lineaVisible;
+        if (cambioLinea)
+        {
+            _lineaVisible = ver;
+            // Al volver, la region tiene que ser la de ahora: puede seguir guardando la
+            // ficha abierta de antes de que el aviso ocupara el centro.
+            if (ver) _regionMain = _actual;
+            // Apagarla ya. Un fundido la dejaria un instante pegada al borde de la pastilla.
+            _visuals.Principal(ver, instantaneo: !ver);
+        }
+        else
+        {
+            _visuals.Principal(ver);
+        }
+
         // Llega o se va un aviso, o la brasa aparece a su lado, con la isla quieta: la region al
         // dia ya. Si hay un encogimiento esperando, lo pondra el tic. Y solo si cambio algo: esto
         // corre con cada aviso de medios, y Spotify avisa a menudo.
-        if (_regionCuando == default && (_enTarjeta is not null, HayPrincipal()) != _regionBurbuja)
+        if (cambioLinea || (_regionCuando == default && (_enTarjeta is not null, HayPrincipal()) != _regionBurbuja))
             AplicarRegion();
+    }
+
+    /// <summary>
+    /// La linea solo cabe cuando el aviso no esta en el centro. Desplegado, o todavia
+    /// encogiendose hacia la burbuja, sus 5 px asomarian por encima de la pastilla.
+    /// </summary>
+    private bool LineaCabe()
+    {
+        if (_avisoEstado != Estado.Brasa) return false;
+        if (_enTarjeta is not null && _regionAviso != Estado.Brasa) return false;
+        return _actual != Estado.Brasa || HayPrincipal();
     }
 
     /// <summary>
@@ -1139,6 +1178,8 @@ internal sealed unsafe class IslaWindow : IDisposable
             _regionCuando = default;
             _regionMain = _actual;
             _regionAviso = _avisoEstado;
+            // El aviso ya es burbuja: la linea puede volver. Burbuja la ensena si cabe.
+            Burbuja();
             AplicarRegion();
         }
 
@@ -1467,7 +1508,8 @@ internal sealed unsafe class IslaWindow : IDisposable
     {
         _regionBurbuja = (_enTarjeta is not null, HayPrincipal());
         HRGN region = PInvoke.CreateRectRgn(0, 0, 0, 0);
-        Sumar(region, RectDe(_regionMain));
+        // Sin linea no hay rectangulo: uno invisible de 140x5 se comeria el borde de la pastilla.
+        if (_lineaVisible) Sumar(region, RectDe(_regionMain));
         // La isla del aviso, mientras hay uno: su burbuja -- solo su cuadrado, nada del hueco que
         // la separa de la brasa --, o la pastilla entera si esta desplegada.
         if (_enTarjeta is not null) Sumar(region, _regionAviso == Estado.Brasa ? Burbuja(0) : RectDe(_regionAviso));

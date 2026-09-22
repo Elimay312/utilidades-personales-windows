@@ -71,9 +71,11 @@ declara `IsPreviousEnabled` e `IsNextEnabled` a `false`.
 La isla principal es lo que está pasando ahora; la burbuja de al lado es lo que te está
 esperando. **Son dos islas, y cada una vuelve a lo suyo**: la del aviso es otra pastilla
 entera, con su muelle, su borde y el aura del color de la app que avisó, que en reposo es la
-burbuja; asoma desde ella y se recoge en ella. La principal no se entera: su línea sigue en el
-centro con lo que suena. Desplegadas ocuparían el mismo sitio, así que solo se despliega una a
-la vez, y al abrirse la del aviso la principal se queda en su línea. Hoy solo lo usa Agenda: sus
+burbuja; asoma desde ella y se recoge en ella. En reposo la línea queda en el centro y la
+burbuja a su derecha, con 8 px de aire. Desplegadas ocuparían el mismo centro, así que solo se
+despliega una. Mientras el aviso está abierto la línea se apaga —sus 5 px de alto, pegados al
+borde, asomarían por encima de la pastilla— y vuelve cuando el aviso se recoge. Si abres la
+principal con un aviso esperando, la burbuja se aparta al lado del panel. Hoy solo lo usa Agenda: sus
 recordatorios llegan aquí en vez de como toast, y la tarjeta ofrece **Terminado**, **5 min**,
 **10 min** y **Abrir**. Qué significa cada botón es cosa de la app que avisó; la isla solo le
 dice cuál se pulsó.

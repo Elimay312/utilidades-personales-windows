@@ -1,0 +1,87 @@
+#include "app/tray.h"
+
+#include <shellapi.h>
+
+#include <cwchar>
+
+#include "core/log.h"
+
+namespace agenda {
+namespace {
+
+// Icon 1 of the executable, declared in assets/agenda.rc. Explorer uses the same one.
+constexpr WORD kIconResource = 1;
+constexpr UINT kIconId = 1;
+
+}  // namespace
+
+NOTIFYICONDATAW Tray::Data() const {
+  NOTIFYICONDATAW data{};
+  data.cbSize = sizeof(data);
+  data.hWnd = owner_;
+  data.uID = kIconId;
+  return data;
+}
+
+bool Tray::Add(HINSTANCE instance, HWND owner) {
+  owner_ = owner;
+
+  NOTIFYICONDATAW data = Data();
+  data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
+  data.uCallbackMessage = kTrayMessage;
+  // Asking for the small icon metrics keeps it crisp instead of letting the shell downscale.
+  data.hIcon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(kIconResource),
+                                             IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                                             GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
+  wcsncpy_s(data.szTip, L"Agenda", _TRUNCATE);
+
+  added_ = Shell_NotifyIconW(NIM_ADD, &data) != FALSE;
+  if (!added_) {
+    LogError(L"tray: Shell_NotifyIconW(NIM_ADD) failed with error {}", GetLastError());
+    return false;
+  }
+
+  NOTIFYICONDATAW version = Data();
+  version.uVersion = NOTIFYICON_VERSION_4;
+  Shell_NotifyIconW(NIM_SETVERSION, &version);
+  return true;
+}
+
+void Tray::Remove() {
+  if (!added_) return;
+  NOTIFYICONDATAW data = Data();
+  Shell_NotifyIconW(NIM_DELETE, &data);
+  added_ = false;
+}
+
+void Tray::Warn(const wchar_t* title, const wchar_t* text) {
+  if (!added_) return;
+  NOTIFYICONDATAW data = Data();
+  data.uFlags = NIF_INFO;
+  data.dwInfoFlags = NIIF_WARNING;
+  wcsncpy_s(data.szInfoTitle, title, _TRUNCATE);
+  wcsncpy_s(data.szInfo, text, _TRUNCATE);
+  Shell_NotifyIconW(NIM_MODIFY, &data);
+}
+
+UINT Tray::ShowMenu(POINT at) const {
+  HMENU menu = CreatePopupMenu();
+  if (menu == nullptr) return kTrayNone;
+
+  AppendMenuW(menu, MF_STRING, kTrayOpen, L"Abrir");
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(menu, MF_STRING, kTrayExit, L"Salir");
+  SetMenuDefaultItem(menu, kTrayOpen, FALSE);
+
+  // The documented dance for tray menus: without the foreground window the menu never closes
+  // when you click elsewhere, and without the trailing message it lingers after a pick.
+  SetForegroundWindow(owner_);
+  const UINT command = static_cast<UINT>(TrackPopupMenu(
+      menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, at.x, at.y, 0, owner_, nullptr));
+  PostMessageW(owner_, WM_NULL, 0, 0);
+
+  DestroyMenu(menu);
+  return command;
+}
+
+}  // namespace agenda

@@ -35,7 +35,7 @@ TEST_CASE("--monitor wins over AGENDA_DEV_MONITOR") {
 }
 
 TEST_CASE("unknown arguments are ignored") {
-  const agenda::Options options = Parse({L"--render-snapshot=popup", L"--monitor=2"});
+  const agenda::Options options = Parse({L"--quiet", L"--monitor=2"});
   CHECK(options.error.empty());
   CHECK(options.monitor == 2);
 }
@@ -44,4 +44,28 @@ TEST_CASE("a non-numeric value is an error") {
   CHECK_FALSE(Parse({L"--monitor=abc"}).error.empty());
   CHECK_FALSE(Parse({L"--monitor="}).error.empty());
   CHECK_FALSE(Parse({}, L"tres").error.empty());
+}
+
+TEST_CASE("--render-snapshot picks the view and names the file itself") {
+  const agenda::Options options = Parse({L"--render-snapshot=popup"});
+  CHECK(options.error.empty());
+  CHECK(options.snapshotView == L"popup");
+  CHECK(options.snapshotOut == L"shot.png");
+}
+
+TEST_CASE("--out says where the snapshot goes") {
+  const agenda::Options options = Parse({L"--render-snapshot=popup", L"--out=docs/img/popup.png"});
+  CHECK(options.error.empty());
+  CHECK(options.snapshotOut == L"docs/img/popup.png");
+}
+
+TEST_CASE("an unknown view or an empty path is an error") {
+  CHECK_FALSE(Parse({L"--render-snapshot=mes"}).error.empty());
+  CHECK_FALSE(Parse({L"--out="}).error.empty());
+}
+
+TEST_CASE("without --render-snapshot the app just runs") {
+  const agenda::Options options = Parse({L"--monitor=3"});
+  CHECK(options.snapshotView.empty());
+  CHECK(options.snapshotOut.empty());
 }

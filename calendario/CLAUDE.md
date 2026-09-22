@@ -35,7 +35,7 @@ Un calendario nativo para Windows escrito en C++ que se abre con un atajo global
 | Ventanas | Win32 puro (`RegisterClassExW` y `CreateWindowExW`) |
 | Render | Direct2D 1.1, DirectWrite y DirectComposition |
 | Fondo | Acrylic o Mica mediante `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE)`, esquinas con `DWMWA_WINDOW_CORNER_PREFERENCE`; fallback a color sólido en Windows 10 |
-| Animación | Motor propio de springs y easing sobre un temporizador vsync (`DCompositionWaitForCompositorClock` o `DwmFlush`) |
+| Animación | Transiciones simples (abrir, cerrar, fundidos) con animaciones de DirectComposition (`IDCompositionAnimation`, tramos cúbicos que interpola la GPU). El motor propio de springs sobre temporizador vsync llega en la fase 6, que es la que lo necesita para la expansión popup→app |
 | HTTP | WinHTTP (nativo, sin dependencias) |
 | JSON | nlohmann-json (vcpkg) |
 | Almacenamiento | SQLite3 (vcpkg), en `%LOCALAPPDATA%\Agenda\agenda.db` |

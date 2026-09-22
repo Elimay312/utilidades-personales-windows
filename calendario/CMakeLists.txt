@@ -46,18 +46,25 @@ set(AGENDA_WARNINGS /W4 /permissive- /utf-8)
 add_executable(Agenda WIN32
   src/app/main.cpp
   src/app/monitors.cpp
+  src/app/tray.cpp
   src/core/config.cpp
   src/core/log.cpp
+  src/ui/popup_view.cpp
+  src/ui/popup_window.cpp
+  src/ui/snapshot.cpp
   assets/agenda.rc)
 target_include_directories(Agenda PRIVATE src)
 target_compile_options(Agenda PRIVATE ${AGENDA_WARNINGS})
 target_compile_definitions(Agenda PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_link_libraries(Agenda PRIVATE nlohmann_json::nlohmann_json)
+# user32, shell32, ole32 y uuid ya vienen en CMAKE_C_STANDARD_LIBRARIES de MSVC. dwrite no
+# entra hasta que haya texto que dibujar.
+target_link_libraries(Agenda PRIVATE nlohmann_json::nlohmann_json
+  d2d1 d3d11 dxgi dcomp dwmapi windowscodecs)
 # El manifiesto (DPI Per-Monitor v2) entra por agenda.rc, no por el generado por el linker.
 target_link_options(Agenda PRIVATE /MANIFEST:NO)
 
 enable_testing()
-add_executable(agenda_tests tests/test_args.cpp src/app/monitors.cpp)
+add_executable(agenda_tests tests/test_args.cpp tests/test_popup.cpp src/app/monitors.cpp)
 target_include_directories(agenda_tests PRIVATE src)
 target_compile_options(agenda_tests PRIVATE ${AGENDA_WARNINGS})
 target_compile_definitions(agenda_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)

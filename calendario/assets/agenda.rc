@@ -1,2 +1,4 @@
 // CREATEPROCESS_MANIFEST_RESOURCE_ID (1), RT_MANIFEST (24).
 1 24 "agenda.manifest"
+// Icon 1: the tray icon (src/app/tray.cpp) and the one Explorer shows for the executable.
+1 ICON "agenda.ico"

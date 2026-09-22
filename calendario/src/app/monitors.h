@@ -18,11 +18,14 @@ inline constexpr int kDefaultMonitor = 0;  // 0 = primary
 
 struct Options {
   int monitor = kDefaultMonitor;
-  std::wstring error;  // non-empty means: log it and exit with code 2
+  std::wstring snapshotView;  // --render-snapshot=<view>, empty when the app should just run
+  std::wstring snapshotOut;   // --out=<file.png>, defaults to shot.png
+  std::wstring error;         // non-empty means: log it and exit with code 2
 };
 
-// Reads --monitor=N, falling back to the AGENDA_DEV_MONITOR value passed in and then to
-// kDefaultMonitor. argv[0] is skipped and unknown arguments are ignored.
+// Reads --monitor=N, --render-snapshot=<view> and --out=<file>, falling back to the
+// AGENDA_DEV_MONITOR value passed in and then to kDefaultMonitor. argv[0] is skipped and
+// unknown arguments are ignored.
 Options ParseOptions(int argc, const wchar_t* const* argv, std::wstring_view envMonitor);
 
 // Looks up \\.\DISPLAYn by device name, which is the number Windows shows in Settings. The

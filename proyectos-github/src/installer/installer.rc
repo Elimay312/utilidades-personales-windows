@@ -1,0 +1,47 @@
+#include <windows.h>
+#include "resource.h"
+#include "../app/Version.h"
+
+#pragma code_page(65001)
+
+// Icono principal
+IDI_APP_ICON ICON "../brujula.ico"
+
+// Binario embebido de Brújula (compilado en Release)
+#ifndef BRUJULA_EXE_PATH
+#define BRUJULA_EXE_PATH "../../build/brujula.exe"
+#endif
+
+IDR_BRUJULA_EXE RCDATA BRUJULA_EXE_PATH
+
+// Metadatos del instalador
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION BRUJULA_VERSION_MAJOR, BRUJULA_VERSION_MINOR, BRUJULA_VERSION_PATCH, 0
+PRODUCTVERSION BRUJULA_VERSION_MAJOR, BRUJULA_VERSION_MINOR, BRUJULA_VERSION_PATCH, 0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+FILEFLAGS VS_FF_DEBUG
+#else
+FILEFLAGS 0
+#endif
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "0c0a04b0"
+        BEGIN
+            VALUE "FileDescription", "Instalador de Brújula"
+            VALUE "FileVersion", BRUJULA_VERSION_STR ".0"
+            VALUE "InternalName", "Instalador-Brujula"
+            VALUE "OriginalFilename", "Instalador-Brujula.exe"
+            VALUE "ProductName", "Brújula"
+            VALUE "ProductVersion", BRUJULA_VERSION_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0c0a, 1200
+    END
+END

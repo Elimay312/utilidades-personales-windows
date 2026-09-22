@@ -274,3 +274,21 @@ target_link_libraries(brujula_tests PRIVATE
   brujula_core doctest::doctest nlohmann_json::nlohmann_json sqlite3
   # Lo que pide Auth.cpp. No se llama en las pruebas, pero hay que enlazarlo.
   advapi32)
+
+# --- El instalador -----------------------------------------------------------------
+
+add_executable(brujula_installer WIN32
+  src/installer/main.cpp
+  src/installer/Installer.cpp
+  src/installer/installer.rc
+)
+set_target_properties(brujula_installer PROPERTIES
+  OUTPUT_NAME "Instalador-Brujula"
+)
+add_dependencies(brujula_installer brujula)
+target_compile_options(brujula_installer PRIVATE ${BRUJULA_FLAGS})
+target_compile_definitions(brujula_installer PRIVATE ${BRUJULA_DEFS})
+target_link_libraries(brujula_installer PRIVATE
+  shell32 ole32 advapi32 comctl32
+)
+target_link_options(brujula_installer PRIVATE /ENTRY:wWinMainCRTStartup)

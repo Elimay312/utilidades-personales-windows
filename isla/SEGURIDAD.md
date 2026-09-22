@@ -225,7 +225,7 @@ de sus botones, la isla le devuelve **por esa misma conexión** cuál fue, y la 
 **Por qué no rompe las reglas que ya había:**
 
 - **Regla 7, red.** Una tubería con nombre **sí puede** abrirse desde otra máquina por SMB
-  (`\equipo\pipe\...`), y .NET no pone `PIPE_REJECT_REMOTE_CLIENTS` —comprobado en su código
+  (`\\equipo\pipe\...`), y .NET no pone `PIPE_REJECT_REMOTE_CLIENTS` —comprobado en su código
   fuente, `NamedPipeServerStream.Windows.cs`, antes de escribir esto; se daba por hecho que sí—.
   Tampoco basta `PipeOptions.CurrentUserOnly`: da permiso a *tu* usuario, y en un dominio tu
   usuario puede venir de otra máquina. Así que la tubería se crea con una ACL propia
@@ -255,6 +255,15 @@ de sus botones, la isla le devuelve **por esa misma conexión** cuál fue, y la 
 - **Lo que la isla devuelve es el id de un botón que la propia app le dio**, o nada. No hay
   forma de que la isla pida algo, ni de que un aviso le pida algo a la isla más allá de
   enseñarse.
+
+**Ceder el primer plano, una vez y a quien avisó.** Un botón como «Abrir» tiene que poder
+traer la app delante, y Windows no deja a un proceso de fondo ponerse en primer plano: se lo
+deja al que recibió la última entrada, que es la isla, porque el clic fue suyo. Así que al
+pulsar un botón la isla llama a `AllowSetForegroundWindow` con el PID del proceso **al otro
+lado de esa tubería** (`GetNamedPipeClientProcessId`, leído al conectarse). No es la regla 15:
+la isla no pone a nadie delante ni toca ninguna ventana, solo le deja a esa app hacerlo **una
+vez**, y Windows retira el permiso con la siguiente entrada. Nunca `ASFW_ANY`, que se lo daría
+a cualquiera.
 
 ---
 

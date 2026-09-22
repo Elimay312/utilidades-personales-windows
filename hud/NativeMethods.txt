@@ -119,3 +119,13 @@ CLSCTX
 IAudioEndpointVolumeCallback
 AUDIO_VOLUME_NOTIFICATION_DATA
 PostMessageW
+
+// --- H5: que COM avise de que has cambiado de altavoces (SEGURIDAD.md 3.2) ---
+// El endpoint viejo NO se cae al cambiar de dispositivo: sigue contestando, y contesta
+// del anterior (medido: 47 muestras, cero excepciones, 38% contra el 100% real). Sin
+// este aviso el HUD se queda pegado al dispositivo con el que arranco.
+//
+// De los cinco metodos de la interfaz solo OnDefaultDeviceChanged hace algo, y el id del
+// dispositivo no se lee NUNCA: no hay inventario de dispositivos, igual que no hay
+// inventario de ventanas. auditar.ps1 tiene el centinela.
+IMMNotificationClient

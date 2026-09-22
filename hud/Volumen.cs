@@ -25,13 +25,27 @@ namespace Hud;
 internal static unsafe class Volumen
 {
     private static IAudioEndpointVolume? _endpoint;
+    private static IMMDeviceEnumerator? _enumerador;
     private static long _siguienteIntento;
+
+    /// <summary>
+    /// Lo pone un hilo de COM y lo consume el de UI en el siguiente <see cref="Abrir"/>,
+    /// de ahi el <c>volatile</c>.
+    /// </summary>
+    private static volatile bool _otroDispositivo;
 
     /// <summary>
     /// El objeto al que COM le avisa de los cambios. <b>Hay que guardarlo en un campo</b>:
     /// si lo recoge el GC, el CCW muere y COM acaba llamando a memoria liberada.
     /// </summary>
     private static Aviso? _aviso;
+
+    /// <summary>
+    /// El otro CCW, el que avisa de que has cambiado de altavoces. Mismo motivo para
+    /// guardarlo en un campo, y ademas vive en el ENUMERADOR y no en el endpoint: tiene
+    /// que sobrevivir justo a lo que anuncia.
+    /// </summary>
+    private static Cambio? _cambio;
 
     /// <summary>Si el aviso esta puesto. Si se cae, alguien tiene que volver a ponerlo.</summary>
     public static bool Escuchando => _aviso is not null;
@@ -52,8 +66,19 @@ internal static unsafe class Volumen
 
         try
         {
+            IAudioEndpointVolume endpoint = Abrir();
+
+            // Y que avise tambien de que has cambiado de altavoces, que es lo que este
+            // fichero daba por hecho que notaria solo y no notaba (SEGURIDAD.md 3.2).
+            if (_cambio is null)
+            {
+                Cambio c = new(ventana, mensaje);
+                _enumerador!.RegisterEndpointNotificationCallback(c);
+                _cambio = c;
+            }
+
             Aviso a = new(ventana, mensaje);
-            Abrir().RegisterControlChangeNotify(a);
+            endpoint.RegisterControlChangeNotify(a);
             _aviso = a;
         }
         catch
@@ -68,18 +93,46 @@ internal static unsafe class Volumen
     /// </summary>
     public static void Callar()
     {
-        if (_aviso is null) return;
+        SoltarEndpoint();
 
-        try
+        if (_cambio is not null)
         {
-            _endpoint?.UnregisterControlChangeNotify(_aviso);
-        }
-        catch
-        {
-            // Si el endpoint ya no esta, el registro se fue con el.
+            try
+            {
+                _enumerador?.UnregisterEndpointNotificationCallback(_cambio);
+            }
+            catch
+            {
+                // Si el enumerador ya no esta, el registro se fue con el.
+            }
+
+            _cambio = null;
         }
 
-        _aviso = null;
+        _enumerador = null;
+    }
+
+    /// <summary>
+    /// Suelta el endpoint y su aviso de volumen, y nada mas. El aviso de dispositivo se
+    /// queda puesto a proposito: vive en el enumerador para sobrevivir a esto.
+    /// </summary>
+    private static void SoltarEndpoint()
+    {
+        if (_aviso is not null)
+        {
+            try
+            {
+                _endpoint?.UnregisterControlChangeNotify(_aviso);
+            }
+            catch
+            {
+                // Si el endpoint ya no esta, el registro se fue con el.
+            }
+
+            _aviso = null;
+        }
+
+        _endpoint = null;
     }
 
     /// <summary>
@@ -94,6 +147,42 @@ internal static unsafe class Volumen
         {
             PInvoke.PostMessage(ventana, mensaje, default, default);
         }
+    }
+
+    /// <summary>
+    /// Lo que COM llama cuando cambia la lista de dispositivos de audio. De los cinco
+    /// metodos de la interfaz <b>solo uno hace algo</b> (SEGURIDAD.md 3.2).
+    ///
+    /// <para>
+    /// <b>El id que llega no se mira nunca.</b> Al aviso no se le pregunta CUAL es el
+    /// nuevo predeterminado, solo se usa que HAY uno nuevo; el dispositivo se vuelve a
+    /// pedir por el mismo <c>GetDefaultAudioEndpoint</c> de siempre. El HUD no tiene
+    /// inventario de dispositivos, igual que no tiene inventario de ventanas, y
+    /// <c>auditar.ps1</c> lo comprueba.
+    /// </para>
+    /// </summary>
+    private sealed class Cambio(HWND ventana, uint mensaje) : IMMNotificationClient
+    {
+        public void OnDefaultDeviceChanged(EDataFlow flujo, ERole rol, PCWSTR _)
+        {
+            // Solo la SALIDA, y solo el rol que abrimos. Windows manda un aviso POR ROL:
+            // medido, eConsole y eMultimedia llegan con 8 ms de diferencia, asi que sin
+            // este filtro se soltaria el endpoint dos veces por cada cambio.
+            if (flujo != EDataFlow.eRender || rol != ERole.eMultimedia) return;
+
+            // Igual que Aviso: llega en un hilo del pool, asi que aqui no se toca el
+            // endpoint. Se marca y se avisa a NUESTRA ventana; lo suelta el hilo de UI.
+            _otroDispositivo = true;
+            PInvoke.PostMessage(ventana, mensaje, default, default);
+        }
+
+        public void OnDeviceAdded(PCWSTR id) { }
+
+        public void OnDeviceRemoved(PCWSTR id) { }
+
+        public void OnDeviceStateChanged(PCWSTR id, DEVICE_STATE estado) { }
+
+        public void OnPropertyValueChanged(PCWSTR id, PROPERTYKEY clave) { }
     }
 
     /// <summary>El nivel en porcentaje y si esta silenciado, o null si no se pudo leer.</summary>
@@ -139,30 +228,57 @@ internal static unsafe class Volumen
     }
 
     /// <summary>
-    /// Cambiar de altavoces invalida el objeto. Se tira, pero NO se reabre en la
-    /// siguiente llamada: montar el enumerador de COM no es gratis, y si el fallo es
-    /// permanente reintentarlo sin pausa cuesta mas que la funcion entera. Es lo que la
-    /// isla anoto en su medidor de pico. La red de seguridad de HudWindow lo reintenta
-    /// cada 2 s, que es de sobra para enchufar unos auriculares.
+    /// Algo de COM ha fallado. Se tira todo, pero NO se reabre en la siguiente llamada:
+    /// montar el enumerador de COM no es gratis, y si el fallo es permanente reintentarlo
+    /// sin pausa cuesta mas que la funcion entera. Es lo que la isla anoto en su medidor
+    /// de pico. La red de seguridad de HudWindow lo reintenta cada 2 s.
+    ///
+    /// <para>
+    /// <b>Este no es el camino del cambio de altavoces</b>, aunque este fichero lo creyo
+    /// durante seis commits. Medido: cambiar de dispositivo no hace fallar a nadie --
+    /// 47 muestras, cero excepciones -- asi que aqui no se llegaba nunca y el HUD se
+    /// quedaba pegado al dispositivo viejo. De eso avisa ahora <see cref="Cambio"/>.
+    /// </para>
     /// </summary>
     private static void Caido()
     {
-        _endpoint = null;
-        // El aviso estaba registrado en el endpoint que se acaba de caer, asi que ya no
-        // sirve. Quien vigila lo vuelve a poner.
-        _aviso = null;
+        SoltarEndpoint();
+
+        // Si COM falla puede haberse caido el servicio de audio entero, y con el el
+        // enumerador. Se tira tambien, para que la proxima vuelta lo monte de cero y
+        // vuelva a registrar los dos avisos: un enumerador muerto dejaria al HUD sordo a
+        // los cambios de dispositivo para siempre, y eso no se nota hasta que molesta.
+        _cambio = null;
+        _enumerador = null;
         _siguienteIntento = Environment.TickCount64 + 2000;
     }
 
     private static IAudioEndpointVolume Abrir()
     {
+        // Cambiar de dispositivo NO invalida el endpoint viejo: sigue contestando, y
+        // contesta del dispositivo ANTERIOR. Medido con una sonda que dejo uno abierto y
+        // cambio el predeterminado: 47 muestras, cero excepciones, y el viejo diciendo
+        // 38% cuando el real era 100%. Hay que soltarlo a mano, y se hace aqui porque es
+        // el sitio por donde pasan Leer, Poner y Silenciar: una guarda en vez de tres.
+        //
+        // ponytail: el aviso de volumen se vuelve a registrar cuando pase la red de los
+        // 2 s (HudWindow.Red), no en el acto. El techo es ese: durante <=2 s despues de
+        // cambiar de altavoces, un cambio de volumen hecho por OTRA app no saca el HUD.
+        // Las teclas van bien desde el primer instante, porque pasan por aqui. Subirlo
+        // seria guardar ventana y mensaje en estaticos y reregistrar aqui mismo.
+        if (_otroDispositivo)
+        {
+            _otroDispositivo = false;
+            SoltarEndpoint();
+        }
+
         if (_endpoint is not null) return _endpoint;
         if (Environment.TickCount64 < _siguienteIntento) throw new InvalidOperationException("en espera");
 
-        IMMDeviceEnumerator enumerador = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+        _enumerador ??= (IMMDeviceEnumerator)new MMDeviceEnumerator();
         // eRender es la SALIDA. La otra direccion no aparece en este proyecto y la
         // auditoria lo comprueba.
-        enumerador.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out IMMDevice d);
+        _enumerador.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out IMMDevice d);
 
         Guid iid = typeof(IAudioEndpointVolume).GUID;
         d.Activate(&iid, CLSCTX.CLSCTX_ALL, null, out object v);

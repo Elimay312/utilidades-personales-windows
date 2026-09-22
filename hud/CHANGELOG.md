@@ -1,5 +1,37 @@
 # Changelog
 
+## El HUD ya no se queda pegado a los altavoces con los que arrancó
+
+Cambiabas la salida a los altavoces del monitor y el HUD seguía enseñando —y moviendo con las
+teclas— el volumen de los anteriores. **La entrada de abajo decía que «al cambiar de altavoces
+el aviso se cae con el endpoint y hay que volver a ponerlo». Es falso**, y era la suposición
+sobre la que estaba montada toda la recuperación: como el endpoint viejo nunca fallaba,
+`Caido()` nunca saltaba, `Escuchando` nunca pasaba a `false` y la red de los 2 s no reenganchaba
+nada.
+
+Medido con una sonda que deja un `IAudioEndpointVolume` abierto y cambia el predeterminado:
+**47 muestras con otro dispositivo puesto, cero excepciones, y el endpoint viejo contestando
+38 % cuando el real era 100 %.** No se cae: se queda mintiendo.
+
+La salida es un segundo aviso de COM, `IMMNotificationClient` sobre el enumerador, que es donde
+tiene que vivir para sobrevivir justo a lo que anuncia. De sus cinco métodos solo
+`OnDefaultDeviceChanged` hace algo, y solo para `eRender` con rol `eMultimedia` — Windows manda
+un aviso **por rol**, y `eConsole` y `eMultimedia` llegan con 8 ms de diferencia, así que sin
+filtro se soltaría el endpoint dos veces por cambio.
+
+La otra salida, sondear el id del predeterminado en el temporizador de 2 s, se descartó con la
+misma sonda: mediana de 3,57 ms pero **50,8 ms en el peor caso**, y eso cae en el hilo de UI. El
+aviso cuesta cero y llegó ~130 ms antes de que el sondeo notara nada.
+
+La guarda va en `Abrir()` y no en cada llamada: es el sitio por donde pasan `Leer`, `Poner` y
+`Silenciar`, así que las teclas van bien desde el primer instante. Queda un `ponytail:` con el
+techo: el aviso de volumen se vuelve a registrar cuando pasa la red de los 2 s, así que durante
+ese rato un cambio hecho por **otra** app no saca el HUD.
+
+`SEGURIDAD.md` §3.2 se enmendó **antes**, en su propio commit, con el corte que importa: el id
+del dispositivo no se lee nunca. `auditar.ps1` estrena el centinela que lo comprueba
+—`EnumAudioEndpoints`, `GetId`, `IPolicyConfig`— y se validó metiendo un `GetId` a propósito.
+
 ## Las tres comprobaciones a mano de SEGURIDAD.md §6
 
 Las que un script no puede hacer solo, ejecutadas por fin sobre el binario publicado y con el

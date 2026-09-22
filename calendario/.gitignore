@@ -1,0 +1,29 @@
+# Build
+build/
+out/
+CMakeUserPresets.json
+vcpkg_installed/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.sln
+*.vcxproj
+*.vcxproj.filters
+
+# Secretos y configuracion local (NUNCA se suben)
+config.local.json
+client_secret*.json
+*.pem
+*.key
+.env
+.env.*
+tokens.json
+
+# Datos y salidas locales
+*.db
+*.db-shm
+*.db-wal
+*.log
+shot.png

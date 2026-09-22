@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "agenda",
+  "version": "0.1.0",
+  "description": "Calendario nativo para Windows 11",
+  "dependencies": [
+    "nlohmann-json",
+    "sqlite3",
+    "catch2"
+  ]
+}

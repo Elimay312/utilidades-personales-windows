@@ -139,7 +139,7 @@ Parser tolerante: si el archivo no tiene frontmatter o tiene campos desconocidos
 | Uso | Muelle | Rebote | Asienta en |
 |---|---|---|---|
 | Interacciones pequeñas (hover, pulsar, marcar) | rígido: amortiguación 0,9, periodo 130 ms | 0,10 | 92 ms |
-| Paneles e inspector | estándar: amortiguación 0,85, periodo 200 ms | 0,15 | 150 ms |
+| Paneles e inspector | estándar: amortiguación 0,85, periodo 60 ms | 0,15 | 45 ms |
 | Reordenar y mover tarjetas entre grupos | suave: amortiguación 0,8, periodo 250 ms | 0,20 | 199 ms |
 | Hojas modales y revisión semanal | expresivo: amortiguación 0,75, periodo 340 ms | 0,25 | 289 ms |
 
@@ -236,6 +236,47 @@ El plan completo está en `PROMPTS.md`.
 Al terminar una fase: marcarla aquí, anotar decisiones abajo y hacer commit.
 
 ## Decisiones y notas
+
+### Después de la fase 8 — 22 de septiembre de 2026
+
+Usando la revisión semanal con la aplicación delante, y las tres cosas que salieron de ahí
+son las que la fase 8 dejó escritas como pendientes de sentir.
+
+**El «toque borroso» era el medio píxel, y llevaba desde la fase 1.** El marco de un
+elemento se escribe en DIP, y casi todos salen de centrar algo —una división por dos— o de
+una escala que no es 1: a 125 % un renglón de 142 DIP cae en el píxel 177,5. Un visual con
+superficie propia colocado en medio píxel se dibuja REMUESTREADO, con todo su texto dentro.
+Ahora `Ui::Element::SetFrame` redondea el `Offset` a píxel entero, y va ahí y no en cada
+vista porque el desplazamiento de un hijo es relativo al padre: con los dos redondeados, la
+suma también lo está, y por ese método basta con hacerlo en el único sitio por el que pasan
+todos. **El marco guardado no se toca**: la maquetación y el hit-test siguen hablando en DIP
+exactos y medio píxel no cambia dónde cae un clic. Un piso más abajo hace falta lo mismo a
+mano cuando se reparte un ancho DENTRO de una textura —`ChipRect` divide el pie entre cuatro
+y dejaba tres de los cuatro bordes en fracciones—, porque ahí ya no hay marco que redondear.
+Lo que quedaba de la hipótesis del suavizado en gris se mira DESPUÉS de esto: la mitad de lo
+que se estaba juzgando era remuestreo.
+
+**En la revisión semanal no se mueve nada, y es la misma lección otra vez.** Una animación
+colgando de un visual rasteriza su texto filtrado aunque haya acabado en su valor exacto
+—la fase 7 lo vio con la escala, la 8 con `Recede`— y la revisión es la pantalla con la
+letra de 26 DIP. Se quitaron las tres: la tarjeta ya no entra deslizándose ni sale volando
+hacia su diana, el «no» del límite de Enfoque ya no tiembla, y el resumen ya no aparece con
+`Ui::Panel::Appear`, que deja una escala colgada del panel que lleva el texto dentro. Se
+quedan animadas la barra de progreso y las barras del resumen, que son material y no llevan
+una letra. **Y la tarjeta pasa a ser UNA**: las dos caras alternándose existían solo para
+que la que salía volando siguiera viéndose mientras entraba la siguiente.
+
+**El estándar bajó de 200 a 60, en dos pasadas y mirando.** Es el experimento que la fase 8
+dejó escrito y sin hacer, y confirma su propia regla: `SettleMs` no lo habría encontrado.
+Queda por debajo del rígido y rompe la escala creciente de la tabla, y eso es información:
+el inspector aparece donde ya se sabía que iba a aparecer y no hay nada que seguir con la
+vista, mientras que lo que sí se sigue —una tarjeta que cambia de grupo, una hoja que cruza
+la pantalla— sigue arriba. **Y arrastró un fundido que no era suyo**: `Resolve()` calcula el
+fundido como `SettleMs × 0,6`, así que el de la columna entera al cambiar de vista se quedó
+en 27 ms —dos fotogramas, o sea el fallo que la fase 8 acababa de arreglar—. Colgaba del
+estándar por ser el del medio y no porque acompañara a ese muelle; los tres sitios de la
+lista cuelgan ahora del suave. La regla que queda: **al tocar un periodo hay que mirar quién
+usa su `FadeMs`**, porque un fundido que no acompaña a ese muelle no tiene por qué seguirlo.
 
 ### Fase 8 — 22 de septiembre de 2026
 

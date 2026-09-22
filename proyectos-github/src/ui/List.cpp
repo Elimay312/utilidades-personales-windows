@@ -103,7 +103,12 @@ void List::FadeInContent() {
     // cambios seguidos no tendrían nada que animar el segundo.
     m_content.StopAnimation(L"Opacity");
     m_content.Opacity(0.0f);
-    animator.Opacity(m_content, 1.0f, animator.FadeMs(Motion::Kind::Standard));
+    // Del muelle SUAVE, que es el de la lista, y no del estándar. Este fundido no acompaña
+    // a ningún muelle —no se mueve nada, la columna entera cambia de contenido— así que
+    // colgaba del estándar solo por ser el del medio; y cuando el estándar bajó a 60 ms
+    // por el inspector, esto se quedó en 27: dos fotogramas, o sea la columna apareciendo
+    // de golpe, que es justo el fallo que la fase 8 arregló.
+    animator.Opacity(m_content, 1.0f, animator.FadeMs(Motion::Kind::Smooth));
 }
 
 void List::SetRowHeight(float heightDip) { SetLayout(1, heightDip, 0.0f, false); }
@@ -303,8 +308,10 @@ void List::Release(Row& row, bool fade) {
     row.leaving = true;
     if (!row.holder) return;
     if (fade) {
+        // Suave, como el resto de la lista: una fila que se va lo hace mientras las demás
+        // se deslizan, y las dos cosas tienen que durar lo mismo.
         HostRef().Animator().Opacity(row.holder, 0.0f,
-                                     HostRef().Animator().FadeMs(Motion::Kind::Standard));
+                                     HostRef().Animator().FadeMs(Motion::Kind::Smooth));
     } else {
         row.holder.StopAnimation(L"Opacity");
         row.holder.Opacity(0.0f);

@@ -49,12 +49,25 @@ struct Spring {
 // pide tiempo es la distancia recorrida: un anillo de foco que crece un 4 % y una hoja
 // modal que cruza la pantalla no pueden estar a un factor de dos.
 //
+// Y el estándar está en 60, que es la TERCERA PARTE de esos 200 y el número al que se
+// llegó mirando: 200 -> 100 («mejor, pero todavía se espera») -> 60 («perfecto»), en dos
+// pasadas con la aplicación delante y abriendo el inspector de un proyecto tras otro. Es
+// justo el método que este archivo pide —el mando es el periodo y se juzga viéndolo— y
+// también la prueba de que SettleMs no servía: la fase 8 lo había dejado en 200 «a la
+// espera de sentirlo», y sentirlo lo bajó a menos de un tercio.
+//
+// Rompe la escala creciente —queda por debajo del muelle del hover, que son 130— y eso es
+// información, no un descuido: el inspector aparece donde ya se sabía que iba a aparecer
+// y no hay nada que seguir con la vista, mientras que lo que sí se sigue —una tarjeta que
+// cambia de grupo, una hoja que cruza la pantalla— sigue arriba en la tabla. Lo que se
+// afina es cuánto estorba, no cuánto se luce.
+//
 // Las amortiguaciones siguen sin tocarse desde la fase 1. En el idioma de Apple son
 // rebotes de 0,10 / 0,15 / 0,20 / 0,25, y los tres presets de iOS van de 0 a 0,3: la tabla
 // está entera dentro de ese rango y por encima de 0,3 el movimiento se lee como un dibujo
 // animado.
 inline constexpr Spring kSnappy{0.9f, 130.0f};
-inline constexpr Spring kStandard{0.85f, 200.0f};
+inline constexpr Spring kStandard{0.85f, 60.0f};
 inline constexpr Spring kSmooth{0.8f, 250.0f};
 inline constexpr Spring kExpressive{0.75f, 340.0f};
 

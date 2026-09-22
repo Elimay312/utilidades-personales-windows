@@ -3,6 +3,7 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include "compositor/Paint.h"
@@ -75,13 +76,16 @@ void Line(const Ui::Paint& paint, std::wstring_view text, const Rect& box, Ui::S
     paint.text->Draw(paint.dc, run, ToBox(box), brush.get());
 }
 
-// Las cuatro dianas dentro de la caja del pie. Sale de UNA función y no de dos cuentas
-// iguales: la tarjeta vuela exactamente hacia la que se pinta, y con la aritmética escrita
-// dos veces llega un día en que vuela hacia el hueco de al lado.
-Rect ChipRect(const Rect& box, int index) {
+// Las cuatro dianas dentro de la caja del pie, a PÍXEL ENTERO. Repartir el ancho entre
+// cuatro deja tres de los cuatro bordes en fracciones de píxel, y ahí el texto de la diana
+// se rasteriza con medio píxel de desplazamiento: se lee gris y emborronado al lado del
+// mismo texto en otro sitio. Element::SetFrame redondea los marcos de los elementos; esto
+// es lo mismo un piso más abajo, dentro de una textura que ya está en su sitio.
+Rect ChipRect(const Rect& box, int index, float scale) {
+    const auto whole = [scale](float dip) { return std::round(dip * scale) / scale; };
     const float width = (box.width - kChipGap * (kChips - 1)) / kChips;
-    return Rect{box.x + (width + kChipGap) * static_cast<float>(index), box.y, width,
-                kChipHeight};
+    const float x = box.x + (width + kChipGap) * static_cast<float>(index);
+    return Rect{whole(x), box.y, whole(x + width) - whole(x), kChipHeight};
 }
 
 // Cuánto se espera antes de esconder la pantalla al terminar: lo que tarda el muelle
@@ -207,44 +211,19 @@ public:
         Invalidate();
     }
 
-    // Llega desde abajo con el muelle expresivo, que es el de "hojas modales y revisión
-    // semanal" de la tabla de CLAUDE.md.
-    void Enter(const Rect& frame, bool animate) {
-        SetVisible(true);
-        Motion::Animator& animator = HostRef().Animator();
-        if (!animate) {
-            SetFrame(frame);
-            SetOpacity(1.0f, 0.0f);
-            return;
-        }
-        SetFrame(Rect{frame.x, frame.y + Metrics::kSpace5, frame.width, frame.height});
-        SetOpacity(0.0f, 0.0f);
-        SlideTo(frame.x, frame.y, Motion::Kind::Expressive);
-        SetOpacity(1.0f, animator.FadeMs(Motion::Kind::Expressive));
-    }
-
-    // Sale hacia su diana: se va a su sitio y se apaga por el camino.
+    // Aparece en su sitio, sin viaje y sin fundido.
     //
-    // **Sin escala, y eso NO es una simplificación.** Un visual con una animación de escala
-    // encima se rasteriza filtrado aunque la animación acabe en 1,0 exacto, y el texto de
-    // la tarjeta salía con halos grises donde el de la barra de título sale con el píxel
-    // limpio — comparado a 1:1, no a ojo. Lo que la tarjeta tiene que decir al salir es
-    // hacia dónde va, y eso lo dice el viaje; el tamaño no dice nada más.
-    void FlyTo(const Rect& target) {
-        if (!Visible()) return;
-        Motion::Animator& animator = HostRef().Animator();
-        // Hacia el CENTRO de la diana, no hacia su esquina: la tarjeta es mucho más ancha,
-        // y apuntar la esquina la manda a la diana de al lado.
-        const float x = target.x + (target.width - Frame().width) * 0.5f;
-        const float y = target.y + (target.height - Frame().height) * 0.5f;
-        SlideTo(x, y, Motion::Kind::Expressive);
-        SetOpacity(0.0f, animator.FadeMs(Motion::Kind::Expressive));
-    }
-
-    // El "no" del límite de Enfoque, igual que en la lista: se para, tiembla y se queda.
-    // Aquí NO se apaga después, porque la tarjeta sigue estando por decidir.
-    void Refuse() {
-        HostRef().Animator().Shake(Visual(), {Frame().x, Frame().y, 0.0f}, Motion::kShakeDip);
+    // **La tarjeta de la revisión no se mueve, y no es una simplificación.** Un visual con
+    // una animación colgando —escala en la fase 7, desplazamiento aquí— se rasteriza
+    // filtrado aunque la animación haya acabado en su valor exacto, y esta es la pantalla
+    // con el texto de 26 DIP: el «toque borroso» que arrastra desde la fase 7 era esto.
+    // La tarjeta se cambia de golpe, que además es lo que hace una pila de fichas de
+    // verdad. Lo que dice hacia dónde va una decisión es la barra de progreso y el
+    // contador, que no llevan texto encima.
+    void Enter(const Rect& frame) {
+        SetVisible(true);
+        SetFrame(frame);
+        SetOpacity(1.0f, 0.0f);
     }
 
     void HideNow() {
@@ -371,11 +350,10 @@ bool Review::OnAttach() {
     const float cardRadius = Metrics::RadiusOf(Metrics::Radius::Panel);
     m_stack[1] = Add<Bar>(cardRadius);
     m_stack[0] = Add<Bar>(cardRadius);
-    m_faces[0] = Add<CardView>();
-    m_faces[1] = Add<CardView>();
+    m_face = Add<CardView>();
 
-    // El campo vive FUERA de la tarjeta: la tarjeta vuela, y un campo de texto dentro se
-    // iría volando con lo escrito a medias. Se coloca encima del renglón del siguiente
+    // El campo vive FUERA de la tarjeta: la tarjeta se cambia entera de una decisión a
+    // otra, y un campo dentro se iría con ella. Se coloca encima del renglón del siguiente
     // paso y solo existe mientras se edita.
     m_step = Add<Ui::Field>(L"Cuál es el siguiente paso");
     m_step->SetVisible(false);
@@ -403,15 +381,14 @@ void Review::Begin(std::vector<Card> cards) {
         m_summary->SetVisible(false);
         m_summary->SetOpacity(0.0f, 0.0f);
     }
-    for (CardView* face : m_faces) face->HideNow();
-    m_front = 0;
+    m_face->HideNow();
     if (m_footer) m_footer->SetVisible(true);
 
     SetVisible(true);
     SetOpacity(1.0f, 0.0f);
     Relayout();
     UpdateProgress(false);
-    ShowCurrent(true);
+    ShowCurrent();
 }
 
 void Review::Finish() {
@@ -444,14 +421,13 @@ void Review::Finish() {
 
 // ------------------------------------------------------------------------ La pila --
 
-void Review::ShowCurrent(bool animate) {
+void Review::ShowCurrent() {
     if (m_at >= static_cast<int>(m_cards.size())) {
         ShowSummary();
         return;
     }
-    CardView* face = m_faces[m_front];
-    face->Show(m_cards[static_cast<std::size_t>(m_at)]);
-    face->Enter(CardFrame(), animate);
+    m_face->Show(m_cards[static_cast<std::size_t>(m_at)]);
+    m_face->Enter(CardFrame());
 
     const int left = static_cast<int>(m_cards.size()) - m_at;
     // Los fantasmas solo se ven si de verdad hay algo detrás. Una pila de tres cuando
@@ -468,11 +444,9 @@ void Review::Decide(Model::Priority priority) {
     const std::string repoId = card.repoId;
 
     // Quien decide es App: es quien conoce el límite de Enfoque y quien escribe. Un "no"
-    // deja la tarjeta donde está —temblando— y la hoja que explica por qué sale por encima.
-    if (m_decide && !m_decide(repoId, priority)) {
-        m_faces[m_front]->Refuse();
-        return;
-    }
+    // deja la tarjeta donde está y la hoja que explica por qué sale por encima. No tiembla:
+    // el temblor son fotogramas clave sobre el Offset del visual que se está leyendo.
+    if (m_decide && !m_decide(repoId, priority)) return;
     Advance(priority);
 }
 
@@ -487,20 +461,11 @@ void Review::Advance(Model::Priority priority) {
     if (index >= 0 && index < 5) ++m_tally[index];
     ++m_decided;
 
-    // La tarjeta sale hacia SU diana. Las cuatro salen del mismo sitio que las pintadas.
-    Rect target = CardFrame();
-    if (m_footer && index >= 0 && index < kChips) {
-        const Rect chip = ChipRect(Rect{0.0f, 0.0f, m_footer->Frame().width, kChipHeight},
-                                   index);
-        target = chip.Moved(m_footer->Frame().x, m_footer->Frame().y);
-    }
     CancelEdit();
-    m_faces[m_front]->FlyTo(target);
-    m_front = 1 - m_front;
     ++m_at;
 
     UpdateProgress(true);
-    ShowCurrent(true);
+    ShowCurrent();
 }
 
 // Aplazar no es saltar: saltar manda la tarjeta al final de ESTA sesión, y aplazar la saca
@@ -513,13 +478,9 @@ void Review::Postpone() {
     ++m_decided;
     ++m_postponed;
     CancelEdit();
-    // Sale por abajo, como la saltada: no va a ningún grupo, así que no tiene diana a la
-    // que ir. Lo que dice el viaje es «esta se aparta», y eso es hacia fuera.
-    m_faces[m_front]->FlyTo(CardFrame().Moved(0.0f, Frame().height));
-    m_front = 1 - m_front;
     ++m_at;
     UpdateProgress(true);
-    ShowCurrent(true);
+    ShowCurrent();
 }
 
 void Review::Skip() {
@@ -534,9 +495,7 @@ void Review::Skip() {
         m_cards.push_back(std::move(moved));
     }
     CancelEdit();
-    m_faces[m_front]->FlyTo(CardFrame().Moved(0.0f, Frame().height));
-    m_front = 1 - m_front;
-    ShowCurrent(true);
+    ShowCurrent();
 }
 
 void Review::UpdateProgress(bool animate) {
@@ -554,7 +513,7 @@ void Review::BeginEdit() {
     m_step->SetText(m_cards[static_cast<std::size_t>(m_at)].nextStep);
     m_step->SetVisible(true);
     m_step->SetFrame(CardView::StepRect(CardFrame()));
-    m_faces[m_front]->SetEditing(true);
+    m_face->SetEditing(true);
     HostRef().Input().Focus(m_step, true);
 }
 
@@ -566,7 +525,7 @@ void Review::CommitEdit() {
     if (m_step == nullptr || !m_step->Visible()) return;
     const std::wstring text = m_step->Text();
     m_step->SetVisible(false);
-    m_faces[m_front]->SetEditing(false);
+    m_face->SetEditing(false);
     if (m_at >= static_cast<int>(m_cards.size())) return;
 
     Card& card = m_cards[static_cast<std::size_t>(m_at)];
@@ -575,7 +534,7 @@ void Review::CommitEdit() {
     // desde aquí, y si se volviera a leer del estado habría que esperar a que App la
     // guardara para ver lo que se acaba de escribir.
     card.nextStep = text;
-    m_faces[m_front]->Show(card);
+    m_face->Show(card);
     if (m_nextStep) m_nextStep(card.repoId, text);
 }
 
@@ -588,7 +547,7 @@ bool Review::CancelEdit() {
         m_step->SetText(m_cards[static_cast<std::size_t>(m_at)].nextStep);
     }
     m_step->SetVisible(false);
-    m_faces[m_front]->SetEditing(false);
+    m_face->SetEditing(false);
     if (Attached() && HostRef().Input().Focused() == m_step) {
         HostRef().Input().Focus(nullptr, false);
     }
@@ -664,7 +623,7 @@ bool Review::Keys(const Input::Key& e) {
 
 void Review::ShowSummary() {
     m_done = true;
-    for (CardView* face : m_faces) face->HideNow();
+    m_face->HideNow();
     for (Bar* ghost : m_stack) ghost->SetVisible(false);
     // Y el pie con las dianas: ya no queda nada que decidir, y cuatro teclas ofrecidas que
     // no hacen nada son cuatro teclas que alguien va a pulsar.
@@ -686,12 +645,13 @@ void Review::ShowSummary() {
         ApplyTheme(Tokens(), 0.0f);
     }
     m_summary->SetVisible(true);
-    m_summary->SetOpacity(0.0f, 0.0f);
     if (m_summaryBoard) m_summaryBoard->Invalidate();
     Relayout();
-    m_summary->Appear(Motion::Kind::Expressive);
-    // Y las barras entran escalonadas, veinte milisegundos una detrás de otra: es el mismo
-    // escalonado con el que entran las filas de una lista en la fase 4.
+    // Y NO por Ui::Panel::Appear: deja una animación de escala colgando del panel, y el
+    // resumen tiene su texto dentro. Las barras sí entran escalonadas —son material, no
+    // llevan una letra— veinte milisegundos una detrás de otra, como las filas de la
+    // fase 4.
+    m_summary->SetOpacity(1.0f, 0.0f);
     for (int i = 0; i < 5; ++i) {
         m_summaryBars[i]->Enter(static_cast<float>(i) * 20.0f);
     }
@@ -715,6 +675,9 @@ Rect Review::CardFrame() const {
     // alta la tarjeta se quedaba arriba con media pantalla de hueco negro debajo del pie, y
     // lo que se lee entonces no es una pila de tarjetas, es una pantalla a medio cargar.
     const float y = top + std::max((bottom - top - cardHeight - below) * 0.5f, 0.0f);
+
+    // Centrada. Que eso caiga en medio píxel lo arregla Element::SetFrame, que redondea el
+    // sitio de todo elemento: aquí lo que importa es el centro, no el píxel.
     return Rect{(width - cardWidth) * 0.5f, y, cardWidth, cardHeight};
 }
 
@@ -736,8 +699,8 @@ void Review::OnArrange() {
     }
     // Solo la de delante se coloca: la otra está volando o escondida, y escribirle el marco
     // a mitad del vuelo la plantaría en el destino y se comería la salida.
-    if (m_running && !m_done && m_faces[m_front]->Visible()) {
-        m_faces[m_front]->SetFrame(card);
+    if (m_running && !m_done && m_face->Visible()) {
+        m_face->SetFrame(card);
     }
     if (m_step && m_step->Visible()) m_step->SetFrame(CardView::StepRect(card));
 
@@ -820,7 +783,7 @@ void Review::PaintFooter(const Ui::Paint& paint, const Rect& box) {
     const Rect chips{0.0f, 0.0f, box.width, kChipHeight};
     for (int i = 0; i < kChips; ++i) {
         const Model::Priority priority = static_cast<Model::Priority>(i);
-        const Rect chip = ChipRect(chips, i).Moved(box.x, box.y);
+        const Rect chip = ChipRect(chips.Moved(box.x, box.y), i, paint.scale);
         Theme::Color color = Ui::ColorOf(priority, *paint.tokens);
 
         Theme::Color back = color;

@@ -15,7 +15,7 @@ using Motion::Kind;
 
 TEST_CASE("la tabla de muelles es la de CLAUDE.md") {
     CHECK(Motion::SpringFor(Kind::Snappy) == Motion::Spring{0.9f, 130.0f});
-    CHECK(Motion::SpringFor(Kind::Standard) == Motion::Spring{0.85f, 200.0f});
+    CHECK(Motion::SpringFor(Kind::Standard) == Motion::Spring{0.85f, 60.0f});
     CHECK(Motion::SpringFor(Kind::Smooth) == Motion::Spring{0.8f, 250.0f});
     CHECK(Motion::SpringFor(Kind::Expressive) == Motion::Spring{0.75f, 340.0f});
 }
@@ -27,7 +27,8 @@ TEST_CASE("los muelles van de más seco a más suelto, en ese orden") {
     CHECK(Motion::kStandard.dampingRatio > Motion::kSmooth.dampingRatio);
     CHECK(Motion::kSmooth.dampingRatio > Motion::kExpressive.dampingRatio);
 
-    CHECK(Motion::kSnappy.periodMs < Motion::kStandard.periodMs);
+    // El estándar quedó por DEBAJO del rígido al bajarlo a la mitad con la aplicación
+    // delante (ver MotionSpec.h): la escala crece a partir de ahí y no desde el principio.
     CHECK(Motion::kStandard.periodMs < Motion::kSmooth.periodMs);
     CHECK(Motion::kSmooth.periodMs < Motion::kExpressive.periodMs);
 }
@@ -42,7 +43,12 @@ TEST_CASE("el periodo ES la duración perceptual, y cae donde lo pone lo publica
     // para ir de un proyecto a otro, que es lo que se midió usando la aplicación.
     CHECK(Motion::kSnappy.periodMs >= 100.0f);
     CHECK(Motion::kSnappy.periodMs <= 200.0f);
-    for (const Kind kind : {Kind::Standard, Kind::Smooth, Kind::Expressive}) {
+    // El estándar está en la banda de micro-interacción y no en la de maquetación, y es
+    // donde se pidió con la aplicación delante: un panel que aparece donde ya se sabía que
+    // iba a aparecer no hay que seguirlo con la vista. Ver MotionSpec.h.
+    CHECK(Motion::kStandard.periodMs >= 50.0f);
+    CHECK(Motion::kStandard.periodMs <= 200.0f);
+    for (const Kind kind : {Kind::Smooth, Kind::Expressive}) {
         CHECK(Motion::SpringFor(kind).periodMs >= 200.0f);
         CHECK(Motion::SpringFor(kind).periodMs <= 350.0f);
     }
@@ -63,7 +69,7 @@ TEST_CASE("el asentado es una consecuencia, no un mando, y ninguno se va de tiem
     // 4/(ζ · 2π/T). Está aquí para que si alguien sube un periodo a ojo y lo pone en dos
     // segundos se entere en esta línea y no abriendo la aplicación.
     CHECK(Motion::SettleMs(Motion::kSnappy) == doctest::Approx(91.96f).epsilon(0.01));
-    CHECK(Motion::SettleMs(Motion::kStandard) == doctest::Approx(149.79f).epsilon(0.01));
+    CHECK(Motion::SettleMs(Motion::kStandard) == doctest::Approx(44.94f).epsilon(0.01));
     CHECK(Motion::SettleMs(Motion::kSmooth) == doctest::Approx(198.94f).epsilon(0.01));
     CHECK(Motion::SettleMs(Motion::kExpressive) == doctest::Approx(288.60f).epsilon(0.01));
 

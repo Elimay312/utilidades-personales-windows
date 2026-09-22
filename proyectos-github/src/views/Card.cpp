@@ -261,7 +261,7 @@ void DragCard::Refuse() {
     // el retardo se quita. Dejarlo dejaba la tarjeta un tercio de segundo parada en el aire
     // sin que pasara nada, que es peor que no animar — es no animar Y hacer esperar.
     const float delay = animator.Enabled() ? Motion::kShakeMs : 0.0f;
-    animator.OpacityDelayed(Visual(), 0.0f, animator.FadeMs(Motion::Kind::Standard), delay);
+    animator.OpacityDelayed(Visual(), 0.0f, animator.FadeMs(Motion::Kind::Smooth), delay);
 }
 
 void DragCard::HideNow() {

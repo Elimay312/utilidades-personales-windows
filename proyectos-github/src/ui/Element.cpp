@@ -1,6 +1,7 @@
 #include "ui/Element.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "ui/Host.h"
 
@@ -183,7 +184,18 @@ void Element::SetFrame(const Rect& frame) {
     // Pasaba al abrir el inspector y volver a pulsar antes de que terminara de crecer.
     m_visual.StopAnimation(L"Offset");
     m_visual.StopAnimation(L"Size");
-    m_visual.Offset({frame.x, frame.y, 0.0f});
+    // **Y el sitio se redondea a PÍXEL ENTERO.** El marco se escribe en DIP y casi todos
+    // los de esta aplicación salen de centrar algo —una división por dos— o de una escala
+    // que no es 1: a 125 % un renglón de 142 DIP cae en el píxel 177,5. Un visual con
+    // superficie propia en medio píxel se dibuja REMUESTREADO, con todo su texto dentro, y
+    // eso es el «toque borroso» que se arrastra desde la fase 7. Se redondea aquí y no en
+    // cada vista porque el desplazamiento de un hijo es relativo al padre: con los dos
+    // redondeados, la suma también lo está, y basta con que lo haga el único sitio por el
+    // que pasan todos. El marco guardado NO se toca: la maquetación y el hit-test siguen
+    // hablando en DIP exactos, y medio píxel no cambia dónde cae un clic.
+    const float scale = m_host->Scale();
+    m_visual.Offset({std::round(frame.x * scale) / scale, std::round(frame.y * scale) / scale,
+                     0.0f});
     m_visual.Size({frame.width, frame.height});
 
     if (m_material) m_material->SetSize(frame.width, frame.height);

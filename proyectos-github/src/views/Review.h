@@ -6,8 +6,14 @@
 //
 // **No decide nada.** Pregunta hacia arriba —igual que Views::Inspector y Views::Palette—
 // y quien contesta es App, que es quien conoce el límite de Enfoque y quien escribe en
-// SQLite. La única respuesta que esta vista entiende es sí o no: con un sí la tarjeta sale
-// volando hacia el color de su grupo, con un no tiembla y se queda donde está.
+// SQLite. La única respuesta que esta vista entiende es sí o no: con un sí entra la
+// siguiente tarjeta, con un no se queda la misma y la hoja del límite explica por qué.
+//
+// **Aquí no se mueve nada.** Ni la tarjeta que sale, ni la que entra, ni el temblor del
+// "no", ni la escala con la que aparecía el resumen: una animación colgando de un visual
+// rasteriza su texto filtrado aunque haya acabado en su valor exacto, y esta es la
+// pantalla con la letra más grande de la aplicación. Lo que sigue animándose es lo que no
+// lleva texto encima: la barra de progreso y las barras del resumen.
 //
 // **Y no es una capa flotante del Host, a propósito.** Las capas se cierran TODAS cuando
 // la ventana pierde el foco —`onDeactivate` llama a `PopAllLayers`— y una revisión a
@@ -15,10 +21,9 @@
 // hijo de Views::Main que ocupa la ventana entera, exactamente por el mismo motivo por el
 // que Views::DragCard tampoco es una capa.
 //
-// **Las tarjetas son DOS y se alternan.** La que sale tiene que seguir viéndose mientras
-// la siguiente entra, o entre una decisión y la otra hay un hueco en blanco; y con veinte
-// repositorios en dos minutos ese hueco es la mitad del tiempo. Cada una es dueña de su
-// superficie porque cada una vuela por su lado.
+// **Y la tarjeta es UNA.** Eran dos alternándose para que la que salía volando siguiera
+// viéndose mientras entraba la siguiente; sin viaje no hay nada que se solape, y dos caras
+// serían dos superficies para enseñar una.
 
 #include <functional>
 #include <string>
@@ -100,7 +105,7 @@ private:
     class CardView;
 
     // Enseña la tarjeta de m_at en la cara que toque y deja la otra libre.
-    void ShowCurrent(bool animate);
+    void ShowCurrent();
     void Decide(Model::Priority priority);
     void Skip();
     void Postpone();
@@ -108,7 +113,7 @@ private:
     void CommitEdit();
     bool CancelEdit();
     bool Editing() const;
-    // La tarjeta de delante sale hacia la diana de 'priority' y entra la siguiente.
+    // La tarjeta de delante se va y entra la siguiente, en el mismo fotograma.
     void Advance(Model::Priority priority);
     void UpdateProgress(bool animate);
     void ShowSummary();
@@ -137,10 +142,7 @@ private:
     Board* m_footer = nullptr;
     Bar* m_track = nullptr;
     Bar* m_fill = nullptr;
-    // Las dos caras. m_front es la de delante; la otra es la que acaba de salir volando o
-    // la que todavía no ha entrado.
-    CardView* m_faces[2] = {nullptr, nullptr};
-    int m_front = 0;
+    CardView* m_face = nullptr;
     // Los dos fantasmas de debajo, que son lo que convierte una tarjeta en una pila. Son
     // materiales y nada más: no llevan texto porque no se lee nada de ellos.
     Bar* m_stack[2] = {nullptr, nullptr};

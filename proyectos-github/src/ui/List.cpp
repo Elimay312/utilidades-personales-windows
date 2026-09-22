@@ -19,6 +19,11 @@ constexpr int kOverscan = 2;
 // Lo que se desplaza una fila al entrar, de CLAUDE.md.
 constexpr float kEntryRise = 8.0f;
 
+// Lo que hay que recorrer con el botón abajo para que deje de ser un clic y pase a ser un
+// arrastre. Sin este margen, cualquier clic con el pulso normal de una mano levanta la
+// tarjeta, y entonces abrir el inspector se convierte en una lotería.
+constexpr float kDragSlop = 4.0f;
+
 // Un cronómetro de verdad: lo que mide es si el criterio de los 60 fps se cumple, y para
 // eso hay que medir, no estimar.
 double NowMs() {
@@ -108,8 +113,9 @@ void List::SetLayout(int columns, float cellHeightDip, float gapDip, bool animat
     // muelle, que es lo que se lee como "la rejilla ha fluido".
     for (Row& row : m_rows) {
         if (row.index < 0) continue;
+        // Sin PaintRow detrás: la celda cambia de tamaño siempre que se llega aquí —es lo
+        // que hace esta función— y de repintarla se encarga ya PlaceRow.
         PlaceRow(row, row.index, animate);
-        PaintRow(row);
     }
     Recycle(animate);
 }
@@ -135,6 +141,12 @@ int List::IndexOfKey(std::uint64_t key) const {
 }
 
 void List::Update(std::vector<std::uint64_t> keys, bool animate) {
+    // Una sincronización puede terminar mientras alguien arrastra, y entonces los índices de
+    // antes ya no señalan a los mismos repositorios. El arrastre se acaba aquí y la tarjeta
+    // vuelve a su sitio: soltarla después escribiría la prioridad del repositorio equivocado
+    // sin dar el menor error.
+    CancelDrag();
+
     std::vector<std::uint64_t> previous;
     previous.swap(m_keys);
     m_keys = std::move(keys);
@@ -298,8 +310,9 @@ void List::Recycle(bool animateEntry) {
 
 void List::PlaceRow(Row& row, int index, bool slide) {
     row.index = index;
-    row.x = CellX(index);
-    row.y = CellY(index);
+    const int slot = DisplaySlot(index);
+    row.x = CellX(slot);
+    row.y = CellY(slot);
 
     if (row.leaving) {
         // Vuelve del fundido. El muelle de opacidad no se puede dejar corriendo: se la
@@ -309,7 +322,17 @@ void List::PlaceRow(Row& row, int index, bool slide) {
         row.holder.Opacity(1.0f);
     }
 
+    // Reservar una textura la VACÍA —Composition devuelve un hueco del atlas con los
+    // píxeles de quien estuviera antes, y por eso Surface::Draw empieza por un Clear—, así
+    // que una celda que cambia de tamaño hay que repintarla. Se decide AQUÍ y no en cada uno
+    // de los cinco sitios que recolocan, porque dos de ellos se olvidaban: al abrir el
+    // inspector la columna se estrecha, y hasta aquí eso dejaba TODAS las tarjetas en blanco
+    // menos la que tuviera el ratón encima —que se repintaba por el hover—. Es el mismo
+    // fallo que la fase 4 encontró en Element::SetFrame, un piso más abajo.
     const float width = CellWidth();
+    const bool reserved = row.width != width || row.height != m_cellHeight;
+    row.width = width;
+    row.height = m_cellHeight;
     row.layer.Place(0.0f, 0.0f, width, m_cellHeight);
     row.layer.Resize(HostRef().Device(), HostRef().Scale());
     row.holder.Size({width, m_cellHeight});
@@ -324,6 +347,8 @@ void List::PlaceRow(Row& row, int index, bool slide) {
         row.holder.StopAnimation(L"Opacity");
         row.holder.Opacity(1.0f);
     }
+    row.holder.IsVisible(index != m_dragIndex);
+    if (reserved) PaintRow(row);
 }
 
 void List::PaintRow(Row& row) {
@@ -389,11 +414,12 @@ Rect List::RowRect(int index) const {
 
     // CellY ya lleva el relleno de arriba; lo que falta es lo desplazado. Es la misma cuenta
     // de IndexAtLocal, del derecho en vez de del revés.
-    const float localY = CellY(index) - m_scroller.Position();
+    const int slot = DisplaySlot(index);
+    const float localY = CellY(slot) - m_scroller.Position();
     if (localY + m_cellHeight <= 0.0f || localY >= Frame().height) return Rect{};
 
     const Rect box = WindowRect();
-    return Rect{box.x + CellX(index), box.y + localY, CellWidth(), m_cellHeight};
+    return Rect{box.x + CellX(slot), box.y + localY, CellWidth(), m_cellHeight};
 }
 
 int List::IndexAtLocal(float localX, float localY) const {
@@ -420,6 +446,88 @@ int List::IndexAtLocal(float localX, float localY) const {
     return index >= 0 && index < m_count ? index : -1;
 }
 
+// ------------------------------------------------------------------- El arrastre --
+
+int List::DisplaySlot(int index) const {
+    if (m_dragIndex < 0 || m_dropIndex < 0) return index;
+    if (index == m_dragIndex) return m_dropIndex;
+    // Sacar el que viaja y volver a meterlo en el hueco. Los dos pasos por separado, porque
+    // escritos como una sola cuenta con signos se equivocan justo en los bordes.
+    const int without = index - (index > m_dragIndex ? 1 : 0);
+    return without + (without >= m_dropIndex ? 1 : 0);
+}
+
+int List::InsertIndexAt(float localX, float localY) const {
+    if (m_count <= 0 || m_cellHeight <= 0.0f) return -1;
+
+    const float absolute = localY + m_scroller.Position() - m_padY;
+    // Sin el hueco entre celdas: soltar en el aire que hay entre dos tarjetas tiene que
+    // significar "aquí", que es justo lo contrario de lo que decide IndexAtLocal para un
+    // clic. Un arrastre que no cae en ninguna parte no se lee como precisión, se lee como
+    // que la aplicación se ha quedado colgada.
+    int row = static_cast<int>(absolute / Pitch());
+    if (absolute < 0.0f) row = 0;
+    row = std::clamp(row, 0, std::max(RowCount() - 1, 0));
+
+    int column = 0;
+    if (m_columns > 1) {
+        const float x = localX - m_padX;
+        column = x <= 0.0f ? 0 : static_cast<int>(x / (CellWidth() + m_gap));
+        column = std::clamp(column, 0, m_columns - 1);
+    }
+    return std::clamp(row * m_columns + column, 0, m_count - 1);
+}
+
+void List::UpdateDragVisibility() {
+    for (Row& row : m_rows) {
+        // Sin arrastre, TODAS se ven — incluidas las que se están yendo con un fundido, que
+        // esconder de golpe sería el fundido que nadie llega a ver.
+        if (row.holder) row.holder.IsVisible(m_dragIndex < 0 || row.index != m_dragIndex);
+    }
+}
+
+void List::BeginDrag(int index) {
+    // El hueco nace justo donde estaba la tarjeta, así que en este fotograma no se mueve
+    // nada: lo único que cambia es que la de verdad se esconde y la copia se levanta.
+    m_dragIndex = index;
+    m_dropIndex = index;
+    UpdateDragVisibility();
+}
+
+void List::SetDropIndex(int index) {
+    if (m_dropIndex == index) return;
+    m_dropIndex = index;
+    // Las demás se apartan. El muelle suave es el de "reordenar y mover tarjetas entre
+    // grupos" de la tabla de CLAUDE.md, y es el mismo que usa el cambio de disposición.
+    for (Row& row : m_rows) {
+        if (row.index >= 0) PlaceRow(row, row.index, true);
+    }
+}
+
+void List::EndDrag(int to, float localX, float localY, bool inside) {
+    const Drop drop{m_dragIndex, to, WindowRect().x + localX, WindowRect().y + localY, inside};
+
+    m_dragIndex = -1;
+    m_dropIndex = -1;
+    m_pressIndex = -1;
+    if (Attached()) HostRef().Input().Release(this);
+
+    // Las celdas vuelven a su sitio de verdad ANTES de avisar: quien escuche va a recargar
+    // la lista, y hacerlo con el hueco todavía puesto dejaría una columna corrida.
+    for (Row& row : m_rows) {
+        if (row.index >= 0) PlaceRow(row, row.index, true);
+    }
+    UpdateDragVisibility();
+
+    if (m_dragEnd) m_dragEnd(drop);
+}
+
+void List::CancelDrag() {
+    if (m_dragIndex < 0) return;
+    // Sin destino: quien escucha lo entiende como "déjalo donde estaba".
+    EndDrag(-1, 0.0f, 0.0f, false);
+}
+
 bool List::OnPointer(const Input::Pointer& e) {
     if (e.action == Input::Action::Wheel) {
         const float delta = m_wheel.Take(static_cast<int>(e.wheelY), Pitch(), Frame().height);
@@ -429,6 +537,12 @@ bool List::OnPointer(const Input::Pointer& e) {
     }
 
     if (e.action == Input::Action::Leave || e.action == Input::Action::Cancel) {
+        // La captura se fue a otra ventana a mitad de un arrastre. Se termina aquí, y por
+        // eso el aviso de fin sale igual: el que levantó la tarjeta tiene que bajarla.
+        if (e.action == Input::Action::Cancel) {
+            CancelDrag();
+            m_pressIndex = -1;
+        }
         if (m_hovered >= 0) {
             const int previous = m_hovered;
             m_hovered = -1;
@@ -441,7 +555,31 @@ bool List::OnPointer(const Input::Pointer& e) {
 
     const int index = IndexAtLocal(e.x, e.y);
 
+    const Rect local{0.0f, 0.0f, Frame().width, Frame().height};
+
     if (e.action == Input::Action::Move) {
+        if (m_dragIndex >= 0) {
+            const Rect box = WindowRect();
+            if (m_dragMove) m_dragMove(box.x + e.x, box.y + e.y);
+            // Fuera de la lista no se enseña hueco: la tarjeta se está yendo a otro grupo, y
+            // un hueco abierto diría que va a volver a caer aquí.
+            SetDropIndex(local.Contains(e.x, e.y) ? InsertIndexAt(e.x, e.y) : -1);
+            return true;
+        }
+        if (m_pressIndex >= 0 && m_dragBegin) {
+            const float dx = e.x - m_pressX;
+            const float dy = e.y - m_pressY;
+            if (dx * dx + dy * dy >= kDragSlop * kDragSlop) {
+                const Rect box = WindowRect();
+                if (m_dragBegin(m_pressIndex, box.x + e.x, box.y + e.y)) {
+                    BeginDrag(m_pressIndex);
+                } else {
+                    // Dijo que no. No se vuelve a preguntar en cada píxel del recorrido.
+                    m_pressIndex = -1;
+                }
+                return true;
+            }
+        }
         if (index == m_hovered) return true;
         const int previous = m_hovered;
         m_hovered = index;
@@ -452,19 +590,64 @@ bool List::OnPointer(const Input::Pointer& e) {
         return true;
     }
 
-    if (e.action == Input::Action::Down && e.button == Input::Button::Left) {
-        if (index >= 0) MoveSelection(index);
-        // El aviso del clic va DESPUÉS de mover la selección: quien lo escuche va a leer cuál
-        // está elegida, y al revés leería la de antes.
-        if (index >= 0 && m_clicked) m_clicked(index);
-        if (index >= 0 && e.clicks >= 2 && m_activate) m_activate(index);
+    if (e.action == Input::Action::Down && e.button == Input::Button::Right) {
+        // Elegir primero y abrir después: un menú que habla de "esta tarjeta" sin que la
+        // tarjeta esté elegida no dice de cuál habla.
+        if (index < 0) return true;
+        MoveSelection(index);
+        if (m_context) {
+            const Rect box = WindowRect();
+            m_context(index, box.x + e.x, box.y + e.y);
+        }
         return true;
     }
-    return e.action == Input::Action::Up;
+
+    if (e.action == Input::Action::Down && e.button == Input::Button::Left) {
+        // La selección sí es del PULSAR: es lo que hace que la tarjeta se ilumine bajo el
+        // dedo, y es también de lo que tira el arrastre si acaba habiéndolo.
+        if (index >= 0) MoveSelection(index);
+        if (index >= 0 && e.clicks >= 2 && m_activate) m_activate(index);
+
+        // Todavía no es un arrastre: es una pulsación que quizá llegue a serlo. La captura se
+        // pide YA, porque el movimiento que lo decide puede caer fuera de la lista —y al
+        // arrastrar hacia la barra lateral, cae fuera siempre.
+        m_pressIndex = index;
+        m_pressX = e.x;
+        m_pressY = e.y;
+        if (index >= 0 && m_dragBegin && Attached()) HostRef().Input().Capture(this);
+        return true;
+    }
+
+    if (e.action == Input::Action::Up) {
+        if (m_dragIndex >= 0) {
+            EndDrag(m_dropIndex, e.x, e.y, local.Contains(e.x, e.y));
+            return true;
+        }
+        // El aviso del clic es del SOLTAR desde que las tarjetas se arrastran, y tiene que
+        // serlo: al pulsar todavía no se sabe si esto es un clic. Avisando al pulsar, cada
+        // arrastre empezaba abriendo el inspector —que estrecha la columna y recoloca las
+        // tarjetas— justo debajo de la que se estaba levantando.
+        if (m_pressIndex >= 0) {
+            const int pressed = m_pressIndex;
+            m_pressIndex = -1;
+            if (Attached()) HostRef().Input().Release(this);
+            if (m_clicked) m_clicked(pressed);
+        }
+        return true;
+    }
+    return false;
 }
 
 bool List::OnKey(const Input::Key& e) {
     if (!e.down) return false;
+
+    // Esc a mitad de arrastrar deja la tarjeta donde estaba, que es lo que Esc significa en
+    // todas partes. Llega hasta aquí porque mientras se arrastra no hay ninguna capa
+    // flotante abierta que se lo quede antes.
+    if (e.virtualKey == VK_ESCAPE && m_dragIndex >= 0) {
+        CancelDrag();
+        return true;
+    }
 
     // En una columna, arriba y abajo son el anterior y el siguiente. En cuadrícula, el de
     // encima y el de debajo; izquierda y derecha son los de al lado. Así la navegación es

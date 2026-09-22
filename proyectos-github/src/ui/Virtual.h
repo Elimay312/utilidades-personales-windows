@@ -79,8 +79,12 @@ private:
     float m_remainder = 0.0f;
 };
 
-// El escalonado de los que entran: 20 ms por elemento, con techo. Sin el techo, una lista
-// de 500 tardaría diez segundos en terminar de aparecer.
-float StaggerMs(int indexInBatch, float stepMs = 20.0f, float capMs = 200.0f);
+// El escalonado de los que entran: los 20 ms por elemento de CLAUDE.md, con techo. Sin el
+// techo, una lista de 500 tardaría diez segundos en terminar de aparecer.
+//
+// El techo bajó de 200 a 120 en la fase 6 por lo mismo que los periodos de los muelles: con
+// veinticinco tarjetas entrando, los 200 ms de la última duraban más que el propio muelle y
+// eran la mitad de lo que se notaba al cambiar de vista.
+float StaggerMs(int indexInBatch, float stepMs = 20.0f, float capMs = 120.0f);
 
 }  // namespace Ui

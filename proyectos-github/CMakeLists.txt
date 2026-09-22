@@ -174,6 +174,10 @@ add_executable(brujula WIN32
   src/views/Card.cpp
   # Fase 5. El panel de la derecha: lo primero de la aplicación que ESCRIBE.
   src/views/Inspector.cpp
+  # Fase 6. La paleta de comandos. Lo demás de la fase cabía dentro de lo que ya había —la
+  # tarjeta levantada está en views/Card.cpp, al lado de la que dibuja— y esto no: es una
+  # vista entera, con su campo, su lista y su manera de filtrar.
+  src/views/Palette.cpp
   # La hoja de la credencial, de la fase 3. Se queda.
   src/views/Welcome.cpp
   # El catálogo solo existe en Debug: es una pantalla de revisión, no una función del

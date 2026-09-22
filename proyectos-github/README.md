@@ -14,11 +14,14 @@ resulta que corre en Windows.
 
 ## Estado
 
-**Fase 5 de 8 terminada.** Ya sirve para lo que existe: al abrirla aparece la lista de los
+**Fase 6 de 8 terminada.** Ya sirve para lo que existe: al abrirla aparece la lista de los
 repositorios de la cuenta —barra lateral con los grupos de prioridad y las vistas
 inteligentes, tarjetas con el siguiente paso, búsqueda en vivo—, y al abrir uno, la tarjeta
 se transforma en el inspector, donde se le pone prioridad, estado, siguiente paso y
-novedades. La sincronización con GitHub ocurre detrás, sin que la ventana la espere. Medido
+novedades. Y ya se decide con ella: las tarjetas se arrastran hasta su grupo o se cambian
+con las teclas 1-4, se reordenan a mano dentro del suyo, Ctrl+K abre la paleta de comandos y
+Ctrl+Z deshace. En Enfoque no caben más de cinco: el sexto se para con un temblor y hay que
+elegir cuál baja. La sincronización con GitHub ocurre detrás, sin que la ventana la espere. Medido
 contra la cuenta del autor —109 repositorios— y con la caché llena, **la ventana está en
 pantalla con la lista en 106 ms** y filtrar mientras se escribe cuesta **0,006 ms por
 pulsación**.
@@ -34,10 +37,11 @@ sincronización, el tema claro/oscuro siguiendo al del sistema, el kit de compon
 (F12 abre su catálogo en una compilación de Debug), la credencial —de GitHub CLI si está, y
 si no una hoja que explica los permisos y la recoge—, el cliente de la API, la caché en
 SQLite, la sincronización en segundo plano, la vista principal, el inspector con sus notas,
-el modo repo y la copia de seguridad a un JSON.
+el modo repo, la copia de seguridad a un JSON, el arrastre entre grupos con su hueco y su
+vuelta a casa, el menú de cada tarjeta, la paleta de comandos y deshacer.
 
-Lo que no hay todavía: arrastrar tarjetas entre grupos y la paleta de comandos (fase 6) y la
-revisión semanal (fase 7). El plan completo está en [`PROMPTS.md`](PROMPTS.md).
+Lo que no hay todavía: la revisión semanal (fase 7) y el pulido final (fase 8). El plan
+completo está en [`PROMPTS.md`](PROMPTS.md).
 
 ## Compilar y ejecutar
 

@@ -186,6 +186,26 @@ void Animator::OpacityDelayed(const wuc::Visual& visual, float value, float dura
     visual.StartAnimation(L"Opacity", animation);
 }
 
+void Animator::Shake(const wuc::Visual& visual, const num::float3& base,
+                     float amplitudeDip) const {
+    if (!m_systemAnimations) return;
+
+    auto animation = m_compositor.CreateVector3KeyFrameAnimation();
+    animation.Duration(Ms(kShakeMs));
+    const auto ease = Ease();
+    // Dos idas y vueltas que se apagan. Empieza y termina en el sitio: lo que dice es "de
+    // aquí no pasas", y para eso tiene que volver exactamente a donde estaba.
+    const float steps[] = {1.0f, -0.7f, 0.45f, -0.2f};
+    float when = 0.0f;
+    for (const float step : steps) {
+        when += 0.2f;
+        animation.InsertKeyFrame(
+            when, num::float3{base.x + step * amplitudeDip, base.y, base.z}, ease);
+    }
+    animation.InsertKeyFrame(1.0f, base, ease);
+    visual.StartAnimation(L"Offset", animation);
+}
+
 void Animator::Blink(const wuc::Visual& caret, float periodMs) const {
     if (!m_systemAnimations) {
         // Quien apaga las animaciones del sistema pide que no se mueva nada, y un cursor

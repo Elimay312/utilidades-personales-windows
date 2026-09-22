@@ -15,8 +15,11 @@
 
 #include "app/State.h"
 #include "compositor/Winrt.h"
+#include "model/Types.h"
 #include "shell/Caption.h"
 #include "ui/Element.h"
+#include "ui/List.h"
+#include "views/Card.h"
 #include "views/Chrome.h"
 #include "views/Inspector.h"
 
@@ -40,6 +43,27 @@ public:
 
     // Vuelve a leer el estado entero: contadores de la barra lateral y lista.
     void Reload(bool animate);
+
+    // --- La tarjeta levantada ------------------------------------------------------------
+    //
+    // Arrastrar y las teclas 1-4 terminan en el mismo sitio a propósito: la tarjeta se
+    // levanta, vuela hasta su grupo y se apaga allí. Quien decide si el viaje se puede hacer
+    // es App —es quien conoce el límite de Enfoque y quien escribe en SQLite—, así que esto
+    // son tres verbos que App llama por su nombre y ninguna decisión.
+    //
+    // LiftCard no hace nada si ya hay una levantada (viene de un arrastre) o si esa tarjeta
+    // no se ve. Las otras tres no hacen nada si no hay ninguna levantada. Entre las cuatro,
+    // no queda un camino por el que una tarjeta se quede flotando.
+    void LiftCard(int slot);
+    void DropCardInto(Model::Priority priority);
+    void CancelDrop();
+    void RefuseDrop();
+
+    int SelectedSlot() const;
+    // Elegir una tarjeta y abrirle el inspector. Lo pide la paleta de comandos.
+    void Reveal(int slot);
+    // Todos y sin búsqueda: donde se ve cualquier repositorio, se haya clasificado o no.
+    void ShowAll();
 
     // --- El inspector ------------------------------------------------------------------
     // Quien monta su contenido es App, que es quien sabe de SQLite. La vista solo dice
@@ -69,6 +93,22 @@ public:
     void OnSettings(std::function<void(float, float)> handler) {
         m_settings = std::move(handler);
     }
+    // Una tarjeta quiere cambiar de grupo: arrastrada hasta la barra lateral, o con las
+    // teclas 1-4. Llega con la posición dentro de lo visible, como el resto.
+    void OnPriority(std::function<void(int, Model::Priority)> handler) {
+        m_priorityRequested = std::move(handler);
+    }
+    // Soltada entre otras dos de la misma lista.
+    void OnReorder(std::function<void(int, int)> handler) { m_reorder = std::move(handler); }
+    // Botón derecho sobre una tarjeta, con el punto donde abrir el menú.
+    void OnCardMenu(std::function<void(int, float, float)> handler) {
+        m_cardMenu = std::move(handler);
+    }
+    void OnUndo(std::function<void()> handler) { m_undo = std::move(handler); }
+    // Ctrl+K. Se pide desde aquí y no desde App —donde viven Ctrl+R y F12— a propósito: ahí
+    // arriba las teclas se miran ANTES que el enrutador, y entonces Ctrl+K con la paleta ya
+    // abierta abriría una segunda encima de la primera.
+    void OnPalette(std::function<void()> handler) { m_palette = std::move(handler); }
 
     bool OnKey(const Input::Key& e) override;
 
@@ -80,6 +120,11 @@ protected:
 private:
     void ChooseLens(App::Lens lens, bool fromSidebar);
     void OpenInspector(int slot);
+    bool BeginCardDrag(int slot, float x, float y);
+    void MoveCardDrag(float x, float y);
+    void FinishCardDrag(const Ui::List::Drop& drop);
+    // El final de todos los caminos: la tarjeta cae en 'target' y se apaga allí.
+    void DropCardAt(const Ui::Rect& target);
     // Coloca la barra lateral, la columna y la barra de título. Aparte de OnArrange porque
     // abrir el inspector las recoloca SIN recolocar el propio inspector: ese viaja con un
     // muelle, y un SetFrame a mitad de camino lo dejaría clavado en su destino.
@@ -94,6 +139,8 @@ private:
     Sidebar* m_sidebar = nullptr;
     RepoList* m_content = nullptr;
     Inspector* m_inspector = nullptr;
+    // La única tarjeta que puede estar en el aire. Se crea al arrancar y vive escondida.
+    DragCard* m_drag = nullptr;
 
     std::function<void()> m_syncRequested;
     std::function<void()> m_signOutRequested;
@@ -102,6 +149,11 @@ private:
     std::function<void(float, float)> m_settings;
     std::function<void(int)> m_inspectorRequest;
     std::function<void()> m_inspectorClosed;
+    std::function<void(int, Model::Priority)> m_priorityRequested;
+    std::function<void(int, int)> m_reorder;
+    std::function<void(int, float, float)> m_cardMenu;
+    std::function<void()> m_undo;
+    std::function<void()> m_palette;
 
     // Se esconde cuando el muelle de vuelta ha terminado, no antes: mientras viaja hay que
     // seguir viéndolo. Sin temporizador habría que despertar al hilo en cada fotograma para
@@ -110,6 +162,13 @@ private:
 
     bool m_hasMica = true;
     bool m_inspectorOpen = false;
+    // Hay una tarjeta levantada. No es lo mismo que "el ratón está arrastrando": las teclas
+    // 1-4 también levantan una, y entonces no hay puntero de por medio.
+    bool m_lifted = false;
+    Ui::Rect m_dragHome;
+    // Por dónde se agarró, para que la tarjeta no salte bajo el puntero al levantarla.
+    float m_grabX = 0.0f;
+    float m_grabY = 0.0f;
 };
 
 }  // namespace Views

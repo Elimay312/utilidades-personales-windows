@@ -11,6 +11,7 @@
 // apaga la suya: lo que se ve es una sola píldora que se muda de un grupo al otro.
 
 #include <functional>
+#include <optional>
 #include <string>
 
 #include "app/State.h"
@@ -37,6 +38,16 @@ public:
     void Select(App::Lens lens);
     void SetAccount(const std::wstring& account);
     void SetSyncing(bool running);
+
+    // --- Soltar una tarjeta encima ------------------------------------------------------
+    // Qué grupo hay bajo un punto de la VENTANA, si es uno de los que aceptan tarjetas. Las
+    // vistas inteligentes no: "Dormidos" no es un sitio donde poner algo, es una pregunta
+    // que se le hace a los datos.
+    std::optional<App::Lens> DropLensAt(float x, float y) const;
+    // Dónde está ese grupo, para que la tarjeta pueda caer dentro de él. Vacío si no se ve.
+    Ui::Rect RectOf(App::Lens lens) const;
+    // Enciende el resalte de soltar. Sin vista, lo apaga entero.
+    void SetDropTarget(std::optional<App::Lens> lens);
 
     void OnLens(std::function<void(App::Lens)> handler) { m_lens = std::move(handler); }
     void OnSync(std::function<void()> handler) { m_sync = std::move(handler); }

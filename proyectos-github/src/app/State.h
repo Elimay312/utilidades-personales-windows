@@ -53,6 +53,12 @@ inline constexpr Lens kSmartLenses[] = {Lens::All, Lens::NeedsDecision, Lens::Do
                                         Lens::ThisWeek};
 
 const wchar_t* NameOf(Lens lens);
+// Las cinco primeras vistas SON las cinco prioridades, en el mismo orden. Traducir de una a
+// otra pasa por aquí y no por un static_cast en cada sitio: el día que la barra lateral
+// cambie de orden, un cast escrito a mano en tres archivos empieza a mandar las tarjetas al
+// grupo de al lado sin dar ningún error.
+std::optional<Model::Priority> PriorityOf(Lens lens);
+Lens LensOf(Model::Priority priority);
 // El nombre con el que se guarda en 'ajustes'. ASCII y estable, como los slugs de
 // model/Types.h y por el mismo motivo: acaba escrito en la caché del usuario.
 const char* SlugOf(Lens lens);
@@ -123,7 +129,23 @@ void Derive(Entry& entry, Model::Instant now, const Model::Thresholds& limits);
 // El orden de la lista: el último push primero, y el que no tiene push, al final. Empatados
 // —dos repositorios sin push—, por nombre completo, para que el orden no dependa de en qué
 // orden los devolvió SQLite.
+//
+// Y por delante de todo eso, lo que se haya ordenado a mano. Arrastrar una tarjeta dentro de
+// un grupo escribe un 'order' a cada uno de ese grupo, y quien lo tiene va primero EN TODAS
+// las vistas, no solo en la que se ordenó. No es un descuido: una comparación que mirase el
+// orden solo entre los de la misma prioridad no sería una relación de orden —A antes que B
+// por orden, B antes que C por fecha, C antes que A por fecha— y std::sort con una
+// comparación así no da resultados raros, da comportamiento indefinido.
 bool Earlier(const Entry& a, const Entry& b);
+
+// Mueve el elemento 'from' a la posición 'to' de la lista, que es lo que significa soltar
+// una tarjeta entre otras dos. Devuelve vacío si no hay nada que mover: fuera de rango, o al
+// mismo sitio del que salió.
+//
+// Es puro y está aquí porque es de los que se equivocan en silencio: un desplazamiento con
+// el índice corrido en uno deja la tarjeta una posición más abajo de donde se soltó, y eso
+// no se lee como un fallo, se lee como que el pulso tembló.
+std::vector<std::string> Reordered(const std::vector<std::string>& ids, int from, int to);
 
 class State {
 public:

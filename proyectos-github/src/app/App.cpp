@@ -2,6 +2,9 @@
 
 #include <shellapi.h>
 
+#include <algorithm>
+#include <utility>
+
 #include "github/Auth.h"
 #include "model/Time.h"
 #include "model/Utf.h"
@@ -13,6 +16,7 @@
 #include "store/Repos.h"
 #include "ui/Controls.h"
 #include "ui/Overlays.h"
+#include "views/Palette.h"
 
 namespace App {
 
@@ -54,6 +58,21 @@ std::wstring RepoModeText(const Model::Local& local) {
         return L"Hay cambios sin subir. Se reintenta en la próxima sincronización.";
     }
     return L"Se escribe en PROYECTO.md al guardar.";
+}
+
+// Qué cambió entre dos Local, en una frase. Vacío si no cambió nada de lo que el usuario
+// escribe — y entonces no hay nada que deshacer, que es lo que distingue "guardar el mismo
+// siguiente paso otra vez" de un cambio de verdad.
+//
+// Se mira aquí y no en cada sitio que guarda: con la frase escrita en cada llamante, el que
+// se olvide de pasarla deja un Ctrl+Z que deshace algo sin decir qué.
+std::wstring Changed(const Model::Local& before, const Model::Local& after) {
+    if (before.priority != after.priority) return L"la prioridad";
+    if (before.state != after.state) return L"el estado";
+    if (before.nextStep != after.nextStep) return L"el siguiente paso";
+    if (before.repoMode != after.repoMode) return L"el modo repo";
+    if (before.folder != after.folder) return L"la carpeta";
+    return std::wstring();
 }
 
 const wchar_t* NameOf(Github::Stage stage) {
@@ -520,8 +539,29 @@ void Application::OnFileArrived(const Github::JobResult& done) {
 }
 
 void Application::SetPriority(Model::Priority priority) {
-    const Entry* entry = m_state.EntryOf(m_inspectorRepo);
-    if (entry == nullptr || entry->local.priority == priority) return;
+    ApplyPriority(m_inspectorRepo, priority);
+}
+
+void Application::ApplyPriority(const std::string& repoId, Model::Priority priority) {
+    const Entry* entry = m_state.EntryOf(repoId);
+    if (entry == nullptr) {
+        // El repositorio ya no está —una sincronización lo quitó mientras se arrastraba—. La
+        // tarjeta que hubiera en el aire vuelve a su sitio igual.
+        if (m_main) m_main->CancelDrop();
+        return;
+    }
+
+    // Se levanta antes de decidir nada: si viene de un arrastre ya está levantada y esto no
+    // hace nada, y si viene del teclado o de la paleta es lo que hace que el cambio se VEA
+    // irse a su grupo en vez de aparecer ya hecho.
+    if (m_main) m_main->LiftCard(m_state.SlotOfId(repoId));
+
+    if (entry->local.priority == priority) {
+        // Ya estaba ahí. Se deja caer en su grupo igual: quien acaba de arrastrarla hasta
+        // allí tiene que ver que llegó, no que se le queda la tarjeta en la mano.
+        if (m_main) m_main->DropCardInto(priority);
+        return;
+    }
 
     if (priority == Model::Priority::Focus) {
         std::vector<Model::FocusEntry> inFocus;
@@ -531,12 +571,11 @@ void Application::SetPriority(Model::Priority priority) {
         }
         const Model::FocusPlan plan =
             Model::PlanFocus(inFocus, entry->repo.id, Now(), m_state.Thresholds());
-        // El límite no se puede saltar (CLAUDE.md). La hoja para elegir a quién se baja es de
-        // la fase 6; lo que esta fase no puede hacer es dejar pasar el sexto.
+        // El límite no se puede saltar (CLAUDE.md), así que esto no tiene una rama que lo
+        // ignore: la tarjeta se para en seco, tiembla, y la hoja pregunta cuál baja.
         if (!plan.fits) {
-            Toast(L"Enfoque está lleno: caben " +
-                  std::to_wstring(m_state.Thresholds().focusLimit) +
-                  L". Baja uno a Secundario antes de subir otro.");
+            if (m_main) m_main->RefuseDrop();
+            AskWhoLeavesFocus(repoId, plan.demote);
             return;
         }
     }
@@ -544,6 +583,69 @@ void Application::SetPriority(Model::Priority priority) {
     Model::Local local = entry->local;
     local.priority = priority;
     SaveLocal(std::move(local));
+    if (m_main) m_main->DropCardInto(priority);
+}
+
+void Application::AskWhoLeavesFocus(const std::string& candidateId,
+                                    const std::vector<std::string>& demote) {
+    const Entry* candidate = m_state.EntryOf(candidateId);
+    if (candidate == nullptr || demote.empty()) return;
+
+    // En el orden que trae Model::PlanFocus: el que lleva más tiempo sin un push, primero. No
+    // se marca ninguno como "el recomendado" — la lista ya lo dice por sí sola, y decirlo
+    // además con palabras sería empujar a alguien a bajar su trabajo por una fecha.
+    std::vector<std::wstring> options;
+    options.reserve(demote.size());
+    for (const std::string& id : demote) {
+        const Entry* other = m_state.EntryOf(id);
+        if (other == nullptr) continue;
+        options.push_back(other->repo.name + L" · " +
+                          (other->daysSincePush.has_value() ? AgoDays(*other->daysSincePush)
+                                                            : L"sin actividad"));
+    }
+    if (options.empty()) return;
+
+    const std::wstring limit = std::to_wstring(m_state.Thresholds().focusLimit);
+    Ui::Sheet* sheet = Ask(L"Enfoque está lleno",
+                           L"Caben " + limit + L" y ya están los " + limit + L". Para que " +
+                               candidate->repo.name +
+                               L" entre, uno tiene que bajar a Secundario:",
+                           L"Ahora no", std::wstring());
+
+    const std::vector<std::string> leaving = demote;
+    // Ojo al orden: Ask() ya repartió el tema, y estos botones nacen después. Sin volver a
+    // repartirlo salen sin color de fondo —Ui::Button lo pone en OnTheme y no al crearse—,
+    // que es un botón invisible con su texto encima.
+    sheet->SetOptions(std::move(options), [this, candidateId, leaving](int index) {
+        if (index < 0 || index >= static_cast<int>(leaving.size())) return;
+        const Entry* out = m_state.EntryOf(leaving[static_cast<std::size_t>(index)]);
+        const Entry* in = m_state.EntryOf(candidateId);
+        if (out == nullptr || in == nullptr) return;
+
+        Model::Local down = out->local;
+        Model::Local up = in->local;
+        const Model::Local beforeDown = down;
+        const Model::Local beforeUp = up;
+        const std::wstring said =
+            out->repo.name + L" baja a Secundario y " + in->repo.name + L" entra en Enfoque.";
+        down.priority = Model::Priority::Secondary;
+        up.priority = Model::Priority::Focus;
+
+        // Los dos como UN cambio: con dos entradas en la pila, el primer Ctrl+Z dejaría seis
+        // en Enfoque durante un rato, que es justo el estado que no puede existir.
+        m_quietUndo = true;
+        SaveLocal(std::move(down));
+        SaveLocal(std::move(up));
+        m_quietUndo = false;
+        PushUndo(L"el relevo en Enfoque", [this, beforeDown, beforeUp] {
+            SaveLocal(beforeDown);
+            SaveLocal(beforeUp);
+        });
+        Toast(said);
+    });
+
+    m_host.ApplyTheme(m_theme.Tokens(), 0.0f);
+    m_host.FlushNow();
 }
 
 void Application::SetProjectState(Model::State state) {
@@ -577,21 +679,52 @@ void Application::AddNovedad(const std::wstring& text) {
         Toast(std::wstring(Model::NameOf(added.Err().kind)) + L". " + added.Err().detail);
         return;
     }
+    // El número de la fila recién escrita, que es lo único con lo que se puede volver atrás:
+    // dos novedades del mismo día con el mismo texto son dos filas distintas, y buscarla por
+    // el contenido borraría la que no es.
+    const std::int64_t addedId = m_db.LastInsertId();
+    const std::string repoId = entry->repo.id;
+    const std::wstring name = entry->repo.name;
+
     // Y por el camino de siempre: una novedad también es un cambio del repositorio, así que
     // pasa por SaveLocal para que se selle la fecha y, cuando toque, se encole la subida.
     SaveLocal(entry->local);
+    PushUndo(L"la novedad de " + name,
+             [this, repoId, addedId] { DeleteNovedadOf(repoId, addedId); });
 }
 
-void Application::DeleteNovedad(std::int64_t id) {
-    const Entry* entry = m_state.EntryOf(m_inspectorRepo);
+void Application::DeleteNovedad(std::int64_t id) { DeleteNovedadOf(m_inspectorRepo, id); }
+
+void Application::DeleteNovedadOf(const std::string& repoId, std::int64_t id) {
+    const Entry* entry = m_state.EntryOf(repoId);
     if (entry == nullptr || !m_db.IsOpen()) return;
 
     Store::Repos repos(m_db);
+    // Lo que se va a borrar, ANTES de borrarlo: es lo único que permite devolverlo. Una
+    // novedad borrada por error no se puede volver a descargar de ninguna parte.
+    Model::Novedad gone;
+    if (Model::Result<std::vector<Model::Novedad>> all = repos.NovedadesOf(repoId); all.IsOk()) {
+        for (const Model::Novedad& one : all.Value()) {
+            if (one.id == id) gone = one;
+        }
+    }
+
     if (Model::Outcome removed = repos.DeleteNovedad(id); !removed) {
         Toast(std::wstring(Model::NameOf(removed.Err().kind)) + L". " + removed.Err().detail);
         return;
     }
     SaveLocal(entry->local);
+    if (gone.id != 0) {
+        PushUndo(L"borrar una novedad de " + entry->repo.name, [this, gone] {
+            if (!m_db.IsOpen()) return;
+            Store::Repos again(m_db);
+            // Vuelve con otro número de fila y con su fecha original. El número no lo mira
+            // nadie más que la propia lista del inspector.
+            (void)again.AddNovedad(gone);
+            const Entry* back = m_state.EntryOf(gone.repoId);
+            if (back != nullptr) SaveLocal(back->local);
+        });
+    }
 }
 
 std::wstring Application::ResolveFolder(const Entry& entry) const {
@@ -606,8 +739,10 @@ std::wstring Application::ResolveFolder(const Entry& entry) const {
     return Exists(guess) ? guess : std::wstring();
 }
 
-void Application::OpenFolder() {
-    const Entry* entry = m_state.EntryOf(m_inspectorRepo);
+void Application::OpenFolder() { OpenFolderOf(m_inspectorRepo); }
+
+void Application::OpenFolderOf(const std::string& repoId) {
+    const Entry* entry = m_state.EntryOf(repoId);
     if (entry == nullptr) return;
     const std::wstring folder = ResolveFolder(*entry);
     // Sin carpeta que abrir, el botón sirve para elegirla. Un botón que solo sabe decir que
@@ -742,6 +877,210 @@ void Application::ChooseFolderFor(const std::string& repoId) {
     SaveLocal(std::move(local));
 }
 
+// ------------------------------------------------------- Ordenar, deshacer y menús --
+
+bool Application::WriteOrder(const std::vector<std::pair<std::string, int>>& orders) {
+    if (!m_db.IsOpen()) return false;
+
+    // Todo o nada. Son hasta ciento nueve escrituras por un solo gesto, y una tanda a medias
+    // dejaría la lista ordenada por un orden que nadie pidió —ni el viejo ni el nuevo—.
+    Store::Transaction tx(m_db);
+    if (Model::Outcome started = tx.Begin(); !started) {
+        Toast(std::wstring(Model::NameOf(started.Err().kind)) + L". " + started.Err().detail);
+        return false;
+    }
+    Store::Repos repos(m_db);
+    for (const std::pair<std::string, int>& one : orders) {
+        if (Model::Outcome written = repos.SetOrder(one.first, one.second); !written) {
+            Toast(std::wstring(Model::NameOf(written.Err().kind)) + L". " +
+                  written.Err().detail);
+            return false;
+        }
+    }
+    if (Model::Outcome done = tx.Commit(); !done) {
+        Toast(std::wstring(Model::NameOf(done.Err().kind)) + L". " + done.Err().detail);
+        return false;
+    }
+    return true;
+}
+
+void Application::ReorderVisible(int from, int to) {
+    if (m_main == nullptr || !m_db.IsOpen()) return;
+
+    // Con una búsqueda puesta no se ordena. Lo que se ve es un trozo de la vista, así que
+    // "entre estas dos" no dice nada de los que el filtro dejó fuera y que están justo ahí
+    // en medio: el orden saldría de otra manera en cuanto se borrara la búsqueda.
+    if (m_state.Searching()) {
+        Toast(L"Para ordenar a mano, quita antes la búsqueda: lo que se ve es solo una parte.");
+        if (m_main) m_main->CancelDrop();
+        return;
+    }
+
+    std::vector<std::string> ids;
+    std::vector<std::pair<std::string, int>> before;
+    ids.reserve(static_cast<std::size_t>(m_state.VisibleCount()));
+    before.reserve(static_cast<std::size_t>(m_state.VisibleCount()));
+    for (int slot = 0; slot < m_state.VisibleCount(); ++slot) {
+        const Entry* entry = m_state.At(slot);
+        if (entry == nullptr) continue;
+        ids.push_back(entry->repo.id);
+        before.emplace_back(entry->repo.id, entry->local.order);
+    }
+
+    const std::vector<std::string> moved = Reordered(ids, from, to);
+    if (moved.empty()) return;
+
+    // Se renumera la vista ENTERA, del uno en adelante, y no solo los dos de al lado. Con
+    // números sueltos habría que inventarse huecos entre medias y un día no cabría ninguno;
+    // así, el orden de la pantalla y el de la cajón son el mismo número.
+    std::vector<std::pair<std::string, int>> orders;
+    orders.reserve(moved.size());
+    for (std::size_t i = 0; i < moved.size(); ++i) {
+        orders.emplace_back(moved[i], static_cast<int>(i) + 1);
+    }
+    if (!WriteOrder(orders)) return;
+
+    PushUndo(L"el orden de " + std::wstring(NameOf(m_state.CurrentLens())), [this, before] {
+        if (!WriteOrder(before)) return;
+        LoadFromCache();
+        if (m_main) m_main->Reload(true);
+    });
+
+    LoadFromCache();
+    m_main->Reload(true);
+}
+
+void Application::PushUndo(std::wstring said, std::function<void()> apply) {
+    if (m_quietUndo) return;
+    // Cincuenta y a olvidar los de abajo. Es una pila para el error de hace un momento, no un
+    // historial del día: lo que de verdad guarda lo escrito es SQLite.
+    constexpr std::size_t kDepth = 50;
+    m_undo.push_back(Undo{std::move(said), std::move(apply)});
+    if (m_undo.size() > kDepth) m_undo.erase(m_undo.begin());
+}
+
+void Application::UndoLast() {
+    if (m_undo.empty()) {
+        Toast(L"No hay nada que deshacer.");
+        return;
+    }
+    const Undo last = std::move(m_undo.back());
+    m_undo.pop_back();
+
+    // Callado: la vuelta atrás no se apunta a sí misma. Sin esto, Ctrl+Z dos veces se
+    // quedaría meciendo el mismo cambio para siempre.
+    m_quietUndo = true;
+    if (last.apply) last.apply();
+    m_quietUndo = false;
+    Toast(L"Deshecho: " + last.said);
+}
+
+void Application::ShowCardMenu(int slot, float x, float y) {
+    const Entry* entry = m_state.At(slot);
+    if (entry == nullptr) return;
+
+    // Todo por VALOR: el menú vive más que esta llamada, y para cuando alguien elija una
+    // opción puede haber terminado una sincronización y haberse reconstruido el estado entero.
+    const std::string repoId = entry->repo.id;
+    const std::wstring url = entry->repo.url;
+    const Model::Priority current = entry->local.priority;
+
+    std::vector<Ui::Menu::Entry> entries;
+    entries.push_back({L"Abrir", [this, repoId] { RevealRepo(repoId); }});
+    for (int i = 0; i < 5; ++i) {
+        const Model::Priority priority = static_cast<Model::Priority>(i);
+        std::wstring label = priority == Model::Priority::Unsorted
+                                 ? std::wstring(L"Quitar la prioridad")
+                                 : L"Poner en " + std::wstring(Ui::NameOf(priority));
+        // La de ahora se dice con palabras y no con una marca: un menú con una columna de
+        // marcas vacías pide leerlo dos veces para encontrar la única que está puesta.
+        if (priority == current) label += L" (ahora)";
+        entries.push_back({std::move(label),
+                           [this, repoId, priority] { ApplyPriority(repoId, priority); }});
+    }
+    entries.push_back({L"Editar el siguiente paso", [this, repoId] {
+                           RevealRepo(repoId);
+                           if (m_main && m_main->Panel()) m_main->Panel()->FocusNextStep();
+                       }});
+    entries.push_back({L"Añadir una novedad", [this, repoId] {
+                           RevealRepo(repoId);
+                           if (m_main && m_main->Panel()) m_main->Panel()->BeginNovedad();
+                       }});
+    if (!url.empty()) {
+        entries.push_back({L"Abrir en GitHub", [url] {
+                               ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr,
+                                             SW_SHOWNORMAL);
+                           }});
+    }
+    entries.push_back({L"Abrir la carpeta local", [this, repoId] { OpenFolderOf(repoId); }});
+
+    m_host.PushLayer<Ui::Menu>(Ui::Host::LayerOptions{false, true, false}, std::move(entries),
+                               x, y);
+    m_host.Layout(m_window.WidthDip(), m_window.HeightDip(), m_window.Scale());
+    m_host.ApplyTheme(m_theme.Tokens(), 0.0f);
+    m_host.FlushNow();
+}
+
+void Application::ShowPalette() {
+    std::vector<Views::Palette::Action> actions;
+
+    // Lo del repositorio elegido va PRIMERO, porque es lo que se busca cuando se abre la
+    // paleta con una tarjeta señalada. Sin ninguna elegida, estas acciones no existen: una
+    // paleta que ofrece "Poner en Enfoque" sin decir el qué solo puede equivocarse.
+    const Entry* chosen = m_main ? m_state.At(m_main->SelectedSlot()) : nullptr;
+    if (chosen != nullptr) {
+        const std::string repoId = chosen->repo.id;
+        const std::wstring name = chosen->repo.name;
+        for (int i = 0; i < 5; ++i) {
+            const Model::Priority priority = static_cast<Model::Priority>(i);
+            std::wstring label = priority == Model::Priority::Unsorted
+                                     ? std::wstring(L"Quitar la prioridad")
+                                     : L"Poner en " + std::wstring(Ui::NameOf(priority));
+            actions.push_back({std::move(label), name, [this, repoId, priority] {
+                                   ApplyPriority(repoId, priority);
+                               }});
+        }
+        if (!chosen->repo.url.empty()) {
+            const std::wstring url = chosen->repo.url;
+            actions.push_back({L"Abrir en GitHub", name, [url] {
+                                   ShellExecuteW(nullptr, L"open", url.c_str(), nullptr,
+                                                 nullptr, SW_SHOWNORMAL);
+                               }});
+        }
+    }
+
+    actions.push_back({L"Sincronizar ahora", L"Ctrl+R", [this] { m_sync.Start(); }});
+    actions.push_back({L"Empezar la revisión semanal", L"Ctrl+Mayús+R", [this] {
+                           // Dice la verdad en vez de no estar: la revisión es de la fase 7, y
+                           // una acción que no aparece se busca; una que avisa, no.
+                           Toast(L"La revisión semanal todavía no está: llega en la fase 7.");
+                       }});
+    actions.push_back({L"Deshacer", L"Ctrl+Z", [this] { UndoLast(); }});
+
+    for (const Entry& entry : m_state.Entries()) {
+        const std::string repoId = entry.repo.id;
+        actions.push_back({entry.repo.name, entry.repo.nameWithOwner,
+                           [this, repoId] { RevealRepo(repoId); }});
+    }
+
+    m_host.PushLayer<Views::Palette>(
+        Ui::Host::LayerOptions{/*modal*/ true, /*lightDismiss*/ true, /*scrim*/ true},
+        std::move(actions));
+    m_host.Layout(m_window.WidthDip(), m_window.HeightDip(), m_window.Scale());
+    m_host.ApplyTheme(m_theme.Tokens(), 0.0f);
+    m_host.FlushNow();
+}
+
+void Application::RevealRepo(const std::string& repoId) {
+    if (m_main == nullptr) return;
+    // Si no se ve desde donde estamos —otra vista, o una búsqueda puesta— se va a Todos.
+    // Encontrar algo en la paleta y que no aparezca sería encontrarlo y perderlo en el mismo
+    // gesto.
+    if (m_state.SlotOfId(repoId) < 0) m_main->ShowAll();
+    const int slot = m_state.SlotOfId(repoId);
+    if (slot >= 0) m_main->Reveal(slot);
+}
+
 void Application::WireView() {
     m_main->OnSyncRequested([this] { m_sync.Start(); });
     m_main->OnSettings([this](float x, float y) { ShowSettings(x, y); });
@@ -753,6 +1092,19 @@ void Application::WireView() {
     });
     m_main->OnLensChanged([this](Lens lens) { SaveLens(lens); });
     m_main->OnOpenInGitHub([this](int slot) { OpenInGitHub(slot); });
+    m_main->OnPriority([this](int slot, Model::Priority priority) {
+        const Entry* entry = m_state.At(slot);
+        if (entry == nullptr) {
+            // La tarjeta se fue de la vista entre el gesto y esto. Que no se quede en el aire.
+            m_main->CancelDrop();
+            return;
+        }
+        ApplyPriority(entry->repo.id, priority);
+    });
+    m_main->OnReorder([this](int from, int to) { ReorderVisible(from, to); });
+    m_main->OnCardMenu([this](int slot, float x, float y) { ShowCardMenu(slot, x, y); });
+    m_main->OnUndo([this] { UndoLast(); });
+    m_main->OnPalette([this] { ShowPalette(); });
     WireInspector();
 }
 

@@ -11,7 +11,10 @@
 
 #include <Windows.h>
 
+#include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "app/State.h"
 #include "compositor/Device.h"
@@ -58,11 +61,34 @@ private:
     // repo esté encendido, así que lo primero que pasa siempre es que se guarda.
     void SaveLocal(Model::Local local);
     void SetPriority(Model::Priority priority);
+    // --- Priorizar: el único camino ------------------------------------------------------
+    //
+    // Todo lo que cambia una prioridad pasa por aquí: el menú del inspector, las teclas 1-4,
+    // arrastrar hasta la barra lateral, el menú contextual y la paleta. Es lo que hace que
+    // "no se puede tener más en Enfoque que el límite" sea cierto y no cinco veces cierto:
+    // con la comprobación copiada en cada sitio, el sexto entra por el camino que se olvidó.
+    void ApplyPriority(const std::string& repoId, Model::Priority priority);
+    // Enfoque está lleno: la hoja que pregunta cuál baja a Secundario.
+    void AskWhoLeavesFocus(const std::string& candidateId,
+                           const std::vector<std::string>& demote);
+    // Soltar una tarjeta entre otras dos: escribe el orden de TODA la vista de una tacada.
+    void ReorderVisible(int from, int to);
+    // El menú contextual de una tarjeta, con todo lo que se puede hacer con ella.
+    void ShowCardMenu(int slot, float x, float y);
+    void ShowPalette();
+    // Elegir un repositorio y abrirle el inspector, venga de donde venga. Cambia de vista si
+    // hace falta: buscar algo en la paleta y que no aparezca porque estaba filtrado sería
+    // encontrarlo y perderlo en el mismo gesto.
+    void RevealRepo(const std::string& repoId);
     void SetProjectState(Model::State state);
     void SetNextStep(const std::wstring& text);
     void AddNovedad(const std::wstring& text);
     void DeleteNovedad(std::int64_t id);
+    // Por identificador de repositorio y no por "el del inspector": deshacer una novedad
+    // borrada tiene que funcionar aunque el panel se haya cerrado o esté en otro.
+    void DeleteNovedadOf(const std::string& repoId, std::int64_t id);
     void OpenFolder();
+    void OpenFolderOf(const std::string& repoId);
     // El interruptor del modo repo. Encenderlo en un repositorio que nunca se ha confirmado
     // abre la hoja; apagarlo no pregunta nada.
     void SetRepoMode(bool wanted);
@@ -100,6 +126,22 @@ private:
     void Toast(const std::wstring& message);
     void OpenInGitHub(int slot);
     void SaveLens(Lens lens);
+
+    // --- Deshacer -------------------------------------------------------------------------
+    //
+    // Una pila de "cómo se deshace esto", no de "qué pasó". Deshacer un cambio de prioridad y
+    // deshacer una novedad borrada no se parecen en nada salvo en que los dos saben volver
+    // atrás, y guardar la vuelta atrás ya hecha es lo que evita tener un tipo de evento por
+    // cada cosa que la aplicación sabe cambiar.
+    struct Undo {
+        std::wstring said;
+        std::function<void()> apply;
+    };
+    void PushUndo(std::wstring said, std::function<void()> apply);
+    void UndoLast();
+    // Escribe pares (repositorio, orden) de una sentada y en una transacción. Lo usan el
+    // arrastre y su deshacer, que son la misma escritura con otros números.
+    bool WriteOrder(const std::vector<std::pair<std::string, int>>& orders);
     // Reparte el estado de la barra de título a la raíz que haya puesta. Son dos —la vista
     // principal y el catálogo de Debug— y las dos llevan un Views::Chrome, porque los
     // botones de la ventana se dibujan aquí dentro y una raíz sin ellos deja la ventana sin
@@ -143,6 +185,13 @@ private:
     std::wstring m_account;
     // La vista guardada se lee una sola vez, al arrancar. Ver LoadFromCache.
     bool m_lensLoaded = false;
+
+    std::vector<Undo> m_undo;
+    // Deshacer no se apunta a sí mismo. Sin esto, la primera vuelta atrás dejaría en la pila
+    // cómo deshacerla, y Ctrl+Z dos veces se quedaría meciendo el mismo cambio para siempre.
+    // Lo usan también los cambios que van en pareja —bajar uno de Enfoque y subir otro—, que
+    // se apuntan como UNA entrada.
+    bool m_quietUndo = false;
 
 #if BRUJULA_CATALOGO
     Views::Catalog* m_catalog = nullptr;

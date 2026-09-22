@@ -128,6 +128,12 @@ void Router::Pointer(const Input::Pointer& e) {
     if (e.action == Input::Action::Cancel) {
         // La captura se fue a otra ventana. Sin soltar el pulsado, el botón se queda
         // hundido para siempre.
+        //
+        // Y quien tuviera la captura se entera ANTES de quitársela. Sin este aviso, un
+        // Alt+Tab a mitad de arrastrar una tarjeta deja la tarjeta levantada flotando en
+        // medio de la pantalla y sin nadie que la vaya a soltar nunca, que es justo lo que
+        // el criterio de aceptación de la fase 6 dice que no puede pasar.
+        if (m_captured) m_captured->OnPointer(e);
         if (m_pressed) m_pressed->SetPressed(false);
         m_pressed = nullptr;
         m_captured = nullptr;
@@ -216,6 +222,13 @@ void Router::WindowFocus(bool focused) {
         // encendidos encima de otra aplicación.
         PopLightDismiss();
         SetHoverChain(nullptr);
+        // Lo mismo que en Cancel, y por lo mismo: el que esté arrastrando algo tiene que
+        // enterarse de que se le acabó, porque nadie le va a mandar el Up.
+        if (m_captured) {
+            Input::Pointer cancelled;
+            cancelled.action = Input::Action::Cancel;
+            m_captured->OnPointer(cancelled);
+        }
         if (m_pressed) m_pressed->SetPressed(false);
         m_pressed = nullptr;
         m_captured = nullptr;

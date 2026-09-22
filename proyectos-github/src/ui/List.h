@@ -110,6 +110,46 @@ public:
     // costó, que es la medida que decide si el criterio de los 60 fps se cumple.
     void OnRecycled(std::function<void()> handler) { m_recycled = std::move(handler); }
 
+    // --- Arrastrar ----------------------------------------------------------------------
+    //
+    // La lista no sabe qué significa soltar. Sabe de celdas: quién se está llevando, dónde
+    // caería y cuándo se soltó, todo en coordenadas de VENTANA para quien tenga que mirar
+    // fuera de ella —la barra lateral, sin ir más lejos—. Lo que significa cada cosa lo
+    // decide quien escucha, que es la regla 2 de arquitectura otra vez.
+    //
+    // El hueco sí es suyo, porque es su maquetación: mientras se arrastra, las demás celdas
+    // se colocan como si la que viaja ya no estuviera, y se deslizan con el muelle suave —el
+    // de reordenar de la tabla de CLAUDE.md— hasta el sitio que les toca.
+    struct Drop {
+        int from = -1;
+        // Dónde caería dentro de la lista, o -1 si se soltó fuera de ella.
+        int to = -1;
+        float x = 0.0f;  // en coordenadas de ventana
+        float y = 0.0f;
+        bool inside = false;
+    };
+
+    // Devuelve false para negarse: una lista que no se reordena no engancha esto, y una que
+    // sí puede decir que esa celda concreta no se mueve.
+    void OnDragBegin(std::function<bool(int index, float x, float y)> handler) {
+        m_dragBegin = std::move(handler);
+    }
+    void OnDragMove(std::function<void(float x, float y)> handler) {
+        m_dragMove = std::move(handler);
+    }
+    // Se llama SIEMPRE que un arrastre termina, incluso cuando termina mal: soltar fuera,
+    // Esc, o que otra ventana se lleve la captura. Es lo que hace imposible que quede una
+    // tarjeta levantada sin nadie que la baje.
+    void OnDragEnd(std::function<void(const Drop&)> handler) { m_dragEnd = std::move(handler); }
+    // El botón derecho sobre una celda, con el punto donde abrir el menú.
+    void OnContextMenu(std::function<void(int index, float x, float y)> handler) {
+        m_context = std::move(handler);
+    }
+
+    bool Dragging() const { return m_dragIndex >= 0; }
+    // Lo deja donde estaba. La usa Esc, y el aviso de fin sale igual.
+    void CancelDrag();
+
     // Lo que hace falta para juzgar el criterio: cuánto costó la última tanda de
     // reciclado y cuántas superficies hay vivas. Muy por debajo de 16,6 ms con 500
     // elementos es la prueba de que el desplazamiento no puede tirar fotogramas.
@@ -137,6 +177,11 @@ private:
         bool leaving = false;
         float x = 0.0f;
         float y = 0.0f;
+        // A qué tamaño está reservada su textura. Es lo que decide si hay que repintarla al
+        // recolocarla: reservar la VACÍA, y una celda que cambia de ancho sin repintarse se
+        // queda en blanco hasta que algo la toque (ver PlaceRow).
+        float width = 0.0f;
+        float height = 0.0f;
     };
 
     void OnScroll(float position);
@@ -145,6 +190,20 @@ private:
     void PlaceRow(Row& row, int index, bool slide);
     void Release(Row& row, bool fade);
     Row* FreeRow();
+
+    // Dónde se DIBUJA el elemento 'index'. Sin arrastre es él mismo; con arrastre, el que
+    // viaja va al hueco y los de en medio se corren uno. Es la única cuenta de todo esto:
+    // el resto de la lista sigue hablando de índices y no se entera.
+    int DisplaySlot(int index) const;
+    // Entre qué dos caería un punto. A diferencia de IndexAtLocal, el hueco entre celdas no
+    // es tierra de nadie: soltar ahí tiene que significar algo.
+    int InsertIndexAt(float localX, float localY) const;
+    void BeginDrag(int index);
+    void SetDropIndex(int index);
+    void EndDrag(int to, float localX, float localY, bool inside);
+    // Esconde la que se está llevando el usuario: lo que se ve viajar es la copia que
+    // levanta quien escucha, y las dos a la vez serían dos tarjetas iguales.
+    void UpdateDragVisibility();
 
     float Pitch() const { return m_cellHeight + m_gap; }
     int RowCount() const { return RowsFor(m_count, m_columns); }
@@ -167,10 +226,22 @@ private:
     std::function<void(int)> m_clicked;
     std::function<void(int)> m_selectionChanged;
     std::function<void()> m_recycled;
+    std::function<bool(int, float, float)> m_dragBegin;
+    std::function<void(float, float)> m_dragMove;
+    std::function<void(const Drop&)> m_dragEnd;
+    std::function<void(int, float, float)> m_context;
 
     int m_count = 0;
     int m_selected = -1;
     int m_hovered = -1;
+    // Sobre cuál se pulsó y dónde, mientras el botón sigue abajo. Es lo que separa un clic
+    // de un arrastre: hasta que no se recorren unos pocos DIP, esto es un clic.
+    int m_pressIndex = -1;
+    float m_pressX = 0.0f;
+    float m_pressY = 0.0f;
+    // El que viaja, y dónde caería. Los dos a -1 cuando no se está arrastrando.
+    int m_dragIndex = -1;
+    int m_dropIndex = -1;
     int m_columns = 1;
     float m_cellHeight = Metrics::kRowHeight;
     float m_gap = 0.0f;

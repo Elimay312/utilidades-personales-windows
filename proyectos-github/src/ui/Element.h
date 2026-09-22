@@ -131,6 +131,12 @@ public:
     void Invalidate(float fadeMs = 0.0f);
     // Recoloca el subárbol y lo repinta. Lo llama quien cambia de tamaño.
     void Relayout();
+    // Recoloca a los HIJOS y repinta, sin volver a escribir el marco propio. Es lo que
+    // quiere quien cambia lo que tiene dentro mientras su propia forma puede estar
+    // viajando: reescribir el marco propio a mitad de un MorphTo lo planta en el destino y
+    // se come la transición —y antes de que Element::SetFrame parase también el Size, lo
+    // dejaba congelado a medio camino—.
+    void RelayoutContent();
     // Baja por el subárbol. Substitute permite a un contenedor cambiar la paleta.
     void ApplyTheme(const Theme::Tokens& tokens, float crossfadeMs);
     const Theme::Tokens& Tokens() const { return m_tokens; }

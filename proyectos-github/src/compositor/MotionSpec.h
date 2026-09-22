@@ -27,15 +27,25 @@ struct Spring {
     constexpr bool operator==(const Spring&) const = default;
 };
 
-inline constexpr Spring kSnappy{0.9f, 120.0f};
-inline constexpr Spring kStandard{0.85f, 220.0f};
-inline constexpr Spring kSmooth{0.8f, 300.0f};
-inline constexpr Spring kExpressive{0.75f, 350.0f};
+// Los periodos bajaron en la fase 6, con la aplicación ya llena de datos y en uso: con los
+// de la fase 1 —120, 220, 300 y 350— cambiar de proyecto se sentía lento, que es justo lo
+// contrario de para lo que existe esta aplicación. Las amortiguaciones no se tocan: son las
+// que dan el carácter de cada muelle, y lo que sobraba era el tiempo.
+inline constexpr Spring kSnappy{0.9f, 80.0f};
+inline constexpr Spring kStandard{0.85f, 130.0f};
+inline constexpr Spring kSmooth{0.8f, 165.0f};
+inline constexpr Spring kExpressive{0.75f, 195.0f};
 
 // El fundido que sustituye al movimiento cuando "Mostrar animaciones en Windows" está
 // apagado. Corto a propósito: quien apaga las animaciones no quiere media transición,
 // quiere que el cambio ya esté hecho.
 inline constexpr float kReducedFadeMs = 120.0f;
+
+// El temblor del límite de Enfoque: cuánto dura y cuánto se aparta. Corto y poco, las dos
+// cosas: un rechazo de medio segundo se lee como que la aplicación se ha quedado pensando, y
+// uno de veinte píxeles, como que la tarjeta se ha escapado.
+inline constexpr float kShakeMs = 320.0f;
+inline constexpr float kShakeDip = 7.0f;
 
 // El cruce del cambio de tema. Es duración fija y no muelle: no se mueve nada, solo se
 // funde, y un muelle sobre una opacidad que va de 0 a 1 no aporta física ninguna.

@@ -84,6 +84,16 @@ public:
     void OpacityDelayed(const winrt::Windows::UI::Composition::Visual& visual, float value,
                         float durationMs, float delayMs) const;
 
+    // Un temblor horizontal corto que vuelve a 'base' y se queda ahí: el "no" del límite de
+    // Enfoque. Es lo ÚNICO de la aplicación que anima un desplazamiento con fotogramas clave
+    // y no con un muelle, y se sostiene por lo mismo que la regla de la fase 1 dice al revés:
+    // un muelle está para retomarse a mitad, y un temblor no se retoma — o se ve entero o no
+    // ha dicho nada—. Con animaciones del sistema apagadas no tiembla nada: quien las apaga
+    // pide que no se mueva nada, y el aviso lo da la hoja que sale detrás.
+    void Shake(const winrt::Windows::UI::Composition::Visual& visual,
+               const winrt::Windows::Foundation::Numerics::float3& base,
+               float amplitudeDip) const;
+
     // El cursor del campo de texto, parpadeando en bucle en la GPU. Sin temporizador en el
     // hilo de UI: el bucle de mensajes se queda dormido en GetMessageW y así sigue.
     void Blink(const winrt::Windows::UI::Composition::Visual& caret, float periodMs) const;

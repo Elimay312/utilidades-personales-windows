@@ -1,6 +1,7 @@
 #include "app/State.h"
 
 #include <algorithm>
+#include <iterator>
 
 namespace App {
 
@@ -80,6 +81,18 @@ const char* SlugOf(Lens lens) {
     case Lens::ThisWeek:      return "esta-semana";
     }
     return "todos";
+}
+
+std::optional<Model::Priority> PriorityOf(Lens lens) {
+    for (std::size_t i = 0; i < std::size(kPriorityLenses); ++i) {
+        if (kPriorityLenses[i] == lens) return static_cast<Model::Priority>(i);
+    }
+    return std::nullopt;
+}
+
+Lens LensOf(Model::Priority priority) {
+    const std::size_t index = static_cast<std::size_t>(priority);
+    return index < std::size(kPriorityLenses) ? kPriorityLenses[index] : Lens::All;
 }
 
 Lens LensFromSlug(std::string_view slug, Lens fallback) {
@@ -190,6 +203,13 @@ void Derive(Entry& entry, Model::Instant now, const Model::Thresholds& limits) {
 }
 
 bool Earlier(const Entry& a, const Entry& b) {
+    // Lo ordenado a mano manda, y manda en todas las vistas. Ver la cabecera: mirarlo solo
+    // entre los de la misma prioridad no sería una relación de orden.
+    if ((a.local.order != 0) != (b.local.order != 0)) return a.local.order != 0;
+    if (a.local.order != 0 && a.local.order != b.local.order) {
+        return a.local.order < b.local.order;
+    }
+
     const bool hasA = a.repo.pushedAt.has_value();
     const bool hasB = b.repo.pushedAt.has_value();
     // El que no tiene push va al final: no es que sea viejísimo, es que no hay nada que
@@ -199,6 +219,20 @@ bool Earlier(const Entry& a, const Entry& b) {
         return *a.repo.pushedAt > *b.repo.pushedAt;
     }
     return a.repo.nameWithOwner < b.repo.nameWithOwner;
+}
+
+std::vector<std::string> Reordered(const std::vector<std::string>& ids, int from, int to) {
+    const int count = static_cast<int>(ids.size());
+    if (from < 0 || from >= count || to < 0 || to >= count || from == to) return {};
+
+    std::vector<std::string> moved = ids;
+    const std::string carried = moved[static_cast<std::size_t>(from)];
+    moved.erase(moved.begin() + from);
+    // Después de sacarlo, 'to' sigue siendo la posición de la PANTALLA, que es donde el
+    // usuario lo soltó. Insertar ahí es lo correcto justo porque el hueco que se ve mientras
+    // se arrastra se dibuja con el elemento ya fuera de la fila.
+    moved.insert(moved.begin() + to, carried);
+    return moved;
 }
 
 void State::Load(std::vector<Model::Repo> repos, const std::vector<Model::Local>& locals,

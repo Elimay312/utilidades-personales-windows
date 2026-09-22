@@ -11,9 +11,14 @@ namespace Gfx {
 
 namespace {
 
-// Cuánto frena la inercia por fotograma. Con 0,92 una muesca se para en medio segundo
-// largo; con 0,98 la lista sigue viajando sola y se siente resbaladiza.
-constexpr float kDecay = 0.92f;
+// Cuánto frena la inercia por fotograma. Con 0,98 la lista sigue viajando sola y se siente
+// resbaladiza; con 0,92 una muesca tardaba todavía cerca de un segundo en pararse, que con
+// la aplicación en uso se sentía como que la lista tira de más. Con 0,85 se para en poco
+// más de medio segundo y sigue habiendo inercia.
+//
+// La DISTANCIA de una muesca no cambia al tocar esto: kVelocityPerDip se deriva del mismo
+// número, así que lo que se acorta es el tiempo y no lo que recorre.
+constexpr float kDecay = 0.85f;
 
 // De DIP a velocidad. Con decaimiento exponencial por fotograma, lo que recorre un
 // impulso es v/60/(1-decay), así que para recorrer D hay que empujar con D*60*(1-decay).

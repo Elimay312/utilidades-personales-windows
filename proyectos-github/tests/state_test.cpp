@@ -137,6 +137,72 @@ TEST_CASE("El orden es el último push primero y los que no tienen, al final") {
     CHECK(state.At(2)->repo.id == "R2");
 }
 
+TEST_CASE("El orden puesto a mano va por delante de la fecha") {
+    // Y va por delante en TODAS las vistas, no solo en la que se ordenó. Es lo que obliga a
+    // que la comparación mire una sola llave: una que mirase el orden solo entre los de la
+    // misma prioridad no sería una relación de orden, y std::sort con una de esas no da un
+    // resultado raro, da comportamiento indefinido.
+    std::vector<Model::Repo> repos;
+    repos.push_back(MakeRepo("R1", L"viejo", "2025-03-01T10:00:00Z"));
+    repos.push_back(MakeRepo("R2", L"nuevo", "2026-09-20T10:00:00Z"));
+    repos.push_back(MakeRepo("R3", L"medio", "2026-01-01T10:00:00Z"));
+
+    std::vector<Model::Local> locals;
+    Model::Local first;
+    first.repoId = "R1";
+    first.order = 1;
+    locals.push_back(first);
+    Model::Local second;
+    second.repoId = "R3";
+    second.order = 2;
+    locals.push_back(second);
+
+    App::State state;
+    state.Load(std::move(repos), locals, kNow);
+
+    REQUIRE(state.VisibleCount() == 3);
+    CHECK(state.At(0)->repo.id == "R1");
+    CHECK(state.At(1)->repo.id == "R3");
+    // El que nadie ordenó se queda detrás aunque tenga el push más reciente de los tres.
+    CHECK(state.At(2)->repo.id == "R2");
+}
+
+TEST_CASE("Reordered mueve el elemento a la posición de la PANTALLA") {
+    const std::vector<std::string> ids{"A", "B", "C", "D"};
+
+    // Hacia abajo: B se suelta donde estaba C.
+    CHECK(App::Reordered(ids, 1, 2) == std::vector<std::string>{"A", "C", "B", "D"});
+    // Hacia arriba: D se suelta en el primer sitio.
+    CHECK(App::Reordered(ids, 3, 0) == std::vector<std::string>{"D", "A", "B", "C"});
+    // Al final del todo.
+    CHECK(App::Reordered(ids, 0, 3) == std::vector<std::string>{"B", "C", "D", "A"});
+
+    // Y lo que no es un movimiento devuelve vacío, que es como se dice "no escribas nada":
+    // renumerar ciento nueve filas para dejarlas igual sería ciento nueve escrituras por un
+    // clic que solo eligió una tarjeta.
+    CHECK(App::Reordered(ids, 2, 2).empty());
+    CHECK(App::Reordered(ids, -1, 2).empty());
+    CHECK(App::Reordered(ids, 1, 9).empty());
+    CHECK(App::Reordered({}, 0, 0).empty());
+}
+
+TEST_CASE("Las cinco primeras vistas son las cinco prioridades, y al revés") {
+    // Las teclas 1-4 y la barra lateral cuentan con esto. Si alguien reordena una de las dos
+    // enumeraciones, las tarjetas empezarían a irse al grupo de al lado sin dar un error.
+    for (int i = 0; i < 5; ++i) {
+        const Model::Priority priority = static_cast<Model::Priority>(i);
+        const App::Lens lens = App::LensOf(priority);
+        REQUIRE(App::PriorityOf(lens).has_value());
+        CHECK(*App::PriorityOf(lens) == priority);
+    }
+    // Y las inteligentes no son ninguna prioridad: soltar una tarjeta encima de "Dormidos"
+    // no puede significar nada.
+    CHECK_FALSE(App::PriorityOf(App::Lens::All).has_value());
+    CHECK_FALSE(App::PriorityOf(App::Lens::NeedsDecision).has_value());
+    CHECK_FALSE(App::PriorityOf(App::Lens::Dormant).has_value());
+    CHECK_FALSE(App::PriorityOf(App::Lens::ThisWeek).has_value());
+}
+
 TEST_CASE("Los contadores cuentan la vista entera, no el filtro") {
     std::vector<Model::Repo> repos;
     repos.push_back(MakeRepo("R1", L"brujula", "2026-09-20T10:00:00Z"));

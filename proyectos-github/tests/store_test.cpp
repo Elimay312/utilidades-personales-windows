@@ -467,6 +467,54 @@ TEST_CASE("una base de la versión 1 sube a la 2 sin perder lo que había") {
     // todavía que se escriba en ningún repositorio.
     CHECK_FALSE(mine.Value().repoConfirmed);
     CHECK_FALSE(mine.Value().pushPending);
+    // El orden a mano llega a cero, que significa "este nunca se ha arrastrado". Cualquier
+    // otro número colaría las fichas viejas por delante de todo lo demás en la primera
+    // pantalla después de actualizar.
+    CHECK(mine.Value().order == 0);
+}
+
+TEST_CASE("el orden a mano se guarda solo, y guardar una nota no lo pisa") {
+    Fresh fresh;
+    REQUIRE(fresh.repos.BeginSync().IsOk());
+    std::vector<Model::Repo> repos;
+    repos.push_back(MakeRepo("R_1", L"yo/uno", "2026-09-20T10:00:00Z"));
+    repos.push_back(MakeRepo("R_2", L"yo/dos", "2026-09-19T10:00:00Z"));
+    REQUIRE(fresh.repos.UpsertMetadata(repos, 1, kNow).IsOk());
+
+    REQUIRE(fresh.repos.SetOrder("R_1", 7).IsOk());
+    CHECK(fresh.repos.LocalOf("R_1").Value().order == 7);
+    // Sobre un repositorio sin fila propia todavía: arrastrar una tarjeta de la que nadie ha
+    // escrito nada es el caso NORMAL la primera vez que se ordena.
+    REQUIRE(fresh.repos.SetOrder("R_2", 2).IsOk());
+    CHECK(fresh.repos.LocalOf("R_2").Value().order == 2);
+
+    // Y ahora lo que de verdad se vigila: guardar lo del usuario con un Local leído ANTES de
+    // arrastrar no puede devolver el orden viejo. Es el mismo trato que push_pending, y el
+    // fallo tendría la misma pinta: la lista se recoloca sola al escribir un siguiente paso.
+    Model::Local stale = fresh.repos.LocalOf("R_1").Value();
+    stale.order = 0;
+    stale.nextStep = L"Conectar el lector de carpetas";
+    REQUIRE(fresh.repos.SaveLocal(stale).IsOk());
+
+    const auto after = fresh.repos.LocalOf("R_1");
+    REQUIRE(after.IsOk());
+    CHECK(after.Value().nextStep == L"Conectar el lector de carpetas");
+    CHECK(after.Value().order == 7);
+}
+
+TEST_CASE("el orden no lo toca una sincronización") {
+    // Es de la mitad del usuario, como el siguiente paso. Lo comprueba aparte porque el
+    // fallo no sería un error: sería la lista deshaciendo sola una tarde de ordenar.
+    Fresh fresh;
+    REQUIRE(fresh.repos.BeginSync().IsOk());
+    std::vector<Model::Repo> repos;
+    repos.push_back(MakeRepo("R_1", L"yo/uno", "2026-09-20T10:00:00Z"));
+    REQUIRE(fresh.repos.UpsertMetadata(repos, 1, kNow).IsOk());
+    REQUIRE(fresh.repos.SetOrder("R_1", 3).IsOk());
+
+    repos[0].pushedAt = At("2026-09-21T11:00:00Z");
+    REQUIRE(fresh.repos.UpsertMetadata(repos, 2, kNow).IsOk());
+    CHECK(fresh.repos.LocalOf("R_1").Value().order == 3);
 }
 
 TEST_CASE("los commits se reescriben enteros, no se fusionan") {

@@ -39,6 +39,12 @@ void SidebarItem::SetCount(int count) {
     Invalidate();
 }
 
+void SidebarItem::SetDropTarget(bool value) {
+    if (m_drop == value) return;
+    m_drop = value;
+    Invalidate();
+}
+
 void SidebarItem::OnStateChanged() { Invalidate(); }
 
 void SidebarItem::OnPaint(const Paint& paint, const Rect& box) {
@@ -47,9 +53,14 @@ void SidebarItem::OnPaint(const Paint& paint, const Rect& box) {
     // El hover se pinta aquí y no con un material propio: un material por fila serían
     // seis visuales más en la barra lateral para algo que solo se ve uno a la vez. La
     // selección sí es material, porque tiene que DESLIZARSE.
-    if (Hovered() && !selected) {
+    // El velo de "estás señalando esto". El de soltar se pinta TAMBIÉN sobre el elegido:
+    // arrastrar desde Todos hasta el grupo que ya está seleccionado es un caso normal, y sin
+    // esto sería el único sitio de la barra que no contesta.
+    if (m_drop || (Hovered() && !selected)) {
         winrt::com_ptr<ID2D1SolidColorBrush> veil;
-        paint.dc->CreateSolidColorBrush(Gfx::ToD2D(paint.tokens->controlHover), veil.put());
+        paint.dc->CreateSolidColorBrush(
+            Gfx::ToD2D(m_drop ? paint.tokens->selectionRow : paint.tokens->controlHover),
+            veil.put());
         const float radius = Metrics::RadiusOf(Metrics::Radius::Control);
         paint.dc->FillRoundedRectangle(D2D1::RoundedRect(ToBox(box), radius, radius),
                                        veil.get());

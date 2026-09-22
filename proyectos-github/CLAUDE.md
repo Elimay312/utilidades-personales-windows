@@ -135,12 +135,18 @@ Parser tolerante: si el archivo no tiene frontmatter o tiene campos desconocidos
 
 ### Movimiento
 
-| Uso | Muelle |
-|---|---|
-| Interacciones pequeñas (hover, pulsar, marcar) | rígido: amortiguación 0,9, periodo 120 ms |
-| Paneles e inspector | estándar: amortiguación 0,85, periodo 220 ms |
-| Reordenar y mover tarjetas entre grupos | suave: amortiguación 0,8, periodo 300 ms |
-| Hojas modales y revisión semanal | expresivo: amortiguación 0,75, periodo 350 ms |
+| Uso | Muelle | Asienta en |
+|---|---|---|
+| Interacciones pequeñas (hover, pulsar, marcar) | rígido: amortiguación 0,9, periodo 80 ms | 57 ms |
+| Paneles e inspector | estándar: amortiguación 0,85, periodo 130 ms | 97 ms |
+| Reordenar y mover tarjetas entre grupos | suave: amortiguación 0,8, periodo 165 ms | 131 ms |
+| Hojas modales y revisión semanal | expresivo: amortiguación 0,75, periodo 195 ms | 166 ms |
+
+Los periodos son los de la fase 6. Los de la fase 1 —120, 220, 300 y 350— asentaban entre 85
+y 297 ms y con la aplicación en uso se sentían lentos para ir de un proyecto a otro, que es
+justo para lo que existe. Las amortiguaciones no se tocaron: el carácter de cada muelle es
+suyo, y lo que sobraba era el tiempo. Se cambian en `compositor/MotionSpec.h`, que es el
+único sitio donde están escritos, y las pruebas fijan los cuatro.
 
 - Pulsar un control lo escala a 0,97; soltarlo vuelve con muelle rígido.
 - **Transiciones compartidas:** al abrir un repo, su tarjeta se transforma en el inspector (posición, tamaño y radio a la vez, con fundido cruzado del contenido). Al cerrar, vuelve a su sitio.
@@ -171,6 +177,9 @@ Parser tolerante: si el archivo no tiene frontmatter o tiene campos desconocidos
 | Ctrl+R | Sincronizar ahora |
 | Ctrl+Shift+R | Empezar revisión semanal |
 | Ctrl+O | Abrir el repo en GitHub |
+| Ctrl+Z | Deshacer el último cambio (prioridad, orden, ediciones y novedades) |
+| Ctrl+G | Alternar entre lista y cuadrícula |
+| Botón derecho | Menú de la tarjeta, con todas sus acciones |
 
 ## Convenciones de código
 
@@ -189,13 +198,115 @@ El plan completo está en `PROMPTS.md`.
 - [x] Fase 3 — GitHub: token seguro, GraphQL, SQLite y sincronización
 - [x] Fase 4 — Vista principal: barra lateral, lista y clasificación
 - [x] Fase 5 — Inspector, notas y PROYECTO.md
-- [ ] Fase 6 — Priorizar: arrastrar, límite de Enfoque, atajos y paleta
+- [x] Fase 6 — Priorizar: arrastrar, límite de Enfoque, atajos y paleta
 - [ ] Fase 7 — Revisión semanal
 - [ ] Fase 8 — Pulido final y rendimiento
 
 Al terminar una fase: marcarla aquí, anotar decisiones abajo y hacer commit.
 
 ## Decisiones y notas
+
+### Fase 6 — 21 de septiembre de 2026
+
+El detalle con todas las mediciones está en `CHANGELOG.md`. Aquí van solo las decisiones
+que condicionan lo que venga después.
+
+**Esta es la primera fase que se probó con la aplicación EN USO, y de ahí salieron tres
+arreglos que no estaban en el guión.** Las cinco anteriores se juzgaron con capturas; esta
+se usó, y en cuanto alguien hizo clic deprisa aparecieron un panel congelado a medio viaje,
+las tarjetas en blanco y unas animaciones que sobre el papel eran correctas y en la mano se
+sentían lentas. Los tres se arreglaron aquí y los tres venían de fases anteriores.
+
+**Escribir una propiedad que tiene una animación encima NO para la animación.** Es la causa
+del panel que se quedaba clavado a medio crecer al volver a pulsar una tarjeta:
+`Element::SetFrame` paraba `Offset` antes de escribirlo pero no `Size`, así que el tamaño
+escrito se perdía —la animación seguía mandando— y acto seguido `Material::SetSize` paraba
+esa MISMA animación por su otro extremo, porque `Animator::SizeTogether` la arranca en el
+visual y en la geometría a la vez. El visual se quedaba con el último valor animado y ahí se
+quedaba para siempre. La regla, para todo lo que venga: **parar antes de escribir**, que es
+lo que `Gfx::Material` ya hacía en sus tres métodos y `Element` hacía a medias.
+
+**Reservar una textura la VACÍA, y la lista tenía el mismo fallo que la fase 4 encontró un
+piso más abajo.** `Ui::List::OnArrange` recolocaba las celdas vivas —reservando su textura
+al ancho nuevo— y no las repintaba: abrir el inspector estrecha la columna, y eso dejaba
+TODAS las tarjetas en blanco menos la que tuviera el ratón encima, que se repintaba por el
+hover. Lo reportado fue exactamente eso: «desaparecen los proyectos y tengo que pasarles el
+mouse para que aparezcan». Ahora repinta `PlaceRow`, que es por donde pasan los cinco sitios
+que recolocan, y no cada uno de ellos por su cuenta: dos ya se habían olvidado.
+
+**El clic se avisa al SOLTAR desde que las tarjetas se arrastran.** Al pulsar todavía no se
+sabe si eso es un clic; avisándolo ahí, cada arrastre empezaba abriendo el inspector —que
+estrecha la columna y recoloca las tarjetas— justo debajo de la que se estaba levantando. La
+selección sí se queda en el pulsar: es lo que ilumina la tarjeta bajo el dedo y de lo que
+tira el arrastre.
+
+**Lo que viaja mientras se arrastra es una COPIA, y cuelga de `Views::Main`.** La ventanilla
+de la lista se recorta a sí misma, así que una celda arrastrada hacia la barra lateral
+desaparecería al cruzar el borde. `Views::DragCard` es un elemento aparte —con sombra, a
+escala 1,03 y pintado con el mismo `PaintCard`— y NO es una capa flotante del Host: las
+capas se cierran todas juntas cuando la ventana pierde el foco, y una tarjeta levantada que
+desaparece mientras alguien la sujeta dejaría un puntero colgando en la vista.
+
+**Todo lo que cambia una prioridad pasa por `Application::ApplyPriority`.** Son cinco
+caminos —el menú del inspector, las teclas 1-4, arrastrar, el menú contextual y la paleta—
+y con la comprobación del límite copiada en cada uno, el sexto Enfoque entra por el camino
+que se olvidó. Por eso el criterio «no es posible tener más en Enfoque que el límite» es una
+función con pruebas (`Model::PlanFocus`) llamada desde un solo sitio.
+
+**El arrastre termina SIEMPRE, y por eso avisa una sola llamada.** `Ui::List::OnDragEnd` se
+llama al soltar, al pulsar Esc y cuando otra ventana se lleva la captura —que hasta ahora no
+se enteraba nadie: `Ui::Router` se comía el `Cancel` sin contárselo al que tenía la captura—.
+Y `List::Update` cancela el arrastre en curso: una sincronización que termine a mitad
+cambiaría a qué repositorio apunta cada índice, y soltar después escribiría la prioridad del
+que no es sin dar el menor error.
+
+**El orden a mano es una columna de `local` y NO viaja a PROYECTO.md.** El formato de este
+documento no tiene ese campo, y un commit por cada tarjeta arrastrada serían ciento nueve
+commits por una tarde ordenando. Se escribe con `Repos::SetOrder`, que toca esa columna y
+nada más —como `push_pending` y por lo mismo—, y al soltar se renumera la vista ENTERA del
+uno en adelante dentro de una transacción: con números sueltos habría que inventar huecos
+entre medias y un día no cabría ninguno.
+
+**Y lo ordenado a mano va primero en TODAS las vistas.** No es un descuido: una comparación
+que mirase el orden solo entre los de la misma prioridad no sería una relación de orden —A
+antes que B por orden, B antes que C por fecha, C antes que A por fecha— y `std::sort` con
+una de esas no da un resultado raro, da comportamiento indefinido. Con búsqueda puesta no se
+ordena: lo que se ve es un trozo, y «entre estas dos» no dice nada de los que el filtro dejó
+fuera.
+
+**Deshacer es una pila de vueltas atrás, no de cosas que pasaron.** Guardar el `Model::Local`
+de antes y volver a guardarlo sirve para la prioridad, el estado, el siguiente paso, la
+carpeta y el modo repo con el mismo código; las novedades y el orden traen la suya. Lo que
+va en pareja —bajar uno de Enfoque para subir otro— se apunta como UNA entrada, porque con
+dos el primer Ctrl+Z dejaría seis en Enfoque durante un rato, que es el estado que no puede
+existir. Y deshacer no se apunta a sí mismo: si no, Ctrl+Z dos veces mece el mismo cambio
+para siempre.
+
+**Ctrl+K se mira DESPUÉS del enrutador y Ctrl+R antes.** Los atajos globales de `App` se
+miran antes que nadie, y ahí Ctrl+K abriría una segunda paleta encima de la primera. Ctrl+Z
+también va por la vista: con el foco en un campo de texto, el Ctrl+Z es del historial del
+campo, que es lo que espera quien está escribiendo una frase.
+
+**El temblor del límite de Enfoque es lo único de la aplicación animado con fotogramas
+clave.** La regla de la fase 1 dice muelles para todo lo interrumpible, y un temblor no se
+interrumpe: o se ve entero o no ha dicho nada. Con las animaciones del sistema apagadas no
+tiembla nada y el aviso lo da la hoja.
+
+**Se añadió una vista que no está en este documento: `Views::Palette`.** La paleta no sabe
+hacer nada de lo que ofrece —recibe las acciones ya montadas por `App`— y filtra con el
+MISMO `App::Terms` que la búsqueda de la lista: dos maneras de buscar dentro de la misma
+aplicación serían dos ideas distintas de qué significa encontrar algo. La única acción que
+no hace lo que dice es «empezar la revisión semanal», que avisa de que llega en la fase 7:
+una acción que no aparece se busca; una que avisa, no.
+
+**Falta comprobar cinco cosas**, cuatro heredadas y una nueva: la nitidez a otras escalas
+—`WM_DPICHANGED` sigue sin dispararse—, el IME de verdad, el panel táctil de precisión, los
+tres cuadros de archivo, y **el arrastre con un ratón de verdad**: la máquina tenía otra
+aplicación reteniendo el foco, así que todo lo de esta fase se probó con mensajes puestos a
+mano en la cola de la ventana. Con eso se vio funcionar el camino entero —levantar, soltar
+fuera y volver a su sitio— y el cambio de prioridad con la tecla 1, contador de la barra
+lateral incluido; lo que no se ha visto es el hueco abriéndose entre dos tarjetas mientras
+una mano mueve el ratón.
 
 ### Fase 5 — 21 de septiembre de 2026
 

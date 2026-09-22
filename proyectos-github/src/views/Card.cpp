@@ -4,6 +4,7 @@
 
 #include "compositor/Paint.h"
 #include "ui/Controls.h"
+#include "ui/Host.h"
 #include "ui/Text.h"
 
 namespace Views {
@@ -13,6 +14,9 @@ namespace {
 using Ui::Rect;
 
 constexpr float kPad = Metrics::kSpace2;
+// Lo que crece la tarjeta al levantarla, de la fase 6. Poco y con sombra: lo que dice es
+// "esto está por encima de lo demás", no "esto ha cambiado de tamaño".
+constexpr float kLiftScale = 1.03f;
 constexpr float kDotColumn = 16.0f;
 constexpr float kLine = 20.0f;
 constexpr float kMetaLine = 16.0f;
@@ -198,6 +202,84 @@ void PaintCard(const Ui::Paint& paint, const Rect& box, const App::Entry& entry,
         Fill(paint, Rect{box.x, box.y + 10.0f, 3.0f, box.height - 20.0f},
              WithAlpha(paint.tokens->priorityFocus, 0.9f), 1.5f);
     }
+}
+
+// ======================================================================== DragCard ==
+
+bool DragCard::OnAttach() {
+    // La sombra ANTES que nada: mete todo lo demás dentro de su capa para sacar la máscara
+    // del alfa, y lo que se cree antes se queda fuera (ui/Element.h).
+    CreateShadow(Metrics::kElevationSheet);
+    if (!CreateLayer()) return false;
+    // El centro atado al tamaño: sin esto, crecer a 1,03 tira de la tarjeta hacia su esquina
+    // superior izquierda en vez de hincharla desde el medio.
+    HostRef().Animator().BindCenterPoint(Visual());
+    SetVisible(false);
+    return true;
+}
+
+void DragCard::Lift(const App::Entry& entry, CardLayout layout, const Rect& from) {
+    m_entry = entry;
+    m_layout = layout;
+
+    SetVisible(true);
+    SetOpacity(1.0f, 0.0f);
+    SetFrame(from);
+    Invalidate();
+
+    Motion::Animator& animator = HostRef().Animator();
+    // El valor inicial se escribe a mano: el muelle retoma desde donde esté, y si se quedó
+    // en 1,03 del último arrastre no habría nada que animar.
+    Visual().StopAnimation(L"Scale");
+    Visual().Scale({1.0f, 1.0f, 1.0f});
+    animator.Scale(Visual(), {kLiftScale, kLiftScale, 1.0f}, Motion::Kind::Snappy);
+}
+
+void DragCard::MoveTo(float xDip, float yDip) {
+    SetFrame(Rect{xDip, yDip, Frame().width, Frame().height});
+}
+
+void DragCard::FlyTo(const Rect& target) {
+    if (!Visible()) return;
+    Motion::Animator& animator = HostRef().Animator();
+    // Muelle suave: es "mover una tarjeta entre grupos", que es literalmente para lo que
+    // está ese muelle en la tabla de CLAUDE.md.
+    SlideTo(target.x, target.y, Motion::Kind::Smooth);
+    animator.Scale(Visual(), {1.0f, 1.0f, 1.0f}, Motion::Kind::Smooth);
+    SetOpacity(0.0f, animator.FadeMs(Motion::Kind::Smooth));
+}
+
+void DragCard::Refuse() {
+    if (!Visible()) return;
+    Motion::Animator& animator = HostRef().Animator();
+    animator.Shake(Visual(), {Frame().x, Frame().y, 0.0f}, Motion::kShakeDip);
+    // Se apaga DESPUÉS de temblar, no mientras: un temblor a medio desvanecer no se ve, y lo
+    // que tiene que quedar claro es que ese sitio no la admite. El retardo va dentro de la
+    // animación, así que lo lleva DWM y no hace falta un temporizador en este hilo.
+    animator.OpacityDelayed(Visual(), 0.0f, animator.FadeMs(Motion::Kind::Standard),
+                            Motion::kShakeMs);
+}
+
+void DragCard::HideNow() {
+    SetOpacity(0.0f, 0.0f);
+    SetVisible(false);
+}
+
+void DragCard::OnPaint(const Ui::Paint& paint, const Rect& box) {
+    // Opaca, al revés que las de la lista: una tarjeta en el aire que deja ver las de debajo
+    // se lee como un fantasma, y además es de donde sale la máscara de la sombra.
+    Theme::Color solid = paint.tokens->cardSurface;
+    solid.a = 255;
+    Fill(paint, box, solid, Metrics::RadiusOf(Metrics::Radius::Card));
+    // Elegida: la que se está arrastrando es, por definición, la que se está tocando.
+    PaintCard(paint, box, m_entry, m_layout, false, true);
+}
+
+void DragCard::OnTheme(const Theme::Tokens& tokens, float crossfadeMs) {
+    if (Gfx::Shadow* shadow = ShadowOf()) {
+        shadow->SetColor(tokens.shadow, HostRef().Animator(), crossfadeMs);
+    }
+    Ui::Element::OnTheme(tokens, crossfadeMs);
 }
 
 }  // namespace Views

@@ -397,7 +397,7 @@ Model::Result<Stats> Repos::Counts() {
 Model::Result<Model::Local> Repos::LocalOf(const std::string& repoId) {
     Model::Result<Stmt> prepared = m_db.Prepare(
         "SELECT priority, state, next_step, repo_mode, folder, updated_at, "
-        "       repo_confirmed, push_pending "
+        "       repo_confirmed, push_pending, orden "
         "  FROM local WHERE repo_id = ?1");
     if (!prepared) return prepared.Err();
 
@@ -426,6 +426,7 @@ Model::Result<Model::Local> Repos::LocalOf(const std::string& repoId) {
     local.updatedAt = Model::FromEpoch(stmt.Int(5));
     local.repoConfirmed = stmt.Int(6) != 0;
     local.pushPending = stmt.Int(7) != 0;
+    local.order = static_cast<int>(stmt.Int(8));
     return local;
 }
 
@@ -435,7 +436,7 @@ Model::Result<std::vector<Model::Local>> Repos::AllLocal() {
     // de enseñarla hay que poder contarlo con los dedos.
     Model::Result<Stmt> prepared = m_db.Prepare(
         "SELECT repo_id, priority, state, next_step, repo_mode, folder, updated_at, "
-        "       repo_confirmed, push_pending FROM local");
+        "       repo_confirmed, push_pending, orden FROM local");
     if (!prepared) return prepared.Err();
 
     Stmt stmt = prepared.Take();
@@ -457,16 +458,22 @@ Model::Result<std::vector<Model::Local>> Repos::AllLocal() {
         local.updatedAt = Model::FromEpoch(stmt.Int(6));
         local.repoConfirmed = stmt.Int(7) != 0;
         local.pushPending = stmt.Int(8) != 0;
+        local.order = static_cast<int>(stmt.Int(9));
         locals.push_back(std::move(local));
     }
     return locals;
 }
 
 Model::Outcome Repos::SaveLocal(const Model::Local& local) {
-    // Fíjate en lo que NO aparece: push_pending. Lo escribe SetPushPending y nadie más,
+    // Fíjate en lo que NO aparece: push_pending ni orden. Lo escribe SetPushPending y nadie más,
     // porque el que lo apaga es el hilo de trabajo cuando el commit sale bien y el que lo
     // enciende es la interfaz al guardar. Listarlo aquí haría que un guardado hecho mientras
     // sube el anterior borrase la marca del que todavía está en vuelo.
+    //
+    // 'orden' falta por lo mismo y por una razón más: lo escribe SetOrder de una tacada para
+    // toda una vista, y pasa por aquí lo que el usuario edita de UN repositorio. Si estuviera
+    // en esta lista, guardar el siguiente paso de una tarjeta con el Local que se leyó antes
+    // de arrastrarla devolvería el orden viejo sin que nadie lo pidiera.
     Model::Result<Stmt> prepared = m_db.Prepare(
         "INSERT INTO local (repo_id, priority, state, next_step, repo_mode, folder, "
         "                   updated_at, repo_confirmed) "
@@ -488,6 +495,22 @@ Model::Outcome Repos::SaveLocal(const Model::Local& local) {
     stmt.Bind(7, Model::ToEpoch(local.updatedAt));
     stmt.Bind(8, local.repoConfirmed);
 
+    if (Model::Result<bool> stepped = stmt.Step(); !stepped) return stepped.Err();
+    return Model::Ok();
+}
+
+Model::Outcome Repos::SetOrder(const std::string& repoId, int order) {
+    // INSERT y no UPDATE, por lo mismo que SetPushPending: arrastrar una tarjeta de un
+    // repositorio del que nunca se ha escrito nada no tiene fila todavía, y un UPDATE sobre
+    // cero filas no da error, no hace nada y deja el orden sin guardar.
+    Model::Result<Stmt> prepared = m_db.Prepare(
+        "INSERT INTO local (repo_id, orden) VALUES (?1, ?2) "
+        "ON CONFLICT(repo_id) DO UPDATE SET orden = excluded.orden");
+    if (!prepared) return prepared.Err();
+
+    Stmt stmt = prepared.Take();
+    stmt.Bind(1, repoId);
+    stmt.Bind(2, order);
     if (Model::Result<bool> stepped = stmt.Step(); !stepped) return stepped.Err();
     return Model::Ok();
 }

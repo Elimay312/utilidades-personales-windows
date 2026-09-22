@@ -119,6 +119,14 @@ public:
     // Sin esto la hoja solo sabe cerrarse, que es lo que hacía en la fase 2. Con esto son
     // dos botones: el de la derecha acepta y el de su izquierda se va sin hacer nada.
     void SetActions(std::wstring accept, std::wstring cancel);
+
+    // Una pregunta de varias respuestas, en botones apilados entre el texto y las acciones.
+    // La estrena el límite de Enfoque, que no pregunta "¿sí o no?" sino "¿cuál de estos
+    // cinco baja?", y la alternativa —un menú dentro de una hoja modal— sería una capa
+    // flotante encima de otra para elegir entre cinco cosas que caben a la vista.
+    //
+    // La hoja crece con ellos: el alto ya salía del texto medido, y esto es un sumando más.
+    void SetOptions(std::vector<std::wstring> labels, std::function<void(int)> chosen);
     // El de aceptar en rojo de advertencia no existe en la tabla de CLAUDE.md; lo que sí hay
     // es el acento, y un botón primario ya dice cuál es la salida por omisión.
     void OnAccept(std::function<void()> handler) { m_accepted = std::move(handler); }
@@ -150,8 +158,10 @@ private:
     Label* m_bodyLabel = nullptr;
     Button* m_acceptButton = nullptr;
     Button* m_cancelButton = nullptr;
+    std::vector<Button*> m_options;
     std::function<void()> m_accepted;
     std::function<void()> m_cancelled;
+    std::function<void(int)> m_chosen;
     Rect m_panelRect;
 };
 

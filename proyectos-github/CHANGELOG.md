@@ -10,6 +10,114 @@ lo dice.
 
 ## Sin publicar
 
+### Fase 6 — Priorizar
+
+La fase que convierte una lista en algo con lo que se decide: arrastrar tarjetas entre
+grupos, reordenarlas dentro del suyo, las teclas 1-4, el menú de cada tarjeta, la paleta de
+comandos y deshacer.
+
+Y la primera que se probó **con la aplicación en uso** en vez de con capturas. En cuanto
+alguien hizo clic deprisa salieron tres cosas que ninguna captura había enseñado, las tres
+heredadas de fases anteriores: un panel congelado a medio viaje, las tarjetas en blanco y
+unas animaciones correctas sobre el papel que en la mano se sentían lentas.
+
+**Lo que hay**
+
+- **Arrastrar** (`Ui::List` + `Views::DragCard`): la tarjeta se levanta —escala 1,03 y
+  sombra—, las demás se apartan con el muelle suave dejando el hueco donde caería, y al
+  soltar cae en su sitio. Sobre un grupo de la barra lateral cambia de prioridad; entre dos
+  tarjetas, reordena. Soltar en cualquier otro sitio la devuelve de donde salió.
+- **Teclas 1-4** sobre la tarjeta elegida, por el mismo camino y con el mismo viaje hacia su
+  grupo. Sin tecla para «Sin clasificar»: no es una prioridad, es la falta de una, y para
+  quitarla está el menú.
+- **Límite de Enfoque**: la tarjeta se para con un temblor horizontal corto y una hoja
+  pregunta cuál de los cinco baja a Secundario, ordenados por el que lleva más tiempo sin un
+  push. Los dos cambios —el que baja y el que sube— se apuntan como UNA entrada de deshacer.
+- **Menú contextual** en cada tarjeta: abrir, las cinco prioridades —la de ahora dicha con
+  palabras y no con una marca—, editar el siguiente paso, añadir una novedad, abrir en
+  GitHub y abrir la carpeta local.
+- **Paleta de comandos** (Ctrl+K, `Views::Palette`): entra desde arriba con el muelle
+  estándar y el fondo atenuado. Busca entre los 109 repositorios y las acciones del momento,
+  con el MISMO filtro que la búsqueda de la lista.
+- **Deshacer** (Ctrl+Z) para prioridad, estado, siguiente paso, carpeta, modo repo, orden y
+  novedades. Cincuenta de fondo. Con el foco en un campo de texto, el Ctrl+Z sigue siendo
+  del historial del campo.
+- **Esquema v3**: una columna `orden` en `local`, por omisión cero —«este nunca se ha
+  arrastrado»—, así que una caché de la fase 5 se ve exactamente igual después de migrar.
+
+**Los tres arreglos que salió de usarla**
+
+- **El panel congelado a medio crecer.** Volver a pulsar una tarjeta mientras el inspector
+  todavía se estaba abriendo lo dejaba clavado a mitad de camino, flotando sobre la lista.
+  La causa: **escribir una propiedad que tiene una animación encima no para la animación**.
+  `Element::SetFrame` paraba `Offset` antes de escribirlo pero no `Size`; el tamaño escrito
+  se perdía, y acto seguido `Material::SetSize` paraba esa misma animación por su otro
+  extremo —`Animator::SizeTogether` la arranca en el visual y en la geometría a la vez—, así
+  que el visual se quedaba con el último valor animado para siempre. Reproducido con ocho
+  clics puestos en la cola de la ventana con 90 ms entre ellos, y ya no pasa. De paso,
+  `Inspector::Rebuild` recoloca lo de dentro sin reescribir su propio marco: hacerlo plantaba
+  el panel en su destino a mitad de la transición.
+- **Las tarjetas en blanco.** «Desaparecen los proyectos y tengo que pasarles el mouse para
+  que aparezcan.» `Ui::List::OnArrange` recolocaba las celdas vivas —reservando su textura al
+  ancho nuevo, y reservar una textura la VACÍA— sin repintarlas. Abrir el inspector estrecha
+  la columna, así que todas las tarjetas se quedaban en blanco menos la que tuviera el ratón
+  encima, que se repintaba por el hover. **Comprobado que venía de antes**: se compiló el
+  árbol anterior a esta fase y un solo clic lo reproduce. Ahora repinta `PlaceRow`, que es
+  por donde pasan los cinco sitios que recolocan —dos ya se habían olvidado—, y solo cuando
+  la textura de verdad ha cambiado de tamaño.
+- **El tiempo de las animaciones.** Los periodos de la fase 1 asentaban en 85, 165, 239 y
+  297 ms; con la aplicación llena de datos, ir de un proyecto a otro se sentía lento. Los
+  cuatro bajan a 80, 130, 165 y 195 ms de periodo —asientan en 57, 97, 131 y 166— sin tocar
+  las amortiguaciones, que son las que dan el carácter. El escalonado de los que entran baja
+  de 200 a 120 ms de techo, y la inercia del desplazamiento de 0,92 a 0,85 de frenada por
+  fotograma: una muesca se para en poco más de medio segundo en vez de en casi uno, y
+  recorre lo mismo —la distancia se deriva del mismo número—.
+
+**Lo decidido**
+
+- **Un solo camino para la prioridad.** Cinco sitios la cambian —inspector, teclas,
+  arrastre, menú y paleta— y los cinco llaman a `Application::ApplyPriority`. Con la
+  comprobación del límite copiada en cada uno, el sexto Enfoque entra por el que se olvidó.
+- **El arrastre avisa de su final SIEMPRE**: al soltar, con Esc y cuando otra ventana se
+  lleva la captura. Esto último no se enteraba nadie hasta ahora —`Ui::Router` se comía el
+  `Cancel`— y es lo que hacía falta para que soltar fuera no deje nunca una tarjeta
+  flotando. `List::Update` lo cancela también: una sincronización que termine a mitad cambia
+  a qué repositorio apunta cada índice.
+- **El clic se avisa al soltar**, no al pulsar: al pulsar todavía no se sabe si es un clic, y
+  avisándolo ahí cada arrastre empezaba abriendo el inspector debajo de la tarjeta que se
+  estaba levantando. La selección se queda en el pulsar.
+- **El orden a mano no viaja a PROYECTO.md** —el formato no tiene ese campo, y serían ciento
+  nueve commits por una tarde ordenando— y se escribe con `Repos::SetOrder`, que toca esa
+  columna y nada más. Al soltar se renumera la vista entera del uno en adelante, en una
+  transacción. Con búsqueda puesta no se ordena: lo que se ve es un trozo.
+- **Lo ordenado a mano va primero en todas las vistas.** Mirar el orden solo entre los de la
+  misma prioridad no sería una relación de orden, y `std::sort` con una de esas no da un
+  resultado raro: da comportamiento indefinido.
+
+**Lo medido**
+
+- Las pruebas pasan de 261 a 266 casos y de 2008 a 2054 aserciones. Las nuevas fijan la
+  tabla de muelles nueva, el orden a mano —que va delante de la fecha—, `Reordered` y sus
+  bordes, que las cinco primeras vistas son las cinco prioridades, y que guardar una nota no
+  pisa el orden ni una sincronización lo toca.
+- Filtrar 500 repositorios sigue costando 0,007 ms por pulsación.
+- `auditar.ps1`: las once reglas en verde.
+- La migración a v3 corrió sobre la caché de verdad, con los 109 repositorios dentro:
+  `user_version` a 3 y la columna `orden` a cero en todas partes.
+
+**Lo que falta por comprobar**
+
+- **El arrastre con un ratón de verdad.** La máquina tenía otra aplicación reteniendo el
+  foco —el mismo problema que dejó los cuadros de archivo sin probar en la fase 5— así que
+  todo se probó con mensajes puestos a mano en la cola de la ventana. Con eso se vio el
+  camino entero: levantar la tarjeta, soltarla fuera y verla volver a su sitio, y la tecla 1
+  poniendo un repositorio en Enfoque con el contador de la barra lateral subiendo a 1. Lo que
+  no se ha visto es el hueco abriéndose entre dos tarjetas mientras una mano mueve el ratón.
+- La **nitidez a otras escalas**, el **IME de verdad**, el **panel táctil de precisión** y
+  los **cuadros de archivo**, heredados de las fases anteriores y por los mismos motivos.
+
+---
+
 ### Fase 5 — Inspector, notas y PROYECTO.md
 
 La primera fase en la que Brújula **escribe**. Hasta aquí todo lo que se veía se podía

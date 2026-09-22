@@ -14,10 +14,10 @@
 using Motion::Kind;
 
 TEST_CASE("la tabla de muelles es la de CLAUDE.md") {
-    CHECK(Motion::SpringFor(Kind::Snappy) == Motion::Spring{0.9f, 120.0f});
-    CHECK(Motion::SpringFor(Kind::Standard) == Motion::Spring{0.85f, 220.0f});
-    CHECK(Motion::SpringFor(Kind::Smooth) == Motion::Spring{0.8f, 300.0f});
-    CHECK(Motion::SpringFor(Kind::Expressive) == Motion::Spring{0.75f, 350.0f});
+    CHECK(Motion::SpringFor(Kind::Snappy) == Motion::Spring{0.9f, 80.0f});
+    CHECK(Motion::SpringFor(Kind::Standard) == Motion::Spring{0.85f, 130.0f});
+    CHECK(Motion::SpringFor(Kind::Smooth) == Motion::Spring{0.8f, 165.0f});
+    CHECK(Motion::SpringFor(Kind::Expressive) == Motion::Spring{0.75f, 195.0f});
 }
 
 TEST_CASE("los muelles van de más seco a más suelto, en ese orden") {
@@ -34,16 +34,18 @@ TEST_CASE("los muelles van de más seco a más suelto, en ese orden") {
 
 TEST_CASE("el periodo no es la duración, y ninguno se va de tiempo") {
     // Period es el periodo NO amortiguado. Con 4/(damping * 2*pi/Period) los cuatro
-    // asientan entre 85 y 300 ms, que es lo que se buscaba. La prueba está para que si
+    // asientan entre 57 y 166 ms desde que la fase 6 los secó. La prueba está para que si
     // alguien sube un periodo a ojo y lo pone en 2 segundos, se entere aquí y no al
     // abrir la app.
-    CHECK(Motion::SettleMs(Motion::kSnappy) == doctest::Approx(84.9f).epsilon(0.01));
-    CHECK(Motion::SettleMs(Motion::kStandard) == doctest::Approx(164.8f).epsilon(0.01));
-    CHECK(Motion::SettleMs(Motion::kSmooth) == doctest::Approx(238.7f).epsilon(0.01));
-    CHECK(Motion::SettleMs(Motion::kExpressive) == doctest::Approx(297.1f).epsilon(0.01));
+    CHECK(Motion::SettleMs(Motion::kSnappy) == doctest::Approx(56.6f).epsilon(0.01));
+    CHECK(Motion::SettleMs(Motion::kStandard) == doctest::Approx(97.4f).epsilon(0.01));
+    CHECK(Motion::SettleMs(Motion::kSmooth) == doctest::Approx(131.3f).epsilon(0.01));
+    CHECK(Motion::SettleMs(Motion::kExpressive) == doctest::Approx(165.5f).epsilon(0.01));
 
+    // El techo son 200 ms y no 350: con la aplicación en uso, todo lo que pase de ahí se
+    // siente lento al cambiar de proyecto, que es lo que dijo quien la usa.
     for (const Kind kind : {Kind::Snappy, Kind::Standard, Kind::Smooth, Kind::Expressive}) {
-        CHECK(Motion::SettleMs(Motion::SpringFor(kind)) < 350.0f);
+        CHECK(Motion::SettleMs(Motion::SpringFor(kind)) < 200.0f);
     }
 }
 

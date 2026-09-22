@@ -211,7 +211,9 @@ TEST_CASE("el escalonado de entrada tiene techo") {
     CHECK(Ui::StaggerMs(1) == doctest::Approx(20.0f));  // los 20 ms de CLAUDE.md
     CHECK(Ui::StaggerMs(5) == doctest::Approx(100.0f));
     // Sin techo, el elemento 499 empezaría a aparecer diez segundos después del primero.
-    CHECK(Ui::StaggerMs(499) == doctest::Approx(200.0f));
+    CHECK(Ui::StaggerMs(499) == doctest::Approx(120.0f));
+    // Y el techo llega pronto a propósito: a partir del sexto, todos entran a la vez.
+    CHECK(Ui::StaggerMs(6) == doctest::Approx(120.0f));
 }
 
 TEST_CASE("la cuadrícula redondea hacia arriba y nunca deja a nadie fuera") {

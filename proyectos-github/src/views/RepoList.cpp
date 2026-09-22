@@ -338,6 +338,31 @@ Ui::Rect RepoList::SelectedCardRect() const {
     return m_list->RowRect(m_list->Selected());
 }
 
+Ui::Rect RepoList::CardRect(int slot) const {
+    if (m_list == nullptr) return Ui::Rect{};
+    return m_list->RowRect(slot);
+}
+
+void RepoList::OnCardDragBegin(std::function<bool(int, float, float)> handler) {
+    if (m_list) m_list->OnDragBegin(std::move(handler));
+}
+
+void RepoList::OnCardDragMove(std::function<void(float, float)> handler) {
+    if (m_list) m_list->OnDragMove(std::move(handler));
+}
+
+void RepoList::OnCardDrop(std::function<void(const Ui::List::Drop&)> handler) {
+    if (m_list) m_list->OnDragEnd(std::move(handler));
+}
+
+void RepoList::OnCardMenu(std::function<void(int, float, float)> handler) {
+    if (m_list) m_list->OnContextMenu(std::move(handler));
+}
+
+void RepoList::CancelDrag() {
+    if (m_list) m_list->CancelDrag();
+}
+
 void RepoList::SelectSlot(int slot) {
     if (m_list) m_list->SetSelected(slot);
 }

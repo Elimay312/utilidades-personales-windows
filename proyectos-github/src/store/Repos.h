@@ -81,6 +81,10 @@ public:
     // tienen fila y no salen aquí: quien cruza las dos listas pone los valores por omisión.
     Model::Result<std::vector<Model::Local>> AllLocal();
     Model::Outcome SaveLocal(const Model::Local& local);
+    // El orden puesto a mano. Va aparte de SaveLocal —como push_pending y por un motivo
+    // parecido— porque se escribe de una tacada para toda una vista al soltar una tarjeta, y
+    // no lleva fecha ni encola ningún commit: ordenar no es editar el repositorio de nadie.
+    Model::Outcome SetOrder(const std::string& repoId, int order);
 
     Model::Outcome AddNovedad(const Model::Novedad& novedad);
     Model::Outcome DeleteNovedad(std::int64_t id);

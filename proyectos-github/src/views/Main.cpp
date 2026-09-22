@@ -3,6 +3,7 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <optional>
 
 #include "ui/Controls.h"
 #include "ui/Host.h"
@@ -80,6 +81,10 @@ bool Main::OnAttach() {
     // El último, y por eso el de arriba: los botones de la ventana no pueden quedar debajo
     // de nada.
     m_chrome = Add<Chrome>();
+    // Salvo esta, que va todavía más arriba: mientras se arrastra hasta la barra lateral
+    // cruza por encima de la columna, del inspector y del propio título, y pasar por debajo
+    // de cualquiera de ellos se vería como que la tarjeta se ha caído dentro.
+    m_drag = Add<DragCard>();
 
     m_sidebar->OnLens([this](App::Lens lens) { ChooseLens(lens, true); });
     m_sidebar->OnSync([this] {
@@ -116,8 +121,128 @@ bool Main::OnAttach() {
         if (m_inspectorRequest) m_inspectorRequest(slot);
     });
 
+    m_content->OnCardDragBegin(
+        [this](int slot, float x, float y) { return BeginCardDrag(slot, x, y); });
+    m_content->OnCardDragMove([this](float x, float y) { MoveCardDrag(x, y); });
+    m_content->OnCardDrop([this](const Ui::List::Drop& drop) { FinishCardDrag(drop); });
+    m_content->OnCardMenu([this](int slot, float x, float y) {
+        if (m_cardMenu) m_cardMenu(slot, x, y);
+    });
+
     m_inspector->OnClose([this] { CloseInspector(); });
     return true;
+}
+
+// ------------------------------------------------------------- La tarjeta levantada --
+
+bool Main::BeginCardDrag(int slot, float x, float y) {
+    if (m_state == nullptr || m_drag == nullptr || m_content == nullptr) return false;
+    const App::Entry* entry = m_state->At(slot);
+    if (entry == nullptr) return false;
+
+    const Rect from = m_content->CardRect(slot);
+    // Sin sitio de salida no hay arrastre. No debería pasar —se está tocando— pero una
+    // tarjeta que sale de la nada tampoco sabría volver a ninguna parte.
+    if (from.Empty()) return false;
+
+    m_drag->Lift(*entry, m_content->Layout(), from);
+    m_lifted = true;
+    m_dragHome = from;
+    m_grabX = x - from.x;
+    m_grabY = y - from.y;
+    return true;
+}
+
+void Main::MoveCardDrag(float x, float y) {
+    if (!m_lifted || m_drag == nullptr) return;
+    // Por donde se agarró: sin esto, la tarjeta pega un salto para centrarse bajo el puntero
+    // en el primer movimiento y parece que se ha soltado sola.
+    m_drag->MoveTo(x - m_grabX, y - m_grabY);
+    if (m_sidebar) m_sidebar->SetDropTarget(m_sidebar->DropLensAt(x, y));
+}
+
+void Main::FinishCardDrag(const Ui::List::Drop& drop) {
+    if (m_sidebar) m_sidebar->SetDropTarget(std::nullopt);
+    if (!m_lifted) return;
+
+    // 1. Sobre un grupo de la barra lateral: cambia de prioridad. Quien contesta es App, que
+    //    es quien sabe del límite de Enfoque, y es también quien baja la tarjeta.
+    if (m_sidebar && m_priorityRequested) {
+        if (const std::optional<App::Lens> lens = m_sidebar->DropLensAt(drop.x, drop.y)) {
+            if (const std::optional<Model::Priority> priority = App::PriorityOf(*lens)) {
+                m_priorityRequested(drop.from, *priority);
+                return;
+            }
+        }
+    }
+
+    // 2. Entre otras dos de la misma lista: se reordena y cae en su celda nueva.
+    if (drop.inside && drop.to >= 0 && drop.to != drop.from && m_reorder && m_content) {
+        m_reorder(drop.from, drop.to);
+        DropCardAt(m_content->CardRect(drop.to));
+        return;
+    }
+
+    // 3. Y en cualquier otro sitio —el aire, el inspector, fuera de la ventana— vuelve de
+    //    donde salió. Es el criterio de aceptación de la fase: soltar fuera no deja nunca
+    //    una tarjeta flotando.
+    DropCardAt(m_dragHome);
+}
+
+void Main::DropCardAt(const Rect& target) {
+    if (!m_lifted || m_drag == nullptr) return;
+    m_lifted = false;
+    const Rect landing = target.Empty() ? m_dragHome : target;
+    if (landing.Empty()) {
+        m_drag->HideNow();
+        return;
+    }
+    m_drag->FlyTo(landing);
+}
+
+void Main::LiftCard(int slot) {
+    // Ya hay una en el aire: viene de un arrastre, y esa manda.
+    if (m_lifted || m_state == nullptr || m_drag == nullptr || m_content == nullptr) return;
+    const App::Entry* entry = m_state->At(slot);
+    if (entry == nullptr) return;
+    const Rect from = m_content->CardRect(slot);
+    // La tarjeta no se ve —se eligió con el teclado y quedó fuera de la ventanilla, o la
+    // búsqueda la dejó fuera—. Sin punto de partida no hay viaje, y el cambio se ve igual:
+    // la lista lo anima al recargarse.
+    if (from.Empty()) return;
+
+    m_drag->Lift(*entry, m_content->Layout(), from);
+    m_lifted = true;
+    m_dragHome = from;
+    m_grabX = 0.0f;
+    m_grabY = 0.0f;
+}
+
+void Main::DropCardInto(Model::Priority priority) {
+    if (!m_lifted || m_sidebar == nullptr) return;
+    DropCardAt(m_sidebar->RectOf(App::LensOf(priority)));
+}
+
+void Main::CancelDrop() { DropCardAt(m_dragHome); }
+
+void Main::RefuseDrop() {
+    if (!m_lifted || m_drag == nullptr) return;
+    m_lifted = false;
+    m_drag->Refuse();
+}
+
+int Main::SelectedSlot() const { return m_content ? m_content->Selected() : -1; }
+
+void Main::Reveal(int slot) {
+    if (m_content == nullptr || m_state == nullptr || m_state->At(slot) == nullptr) return;
+    m_content->SelectSlot(slot);
+    OpenInspector(slot);
+}
+
+void Main::ShowAll() {
+    if (m_content == nullptr) return;
+    if (m_state && !m_state->Query().empty()) m_content->ClearSearch();
+    ChooseLens(App::Lens::All, false);
 }
 
 void Main::Bind(App::State* state) {
@@ -329,14 +454,24 @@ bool Main::OnKey(const Input::Key& e) {
         m_content->FocusSearch();
         return true;
     }
+    // Ctrl+K funciona también mientras se escribe: es la manera de salir de donde estés, y un
+    // atajo que solo vale cuando no estás haciendo nada no sirve para eso.
+    if (e.virtualKey == 'K' && Input::Has(e.modifiers, Input::Modifiers::Control)) {
+        if (m_palette) m_palette();
+        return true;
+    }
     if (!typing && IsSlash(e)) {
         m_content->FocusSearch();
         return true;
     }
     if (e.virtualKey == VK_ESCAPE) {
-        // Por capas, de dentro afuera: primero la edición a medias, luego el inspector y
-        // luego la búsqueda. Las capas flotantes ya se las llevó el enrutador antes de
-        // llegar aquí.
+        // Por capas, de dentro afuera: primero la tarjeta en el aire, luego la edición a
+        // medias, luego el inspector y luego la búsqueda. Las capas flotantes ya se las
+        // llevó el enrutador antes de llegar aquí.
+        if (m_content->Dragging()) {
+            m_content->CancelDrag();
+            return true;
+        }
         if (m_inspectorOpen && m_inspector) {
             if (m_inspector->CancelEditing()) return true;
             CloseInspector();
@@ -365,9 +500,34 @@ bool Main::OnKey(const Input::Key& e) {
         m_content->ToggleLayout();
         return true;
     }
+    // Deshacer. Llega aquí solo cuando el foco NO está en un campo de texto: los campos se
+    // quedan el Ctrl+Z para su propio historial, que es lo que espera quien está escribiendo
+    // una frase y quiere recuperar la palabra de antes, no el cambio de prioridad de hace
+    // diez minutos.
+    if (e.virtualKey == 'Z' && Input::Has(e.modifiers, Input::Modifiers::Control) &&
+        !Input::Has(e.modifiers, Input::Modifiers::Shift)) {
+        if (m_undo) m_undo();
+        return true;
+    }
     if (e.virtualKey == 'O' && Input::Has(e.modifiers, Input::Modifiers::Control)) {
         if (m_openInGitHub && m_content->Selected() >= 0) m_openInGitHub(m_content->Selected());
         return true;
+    }
+
+    // 1, 2, 3 y 4: las cuatro prioridades de la tabla de atajos, sobre la tarjeta elegida.
+    // «Sin clasificar» no tiene tecla y no es un olvido: es la ausencia de prioridad, y para
+    // quitarla está el menú contextual. Van sin Control ni Alt, y nunca mientras se escribe:
+    // el "1" de una fecha dentro de una novedad es un uno.
+    if (!typing && !Input::Has(e.modifiers, Input::Modifiers::Control) &&
+        !Input::Has(e.modifiers, Input::Modifiers::Alt)) {
+        const int digit = e.virtualKey - '1';
+        if (digit >= 0 && digit <= 3) {
+            const int slot = m_content->Selected();
+            if (slot >= 0 && m_priorityRequested) {
+                m_priorityRequested(slot, static_cast<Model::Priority>(digit));
+            }
+            return true;
+        }
     }
 
     // Las flechas desde la BÚSQUEDA bajan a la lista; las letras, no. Desde un campo del

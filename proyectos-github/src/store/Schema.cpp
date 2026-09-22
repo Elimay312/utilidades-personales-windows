@@ -106,6 +106,19 @@ ALTER TABLE local ADD COLUMN repo_confirmed INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE local ADD COLUMN push_pending   INTEGER NOT NULL DEFAULT 0;
 )SQL";
 
+// --- v3 ---------------------------------------------------------------------------
+//
+// El orden puesto a mano, que es lo que hace falta para poder arrastrar una tarjeta dentro
+// de su grupo y que se quede donde se la dejó.
+//
+// Va en 'local' y no en 'repos' porque es del usuario: la sincronización no puede tocarlo,
+// igual que no toca el siguiente paso. Y por omisión vale CERO, que significa "este nunca
+// se ha ordenado a mano" — o sea que una caché de la fase 5 sigue enseñándose exactamente
+// igual después de migrar, ordenada por el último push.
+constexpr const char* kV3 = R"SQL(
+ALTER TABLE local ADD COLUMN orden INTEGER NOT NULL DEFAULT 0;
+)SQL";
+
 struct Migration {
     int version;
     const char* sql;
@@ -114,6 +127,7 @@ struct Migration {
 constexpr Migration kMigrations[] = {
     {1, kV1},
     {2, kV2},
+    {3, kV3},
 };
 
 }  // namespace

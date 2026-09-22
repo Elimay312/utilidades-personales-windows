@@ -146,6 +146,40 @@ void Sidebar::OnArrange() {
     }
 }
 
+// -------------------------------------------------------------- Soltar una tarjeta --
+
+std::optional<App::Lens> Sidebar::DropLensAt(float x, float y) const {
+    if (m_priority == nullptr) return std::nullopt;
+    for (int i = 0; i < m_priority->Size(); ++i) {
+        const Ui::SidebarItem* item = m_priority->ItemAt(i);
+        if (item == nullptr) continue;
+        if (item->WindowRect().Contains(x, y)) {
+            return App::kPriorityLenses[static_cast<std::size_t>(i)];
+        }
+    }
+    return std::nullopt;
+}
+
+Ui::Rect Sidebar::RectOf(App::Lens lens) const {
+    if (m_priority == nullptr) return Ui::Rect{};
+    for (std::size_t i = 0; i < std::size(App::kPriorityLenses); ++i) {
+        if (App::kPriorityLenses[i] != lens) continue;
+        if (const Ui::SidebarItem* item = m_priority->ItemAt(static_cast<int>(i))) {
+            return item->WindowRect();
+        }
+    }
+    return Ui::Rect{};
+}
+
+void Sidebar::SetDropTarget(std::optional<App::Lens> lens) {
+    if (m_priority == nullptr) return;
+    for (std::size_t i = 0; i < std::size(App::kPriorityLenses); ++i) {
+        if (Ui::SidebarItem* item = m_priority->ItemAt(static_cast<int>(i))) {
+            item->SetDropTarget(lens.has_value() && *lens == App::kPriorityLenses[i]);
+        }
+    }
+}
+
 void Sidebar::OnTheme(const Theme::Tokens& tokens, float crossfadeMs) {
     if (Gfx::Material* material = MaterialOf()) {
         material->SetColor(tokens.sidebarVeil, HostRef().Animator(), crossfadeMs);

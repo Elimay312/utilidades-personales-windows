@@ -27,6 +27,10 @@ public:
 
     void SetCount(int count);
     const std::wstring& Label() const { return m_label; }
+    // Hay una tarjeta encima esperando a que la suelten. Se pinta como el hover y no como un
+    // color propio: es la misma idea —"esto es lo que estás señalando"— y un tercer color
+    // para decirla otra vez sería una leyenda más que aprenderse.
+    void SetDropTarget(bool value);
 
     bool Focusable() const override { return true; }
 
@@ -44,6 +48,7 @@ private:
     std::wstring m_label;
     int m_count = 0;
     bool m_selected = false;
+    bool m_drop = false;
 };
 
 class SidebarGroup : public Element {

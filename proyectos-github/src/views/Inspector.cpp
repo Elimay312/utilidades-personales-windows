@@ -275,9 +275,11 @@ void Inspector::Rebuild() {
     }
 
     m_folderButton->SetLabel(m_content.folder.empty() ? L"Elegir carpeta…" : L"Abrir carpeta");
-    // Relayout y no Invalidate: el alto de la lista depende de cuántos botones se enseñan,
-    // así que lo que cambia no es solo lo que se pinta sino dónde cae cada cosa.
-    Relayout();
+    // Recoloca lo de DENTRO y no el panel entero: el alto de la lista depende de cuántos
+    // botones se enseñan, así que no basta con repintar — pero reescribir el marco propio
+    // aquí plantaría el panel en su destino a mitad de la transición compartida, y esto se
+    // llama en cada clic sobre una tarjeta, también mientras el panel todavía está creciendo.
+    RelayoutContent();
 }
 
 int Inspector::VisibleMarkdown() const {

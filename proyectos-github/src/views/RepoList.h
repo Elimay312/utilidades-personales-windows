@@ -13,6 +13,7 @@
 
 #include "app/State.h"
 #include "ui/Element.h"
+#include "ui/List.h"
 #include "views/Card.h"
 
 namespace Ui {
@@ -20,7 +21,6 @@ class Button;
 class Field;
 class IconButton;
 class Label;
-class List;
 class Slate;
 }  // namespace Ui
 
@@ -39,6 +39,20 @@ public:
     // celda en cada fotograma— y lo que se desliza es su posición, que es exactamente la
     // decisión que la fase 4 ya escribió para el paso de lista a cuadrícula.
     void ReflowCells();
+
+    // --- Arrastrar tarjetas -------------------------------------------------------------
+    // La columna no decide qué significa soltar: reenvía lo que la lista sabe —quién viaja,
+    // dónde está el puntero y dónde caería— a quien sí lo sabe, que es Views::Main.
+    void OnCardDragBegin(std::function<bool(int, float, float)> handler);
+    void OnCardDragMove(std::function<void(float, float)> handler);
+    void OnCardDrop(std::function<void(const Ui::List::Drop&)> handler);
+    void OnCardMenu(std::function<void(int, float, float)> handler);
+    void CancelDrag();
+    bool Dragging() const { return m_list && m_list->Dragging(); }
+
+    // Dónde está una tarjeta en coordenadas de ventana, o vacío si no se ve.
+    Ui::Rect CardRect(int slot) const;
+    CardLayout Layout() const { return m_layout; }
 
     void FocusSearch();
     void ClearSearch();

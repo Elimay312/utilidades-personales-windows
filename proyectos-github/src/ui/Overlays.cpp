@@ -299,6 +299,25 @@ void Sheet::SetActions(std::wstring accept, std::wstring cancel) {
     if (Attached()) Relayout();
 }
 
+void Sheet::SetOptions(std::vector<std::wstring> labels, std::function<void(int)> chosen) {
+    m_chosen = std::move(chosen);
+    if (m_panel == nullptr) return;
+
+    for (std::size_t i = 0; i < labels.size(); ++i) {
+        Button* option = m_panel->Add<Button>(labels[i], ButtonKind::Secondary);
+        const int index = static_cast<int>(i);
+        option->OnActivate([this, index] {
+            // La misma maniobra que Leave: la acción se copia ANTES de cerrar, porque cerrar
+            // destruye la hoja y con ella el botón desde cuya lambda estamos.
+            const std::function<void(int)> chosenNow = m_chosen;
+            Leave(false);
+            if (chosenNow) chosenNow(index);
+        });
+        m_options.push_back(option);
+    }
+    if (Attached()) Relayout();
+}
+
 bool Sheet::OnAttach() {
     m_panel = Add<Panel>(Panel::Surface::Sheet, Metrics::Radius::Sheet, Metrics::kElevationSheet);
     m_titleLabel = m_panel->Add<Label>(m_title, Style::Heading, Weight::Semibold);
@@ -320,6 +339,9 @@ bool Sheet::OnAttach() {
 void Sheet::Leave(bool accepted) {
     // La acción se copia ANTES de cerrar: cerrar destruye la hoja, y con ella la lambda
     // desde la que estamos. Es lo mismo que hace Ui::Menu::Activate.
+    //
+    // Salir por un botón de opción pasa por aquí con accepted en false y SIN acción de
+    // cancelar: elegir una de las respuestas no es arrepentirse.
     const std::function<void()> action = accepted ? m_accepted : m_cancelled;
     Host& host = HostRef();
     Element* self = this;
@@ -362,8 +384,15 @@ void Sheet::OnArrange() {
         20.0f);
 
     constexpr float kTitleHeight = 30.0f;
+    const float optionsHeight =
+        m_options.empty()
+            ? 0.0f
+            : static_cast<float>(m_options.size()) *
+                      (Metrics::kControlHeight + Metrics::kSpace1) +
+                  Metrics::kSpace2;
     const float height = kSheetPadding + kTitleHeight + Metrics::kSpace2 + bodyHeight +
-                         Metrics::kSpace4 + Metrics::kControlHeight + kSheetPadding;
+                         optionsHeight + Metrics::kSpace4 + Metrics::kControlHeight +
+                         kSheetPadding;
 
     const float x = (Frame().width - width) * 0.5f;
     const float y = std::max((Frame().height - height) * 0.5f, Metrics::kSpace4);
@@ -375,6 +404,14 @@ void Sheet::OnArrange() {
     m_titleLabel->SetFrame(Rect{kSheetPadding, cursor, inner, kTitleHeight});
     cursor += kTitleHeight + Metrics::kSpace2;
     m_bodyLabel->SetFrame(Rect{kSheetPadding, cursor, inner, bodyHeight});
+    cursor += bodyHeight + Metrics::kSpace2;
+
+    // Apiladas y a todo el ancho: son frases —el nombre de un repositorio y cuánto lleva
+    // parado—, no verbos de dos palabras, y en fila se recortarían las cinco.
+    for (Button* option : m_options) {
+        option->SetFrame(Rect{kSheetPadding, cursor, inner, Metrics::kControlHeight});
+        cursor += Metrics::kControlHeight + Metrics::kSpace1;
+    }
 
     const float buttonsTop = height - kSheetPadding - Metrics::kControlHeight;
     const float acceptWidth =

@@ -130,6 +130,11 @@ struct Local {
     // siguiente sincronización. Sin esto, editar sin cobertura pierde el commit en silencio.
     bool pushPending = false;
     std::wstring folder;  // carpeta local, para el botón de abrir
+    // El orden puesto a mano arrastrando. Cero es "nunca se ha tocado", y entonces manda la
+    // fecha del último push, que es el orden de la fase 4. NO viaja a PROYECTO.md: el
+    // formato de CLAUDE.md no tiene ese campo, y un commit por cada tarjeta que se arrastra
+    // sería ciento nueve commits por una tarde ordenando.
+    int order = 0;
     Instant updatedAt{};
 };
 

@@ -173,7 +173,16 @@ void Element::SetFrame(const Rect& frame) {
     m_frame = frame;
     if (!m_visual || !m_host) return;
 
+    // Las dos se PARAN antes de escribirlas, y el Size no es simetría: escribir una
+    // propiedad que tiene una animación encima no la para —la animación sigue mandando y el
+    // valor escrito se pierde—. Sin este StopAnimation, recolocar algo a mitad de un
+    // MorphTo dejaba el panel clavado a medio viaje: el Size escrito se ignoraba, y acto
+    // seguido Material::SetSize paraba la MISMA animación por su otro extremo —
+    // Animator::SizeTogether la arranca en el visual y en la geometría a la vez—, así que
+    // el visual se quedaba con el último valor animado y ahí se quedaba para siempre.
+    // Pasaba al abrir el inspector y volver a pulsar antes de que terminara de crecer.
     m_visual.StopAnimation(L"Offset");
+    m_visual.StopAnimation(L"Size");
     m_visual.Offset({frame.x, frame.y, 0.0f});
     m_visual.Size({frame.width, frame.height});
 
@@ -353,6 +362,15 @@ void Element::ArrangeTree() {
 
 void Element::Relayout() {
     ArrangeTree();
+    Invalidate();
+}
+
+void Element::RelayoutContent() {
+    // Lo mismo que Relayout menos la primera línea de ArrangeTree, que es el SetFrame de uno
+    // mismo. Los hijos sí se recolocan enteros: su marco lo escribe OnArrange y su textura
+    // hay que reservarla a la escala de ahora.
+    OnArrange();
+    for (const auto& child : m_children) child->ArrangeTree();
     Invalidate();
 }
 

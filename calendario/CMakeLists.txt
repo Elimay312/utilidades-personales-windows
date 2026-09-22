@@ -171,3 +171,22 @@ target_compile_options(agenda_tests PRIVATE ${AGENDA_WARNINGS})
 target_compile_definitions(agenda_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(agenda_tests PRIVATE agenda_nlp agenda_data Catch2::Catch2WithMain)
 add_test(NAME unit COMMAND agenda_tests)
+
+# Instalar-Agenda.exe: el instalador nativo, un solo archivo con Agenda.exe dentro como RCDATA.
+# Agenda.exe cae en la raiz del build dir en cualquier configuracion (ver arriba), asi que su ruta
+# se sabe al configurar y el .rc la recibe por un encabezado generado, sin expresiones generadoras.
+# Instala por usuario en %LOCALAPPDATA%\Programs\Agenda y se deja a si mismo como Desinstalar.exe.
+set(agenda_exe "${CMAKE_BINARY_DIR}/Agenda.exe")
+set(agenda_assets "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+configure_file(src/installer/installer_config.h.in
+  "${CMAKE_BINARY_DIR}/installer/installer_config.h" @ONLY)
+add_executable(agenda_installer WIN32 src/installer/installer.cpp src/installer/installer.rc)
+set_target_properties(agenda_installer PROPERTIES OUTPUT_NAME "Instalar-Agenda")
+add_dependencies(agenda_installer Agenda)
+target_include_directories(agenda_installer PRIVATE src "${CMAKE_BINARY_DIR}/installer")
+target_compile_options(agenda_installer PRIVATE ${AGENDA_WARNINGS})
+target_compile_definitions(agenda_installer PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+# comctl32 es el TaskDialog y propsys el AppUserModelID del acceso directo.
+target_link_libraries(agenda_installer PRIVATE comctl32 propsys)
+# El manifiesto (common controls v6) entra por installer.rc.
+target_link_options(agenda_installer PRIVATE /MANIFEST:NO)

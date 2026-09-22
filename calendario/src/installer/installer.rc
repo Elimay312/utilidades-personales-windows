@@ -1,0 +1,40 @@
+#pragma code_page(65001)
+
+#include <windows.h>
+
+#include "installer_config.h"
+
+// CREATEPROCESS_MANIFEST_RESOURCE_ID (1), RT_MANIFEST (24): common controls v6, which is what
+// TaskDialogIndirect needs to exist at all.
+1 24 AGENDA_MANIFEST_PATH
+1 ICON AGENDA_ICON_PATH
+
+// The whole application, carried inside the installer.
+AGENDA_EXE_RESOURCE RCDATA AGENDA_EXE_PATH
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION AGENDA_VERSION_MAJOR, AGENDA_VERSION_MINOR, AGENDA_VERSION_PATCH, 0
+PRODUCTVERSION AGENDA_VERSION_MAJOR, AGENDA_VERSION_MINOR, AGENDA_VERSION_PATCH, 0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "0c0a04b0"
+    BEGIN
+      VALUE "FileDescription", "Instalador de Agenda"
+      VALUE "FileVersion", AGENDA_VERSION_STR
+      VALUE "InternalName", "Instalar-Agenda"
+      VALUE "OriginalFilename", "Instalar-Agenda.exe"
+      VALUE "ProductName", "Agenda"
+      VALUE "ProductVersion", AGENDA_VERSION_STR
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0c0a, 1200
+  END
+END

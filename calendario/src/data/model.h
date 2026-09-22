@@ -46,6 +46,7 @@ inline std::optional<Date> ParseDayKey(std::string_view key) {
 // the two kinds it is, and the wall clock it happens at.
 struct Draft {
   bool isTask = false;
+  std::string calendar;           // where it lands; empty means the default one
   std::wstring title;
   std::wstring recurrence;        // the RRULE as the parser produced it; phase 4 stores it
   std::optional<Date> day;        // empty only for a task with no date at all
@@ -86,6 +87,45 @@ inline bool EarlierThan(const DayItem& a, const DayItem& b) {
   if (a.startMin && *a.startMin != *b.startMin) return *a.startMin < *b.startMin;
   if (a.isTask != b.isTask) return !a.isTask;
   return a.title < b.title;
+}
+
+// An event whole, as the detail panel edits it and UpdateEvent writes it back. The day list's
+// DayItem is what an event looks like on a card; this is what it is.
+struct EventDetail {
+  std::wstring uid;
+  std::string calendarId;
+  std::wstring title;
+  std::wstring location;
+  std::wstring notes;
+  std::wstring recurrence;        // the RRULE, with or without its "RRULE:" prefix
+  Date startDay{};
+  std::optional<int> startMin;    // empty means all day
+  Date endDay{};
+  std::optional<int> endMin;
+};
+
+// What an edit touched beyond the times and the title, which always go up. The queue has no
+// payload (schema.cpp), so the operation itself says it: "update+location+recurrence".
+//
+// It matters for two fields in particular. A location Agenda never read is empty here and set
+// on Google, so an empty one is only sent when somebody emptied it. And Agenda keeps only the
+// RRULE of a repetition, not its EXDATEs, so the rule is only sent when it was edited: sending
+// it with every move would bring back the occurrences somebody deleted on the web.
+inline constexpr unsigned kEditLocation = 1u;
+inline constexpr unsigned kEditRecurrence = 2u;
+
+inline std::string UpdateOp(unsigned edits) {
+  std::string op = "update";
+  if (edits & kEditLocation) op += "+location";
+  if (edits & kEditRecurrence) op += "+recurrence";
+  return op;
+}
+
+inline unsigned UpdateEdits(std::string_view op) {
+  unsigned edits = 0;
+  if (op.find("+location") != std::string_view::npos) edits |= kEditLocation;
+  if (op.find("+recurrence") != std::string_view::npos) edits |= kEditRecurrence;
+  return edits;
 }
 
 // A day that has something on it, and the colour its dot takes.

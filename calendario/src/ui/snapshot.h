@@ -18,6 +18,9 @@ inline constexpr std::wstring_view kSnapshotViews[] = {
     L"app-semana",          // on the week
     L"app-mes",             // on the month
     L"app-transicion",      // halfway through the expansion, over a whole work area
+    L"app-detalle",         // the week with an event open in the detail panel
+    L"app-arrastre",        // an event halfway through being dragged to another day
+    L"app-borrar",          // Supr pressed: the question before anything is deleted
 };
 
 inline bool KnowsSnapshotView(std::wstring_view view) {

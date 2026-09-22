@@ -64,3 +64,32 @@ TEST_CASE("what it cannot read stays on its first day instead of being guessed")
   CHECK_FALSE(OccursOn("", start, Day(2026, 9, 2)));
   CHECK(OccursOn("RRULE:FREQ=MONTHLY;BYDAY=1TU", start, start));
 }
+
+TEST_CASE("the panel's five answers, and anything else is left alone as custom") {
+  CHECK(RepeatOf(L"") == Repeat::None);
+  CHECK(RepeatOf(L"FREQ=DAILY") == Repeat::Daily);
+  CHECK(RepeatOf(L"RRULE:FREQ=WEEKLY;BYDAY=MO") == Repeat::Weekly);
+  CHECK(RepeatOf(L"FREQ=WEEKLY") == Repeat::Weekly);
+  CHECK(RepeatOf(L"RRULE:FREQ=MONTHLY") == Repeat::Monthly);
+  CHECK(RepeatOf(L"RRULE:FREQ=YEARLY") == Repeat::Yearly);
+  CHECK(RepeatOf(L"RRULE:FREQ=WEEKLY;BYDAY=MO,TH") == Repeat::Custom);
+  CHECK(RepeatOf(L"RRULE:FREQ=DAILY;COUNT=5") == Repeat::Custom);
+
+  const Date tuesday = Day(2026, 9, 22);
+  CHECK(RuleFor(Repeat::Weekly, tuesday) == L"RRULE:FREQ=WEEKLY;BYDAY=TU");
+  CHECK(RuleFor(Repeat::Daily, tuesday) == L"RRULE:FREQ=DAILY");
+  CHECK(RuleFor(Repeat::None, tuesday).empty());
+  CHECK(RuleFor(Repeat::Custom, tuesday).empty());
+}
+
+TEST_CASE("a weekly series dragged to another day repeats on the new day") {
+  const Date thursday = Day(2026, 9, 24);
+  CHECK(MoveRuleTo(L"FREQ=WEEKLY;BYDAY=MO", thursday) == L"FREQ=WEEKLY;BYDAY=TH");
+  CHECK(MoveRuleTo(L"RRULE:FREQ=WEEKLY;BYDAY=MO", thursday) == L"RRULE:FREQ=WEEKLY;BYDAY=TH");
+  // Two days, a count, or not weekly at all: nothing to follow, so nothing moves.
+  CHECK(MoveRuleTo(L"RRULE:FREQ=WEEKLY;BYDAY=MO,WE", thursday) ==
+        L"RRULE:FREQ=WEEKLY;BYDAY=MO,WE");
+  CHECK(MoveRuleTo(L"RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=4", thursday) ==
+        L"RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=4");
+  CHECK(MoveRuleTo(L"RRULE:FREQ=DAILY", thursday) == L"RRULE:FREQ=DAILY");
+}

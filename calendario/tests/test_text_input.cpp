@@ -115,3 +115,14 @@ TEST_CASE("clicking places the caret and clamps past the end") {
   input.MoveTo(99, false);
   CHECK(input.caret() == 9);
 }
+
+TEST_CASE("the notes keep their lines, the capsule does not") {
+  TextInput capsule;
+  capsule.Insert(L"una\r\ndos");
+  CHECK(capsule.text() == L"unados");
+
+  TextInput notes;
+  notes.AllowNewlines(true);
+  notes.Insert(L"una\r\ndos");
+  CHECK(notes.text() == L"una\ndos");
+}

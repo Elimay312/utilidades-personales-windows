@@ -15,6 +15,7 @@
 #include "ui/layout.h"
 #include "ui/paint.h"
 #include "ui/popup_view.h"
+#include "ui/fields.h"
 #include "ui/sample_data.h"
 #include "ui/theme.h"
 
@@ -40,7 +41,10 @@ constexpr int kSnapshotMinute = 10 * 60;  // and a fixed hour, for the same reas
 constexpr RECT kSnapshotWork{0, 0, 1920, 1032};
 
 AppView ViewFor(std::wstring_view view) {
-  if (view == L"app-semana") return AppView::Week;
+  if (view == L"app-semana" || view == L"app-detalle" || view == L"app-arrastre" ||
+      view == L"app-borrar") {
+    return AppView::Week;
+  }
   if (view == L"app-mes") return AppView::Month;
   return AppView::Day;
 }
@@ -113,6 +117,32 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
     model.focus = text.empty() ? 0.0f : 1.0f;
     model.caretOn = !text.empty();
     FillSampleApp(model, appModel);
+    const Date tuesday = kSnapshotToday;
+    if (view == L"app-detalle") {
+      // The coffee with Ana, open, with the keyboard in its location.
+      DetailModel& detail = appModel.detail;
+      detail.open = true;
+      detail.t = 1.0f;
+      detail.event = EventDetail{L"week-2", "familia", L"Café con Ana",
+                                 L"Café Pergamino, El Poblado",
+                                 L"Llevarle las fotos del viaje y el libro que le debo.", L"",
+                                 tuesday, 10 * 60, tuesday, 11 * 60};
+      const std::wstring texts[kDetailFields] = {
+          detail.event.title, DayFieldText(tuesday), TimeFieldText(10 * 60),
+          TimeFieldText(11 * 60), detail.event.location, detail.event.notes};
+      detail.fields[kFieldNotes].AllowNewlines(true);
+      for (int i = 0; i < kDetailFields; ++i) detail.fields[i].Insert(texts[i]);
+      detail.focus = kFieldLocation;
+      detail.caretOn = true;
+      appModel.selected = L"week-2";
+    } else if (view == L"app-arrastre") {
+      // The interview, picked up on Wednesday at eleven and on its way to Thursday at three.
+      appModel.ghost = Ghost{true, false, 3, 15 * 60, 16 * 60, detail::kSampleWorkColor,
+                             L"Entrevista", L"week-6", {}};
+    } else if (view == L"app-borrar") {
+      appModel.selected = L"week-3";
+      appModel.confirm = L"¿Borrar «Revisión de código»?   Supr para borrar · Esc para dejarlo";
+    }
     if (transition) {
       progress = 0.5f;
       window = LerpRect(PlaceRect(kSnapshotWork, layout.size(), USER_DEFAULT_SCREEN_DPI),
@@ -121,8 +151,8 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
   }
   const D2D1_SIZE_F appSize{static_cast<float>(window.right - window.left),
                             static_cast<float>(window.bottom - window.top)};
-  const AppLayout appLayout =
-      MakeAppLayout(appSize, layout, appModel.view, AllDayRows(appModel));
+  const AppLayout appLayout = MakeAppLayout(appSize, layout, appModel.view, AllDayRows(appModel),
+                                            EaseOutCubic(appModel.detail.t));
   if (app) {
     const Date first = appModel.first;
     const bool showsToday = first <= kSnapshotToday &&

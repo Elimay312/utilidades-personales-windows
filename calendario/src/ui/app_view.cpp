@@ -187,6 +187,10 @@ void DrawAllDay(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
       const DayItem& item = *chips[static_cast<size_t>(row)];
       const D2D1_RECT_F chip = app.allDayChip(i, row);
       DrawTinted(target, theme, brush, chip, radius, app.gap / 1.5f, item.color);
+      if (item.uid == appModel.selected) {
+        brush->SetColor(theme.accent);
+        StrokeRound(target, chip, radius, brush, (std::max)(1.0f, std::round(1.5f * app.type)));
+      }
       const bool last = row == app.allDayRows - 1 && total > app.allDayRows;
       const std::wstring text = last ? std::format(L"+{} más", total - row) : item.title;
       brush->SetColor(item.done ? theme.textMuted : theme.textPrimary);
@@ -279,35 +283,32 @@ void DrawTimeline(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& th
     target->FillRectangle(D2D1_RECT_F{x, area.top, x + 1.0f, area.bottom}, brush);
   }
 
-  const float inset = (std::max)(1.0f, std::round(app.gap / 2.0f));
-  for (int i = 0; i < app.columns && i < static_cast<int>(appModel.days.size()); ++i) {
-    const D2D1_RECT_F column = app.column(i);
-    std::vector<const DayItem*> timed;
-    std::vector<std::pair<int, int>> spans;
-    for (const DayItem& item : appModel.days[static_cast<size_t>(i)]) {
-      if (!item.startMin) continue;
-      const int start = *item.startMin;
-      // A task has a moment and not a length; half an hour is what makes it big enough to read.
-      int end = item.isTask ? start + 30 : (item.endMin ? *item.endMin : start + 60);
-      if (end <= start) end = kMinutesPerDay;  // runs past midnight: it fills the rest of the day
-      timed.push_back(&item);
-      spans.emplace_back(start, (std::max)(end, start + kSnapMinutes));
+  const float outline = (std::max)(1.0f, std::round(1.5f * app.type));
+  for (const PlacedBlock& block : PlaceBlocks(app, appModel)) {
+    const DayItem& item = *block.item;
+    const int end = item.isTask ? block.start : (item.endMin ? *item.endMin : block.end);
+    DrawBlock(target, fonts, theme, app, brush, block.rect, item, block.start, end);
+    if (item.uid == appModel.selected) {
+      brush->SetColor(theme.accent);
+      StrokeRound(target, block.rect,
+                  (std::min)(std::round(kRadiusCard * app.type),
+                             (block.rect.bottom - block.rect.top) / 2.0f),
+                  brush, outline);
     }
-    const std::vector<Lane> lanes = LayoutOverlaps(spans);
-    const float width = column.right - column.left - 2.0f * inset;
-    for (size_t k = 0; k < timed.size(); ++k) {
-      const float share = width / static_cast<float>(lanes[k].columns);
-      const float left = column.left + inset + share * static_cast<float>(lanes[k].column);
-      const float top = std::round(YForMinute(app, scroll, static_cast<float>(spans[k].first))) +
-                        inset;
-      const float bottom =
-          std::round(YForMinute(app, scroll, static_cast<float>(spans[k].second))) - inset;
-      const D2D1_RECT_F block{left + (lanes[k].column > 0 ? inset : 0.0f), top,
-                              left + share, (std::max)(bottom, top + app.minBlock)};
-      const int end = timed[k]->isTask ? spans[k].first
-                                       : (timed[k]->endMin ? *timed[k]->endMin : spans[k].second);
-      DrawBlock(target, fonts, theme, app, brush, block, *timed[k], spans[k].first, end);
-    }
+  }
+
+  // What a drag is proposing: the block where it would land, outlined like the selection.
+  const Ghost& ghost = appModel.ghost;
+  if (ghost.on && !ghost.free) {
+    const D2D1_RECT_F rect = GhostRect(app, scroll, ghost.column, ghost.start, ghost.end);
+    DayItem shadow;
+    shadow.title = ghost.title;
+    shadow.color = ghost.color;
+    DrawBlock(target, fonts, theme, app, brush, rect, shadow, ghost.start, ghost.end);
+    brush->SetColor(theme.accent);
+    StrokeRound(target, rect,
+                (std::min)(std::round(kRadiusCard * app.type), (rect.bottom - rect.top) / 2.0f),
+                brush, outline);
   }
 
   target->PopAxisAlignedClip();
@@ -489,7 +490,342 @@ void DrawSidebar(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& the
   }
 }
 
+// --- The detail panel -----------------------------------------------------------------------
+
+constexpr std::wstring_view kDetailLabelNames[kDetailLabels] = {
+    L"Título", L"Fecha", L"Inicio", L"Fin", L"Calendario", L"Ubicación", L"Notas", L"Repetición"};
+constexpr std::wstring_view kRepeatNames[kRepeatChoices] = {L"Nunca", L"Diaria", L"Semanal",
+                                                            L"Mensual", L"Anual"};
+
+// A field's text, laid out the way it is drawn: one line that scrolls to keep the caret in
+// sight, or -- for the notes -- wrapped inside the box. The drawing and the click both build
+// one, so the caret goes where the pointer is.
+struct FieldText {
+  ComPtr<IDWriteTextLayout> layout;
+  D2D1_RECT_F inner{};
+  float scroll = 0.0f;
+  float caretX = 0.0f;
+  float caretY = 0.0f;
+  float caretH = 0.0f;
+};
+
+bool BuildField(const Fonts& fonts, const D2D1_RECT_F& rect, const TextInput& input,
+                bool multiline, float type, FieldText& out) {
+  if (!fonts.ok()) return false;
+  const float padX = std::round(10.0f * type);
+  const float padY = std::round(6.0f * type);
+  out.inner = multiline ? D2D1_RECT_F{rect.left + padX, rect.top + padY, rect.right - padX,
+                                      rect.bottom - padY}
+                        : D2D1_RECT_F{rect.left + padX, rect.top, rect.right - padX, rect.bottom};
+  out.caretH = std::round(18.0f * type);
+  out.caretY = multiline ? 0.0f : (rect.bottom - rect.top - out.caretH) / 2.0f;
+
+  const std::wstring& text = input.text();
+  if (text.empty()) return true;
+  const float width = out.inner.right - out.inner.left;
+  if (FAILED(fonts.factory->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()),
+                                             fonts.event.Get(), multiline ? width : 4096.0f,
+                                             out.inner.bottom - out.inner.top, &out.layout))) {
+    return false;
+  }
+  out.layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+  const DWRITE_TRIMMING none{DWRITE_TRIMMING_GRANULARITY_NONE, 0, 0};
+  out.layout->SetTrimming(&none, nullptr);
+  if (multiline) {
+    out.layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    out.layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+  }
+  float y = 0.0f;
+  DWRITE_HIT_TEST_METRICS metrics{};
+  out.layout->HitTestTextPosition(static_cast<UINT32>(input.caret()), FALSE, &out.caretX, &y,
+                                  &metrics);
+  if (multiline) {
+    out.caretY = y;
+    out.caretH = metrics.height;
+  } else {
+    out.scroll = (std::max)(0.0f, out.caretX - width + (std::max)(1.0f, type));
+  }
+  return true;
+}
+
+void DrawField(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+               ID2D1SolidColorBrush* brush, const D2D1_RECT_F& rect, float radius,
+               const TextInput& input, bool focused, bool caretOn, bool invalid, bool multiline,
+               std::wstring_view placeholder, float type) {
+  brush->SetColor(theme.panelOpaque);
+  FillRound(target, rect, radius, brush);
+  brush->SetColor(invalid ? theme.now : (focused ? theme.accent : theme.border));
+  StrokeRound(target, rect, radius, brush, invalid || focused ? 1.5f * type : 1.0f);
+
+  FieldText field;
+  if (!BuildField(fonts, rect, input, multiline, type, field)) return;
+  target->PushAxisAlignedClip(field.inner, D2D1_ANTIALIAS_MODE_ALIASED);
+  const float originX = field.inner.left - field.scroll;
+  const float originY = multiline ? field.inner.top : rect.top;
+  if (field.layout) {
+    if (focused && input.hasSelection()) {
+      const UINT32 start = static_cast<UINT32>(input.selectionStart());
+      const UINT32 length = static_cast<UINT32>(input.selectionEnd() - start);
+      DWRITE_HIT_TEST_METRICS boxes[8]{};
+      UINT32 count = 0;
+      field.layout->HitTestTextRange(start, length, originX, originY, boxes, 8, &count);
+      brush->SetColor(theme.selection);
+      for (UINT32 i = 0; i < (std::min)(count, 8u); ++i) {
+        target->FillRectangle(D2D1_RECT_F{boxes[i].left, boxes[i].top,
+                                          boxes[i].left + boxes[i].width,
+                                          boxes[i].top + boxes[i].height},
+                              brush);
+      }
+    }
+    brush->SetColor(theme.textPrimary);
+    target->DrawTextLayout(D2D1_POINT_2F{originX, originY}, field.layout.Get(), brush);
+  } else if (!focused) {
+    brush->SetColor(theme.textMuted);
+    DrawTextIn(target, fonts.event.Get(), placeholder,
+               multiline ? D2D1_RECT_F{field.inner.left, field.inner.top, field.inner.right,
+                                       field.inner.top + field.caretH}
+                         : field.inner,
+               brush);
+  }
+  if (focused && caretOn) {
+    const float x = originX + field.caretX;
+    const float y = originY + field.caretY;
+    brush->SetColor(theme.textPrimary);
+    target->FillRectangle(D2D1_RECT_F{x, y, x + (std::max)(1.0f, type), y + field.caretH}, brush);
+  }
+  target->PopAxisAlignedClip();
+}
+
+void DrawCross(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, D2D1_POINT_2F c,
+               float reach, float stroke, ID2D1StrokeStyle* style) {
+  target->DrawLine(D2D1_POINT_2F{c.x - reach, c.y - reach},
+                   D2D1_POINT_2F{c.x + reach, c.y + reach}, brush, stroke, style);
+  target->DrawLine(D2D1_POINT_2F{c.x - reach, c.y + reach},
+                   D2D1_POINT_2F{c.x + reach, c.y - reach}, brush, stroke, style);
+}
+
+const CalendarInfo* FindCalendar(const AppModel& model, const std::string& id) {
+  for (const CalendarInfo& calendar : model.calendars) {
+    if (calendar.id == id) return &calendar;
+  }
+  return nullptr;
+}
+
+void DrawDetail(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                const PanelLayout& popup, const AppLayout& app, const AppModel& appModel,
+                ID2D1SolidColorBrush* brush, ID2D1StrokeStyle* style) {
+  const DetailModel& detail = appModel.detail;
+  if (detail.t <= 0.0f) return;
+  const DetailLayout layout = MakeDetailLayout(app);
+  const float type = app.type;
+  Faded faded(target, EaseOutCubic(detail.t));
+
+  brush->SetColor(theme.surface);
+  FillRound(target, layout.panel, popup.panelRadius, brush);
+  brush->SetColor(theme.border);
+  StrokeRound(target, layout.panel, popup.panelRadius, brush, 1.0f);
+
+  brush->SetColor(theme.textSecondary);
+  DrawCross(target, brush, Center(layout.close), std::round(4.5f * type),
+            (std::max)(1.0f, 1.5f * type), style);
+
+  for (int i = 0; i < kDetailLabels; ++i) {
+    brush->SetColor(theme.textSecondary);
+    DrawTextIn(target, fonts.label.Get(), kDetailLabelNames[i], layout.labels[i], brush);
+  }
+
+  const bool allDay = !detail.event.startMin;
+  const std::wstring_view placeholders[kDetailFields] = {
+      L"Sin título",  L"dd/mm/aaaa",           allDay ? L"Todo el día" : L"--:--",
+      L"--:--",       L"Añadir una ubicación", L"Añadir notas"};
+  for (int i = 0; i < kDetailFields; ++i) {
+    DrawField(target, fonts, theme, brush, layout.fields[i], layout.radius, detail.fields[i],
+              detail.focus == i, detail.caretOn, ((detail.invalid >> i) & 1u) != 0,
+              i == kFieldNotes,
+              placeholders[i], type);
+  }
+
+  // The calendar: its colour and its name, and a chevron that says there is a list behind it.
+  const float dot = std::round(10.0f * type);
+  const auto calendarRow = [&](const D2D1_RECT_F& row, const CalendarInfo* calendar) {
+    if (calendar == nullptr) return;
+    const float padX = std::round(10.0f * type);
+    brush->SetColor(Rgb(calendar->color));
+    FillCircle(target, D2D1_POINT_2F{row.left + padX + dot / 2.0f, (row.top + row.bottom) / 2.0f},
+               dot / 2.0f, brush);
+    brush->SetColor(theme.textPrimary);
+    DrawTextIn(target, fonts.event.Get(), calendar->title,
+               D2D1_RECT_F{row.left + 2.0f * padX + dot, row.top, row.right - 3.0f * padX,
+                           row.bottom},
+               brush);
+  };
+  brush->SetColor(theme.panelOpaque);
+  FillRound(target, layout.calendar, layout.radius, brush);
+  brush->SetColor(detail.calendarOpen ? theme.accent : theme.border);
+  StrokeRound(target, layout.calendar, layout.radius, brush,
+              detail.calendarOpen ? 1.5f * type : 1.0f);
+  calendarRow(layout.calendar, FindCalendar(appModel, detail.event.calendarId));
+  {
+    const D2D1_POINT_2F c{layout.calendar.right - std::round(16.0f * type),
+                          (layout.calendar.top + layout.calendar.bottom) / 2.0f};
+    const float reach = std::round(4.0f * type);
+    brush->SetColor(theme.textSecondary);
+    target->DrawLine(D2D1_POINT_2F{c.x - reach, c.y - reach / 2.0f},
+                     D2D1_POINT_2F{c.x, c.y + reach / 2.0f}, brush, 1.5f * type, style);
+    target->DrawLine(D2D1_POINT_2F{c.x, c.y + reach / 2.0f},
+                     D2D1_POINT_2F{c.x + reach, c.y - reach / 2.0f}, brush, 1.5f * type, style);
+  }
+
+  // Repetition: five answers, and a rule that is none of them is said and kept, not replaced.
+  const Repeat repeat = RepeatOf(detail.event.recurrence);
+  for (int i = 0; i < kRepeatChoices; ++i) {
+    const bool on = static_cast<int>(repeat) == i;
+    const D2D1_RECT_F pill = layout.repeat[i];
+    const float radius = (pill.bottom - pill.top) / 2.0f;
+    brush->SetColor(on ? theme.accent : theme.panelOpaque);
+    FillRound(target, pill, radius, brush);
+    if (!on) {
+      brush->SetColor(theme.border);
+      StrokeRound(target, pill, radius, brush, 1.0f);
+    }
+    brush->SetColor(on ? theme.onAccent : theme.textSecondary);
+    DrawTextIn(target, fonts.label.Get(), kRepeatNames[i], pill, brush, Align::Center);
+  }
+  if (repeat == Repeat::Custom) {
+    brush->SetColor(theme.textSecondary);
+    DrawTextIn(target, fonts.label.Get(), L"Personalizada: se conserva",
+               D2D1_RECT_F{layout.labels[7].left + std::round(80.0f * type), layout.labels[7].top,
+                           layout.labels[7].right, layout.labels[7].bottom},
+               brush, Align::Right);
+  }
+
+  brush->SetColor(Fade(theme.now, theme.light ? 0.08f : 0.12f));
+  FillRound(target, layout.remove, layout.radius, brush);
+  brush->SetColor(theme.now);
+  DrawTextIn(target, fonts.event.Get(), L"Borrar evento", layout.remove, brush, Align::Center);
+
+  // The list, last, because it opens over the fields below the chooser.
+  if (detail.calendarOpen) {
+    int count = 0;
+    for (const CalendarInfo& calendar : appModel.calendars) count += calendar.isTaskList ? 0 : 1;
+    const D2D1_RECT_F first = layout.calendarOption(0);
+    const D2D1_RECT_F all{first.left, first.top, first.right,
+                          first.top + static_cast<float>(count) * layout.fieldHeight};
+    brush->SetColor(theme.surface);
+    FillRound(target, all, layout.radius, brush);
+    brush->SetColor(theme.border);
+    StrokeRound(target, all, layout.radius, brush, 1.0f);
+    int row = 0;
+    for (const CalendarInfo& calendar : appModel.calendars) {
+      if (calendar.isTaskList) continue;
+      const D2D1_RECT_F option = layout.calendarOption(row++);
+      if (calendar.id == detail.event.calendarId) {
+        brush->SetColor(theme.hover);
+        FillRound(target, Inset(option, 2.0f), layout.radius - 2.0f, brush);
+      }
+      calendarRow(option, &calendar);
+    }
+  }
+}
+
+void DrawConfirm(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                 const AppLayout& app, const AppModel& appModel, ID2D1SolidColorBrush* brush) {
+  if (appModel.confirm.empty()) return;
+  const float width = (std::min)(std::round(520.0f * app.type), app.main.right - app.main.left);
+  const float height = std::round(40.0f * app.type);
+  const float middle = (app.main.left + app.main.right) / 2.0f;
+  const float bottom = app.main.bottom - std::round(16.0f * app.type);
+  const D2D1_RECT_F bar{middle - width / 2.0f, bottom - height, middle + width / 2.0f, bottom};
+  brush->SetColor(theme.surface);
+  FillRound(target, bar, height / 2.0f, brush);
+  brush->SetColor(Fade(theme.now, 0.6f));
+  StrokeRound(target, bar, height / 2.0f, brush, 1.5f * app.type);
+  brush->SetColor(theme.textPrimary);
+  DrawTextIn(target, fonts.event.Get(), appModel.confirm,
+             Inset(bar, std::round(12.0f * app.type)), brush, Align::Center);
+}
+
+// A task from the tray on its way to the timeline, drawn under the pointer.
+void DrawFreeGhost(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                   const AppLayout& app, const Ghost& ghost, ID2D1SolidColorBrush* brush) {
+  const float width = std::round(220.0f * app.type);
+  const float height = app.cardHeight;
+  const D2D1_RECT_F card{ghost.at.x - std::round(24.0f * app.type), ghost.at.y - height / 2.0f,
+                         ghost.at.x - std::round(24.0f * app.type) + width,
+                         ghost.at.y + height / 2.0f};
+  Faded faded(target, 0.9f);
+  DrawTinted(target, theme, brush, card, std::round(kRadiusCard * app.type),
+             (std::max)(3.0f, std::round(3.0f * app.type)), ghost.color);
+  brush->SetColor(theme.textPrimary);
+  DrawTextIn(target, fonts.event.Get(), ghost.title,
+             D2D1_RECT_F{card.left + std::round(12.0f * app.type), card.top,
+                         card.right - std::round(8.0f * app.type), card.bottom},
+             brush);
+}
+
 }  // namespace
+
+std::vector<PlacedBlock> PlaceBlocks(const AppLayout& app, const AppModel& model) {
+  std::vector<PlacedBlock> out;
+  if (model.view == AppView::Month) return out;
+  const float inset = (std::max)(1.0f, std::round(app.gap / 2.0f));
+  for (int i = 0; i < app.columns && i < static_cast<int>(model.days.size()); ++i) {
+    const D2D1_RECT_F column = app.column(i);
+    std::vector<const DayItem*> timed;
+    std::vector<std::pair<int, int>> spans;
+    for (const DayItem& item : model.days[static_cast<size_t>(i)]) {
+      if (!item.startMin) continue;
+      if (model.ghost.on && item.uid == model.ghost.hideUid) continue;
+      const int start = *item.startMin;
+      // A task has a moment and not a length; half an hour is what makes it big enough to read.
+      int end = item.isTask ? start + 30 : (item.endMin ? *item.endMin : start + 60);
+      if (end <= start) end = kMinutesPerDay;  // runs past midnight: it fills the rest of the day
+      timed.push_back(&item);
+      spans.emplace_back(start, (std::max)(end, start + kSnapMinutes));
+    }
+    const std::vector<Lane> lanes = LayoutOverlaps(spans);
+    const float width = column.right - column.left - 2.0f * inset;
+    for (size_t k = 0; k < timed.size(); ++k) {
+      const float share = width / static_cast<float>(lanes[k].columns);
+      const float left = column.left + inset + share * static_cast<float>(lanes[k].column);
+      const float top =
+          std::round(YForMinute(app, model.scroll, static_cast<float>(spans[k].first))) + inset;
+      const float bottom =
+          std::round(YForMinute(app, model.scroll, static_cast<float>(spans[k].second))) - inset;
+      const D2D1_RECT_F block{left + (lanes[k].column > 0 ? inset : 0.0f), top, left + share,
+                              (std::max)(bottom, top + app.minBlock)};
+      out.push_back(PlacedBlock{i, timed[k], block, spans[k].first, spans[k].second});
+    }
+  }
+  return out;
+}
+
+D2D1_RECT_F GhostRect(const AppLayout& app, float scroll, int column, int start, int end) {
+  const float inset = (std::max)(1.0f, std::round(app.gap / 2.0f));
+  const D2D1_RECT_F lane = app.column(column);
+  const float top = std::round(YForMinute(app, scroll, static_cast<float>(start))) + inset;
+  const float bottom = std::round(YForMinute(app, scroll, static_cast<float>(end))) - inset;
+  return D2D1_RECT_F{lane.left + inset, top, lane.right - inset,
+                     (std::max)(bottom, top + app.minBlock)};
+}
+
+size_t FieldIndexAt(const Fonts& fonts, const D2D1_RECT_F& rect, const TextInput& input,
+                    bool multiline, float type, float x, float y) {
+  FieldText field;
+  if (!BuildField(fonts, rect, input, multiline, type, field) || !field.layout) {
+    return input.text().size();
+  }
+  BOOL trailing = FALSE;
+  BOOL inside = FALSE;
+  DWRITE_HIT_TEST_METRICS metrics{};
+  const float localY = multiline ? y - field.inner.top : (rect.bottom - rect.top) / 2.0f;
+  if (FAILED(field.layout->HitTestPoint(x - field.inner.left + field.scroll, localY, &trailing,
+                                        &inside, &metrics))) {
+    return input.text().size();
+  }
+  return (std::min)(static_cast<size_t>(metrics.textPosition + (trailing ? metrics.length : 0)),
+                    input.text().size());
+}
 
 // The day list is gone before the app starts arriving, so the two never sit on top of each
 // other where the calendars take the list's place.
@@ -563,6 +899,8 @@ void DrawApp(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
           DrawDayOrWeek(target, fonts, theme, app, model, appModel, brush.Get());
         }
         target->PopAxisAlignedClip();
+        DrawDetail(target, fonts, theme, popup, app, appModel, brush.Get(), rounded.Get());
+        DrawConfirm(target, fonts, theme, app, appModel, brush.Get());
       }
       target->SetTransform(before);
     }
@@ -570,6 +908,14 @@ void DrawApp(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
 
   // Last, so the preview that hangs below the capsule in the app lands on top of the timeline.
   DrawPopupInput(target, fonts, theme, morph, model);
+
+  // A task in flight goes over everything, capsule included: it is in the hand.
+  if (appModel.ghost.on && appModel.ghost.free) {
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (SUCCEEDED(target->CreateSolidColorBrush(theme.textPrimary, &brush))) {
+      DrawFreeGhost(target, fonts, theme, app, appModel.ghost, brush.Get());
+    }
+  }
 }
 
 }  // namespace agenda

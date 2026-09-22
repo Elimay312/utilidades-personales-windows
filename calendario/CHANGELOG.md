@@ -35,6 +35,42 @@ sigue [SemVer](https://semver.org/lang/es/).
   dicho para cuando hubiera vistas de semana y mes: FREQ diaria, semanal, mensual y anual con
   INTERVAL, BYDAY, COUNT y UNTIL. Lo que no se sabe leer se queda en su primer día, como antes.
 - Fase 6a: capturas `app-dia`, `app-semana`, `app-mes` y `app-transicion`, en los dos temas.
+- Fase 6b: **en la línea de tiempo se arrastra.** Sobre un hueco crea un evento con ese rango y
+  abre su detalle con el título seleccionado; sobre un evento lo mueve, también de día; sobre
+  su borde inferior cambia la duración. Todo ajusta a cuartos de hora, se ve mientras se
+  arrastra y se escribe al soltar, sin esperar a nadie.
+- Fase 6b: **una tarea de la bandeja arrastrada a una hora se convierte en un bloque de
+  tiempo**: un evento de una hora con su título, y la tarea se retira. «Deshacer» devuelve la
+  tarea tal como era.
+- Fase 6b: **panel de detalle** a la derecha, que entra con los 160 ms de siempre mientras la
+  vista principal se estrecha: título, fecha, horas, calendario, ubicación, notas y
+  repetición. Fecha y horas aceptan «25/09» y «17:30» y también lo que entiende el campo de
+  arriba («mañana», «5pm»); lo que no se entiende se pone en rojo y no se guarda.
+- Fase 6b: **Supr borra con confirmación y deshacer.** El evento desaparece al instante y se
+  borra de verdad cuando se va el aviso; deshacer solo lo vuelve a enseñar, así que no se
+  pierde nada de lo que Google tiene de él.
+- Fase 6b: **cambiar un evento de calendario** usa el `POST .../move` de Google, que es la
+  única forma de moverlo sin perder invitados ni historial; la fila recuerda el calendario de
+  origen en `moved_from` hasta que el movimiento sube.
+- Fase 6b: mover un evento que se repite mueve la serie entera, y una serie semanal de un solo
+  día pasa a repetirse el día al que se llevó.
+- Fase 6b: capturas `app-detalle`, `app-arrastre` y `app-borrar`.
+
+### Corregido
+
+- **Una edición podía perderse si se hacía mientras subía la anterior.** `pending_ops.id` es un
+  rowid sin `AUTOINCREMENT`, y cambiar una operación por otra borraba primero la vieja e
+  insertaba después la nueva, que heredaba su número. La pasada que estaba enviando la vieja
+  borraba al terminar la nueva por ese número. Pasaba con dos cambios seguidos en el detalle,
+  y también —desde la fase 4— con marcar y desmarcar una tarea o con deshacer justo mientras
+  subía la creación, que podía dejar el evento en Google. Ahora la nueva entra primero y las
+  viejas salen después, así que su número siempre es mayor que cualquiera en vuelo.
+- **Las repeticiones creadas con el parser iban a Google sin su `RRULE:`**, que las rechaza.
+- **Un movimiento ya no reenvía la regla de repetición.** Agenda guarda la RRULE y no las
+  EXDATE, así que mandarla con cada cambio habría devuelto las repeticiones que alguien borró
+  en la web. Ahora solo va cuando se editó la repetición, y la ubicación solo cuando hay una o
+  cuando se vació a propósito: la operación de la cola dice qué cambió
+  (`update+location+recurrence`).
 
 ### Cambiado
 

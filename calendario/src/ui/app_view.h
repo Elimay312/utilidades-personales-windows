@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/dates.h"
+#include "core/recurrence.h"
 #include "data/model.h"
 #include "ui/app_layout.h"
 #include "ui/paint.h"
@@ -13,6 +14,34 @@
 #include "ui/theme.h"
 
 namespace agenda {
+
+// The detail panel: one event, open for editing. `event` is what was last written, and what a
+// field is compared against when it is committed; the fields are what is being typed.
+struct DetailModel {
+  bool open = false;
+  float t = 0.0f;  // how far it has slid in, walked over kCardEnterMs
+  EventDetail event;
+  TextInput fields[kDetailFields];
+  int focus = -1;  // the text field with the keyboard, or -1
+  bool caretOn = false;
+  unsigned invalid = 0;  // one bit per field that did not read, which turns it red
+  bool calendarOpen = false;
+};
+
+// What a drag is showing. On the timeline it is a block at `column`, from `start` to `end`;
+// `free` is a task from the tray on its way there, drawn under the pointer at `at`. The block
+// being moved (`hideUid`) is not drawn in its old place while the ghost stands in for it.
+struct Ghost {
+  bool on = false;
+  bool free = false;
+  int column = 0;
+  int start = 0;
+  int end = 0;
+  std::uint32_t color = 0;
+  std::wstring title;
+  std::wstring hideUid;
+  D2D1_POINT_2F at{};
+};
 
 // What the expanded app paints from, on top of the PopupModel it shares with the popup: the
 // selected day, the month of the mini grid, the capsule and its preview all live there, because
@@ -33,7 +62,31 @@ struct AppModel {
   float prevHover = 0.0f;
   float nextHover = 0.0f;
   std::vector<float> calendarHover;
+
+  std::wstring selected;  // the event outlined, which Supr would delete
+  DetailModel detail;
+  Ghost ghost;
+  std::wstring confirm;   // "¿Borrar «...»?" while it waits for an answer, empty otherwise
 };
+
+// Where each timed item of the day and week views lands, shared by the drawing and the mouse
+// so a click always hits the block it looks like it hits. `end` is the end of the block as
+// drawn, which a task (a moment, not a span) gets half an hour of.
+struct PlacedBlock {
+  int column = 0;
+  const DayItem* item = nullptr;
+  D2D1_RECT_F rect{};
+  int start = 0;
+  int end = 0;
+};
+std::vector<PlacedBlock> PlaceBlocks(const AppLayout& app, const AppModel& model);
+
+// The block a ghost covers: the whole width of its column, from `start` to `end`.
+D2D1_RECT_F GhostRect(const AppLayout& app, float scroll, int column, int start, int end);
+
+// Where in a detail field a click lands, so the caret can go there.
+size_t FieldIndexAt(const Fonts& fonts, const D2D1_RECT_F& rect, const TextInput& input,
+                    bool multiline, float type, float x, float y);
 
 // The busiest day's count of chips, which is how tall the all-day strip is.
 int AllDayRows(const AppModel& model);

@@ -151,7 +151,55 @@ bool Lands(const Rule& rule, Date start, Date day) {
   return false;
 }
 
+constexpr std::wstring_view kDayCodes[7] = {L"MO", L"TU", L"WE", L"TH", L"FR", L"SA", L"SU"};
+
+std::wstring_view Bare(std::wstring_view rule) {
+  if (rule.starts_with(L"RRULE:")) rule.remove_prefix(6);
+  return rule;
+}
+
 }  // namespace
+
+Repeat RepeatOf(std::wstring_view text) {
+  const std::wstring_view rule = Bare(text);
+  if (rule.empty()) return Repeat::None;
+  if (rule == L"FREQ=DAILY") return Repeat::Daily;
+  if (rule == L"FREQ=MONTHLY") return Repeat::Monthly;
+  if (rule == L"FREQ=YEARLY") return Repeat::Yearly;
+  if (rule == L"FREQ=WEEKLY") return Repeat::Weekly;
+  if (rule.starts_with(L"FREQ=WEEKLY;BYDAY=") && rule.size() == 20) return Repeat::Weekly;
+  return Repeat::Custom;
+}
+
+std::wstring RuleFor(Repeat repeat, Date start) {
+  switch (repeat) {
+    case Repeat::Daily:
+      return L"RRULE:FREQ=DAILY";
+    case Repeat::Weekly:
+      return L"RRULE:FREQ=WEEKLY;BYDAY=" +
+             std::wstring(kDayCodes[Weekday(start)]);
+    case Repeat::Monthly:
+      return L"RRULE:FREQ=MONTHLY";
+    case Repeat::Yearly:
+      return L"RRULE:FREQ=YEARLY";
+    case Repeat::None:
+    case Repeat::Custom:
+      break;
+  }
+  return {};
+}
+
+std::wstring MoveRuleTo(std::wstring_view rule, Date start) {
+  const std::wstring_view bare = Bare(rule);
+  constexpr std::wstring_view kWeeklyOn = L"FREQ=WEEKLY;BYDAY=";
+  // Exactly one day after BYDAY and nothing behind it: "FREQ=WEEKLY;BYDAY=MO".
+  if (!bare.starts_with(kWeeklyOn) || bare.size() != kWeeklyOn.size() + 2) {
+    return std::wstring(rule);
+  }
+  std::wstring out(rule);
+  out.replace(out.size() - 2, 2, kDayCodes[Weekday(start)]);
+  return out;
+}
 
 bool OccursOn(std::string_view text, Date start, Date day) {
   if (day == start) return true;

@@ -85,6 +85,8 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - Línea de ahora: `#FF5A5F` en oscuro, `#E0393E` en claro (token `now`). Fuerte en la columna de hoy y al 35 % en las demás.
   - Bloques: el color del calendario mezclado con la superficie (26 % en oscuro, 16 % en claro) y la barra de 3 px a la izquierda.
   - La cápsula viaja primero a la derecha y luego arriba (en línea recta cruzaría la rejilla). La lista del día se va en el primer 30 % del camino y la app entra entre el 30 y el 85 %.
+  - Panel de detalle: 320 DIP a la derecha, superficie de tarjeta con el radio del panel (14), campos de 32 DIP con fondo `panelOpaque` y radio 8; foco en acento, error en el rojo de `now`. Entra con los 160 ms de siempre y no con el muelle: es algo que entra, no la ventana que cambia de tamaño.
+  - Arrastrar: ajuste a 15 min, 4 DIP de temblor siguen siendo un clic, y los 6 DIP de abajo de un bloque lo estiran. El fantasma del arrastre es el bloque con el contorno de la selección.
   - Respeta la preferencia de "reducir animaciones" de Windows (`SPI_GETCLIENTAREAANIMATION`).
 - **Semana:** empieza en lunes. Iniciales en español: L M X J V S D. El locale por defecto es es-CO.
 - Cada vista nueva debe verificarse con `--render-snapshot` antes de darla por terminada. El PNG se renderiza siempre a 96 ppp y al tamaño base, así que **no puede pillar errores de DPI ni de escalado**: eso hay que mirarlo con la app delante en un monitor escalado. `--panel=WxH` fuerza un tamaño de panel para poder juzgarlo en cualquier pantalla.
@@ -106,6 +108,10 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
 - **La sincronización corre en su propio hilo, no en la cola del `Store`**, aunque `store.h` diera eso por hecho en la fase 4. Esa cola lleva también las escrituras del popup, y una petición de veinte segundos por delante dejaría una creación sin escribir veinte segundos. Lo que sí pasa por el `Store` es cada escritura en SQLite, con `Store::Run`: una conexión y un escritor. Dos conexiones habrían sido peor, porque en SQLite las transacciones son de la conexión y no del hilo.
 - **El esquema se quedó en v1 en la fase 5.** Todo lo que hacía falta ya estaba reservado; el token es lo único que no cabía en una tabla y va a un archivo cifrado con DPAPI.
 - **El esquema pasó a v2 en la fase 6**, con permiso del usuario y solo añadiendo columnas: `calendars.hidden` (el interruptor de la barra lateral; `visible` significa «Google todavía lo lista» y cada pasada lo reescribe), `events.location` y `events.moved_from` (el calendario de origen de un evento que se cambió de calendario, para el `POST .../move` de Google).
+- **La cola dice qué cambió.** Una operación de edición de evento es `update`, `update+location`, `update+recurrence` o las dos: el PATCH solo manda la ubicación y la repetición cuando se editaron (la RRULE sin sus EXDATE, reenviada con cada movimiento, devolvería repeticiones borradas en la web).
+- **En `pending_ops` la nueva operación entra antes de que salgan las que sustituye.** El id es un rowid sin AUTOINCREMENT y borrar primero reutiliza el número; una pasada con la vieja en vuelo borraría la nueva al terminar.
+- **Borrar desde la app es diferido**: se oculta al momento y se borra al irse el aviso de deshacer (o al ocultar la ventana). Si la app se cierra antes, no se borra, que es el lado seguro.
+- **Arrastrar un evento que se repite mueve la serie entera**, y un evento que dura varios días no se arrastra. Editar una sola repetición llegará con las excepciones de instancia.
 - **La app expandida no se cierra al perder el foco**, a diferencia del popup: deja de estar siempre encima y se queda detrás como cualquier ventana. Sigue siendo `WS_EX_TOOLWINDOW`, sin botón en la barra de tareas; la trae al frente la bandeja, y el atajo la cierra.
 
 ## Parser de lenguaje natural
@@ -190,4 +196,7 @@ build\debug\Agenda.exe --render-snapshot=app-dia --theme=dark --out=docs\img\app
 build\debug\Agenda.exe --render-snapshot=app-semana --theme=light --out=docs\img\app-semana-claro.png
 build\debug\Agenda.exe --render-snapshot=app-mes --out=docs\img\app-mes.png
 build\debug\Agenda.exe --render-snapshot=app-transicion --out=docs\img\app-transicion.png
+build\debug\Agenda.exe --render-snapshot=app-detalle --out=docs\img\app-detalle.png
+build\debug\Agenda.exe --render-snapshot=app-arrastre --out=docs\img\app-arrastre.png
+build\debug\Agenda.exe --render-snapshot=app-borrar --out=docs\img\app-borrar.png
 ```

@@ -396,6 +396,8 @@ void PopupWindow::Hide() {
   if (hwnd_ == nullptr || !visible_) return;
   visible_ = false;
   clock_.Pause();
+  CancelDrag();
+  FlushDeletes();
   KillTimer(hwnd_, kAnimTimer);
   KillTimer(hwnd_, kCaretTimer);
   KillTimer(hwnd_, kNowTimer);
@@ -436,9 +438,27 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
   switch (message) {
     case WM_MOUSEMOVE: {
       const D2D1_POINT_2F point = ToDip(lparam);
+      if (drag_.kind != DragKind::None) {
+        UpdateDrag(point.x, point.y);
+        return 0;
+      }
       OnMouseMove(point.x, point.y);
       return 0;
     }
+
+    case WM_LBUTTONUP:
+      if (drag_.kind != DragKind::None) {
+        const D2D1_POINT_2F point = ToDip(lparam);
+        UpdateDrag(point.x, point.y);
+        EndDrag();
+        return 0;
+      }
+      break;
+
+    case WM_CAPTURECHANGED:
+      // Somebody else took the mouse -- an alt-tab, a menu -- and the drag is over, unapplied.
+      if (drag_.kind != DragKind::None && reinterpret_cast<HWND>(lparam) != hwnd_) CancelDrag();
+      break;
 
     case WM_MOUSELEAVE:
       tracking_ = false;
@@ -464,10 +484,11 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       if (GetCursorPos(&cursor) && ScreenToClient(hwnd_, &cursor)) {
         const float scale =
             static_cast<float>(USER_DEFAULT_SCREEN_DPI) / static_cast<float>(dpi_);
-        const bool overInput = Inside(ActiveLayout().input(),
-                                      static_cast<float>(cursor.x) * scale,
-                                      static_cast<float>(cursor.y) * scale);
-        SetCursor(LoadCursorW(nullptr, overInput ? IDC_IBEAM : IDC_ARROW));
+        const float x = static_cast<float>(cursor.x) * scale;
+        const float y = static_cast<float>(cursor.y) * scale;
+        LPCWSTR shape = Inside(ActiveLayout().input(), x, y) ? IDC_IBEAM : IDC_ARROW;
+        if (InApp()) DetailCursor(x, y, shape);
+        SetCursor(LoadCursorW(nullptr, shape));
         return TRUE;
       }
       break;
@@ -482,8 +503,15 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       // is no reason to let them look like something was typed.
       const wchar_t typed = static_cast<wchar_t>(wparam);
       if (typed < 0x20 || typed == 0x7F) return 0;
-      // In the app a letter is a shortcut until Ctrl+K or a click puts the capsule in charge.
-      if (InApp() && !inputFocused_) return 0;
+      // In the app a letter is a shortcut until Ctrl+K or a click puts the capsule -- or a field
+      // of the detail panel -- in charge.
+      if (InApp() && !inputFocused_) {
+        if (app_.detail.focus < 0) return 0;
+        FocusedText().Insert(std::wstring_view(&typed, 1));
+        RestartCaret();
+        Invalidate();
+        return 0;
+      }
       FocusInput(true);
       model_.input.Insert(std::wstring_view(&typed, 1));
       RestartCaret();
@@ -495,7 +523,7 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       // Returning zero keeps the IME from drawing its own composition window over the panel:
       // the in-flight text is drawn underlined inside the capsule instead.
       model_.composition.clear();
-      FocusInput(true);
+      if (app_.detail.focus < 0) FocusInput(true);
       PlaceCandidateWindow();
       return 0;
 
@@ -575,6 +603,7 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       if (wparam == kCaretTimer) {
         caretVisible_ = !caretVisible_;
         model_.caretOn = inputFocused_ && caretVisible_;
+        app_.detail.caretOn = app_.detail.focus >= 0 && caretVisible_;
         Invalidate();
         return 0;
       }
@@ -605,6 +634,7 @@ void PopupWindow::Reload() {
     // Today's list is also where the tasks with no date at all land, so nothing that was
     // created is left with nowhere to be seen.
     model_.day = store_->ItemsForDay(model_.selected, model_.selected == model_.today);
+    DropPending(model_.day);
 
     // Mid-slide two months are on screen, so the dots have to cover both grids.
     Month from = model_.month;
@@ -669,6 +699,7 @@ bool PopupWindow::CreateFromInput() {
 
   model_.enterUid = created.uid;
   model_.enterT = 0.0f;
+  FlushDeletes();
   undo_ = Undone{created.uid, created.isTask, typed};
   ShowToast(L"Creado · Deshacer");
 
@@ -679,9 +710,25 @@ bool PopupWindow::CreateFromInput() {
   return true;
 }
 
-void PopupWindow::UndoCreate() {
+void PopupWindow::Undo() {
   if (!undo_ || store_ == nullptr) return;
   const Undone taken = *undo_;
+  if (taken.kind != UndoKind::Created) {
+    // A deletion was never done, only hidden: showing it again is the whole undo. A task made
+    // into an event gets its task back, and the event it became goes.
+    std::erase_if(pendingDelete_, [&taken](const Pending& pending) {
+      return pending.uid == taken.uid || pending.uid == taken.other;
+    });
+    if (taken.kind == UndoKind::Converted) {
+      store_->Remove(taken.uid, /*isTask=*/false);
+      if (sync_ != nullptr) sync_->Push();
+    }
+    KillTimer(hwnd_, kToastTimer);
+    HideToast();
+    Reload();
+    Invalidate();
+    return;
+  }
   store_->Remove(taken.uid, taken.isTask);
   if (sync_ != nullptr) sync_->Push();
 
@@ -716,8 +763,10 @@ void PopupWindow::ShowToast(std::wstring text) {
 void PopupWindow::HideToast() {
   toastOn_ = false;
   // The offer ends with the notice: undo is available while it is on screen and not a second
-  // longer, which is the only way the two can never disagree.
+  // longer, which is the only way the two can never disagree. What was only hidden until then
+  // is deleted now.
   undo_.reset();
+  FlushDeletes();
   StartTicking();
 }
 
@@ -819,10 +868,12 @@ void PopupWindow::RestartCaret() {
   KillTimer(hwnd_, kCaretTimer);
   caretVisible_ = true;
   model_.caretOn = inputFocused_;
+  app_.detail.caretOn = app_.detail.focus >= 0;
 
   // Windows answers INFINITE when the user has turned the blink off in accessibility.
   const UINT blink = GetCaretBlinkTime();
-  if (inputFocused_ && blink != 0 && blink != INFINITE) {
+  const bool typing = inputFocused_ || app_.detail.focus >= 0;
+  if (typing && blink != 0 && blink != INFINITE) {
     SetTimer(hwnd_, kCaretTimer, blink, nullptr);
   }
 }
@@ -906,6 +957,22 @@ bool PopupWindow::OnKeyDown(WPARAM key) {
   TextInput& input = model_.input;
 
   if (InApp()) {
+    if (drag_.kind != DragKind::None) {
+      if (key == VK_ESCAPE) CancelDrag();
+      return true;
+    }
+    // "¿Borrar...?" waits for its answer and nothing else happens meanwhile.
+    if (!app_.confirm.empty()) {
+      if (key == VK_DELETE || key == VK_RETURN) {
+        ConfirmDelete();
+      } else if (key == VK_ESCAPE) {
+        app_.confirm.clear();
+        confirmUid_.clear();
+        Invalidate();
+      }
+      return true;
+    }
+    if (app_.detail.focus >= 0 && !(control && key == 0x4B)) return OnDetailKeyDown(key);
     if (control && key == 0x4B) {  // Ctrl+K: the capsule, from anywhere in the app
       FocusInput(true);
       RestartCaret();
@@ -943,7 +1010,7 @@ bool PopupWindow::OnKeyDown(WPARAM key) {
         // Nothing on offer means this is not ours. The capsule keeps no history of its own, so
         // there is nothing else in the popup for Ctrl+Z to mean.
         if (!undo_) return false;
-        UndoCreate();
+        Undo();
         return true;
       default:
         return false;
@@ -1021,6 +1088,10 @@ bool PopupWindow::OnKeyDown(WPARAM key) {
 }
 
 void PopupWindow::FocusInput(bool focused) {
+  if (focused && app_.detail.focus >= 0) {
+    CommitField(app_.detail.focus);
+    app_.detail.focus = -1;
+  }
   if (inputFocused_ == focused) return;
   inputFocused_ = focused;
   // Leaving the input drops the selection, so nothing stays highlighted out of reach.
@@ -1055,8 +1126,9 @@ void PopupWindow::ChangeMonth(int direction) {
 }
 
 void PopupWindow::CopySelection(bool cut) {
-  if (!model_.input.hasSelection()) return;
-  const std::wstring selected{model_.input.selectedText()};
+  TextInput& input = FocusedText();
+  if (!input.hasSelection()) return;
+  const std::wstring selected{input.selectedText()};
 
   if (OpenClipboard(hwnd_)) {
     EmptyClipboard();
@@ -1073,14 +1145,14 @@ void PopupWindow::CopySelection(bool cut) {
     CloseClipboard();
   }
 
-  if (cut) model_.input.DeleteSelection();
+  if (cut) input.DeleteSelection();
 }
 
 void PopupWindow::Paste() {
   if (!IsClipboardFormatAvailable(CF_UNICODETEXT) || !OpenClipboard(hwnd_)) return;
   if (const HANDLE handle = GetClipboardData(CF_UNICODETEXT)) {
     if (const auto* text = static_cast<const wchar_t*>(GlobalLock(handle))) {
-      model_.input.Insert(text);
+      FocusedText().Insert(text);
       GlobalUnlock(handle);
     }
   }
@@ -1097,11 +1169,12 @@ void PopupWindow::OnImeComposition(LPARAM flags) {
     if (bytes > 0) {
       std::wstring result(static_cast<size_t>(bytes) / sizeof(wchar_t), L'\0');
       ImmGetCompositionStringW(context, GCS_RESULTSTR, result.data(), static_cast<DWORD>(bytes));
-      model_.input.Insert(result);
+      FocusedText().Insert(result);
     }
   }
 
-  if (flags & GCS_COMPSTR) {
+  // The in-flight text is drawn in the capsule only; a detail field just gets the result.
+  if ((flags & GCS_COMPSTR) && app_.detail.focus < 0) {
     const LONG bytes = ImmGetCompositionStringW(context, GCS_COMPSTR, nullptr, 0);
     const size_t length = bytes > 0 ? static_cast<size_t>(bytes) / sizeof(wchar_t) : 0;
     model_.composition.assign(length, L'\0');

@@ -9,8 +9,9 @@ Las decisiones de producto, el stack y el sistema de diseño están en [CLAUDE.m
 
 ## Estado
 
-**Fase 6a terminada: el popup se expande a la app completa.** Queda la 6b, que trae arrastrar
-eventos por la línea de tiempo y el panel de detalle. Agenda se queda residente en la bandeja, el atajo
+**Fase 6 terminada: el popup se expande a la app completa**, y en su línea de tiempo los
+eventos se crean, se mueven y se estiran arrastrando, y se editan en un panel lateral; todo eso
+sube a Google. Agenda se queda residente en la bandeja, el atajo
 abre un popup con fondo acrylic en la esquina inferior derecha del monitor de trabajo, y el
 popup muestra el mes, lo que hay ese día y el campo de texto. El panel se adapta al monitor:
 su alto es el 42 % del área de trabajo, entre 380 y 560 DIP, y todo lo de dentro escala con
@@ -155,7 +156,39 @@ Los eventos que se repiten salen **en todos los días en que caen**, en el popup
 | `←` `→` | Periodo anterior o siguiente |
 | `↑` `↓` | Una hora arriba o abajo (en Mes, una semana) |
 | `Ctrl+K` | Escribir en el campo; Enter crea, como en el popup |
-| `Esc` | Soltar el campo; si ya estaba suelto, contraer al popup |
+| `Supr` | Borrar el evento seleccionado, después de preguntar (`Supr` otra vez confirma) |
+| `Ctrl+Z` | Deshacer lo último, mientras el aviso está en pantalla |
+| `Esc` | Soltar el campo, cerrar el panel de detalle y, al final, contraer al popup |
+
+**En la línea de tiempo, con el ratón** (en Día y Semana, ajustando a cuartos de hora):
+
+- **Arrastrar sobre un hueco** crea un evento con ese rango, «Nuevo evento», y abre su detalle
+  con el título seleccionado para escribir encima. Un clic sin arrastrar no crea nada.
+- **Arrastrar un evento** lo mueve, también a otro día de la semana.
+- **Arrastrar su borde inferior** cambia su duración (el cursor lo avisa antes del clic).
+- **Arrastrar una tarea** de la bandeja «Sin fecha» a una hora la convierte en un bloque de
+  una hora: se crea el evento y la tarea se retira. «Ahora es un evento · Deshacer» la devuelve.
+- Un clic en un evento, o en una ficha de día entero, lo selecciona y abre su **detalle**.
+
+Mover un evento que se repite **mueve toda la serie**; si se repetía un día de la semana, pasa a
+repetirse el día al que se llevó. Un evento que dura varios días no se arrastra: se cambia en
+el detalle.
+
+**El panel de detalle**, a la derecha, edita título, fecha, inicio y fin, calendario,
+ubicación, notas y repetición (Nunca, Diaria, Semanal, Mensual, Anual). Cada campo se guarda al
+salir de él o con Enter, y `Tab` pasa al siguiente. Fecha y horas se escriben como en un
+formulario («25/09», «17:30») o como en el campo de arriba («mañana», «5pm»); lo que no se
+entiende se pone en rojo y no se guarda. En las notas, `Shift+Enter` es un salto de línea. Una
+repetición que no es ninguna de las cinco («el primer martes de cada mes») se enseña como
+personalizada y se conserva. **Borrar evento**, abajo, hace lo mismo que `Supr`.
+
+Borrar no es inmediato: el evento desaparece de la pantalla y se borra de verdad cuando se va
+el aviso de cinco segundos. Deshacer solo lo vuelve a enseñar, así que no se pierde nada de lo
+que Google tiene de él, como los invitados o los recordatorios.
+
+| Panel de detalle | Arrastrando | Borrando |
+|---|---|---|
+| ![El panel de detalle abierto](docs/img/app-detalle.png) | ![Un evento a medio mover](docs/img/app-arrastre.png) | ![La pregunta antes de borrar](docs/img/app-borrar.png) |
 
 Un clic en la cabecera de un día de la semana abre ese día. A diferencia del popup, la app no
 se cierra al hacer clic en otra ventana: se queda detrás, como cualquier aplicación. El icono
@@ -248,10 +281,12 @@ build\debug\Agenda.exe --render-snapshot=app-mes    --theme=light --out=docs\img
 build\debug\Agenda.exe --render-snapshot=app-transicion --out=docs\img\app-transicion.png
 ```
 
-La app tiene cuatro vistas más: `app-dia`, `app-semana` y `app-mes`, a su tamaño de diseño de
-1536×826 DIP (el 80 % de un área de trabajo de 1920×1032), y `app-transicion`, que pinta la
+La app tiene siete vistas más: `app-dia`, `app-semana` y `app-mes`, a su tamaño de diseño de
+1536×826 DIP (el 80 % de un área de trabajo de 1920×1032); `app-transicion`, que pinta la
 ventana a mitad de la expansión sobre esa área de trabajo entera para poder juzgar cómo se
-reorganiza. Llevan una semana de ejemplo propia, con solapes, días enteros y una repetición.
+reorganiza; y `app-detalle`, `app-arrastre` y `app-borrar`, la semana con el panel de detalle
+abierto, con un evento a medio arrastrar y con la pregunta de borrar. Llevan una semana de
+ejemplo propia, con solapes, días enteros y una repetición.
 
 | | Tema oscuro | Tema claro |
 |---|---|---|
@@ -397,7 +432,7 @@ docs/       capturas y decisiones de arquitectura
 | 3 | Parser de lenguaje natural con vista previa en vivo | Hecha |
 | 4 | Almacenamiento en SQLite: eventos, tareas y caché local | Hecha |
 | 5 | Sincronización con Google Calendar y Google Tasks (OAuth) | Hecha |
-| 6 | Expansión animada a la app completa con vistas de día, semana y mes | 6a hecha (expansión y vistas); 6b pendiente (arrastrar, detalle, borrar) |
+| 6 | Expansión animada a la app completa con vistas de día, semana y mes | Hecha |
 | 7 | Pulido, rendimiento, empaquetado y arranque con Windows | Pendiente |
 
 El detalle de cada fase vive en el plan de fases del proyecto; las fases 3 a 7 pueden ajustarse

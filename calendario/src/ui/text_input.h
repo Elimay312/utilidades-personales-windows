@@ -36,12 +36,18 @@ class TextInput {
   void SelectAll();
   void Clear();
 
+  // The notes in the detail panel are the one field with more than one line. With this on, a
+  // newline survives Insert (a CR LF arrives as one LF) instead of being dropped with the rest
+  // of the control characters.
+  void AllowNewlines(bool allow) { newlines_ = allow; }
+
  private:
   void Place(size_t index, bool extend);
 
   std::wstring text_;
   size_t caret_ = 0;
   size_t anchor_ = 0;
+  bool newlines_ = false;
 };
 
 }  // namespace agenda

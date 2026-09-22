@@ -218,6 +218,7 @@ std::optional<EventRow> ReadEvent(const nlohmann::json& event) {
   row.title = Str(event, "summary", kUntitled);
   if (row.title.empty()) row.title = kUntitled;
   row.notes = Str(event, "description");
+  row.location = Str(event, "location");
 
   const auto startNode = event.find("start");
   if (startNode == event.end()) return std::nullopt;
@@ -288,7 +289,17 @@ std::optional<TaskRow> ReadTask(const nlohmann::json& task) {
 
 // --- Us to Google ---------------------------------------------------------------------------
 
-nlohmann::json WriteEvent(const EventRow& row, std::string_view id) {
+std::string RruleLine(std::string_view rule) {
+  if (rule.starts_with("RRULE:")) return std::string(rule);
+  return "RRULE:" + std::string(rule);
+}
+
+std::string MovePath(std::string_view from, std::string_view remoteId, std::string_view to) {
+  return "/calendar/v3/calendars/" + UrlEscape(from) + "/events/" + UrlEscape(remoteId) +
+         "/move?destination=" + UrlEscape(to);
+}
+
+nlohmann::json WriteEvent(const EventRow& row, std::string_view id, unsigned edits) {
   nlohmann::json body = nlohmann::json::object();
   if (!id.empty()) body["id"] = std::string(id);
   body["summary"] = row.title;
@@ -325,11 +336,18 @@ nlohmann::json WriteEvent(const EventRow& row, std::string_view id) {
     body["end"] = std::move(end);
   }
 
-  // Sent only when there is one. This body is a PATCH, so a field left out is a field Google
-  // keeps: saying nothing about recurrence is what stops Agenda -- which has no way of making
-  // an event repeat other than the parser -- from quietly unrepeating one made on the web.
-  if (!row.recurrence.empty()) {
-    body["recurrence"] = nlohmann::json::array({row.recurrence});
+  const bool creating = !id.empty();
+  if (!row.location.empty() || (edits & kEditLocation)) body["location"] = row.location;
+
+  // This body is a PATCH, so a field left out is a field Google keeps. A modification says
+  // nothing about the repetition unless the repetition is what was edited -- and then an empty
+  // list is how "Nunca" stops a series.
+  if (creating || (edits & kEditRecurrence)) {
+    if (!row.recurrence.empty()) {
+      body["recurrence"] = nlohmann::json::array({RruleLine(row.recurrence)});
+    } else if (!creating) {
+      body["recurrence"] = nlohmann::json::array();
+    }
   }
   return body;
 }

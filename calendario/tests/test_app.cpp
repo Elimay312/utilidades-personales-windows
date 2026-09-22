@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "ui/app_layout.h"
+#include "ui/fields.h"
 #include "ui/spring.h"
 
 using namespace agenda;
@@ -158,4 +159,29 @@ TEST_CASE("the capsule starts in the popup, ends in the app, and clears the grid
     const bool overGrid = mid.inputTop < popup.gridTop + popup.gridHeight;
     if (overGrid) CHECK(mid.inputLeft >= popup.contentRight);
   }
+}
+
+TEST_CASE("the date field takes a form's date or a word the capsule would take") {
+  const Date today = Day(2026, 9, 22);
+  CHECK(ReadDayField(L"25/09/2026", today) == Day(2026, 9, 25));
+  CHECK(ReadDayField(L" 3-10-26 ", today) == Day(2026, 10, 3));
+  CHECK(ReadDayField(L"25/12", today) == Day(2026, 12, 25));
+  CHECK(ReadDayField(L"mañana", today) == Day(2026, 9, 23));
+  CHECK_FALSE(ReadDayField(L"31/02/2026", today).has_value());
+  CHECK_FALSE(ReadDayField(L"mañana tal vez", today).has_value());  // a typo is not a date
+  CHECK_FALSE(ReadDayField(L"", today).has_value());
+  CHECK(DayFieldText(Day(2026, 9, 5)) == L"05/09/2026");
+  CHECK(ReadDayField(DayFieldText(today), today) == today);
+}
+
+TEST_CASE("the time fields take a clock or a word, and midnight at the end of a day") {
+  CHECK(ReadTimeField(L"17:30") == 17 * 60 + 30);
+  CHECK(ReadTimeField(L"9:05") == 9 * 60 + 5);
+  CHECK(ReadTimeField(L"17") == 17 * 60);
+  CHECK(ReadTimeField(L"5pm") == 17 * 60);
+  CHECK(ReadTimeField(L"24:00") == 24 * 60);
+  CHECK_FALSE(ReadTimeField(L"24:30").has_value());
+  CHECK_FALSE(ReadTimeField(L"17:75").has_value());
+  CHECK_FALSE(ReadTimeField(L"luego").has_value());
+  CHECK(TimeFieldText(9 * 60 + 5) == L"09:05");
 }

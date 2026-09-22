@@ -137,10 +137,13 @@ inline std::vector<DayItem> SampleAppDay(Date date) {
   }
   const bool september = date.year() == std::chrono::year{2026} &&
                          date.month() == std::chrono::September;
-  for (const SampleWeekRow& row : kSampleWeekRows) {
+  // Numbered by their place in the table, so a snapshot can point at one: "week-2" is always
+  // the coffee with Ana.
+  for (size_t k = 0; k < std::size(kSampleWeekRows); ++k) {
+    const SampleWeekRow& row = kSampleWeekRows[k];
     if (!september || row.day != static_cast<unsigned>(date.day())) continue;
     DayItem item;
-    item.uid = L"week-" + std::to_wstring(index++);
+    item.uid = L"week-" + std::to_wstring(k);
     item.isTask = row.isTask;
     if (row.startMin >= 0) item.startMin = row.startMin;
     if (row.endMin >= 0) item.endMin = row.endMin;

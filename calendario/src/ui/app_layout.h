@@ -44,6 +44,8 @@ inline constexpr float kSectionLabelDip = 24.0f;  // "Calendarios", "Sin fecha"
 inline constexpr float kCalendarRowDip = 28.0f;
 inline constexpr float kMonthLabelsDip = 24.0f;
 inline constexpr float kMonthLineDip = 20.0f;     // one event in a month cell
+inline constexpr float kDetailDip = 320.0f;      // the detail panel on the right
+inline constexpr float kResizeGripDip = 6.0f;     // the bottom of a block that stretches it
 inline constexpr int kSnapMinutes = 15;
 inline constexpr int kMinutesPerDay = 24 * 60;
 
@@ -103,6 +105,10 @@ struct AppLayout {
   D2D1_RECT_F collapse{};
 
   D2D1_RECT_F main{};
+  // The detail panel. It slides in from the right edge and the main view gives way to it, so
+  // while it is closed it sits just past the window, out of sight.
+  float detailWidth = 0.0f;
+  D2D1_RECT_F detail{};
 
   // Day and week.
   int columns = 1;
@@ -179,8 +185,9 @@ struct AppLayout {
 // `popup` is the popup's layout on this same monitor: the sidebar is its width, the capsule is
 // its capsule, and every length here is scaled by its `type`. `allDayRows` is how many chips
 // the busiest day of the week has, which is the only part of the layout that depends on data.
+// `detailShown` is how far the detail panel has slid in, nought to one.
 inline AppLayout MakeAppLayout(D2D1_SIZE_F size, const PanelLayout& popup, AppView view,
-                               int allDayRows) {
+                               int allDayRows, float detailShown = 0.0f) {
   AppLayout out;
   out.view = view;
   out.width = size.width;
@@ -234,8 +241,12 @@ inline AppLayout MakeAppLayout(D2D1_SIZE_F size, const PanelLayout& popup, AppVi
                                      out.input.left - 3.0f * out.gap),
                           rowBottom};
 
-  out.main = D2D1_RECT_F{left, rowBottom + 3.0f * out.gap, right,
+  out.detailWidth = at(kDetailDip);
+  const float taken = (out.detailWidth + 3.0f * out.gap) * std::clamp(detailShown, 0.0f, 1.0f);
+  out.main = D2D1_RECT_F{left, rowBottom + 3.0f * out.gap, (std::max)(left, right - taken),
                          (std::max)(rowBottom + 3.0f * out.gap, out.height - out.padding)};
+  out.detail = D2D1_RECT_F{right - taken + 3.0f * out.gap, out.main.top,
+                           right - taken + 3.0f * out.gap + out.detailWidth, out.main.bottom};
 
   out.columns = view == AppView::Week ? 7 : 1;
   out.dayHeaderTop = out.main.top;
@@ -260,6 +271,90 @@ inline AppLayout MakeAppLayout(D2D1_SIZE_F size, const PanelLayout& popup, AppVi
   out.monthCellWidth = (out.main.right - out.main.left) / kGridCols;
   out.monthCellHeight = (std::max)(0.0f, (out.main.bottom - out.monthGridTop) / kGridRows);
   out.monthLine = at(kMonthLineDip);
+  return out;
+}
+
+// --- The detail panel ---------------------------------------------------------------------
+
+// The text fields, in the order Tab walks them.
+enum DetailField { kFieldTitle, kFieldDate, kFieldStart, kFieldEnd, kFieldLocation, kFieldNotes };
+inline constexpr int kDetailFields = 6;
+inline constexpr int kRepeatChoices = 5;  // Nunca, Diaria, Semanal, Mensual, Anual
+// Título, Fecha, Inicio, Fin, Calendario, Ubicación, Notas, Repetición.
+inline constexpr int kDetailLabels = 8;
+
+struct DetailLayout {
+  D2D1_RECT_F panel{};
+  D2D1_RECT_F close{};
+  D2D1_RECT_F labels[kDetailLabels]{};
+  D2D1_RECT_F fields[kDetailFields]{};
+  D2D1_RECT_F calendar{};
+  D2D1_RECT_F repeat[kRepeatChoices]{};
+  D2D1_RECT_F remove{};
+  float pad = 0.0f;
+  float fieldHeight = 0.0f;
+  float radius = 0.0f;
+
+  // The calendars listed under the chooser while it is open, over whatever is below it.
+  D2D1_RECT_F calendarOption(int index) const {
+    const float top = calendar.bottom + pad / 4.0f + static_cast<float>(index) * fieldHeight;
+    return D2D1_RECT_F{calendar.left, top, calendar.right, top + fieldHeight};
+  }
+};
+
+inline DetailLayout MakeDetailLayout(const AppLayout& app) {
+  DetailLayout out;
+  const float type = app.type;
+  const auto at = [type](float dip) { return std::round(dip * type); };
+  out.panel = app.detail;
+  out.pad = at(16.0f);
+  out.fieldHeight = at(32.0f);
+  out.radius = at(kRadiusCard);
+  const float label = at(18.0f);
+  const float under = at(4.0f);
+  const float row = at(12.0f);
+  const float left = out.panel.left + out.pad;
+  const float right = out.panel.right - out.pad;
+  const float close = at(28.0f);
+  float y = out.panel.top + out.pad;
+
+  out.close = D2D1_RECT_F{right - close, y - at(4.0f), right, y - at(4.0f) + close};
+  const auto labelled = [&](int index, float labelRight) {
+    out.labels[index] = D2D1_RECT_F{left, y, labelRight, y + label};
+    return y + label + under;
+  };
+  const auto field = [&](int index, float height) {
+    const float top = labelled(index, index == 0 ? out.close.left - app.gap : right);
+    y = top + height + row;
+    return D2D1_RECT_F{left, top, right, top + height};
+  };
+
+  out.fields[kFieldTitle] = field(0, out.fieldHeight);
+  out.fields[kFieldDate] = field(1, out.fieldHeight);
+
+  // Start and end share a row, half and half.
+  const float middle = std::round((left + right) / 2.0f);
+  const float top = y + label + under;
+  out.labels[2] = D2D1_RECT_F{left, y, middle - app.gap, y + label};
+  out.labels[3] = D2D1_RECT_F{middle + app.gap, y, right, y + label};
+  out.fields[kFieldStart] = D2D1_RECT_F{left, top, middle - app.gap, top + out.fieldHeight};
+  out.fields[kFieldEnd] = D2D1_RECT_F{middle + app.gap, top, right, top + out.fieldHeight};
+  y = top + out.fieldHeight + row;
+
+  out.calendar = field(4, out.fieldHeight);
+  out.fields[kFieldLocation] = field(5, out.fieldHeight);
+  out.fields[kFieldNotes] = field(6, at(88.0f));
+
+  const float pillTop = labelled(7, right);
+  const float pill = (right - left - static_cast<float>(kRepeatChoices - 1) * app.gap) /
+                     static_cast<float>(kRepeatChoices);
+  for (int i = 0; i < kRepeatChoices; ++i) {
+    const float pillLeft = left + static_cast<float>(i) * (pill + app.gap);
+    out.repeat[i] = D2D1_RECT_F{pillLeft, pillTop, pillLeft + pill, pillTop + at(28.0f)};
+  }
+
+  out.remove = D2D1_RECT_F{left, out.panel.bottom - out.pad - out.fieldHeight, right,
+                           out.panel.bottom - out.pad};
   return out;
 }
 

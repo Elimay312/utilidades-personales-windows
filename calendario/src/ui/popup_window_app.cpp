@@ -8,10 +8,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <format>
 
 #include "core/dates.h"
 #include "core/log.h"
+#include "core/recurrence.h"
 #include "sync/google.h"
+#include "ui/fields.h"
 #include "ui/layout.h"
 
 namespace agenda {
@@ -23,6 +26,16 @@ int DaysBetween(Date from, Date to) {
 
 LONG Width(const RECT& rect) { return rect.right - rect.left; }
 LONG Height(const RECT& rect) { return rect.bottom - rect.top; }
+
+// The minute under `y`, not yet snapped: a drag keeps the offset between the pointer and the
+// block's start in these, so the block does not jump to put its top under the pointer.
+float RawMinuteAt(const AppLayout& app, float scroll, float y) {
+  return scroll + (y - app.timeline.top) * 60.0f / app.hourHeight;
+}
+
+int SnapMinute(float minute) {
+  return static_cast<int>(std::lround(minute / kSnapMinutes)) * kSnapMinutes;
+}
 
 // One notch of the wheel is an hour of timeline; a precision touchpad sends fractions of a
 // notch and gets fractions of an hour, which is what makes it glide.
@@ -41,7 +54,29 @@ D2D1_SIZE_F PopupWindow::SizeDip() const {
 }
 
 void PopupWindow::Relayout() {
-  appLayout_ = MakeAppLayout(SizeDip(), layout_, app_.view, AllDayRows(app_));
+  appLayout_ = MakeAppLayout(SizeDip(), layout_, app_.view, AllDayRows(app_),
+                             EaseOutCubic(app_.detail.t));
+}
+
+TextInput& PopupWindow::FocusedText() {
+  return app_.detail.focus >= 0 ? app_.detail.fields[app_.detail.focus] : model_.input;
+}
+
+void PopupWindow::DropPending(std::vector<DayItem>& items) const {
+  if (pendingDelete_.empty()) return;
+  std::erase_if(items, [this](const DayItem& item) {
+    for (const Pending& pending : pendingDelete_) {
+      if (pending.uid == item.uid) return true;
+    }
+    return false;
+  });
+}
+
+void PopupWindow::FlushDeletes() {
+  if (pendingDelete_.empty() || store_ == nullptr) return;
+  for (const Pending& pending : pendingDelete_) store_->Remove(pending.uid, pending.isTask);
+  pendingDelete_.clear();
+  if (sync_ != nullptr) sync_->Push();
 }
 
 void PopupWindow::Expand(Date day) {
@@ -169,6 +204,8 @@ void PopupWindow::ReloadApp() {
     }
     app_.calendars = store_->AllCalendars();
     app_.undated = store_->UndatedTasks();
+    for (std::vector<DayItem>& day : app_.days) DropPending(day);
+    DropPending(app_.undated);
   }
   app_.calendarHover.resize(app_.calendars.size(), 0.0f);
   Relayout();
@@ -273,7 +310,15 @@ bool PopupWindow::OnAppKeyDown(WPARAM key) {
       return true;
     }
     case VK_ESCAPE:
-      Contract();
+      // In layers: the panel first, the app after it.
+      if (app_.detail.open) {
+        CloseDetail();
+      } else {
+        Contract();
+      }
+      return true;
+    case VK_DELETE:
+      if (!app_.selected.empty()) AskDelete(app_.selected);
       return true;
     case VK_RETURN:
       return true;  // nothing to create with an empty capsule, and nothing else to mean
@@ -283,6 +328,13 @@ bool PopupWindow::OnAppKeyDown(WPARAM key) {
 }
 
 bool PopupWindow::OnAppLeftDown(float x, float y) {
+  // A click while "¿Borrar...?" waits is a no, whatever it lands on.
+  if (!app_.confirm.empty()) {
+    app_.confirm.clear();
+    confirmUid_.clear();
+    Invalidate();
+    return true;
+  }
   if (Inside(appLayout_.collapse, x, y)) {
     Contract();
     return true;
@@ -298,6 +350,8 @@ bool PopupWindow::OnAppLeftDown(float x, float y) {
     MovePeriod(Inside(appLayout_.prev, x, y) ? -1 : 1);
     return true;
   }
+
+  if (OnDetailLeftDown(x, y)) return true;
 
   const int calendars = static_cast<int>(app_.calendars.size());
   for (int i = 0; i < calendars; ++i) {
@@ -320,9 +374,20 @@ bool PopupWindow::OnAppLeftDown(float x, float y) {
       store_->SetDone(item.uid, item.done);
       if (sync_ != nullptr) sync_->Push();
       Invalidate();
+      return true;
     }
+    // Anywhere else on the card picks the task up, to be dropped on an hour.
+    drag_ = DragState{};
+    drag_.kind = DragKind::Task;
+    drag_.down = D2D1_POINT_2F{x, y};
+    drag_.item = item;
+    FocusInput(false);
+    SetCapture(hwnd_);
     return true;
   }
+
+  if (SelectAllDayAt(x, y)) return true;
+  if (BeginDrag(x, y)) return true;
 
   if (app_.view == AppView::Month) {
     for (int i = 0; i < kGridCells; ++i) {
@@ -378,6 +443,11 @@ void PopupWindow::OnWheel(int delta) {
 
 bool PopupWindow::TickApp(float step) {
   bool moving = false;
+  // The panel slides in over the 160 ms everything that arrives takes, and the main view gives
+  // way to it frame by frame.
+  const float detailStep = step >= 1.0f ? 1.0f : step * kStateMs / kCardEnterMs;
+  if (Settle(app_.detail.t, app_.detail.open, detailStep)) moving = true;
+  Relayout();
   for (int i = 0; i < 3; ++i) {
     if (Settle(app_.tabHover[i], hoverTab_ == i, step)) moving = true;
   }
@@ -388,6 +458,662 @@ bool PopupWindow::TickApp(float step) {
     if (Settle(app_.calendarHover[i], hoverCalendar_ == static_cast<int>(i), step)) moving = true;
   }
   return moving;
+}
+
+// --- Dragging on the timeline ---------------------------------------------------------------
+
+bool PopupWindow::BeginDrag(float x, float y) {
+  if (app_.view == AppView::Month || !Inside(appLayout_.timeline, x, y) ||
+      x < appLayout_.columnsLeft) {
+    return false;
+  }
+  DragState drag;
+  drag.down = D2D1_POINT_2F{x, y};
+  const float raw = RawMinuteAt(appLayout_, app_.scroll, y);
+
+  // The block on top wins: the last one drawn is the one the pointer sees.
+  const std::vector<PlacedBlock> blocks = PlaceBlocks(appLayout_, app_);
+  for (auto block = blocks.rbegin(); block != blocks.rend(); ++block) {
+    if (!Inside(block->rect, x, y)) continue;
+    const DayItem& item = *block->item;
+    // Only an event with a start and an end on the same day moves here. A task is a moment,
+    // not a span; one that runs past midnight would need two days' worth of timeline.
+    const bool movable = !item.isTask && item.startMin && item.endMin &&
+                         *item.endMin > *item.startMin;
+    if (!movable) return true;
+    const float grip = std::round(kResizeGripDip * appLayout_.type);
+    drag.kind = y >= block->rect.bottom - grip ? DragKind::Resize : DragKind::Move;
+    drag.item = item;
+    drag.column = block->column;
+    drag.origin = AddDays(app_.first, block->column);
+    drag.grab = raw - static_cast<float>(*item.startMin);
+    drag.length = *item.endMin - *item.startMin;
+    break;
+  }
+  if (drag.kind == DragKind::None) {
+    const int column = ColumnAt(appLayout_, x);
+    if (column < 0) return false;
+    drag.kind = DragKind::Create;
+    drag.column = column;
+    drag.anchor = SnapMinute(raw);
+  }
+
+  if (app_.detail.focus >= 0) {
+    CommitField(app_.detail.focus);
+    app_.detail.focus = -1;
+  }
+  FocusInput(false);
+  drag_ = drag;
+  SetCapture(hwnd_);
+  return true;
+}
+
+void PopupWindow::UpdateDrag(float x, float y) {
+  DragState& drag = drag_;
+  if (!drag.moved) {
+    // A click is allowed to wobble. Four DIP of it is still a click, not a drag.
+    const float dx = x - drag.down.x;
+    const float dy = y - drag.down.y;
+    if (dx * dx + dy * dy < 16.0f * appLayout_.type * appLayout_.type) return;
+    drag.moved = true;
+  }
+
+  Ghost& ghost = app_.ghost;
+  ghost.on = true;
+  ghost.free = false;
+  const float raw = RawMinuteAt(appLayout_, app_.scroll, y);
+  const int column = ColumnAt(appLayout_, x);
+  switch (drag.kind) {
+    case DragKind::Create: {
+      const int here = SnapMinute(raw);
+      ghost.column = drag.column;
+      ghost.start = (std::min)(drag.anchor, here);
+      ghost.end = (std::max)(drag.anchor, here);
+      if (ghost.end - ghost.start < kSnapMinutes) ghost.end = ghost.start + kSnapMinutes;
+      ghost.color = app_.calendars.empty() ? 0x4A8BF5 : app_.calendars.front().color;
+      for (const CalendarInfo& calendar : app_.calendars) {
+        if (calendar.isDefault && !calendar.isTaskList) ghost.color = calendar.color;
+      }
+      ghost.title = L"Nuevo evento";
+      break;
+    }
+    case DragKind::Move: {
+      if (column >= 0) ghost.column = column;
+      else if (ghost.hideUid.empty()) ghost.column = drag.column;
+      ghost.start = std::clamp(SnapMinute(raw - drag.grab), 0, kMinutesPerDay - drag.length);
+      ghost.end = ghost.start + drag.length;
+      ghost.color = drag.item.color;
+      ghost.title = drag.item.title;
+      ghost.hideUid = drag.item.uid;
+      break;
+    }
+    case DragKind::Resize: {
+      ghost.column = drag.column;
+      ghost.start = *drag.item.startMin;
+      ghost.end = std::clamp(SnapMinute(raw), ghost.start + kSnapMinutes, kMinutesPerDay);
+      ghost.color = drag.item.color;
+      ghost.title = drag.item.title;
+      ghost.hideUid = drag.item.uid;
+      break;
+    }
+    case DragKind::Task: {
+      ghost.color = drag.item.color;
+      ghost.title = drag.item.title;
+      ghost.at = D2D1_POINT_2F{x, y};
+      // Over the timeline it becomes the hour it would take; anywhere else it is in the hand.
+      const bool over = app_.view != AppView::Month && column >= 0 &&
+                        Inside(appLayout_.timeline, x, y);
+      ghost.free = !over;
+      if (over) {
+        ghost.column = column;
+        ghost.start = std::clamp(SnapMinute(raw), 0, kMinutesPerDay - 60);
+        ghost.end = ghost.start + 60;
+      }
+      break;
+    }
+    case DragKind::None:
+      break;
+  }
+  Invalidate();
+}
+
+void PopupWindow::CancelDrag() {
+  if (drag_.kind == DragKind::None && !app_.ghost.on) return;
+  drag_ = DragState{};
+  app_.ghost = Ghost{};
+  if (GetCapture() == hwnd_) ReleaseCapture();
+  Invalidate();
+}
+
+void PopupWindow::EndDrag() {
+  const DragState drag = drag_;
+  const Ghost ghost = app_.ghost;
+  drag_ = DragState{};  // before letting go of the mouse, so WM_CAPTURECHANGED is not a cancel
+  app_.ghost = Ghost{};
+  if (GetCapture() == hwnd_) ReleaseCapture();
+
+  if (!drag.moved) {
+    // A click. On an event it opens it; on empty timeline it lets go of whatever was open.
+    if (drag.kind == DragKind::Move || drag.kind == DragKind::Resize) {
+      OpenDetailFor(drag.item.uid);
+    } else if (drag.kind == DragKind::Create) {
+      app_.selected.clear();
+      CloseDetail();
+    }
+    Invalidate();
+    return;
+  }
+
+  switch (drag.kind) {
+    case DragKind::Create: {
+      if (store_ == nullptr) break;
+      Draft draft;
+      draft.title = L"Nuevo evento";
+      draft.day = AddDays(app_.first, ghost.column);
+      draft.startMin = ghost.start;
+      draft.endMin = ghost.end;
+      const DayItem created = store_->Create(draft);
+      if (sync_ != nullptr) sync_->Push();
+      AddToApp(created, draft.day);
+
+      EventDetail event;
+      event.uid = created.uid;
+      event.calendarId = store_->DefaultCalendar(false);
+      event.title = draft.title;
+      event.startDay = *draft.day;
+      event.endDay = *draft.day;
+      event.startMin = draft.startMin;
+      event.endMin = draft.endMin;
+      // Straight into its title, selected, so typing replaces "Nuevo evento".
+      OpenDetail(event, kFieldTitle);
+      break;
+    }
+    case DragKind::Move:
+    case DragKind::Resize:
+      CommitMove(ghost, drag.origin);
+      break;
+    case DragKind::Task:
+      if (ghost.on && !ghost.free) ConvertTask(drag.item, ghost.column, ghost.start);
+      break;
+    case DragKind::None:
+      break;
+  }
+  Invalidate();
+}
+
+void PopupWindow::CommitMove(const Ghost& ghost, Date origin) {
+  if (store_ == nullptr) return;
+  std::optional<EventDetail> event = store_->Event(ghost.hideUid);
+  // A row that spans days is not moved on a timeline that shows one day's worth of it.
+  if (!event || event->startDay != event->endDay) return;
+
+  // `origin` is the day the block was picked up from, which for a repetition is not the day the
+  // series starts: the whole series moves by the same number of days.
+  const int shift = DaysBetween(origin, AddDays(app_.first, ghost.column));
+  if (shift == 0 && event->startMin == ghost.start && event->endMin == ghost.end) return;
+
+  event->startDay = AddDays(event->startDay, shift);
+  event->endDay = event->startDay;
+  event->startMin = ghost.start;
+  event->endMin = ghost.end;
+  unsigned edits = 0;
+  if (shift != 0 && !event->recurrence.empty()) {
+    const std::wstring moved = MoveRuleTo(event->recurrence, event->startDay);
+    if (moved != event->recurrence) {
+      event->recurrence = moved;
+      edits |= kEditRecurrence;
+    }
+  }
+  SaveDetail(*event, edits);
+
+  // On screen now, not when the worker is done: the block lands where it was dropped.
+  for (std::vector<DayItem>& day : app_.days) {
+    std::erase_if(day, [&ghost](const DayItem& item) { return item.uid == ghost.hideUid; });
+  }
+  DayItem landed;
+  landed.uid = event->uid;
+  landed.title = event->title;
+  landed.startMin = event->startMin;
+  landed.endMin = event->endMin;
+  landed.color = ghost.color;
+  landed.repeats = !event->recurrence.empty();
+  AddToApp(landed, AddDays(app_.first, ghost.column));
+  app_.selected = event->uid;
+  if (app_.detail.open && app_.detail.event.uid != event->uid) OpenDetail(*event, -1);
+}
+
+void PopupWindow::ConvertTask(const DayItem& task, int column, int start) {
+  if (store_ == nullptr) return;
+  FlushDeletes();
+  Draft draft;
+  draft.title = task.title;
+  draft.day = AddDays(app_.first, column);
+  draft.startMin = start;
+  draft.endMin = start + 60;
+  const DayItem created = store_->Create(draft);
+  AddToApp(created, draft.day);
+
+  // The task goes when the notice does, so undo can still give it back as it was.
+  pendingDelete_.push_back(Pending{task.uid, true});
+  DropPending(app_.undated);
+  undo_ = Undone{created.uid, false, {}, UndoKind::Converted, task.uid};
+  ShowToast(L"Ahora es un evento · Deshacer");
+  if (sync_ != nullptr) sync_->Push();
+  app_.selected = created.uid;
+  // With the panel open it follows the selection, or it would go on editing another event.
+  if (app_.detail.open) {
+    EventDetail event;
+    event.uid = created.uid;
+    event.calendarId = store_->DefaultCalendar(false);
+    event.title = draft.title;
+    event.startDay = *draft.day;
+    event.endDay = *draft.day;
+    event.startMin = draft.startMin;
+    event.endMin = draft.endMin;
+    OpenDetail(event, -1);
+  }
+  Relayout();
+}
+
+bool PopupWindow::SelectAllDayAt(float x, float y) {
+  if (app_.view == AppView::Month) return false;
+  for (int i = 0; i < appLayout_.columns && i < static_cast<int>(app_.days.size()); ++i) {
+    std::vector<const DayItem*> chips;
+    for (const DayItem& item : app_.days[static_cast<size_t>(i)]) {
+      if (!item.startMin) chips.push_back(&item);
+    }
+    const int total = static_cast<int>(chips.size());
+    for (int row = 0; row < appLayout_.allDayRows && row < total; ++row) {
+      if (!Inside(appLayout_.allDayChip(i, row), x, y)) continue;
+      // The last chip of a full strip is the "+N más", not an item.
+      const bool counter = row == appLayout_.allDayRows - 1 && total > appLayout_.allDayRows;
+      const DayItem& item = *chips[static_cast<size_t>(row)];
+      if (!counter && !item.isTask) OpenDetailFor(item.uid);
+      return true;
+    }
+  }
+  return false;
+}
+
+// --- The detail panel -----------------------------------------------------------------------
+
+void PopupWindow::OpenDetailFor(const std::wstring& uid) {
+  if (store_ == nullptr) return;
+  if (const std::optional<EventDetail> event = store_->Event(uid)) OpenDetail(*event, -1);
+}
+
+void PopupWindow::OpenDetail(const EventDetail& event, int focus) {
+  DetailModel& detail = app_.detail;
+  if (detail.focus >= 0 && detail.event.uid != event.uid) CommitField(detail.focus);
+  detail.open = true;
+  detail.event = event;
+  detail.invalid = 0;
+  detail.calendarOpen = false;
+  detail.focus = -1;
+  detail.fields[kFieldNotes].AllowNewlines(true);
+  FillDetailFields();
+  app_.selected = event.uid;
+  if (focus >= 0) {
+    FocusDetail(focus);
+    detail.fields[focus].SelectAll();
+  }
+  RestartCaret();
+  StartTicking();
+  Invalidate();
+}
+
+void PopupWindow::CloseDetail() {
+  DetailModel& detail = app_.detail;
+  if (!detail.open) return;
+  if (detail.focus >= 0) CommitField(detail.focus);
+  detail.open = false;
+  detail.focus = -1;
+  detail.calendarOpen = false;
+  RestartCaret();
+  StartTicking();
+  Invalidate();
+}
+
+void PopupWindow::FillDetailFields() {
+  DetailModel& detail = app_.detail;
+  const EventDetail& event = detail.event;
+  const std::wstring texts[kDetailFields] = {
+      event.title,
+      DayFieldText(event.startDay),
+      event.startMin ? TimeFieldText(*event.startMin) : std::wstring(),
+      event.endMin ? TimeFieldText(*event.endMin) : std::wstring(),
+      event.location,
+      event.notes};
+  for (int i = 0; i < kDetailFields; ++i) {
+    detail.fields[i].Clear();
+    detail.fields[i].Insert(texts[i]);
+  }
+}
+
+void PopupWindow::FocusDetail(int field) {
+  DetailModel& detail = app_.detail;
+  if (detail.focus == field) return;
+  if (detail.focus >= 0) CommitField(detail.focus);
+  if (inputFocused_) FocusInput(false);
+  detail.focus = field;
+  detail.calendarOpen = false;
+  RestartCaret();
+  Invalidate();
+}
+
+bool PopupWindow::CommitField(int field) {
+  DetailModel& detail = app_.detail;
+  if (field < 0 || field >= kDetailFields) return true;
+  EventDetail event = detail.event;
+  const std::wstring& text = detail.fields[field].text();
+  unsigned edits = 0;
+  bool valid = true;
+
+  switch (field) {
+    case kFieldTitle: {
+      const std::wstring_view title = detail::Trim(text);
+      valid = !title.empty();
+      if (valid) event.title = std::wstring(title);
+      break;
+    }
+    case kFieldDate: {
+      const std::optional<Date> day = ReadDayField(text, model_.today);
+      valid = day.has_value();
+      if (valid) {
+        // The whole event moves; one that spans days keeps its length in days.
+        event.endDay = AddDays(event.endDay, DaysBetween(event.startDay, *day));
+        event.startDay = *day;
+      }
+      break;
+    }
+    case kFieldStart: {
+      if (detail::Trim(text).empty() && !event.startMin) break;  // all day, and staying so
+      const std::optional<int> minute = ReadTimeField(text);
+      valid = minute && *minute < kMinutesPerDay;
+      if (valid) {
+        // The length is kept: moving the start moves the end with it.
+        const int length = event.startMin && event.endMin && event.startDay == event.endDay &&
+                                   *event.endMin > *event.startMin
+                               ? *event.endMin - *event.startMin
+                               : 60;
+        if (!event.startMin) event.endDay = event.startDay;  // an all-day one takes an hour
+        event.startMin = *minute;
+        event.endMin = (std::min)(*minute + length, kMinutesPerDay);
+      }
+      break;
+    }
+    case kFieldEnd: {
+      if (detail::Trim(text).empty() && !event.startMin) break;
+      const std::optional<int> minute = ReadTimeField(text);
+      valid = minute && event.startMin &&
+              (event.endDay != event.startDay || *minute > *event.startMin);
+      if (valid) event.endMin = *minute;
+      break;
+    }
+    case kFieldLocation:
+      if (text != event.location) edits |= kEditLocation;
+      event.location = text;
+      break;
+    case kFieldNotes:
+      event.notes = text;
+      break;
+    default:
+      break;
+  }
+
+  if (!valid) {
+    detail.invalid |= 1u << field;
+    Invalidate();
+    return false;
+  }
+  detail.invalid &= ~(1u << field);
+  const bool changed = event.title != detail.event.title ||
+                       event.startDay != detail.event.startDay ||
+                       event.endDay != detail.event.endDay ||
+                       event.startMin != detail.event.startMin ||
+                       event.endMin != detail.event.endMin ||
+                       event.location != detail.event.location ||
+                       event.notes != detail.event.notes;
+  // SaveDetail writes the fields back the way the panel writes them: "5pm" reads "17:00".
+  if (changed) {
+    SaveDetail(event, edits);
+  } else {
+    FillDetailFields();
+  }
+  return true;
+}
+
+void PopupWindow::SaveDetail(const EventDetail& event, unsigned edits) {
+  if (store_ == nullptr) return;
+  store_->UpdateEvent(event, edits);
+  if (sync_ != nullptr) sync_->Push();
+  // The panel says what was just written, whoever wrote it: a drag on the timeline moves the
+  // hours in the fields too. Only the field being typed in could hold anything unwritten, and
+  // every caller has committed it by now.
+  if (app_.detail.event.uid == event.uid) {
+    app_.detail.event = event;
+    FillDetailFields();
+  }
+  // The rest arrives with the worker's "something changed", a moment from now.
+}
+
+bool PopupWindow::OnDetailKeyDown(WPARAM key) {
+  DetailModel& detail = app_.detail;
+  const bool shift = GetKeyState(VK_SHIFT) < 0;
+  const bool control = GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0;
+  TextInput& input = detail.fields[detail.focus];
+
+  if (control) {
+    switch (key) {
+      case 0x41:  // Ctrl+A
+        input.SelectAll();
+        break;
+      case 0x43:  // Ctrl+C
+        CopySelection(/*cut=*/false);
+        break;
+      case 0x58:  // Ctrl+X
+        CopySelection(/*cut=*/true);
+        break;
+      case 0x56:  // Ctrl+V
+        Paste();
+        break;
+      default:
+        return false;
+    }
+    RestartCaret();
+    Invalidate();
+    return true;
+  }
+
+  switch (key) {
+    case VK_ESCAPE:
+      // Esc closes the panel; what was typed is kept, the way leaving the field keeps it.
+      CloseDetail();
+      return true;
+    case VK_RETURN:
+      if (detail.focus == kFieldNotes && shift) {
+        input.Insert(L"\n");
+        break;
+      }
+      if (CommitField(detail.focus)) {
+        detail.focus = -1;
+        RestartCaret();
+      }
+      Invalidate();
+      return true;
+    case VK_TAB:
+      FocusDetail((detail.focus + (shift ? kDetailFields - 1 : 1)) % kDetailFields);
+      app_.detail.fields[app_.detail.focus].SelectAll();
+      Invalidate();
+      return true;
+    case VK_LEFT:
+      input.MoveLeft(shift);
+      break;
+    case VK_RIGHT:
+      input.MoveRight(shift);
+      break;
+    case VK_HOME:
+      input.MoveHome(shift);
+      break;
+    case VK_END:
+      input.MoveEnd(shift);
+      break;
+    case VK_BACK:
+      input.Backspace();
+      break;
+    case VK_DELETE:
+      input.DeleteForward();
+      break;
+    case VK_UP:
+    case VK_DOWN:
+      return true;  // one line, or notes with no line walking: nothing to go to
+    default:
+      return false;
+  }
+  RestartCaret();
+  Invalidate();
+  return true;
+}
+
+bool PopupWindow::OnDetailLeftDown(float x, float y) {
+  DetailModel& detail = app_.detail;
+  if (!detail.open) return false;
+  const DetailLayout layout = MakeDetailLayout(appLayout_);
+
+  // The open list sits over the fields below the chooser, so it answers first.
+  if (detail.calendarOpen) {
+    int row = 0;
+    for (const CalendarInfo& calendar : app_.calendars) {
+      if (calendar.isTaskList) continue;
+      if (Inside(layout.calendarOption(row++), x, y)) {
+        detail.calendarOpen = false;
+        if (calendar.id != detail.event.calendarId) {
+          EventDetail event = detail.event;
+          event.calendarId = calendar.id;
+          SaveDetail(event, 0);
+        }
+        Invalidate();
+        return true;
+      }
+    }
+    detail.calendarOpen = false;
+    Invalidate();
+  }
+
+  if (!Inside(layout.panel, x, y)) {
+    // A click anywhere else lets go of the field, and keeps what was typed in it.
+    if (detail.focus >= 0) {
+      CommitField(detail.focus);
+      detail.focus = -1;
+      RestartCaret();
+      Invalidate();
+    }
+    return false;
+  }
+
+  if (Inside(layout.close, x, y)) {
+    CloseDetail();
+    return true;
+  }
+  for (int i = 0; i < kDetailFields; ++i) {
+    if (!Inside(layout.fields[i], x, y)) continue;
+    FocusDetail(i);
+    detail.fields[i].MoveTo(FieldIndexAt(fonts_, layout.fields[i], detail.fields[i],
+                                         i == kFieldNotes, appLayout_.type, x, y),
+                            GetKeyState(VK_SHIFT) < 0);
+    RestartCaret();
+    Invalidate();
+    return true;
+  }
+  if (detail.focus >= 0) {
+    CommitField(detail.focus);
+    detail.focus = -1;
+    RestartCaret();
+  }
+  if (Inside(layout.calendar, x, y)) {
+    detail.calendarOpen = true;
+  } else if (Inside(layout.remove, x, y)) {
+    AskDelete(detail.event.uid);
+  } else {
+    for (int i = 0; i < kRepeatChoices; ++i) {
+      if (!Inside(layout.repeat[i], x, y)) continue;
+      const auto repeat = static_cast<Repeat>(i);
+      if (RepeatOf(detail.event.recurrence) != repeat) {
+        EventDetail event = detail.event;
+        event.recurrence = RuleFor(repeat, event.startDay);
+        SaveDetail(event, kEditRecurrence);
+      }
+    }
+  }
+  Invalidate();
+  return true;
+}
+
+bool PopupWindow::DetailCursor(float x, float y, LPCWSTR& cursor) {
+  if (drag_.kind == DragKind::Resize) {
+    cursor = IDC_SIZENS;
+    return true;
+  }
+  if (app_.detail.open) {
+    const DetailLayout layout = MakeDetailLayout(appLayout_);
+    for (int i = 0; i < kDetailFields; ++i) {
+      if (Inside(layout.fields[i], x, y)) {
+        cursor = IDC_IBEAM;
+        return true;
+      }
+    }
+  }
+  // The bottom edge of a block stretches it, and says so before anyone clicks.
+  const float grip = std::round(kResizeGripDip * appLayout_.type);
+  for (const PlacedBlock& block : PlaceBlocks(appLayout_, app_)) {
+    if (!Inside(block.rect, x, y) || y < block.rect.bottom - grip) continue;
+    if (block.item->isTask || !block.item->endMin) continue;
+    cursor = IDC_SIZENS;
+    return true;
+  }
+  return false;
+}
+
+// --- Deleting -------------------------------------------------------------------------------
+
+void PopupWindow::AskDelete(const std::wstring& uid) {
+  std::wstring title = app_.detail.event.uid == uid ? app_.detail.event.title : std::wstring();
+  for (const std::vector<DayItem>& day : app_.days) {
+    for (const DayItem& item : day) {
+      if (item.uid == uid) title = item.title;
+    }
+  }
+  if (title.empty()) return;
+  if (app_.detail.focus >= 0) {
+    CommitField(app_.detail.focus);
+    app_.detail.focus = -1;
+    RestartCaret();
+  }
+  confirmUid_ = uid;
+  app_.confirm = std::format(L"¿Borrar «{}»?   Supr para borrar · Esc para dejarlo", title);
+  Invalidate();
+}
+
+void PopupWindow::ConfirmDelete() {
+  const std::wstring uid = confirmUid_;
+  app_.confirm.clear();
+  confirmUid_.clear();
+  if (uid.empty()) return;
+
+  // Hidden now and deleted when the notice goes, so undo is only showing it again.
+  FlushDeletes();
+  pendingDelete_.push_back(Pending{uid, false});
+  for (std::vector<DayItem>& day : app_.days) DropPending(day);
+  DropPending(model_.day);
+  if (app_.detail.event.uid == uid) {
+    app_.detail.focus = -1;
+    CloseDetail();
+  }
+  app_.selected.clear();
+  undo_ = Undone{uid, false, {}, UndoKind::Deleted, {}};
+  ShowToast(L"Borrado · Deshacer");
+  Relayout();
+  Invalidate();
 }
 
 }  // namespace agenda

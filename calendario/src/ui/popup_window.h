@@ -99,7 +99,15 @@ class PopupWindow {
   // Enter: turns whatever the preview understood into a row. Optimistic -- the card is on
   // screen before the worker has written anything.
   bool CreateFromInput();
-  void UndoCreate();
+  // Ctrl+Z while the notice is up: takes back a creation, a deletion or a task made into an
+  // event, whichever the notice is about.
+  void Undo();
+  // The deletions waiting out their five seconds of undo, done for real. Called when the
+  // notice goes, when another one takes its place, and when the window hides.
+  void FlushDeletes();
+  void DropPending(std::vector<DayItem>& items) const;
+  // Where typed text goes: the detail field with the keyboard, or the capsule.
+  TextInput& FocusedText();
   void ShowToast(std::wstring text);
   void HideToast();
   bool ToggleCardAt(float x, float y);
@@ -128,6 +136,27 @@ class PopupWindow {
   bool OnAppMouseMove(float x, float y);
   void OnWheel(int delta);
   bool TickApp(float step);
+
+  // --- Dragging on the timeline, the detail panel, deleting (phase 6b) ----------------------
+  bool BeginDrag(float x, float y);
+  void UpdateDrag(float x, float y);
+  void EndDrag();
+  void CancelDrag();
+  void CommitMove(const Ghost& ghost, Date origin);
+  void ConvertTask(const DayItem& task, int column, int start);
+  bool SelectAllDayAt(float x, float y);
+  void OpenDetail(const EventDetail& event, int focus);
+  void OpenDetailFor(const std::wstring& uid);
+  void CloseDetail();
+  void FillDetailFields();
+  void FocusDetail(int field);
+  bool CommitField(int field);
+  void SaveDetail(const EventDetail& event, unsigned edits);
+  bool OnDetailKeyDown(WPARAM key);
+  bool OnDetailLeftDown(float x, float y);
+  bool DetailCursor(float x, float y, LPCWSTR& cursor);
+  void AskDelete(const std::wstring& uid);
+  void ConfirmDelete();
 
   D2D1_POINT_2F ToDip(LPARAM lparam) const;
   int HitDay(float x, float y) const;
@@ -175,11 +204,36 @@ class PopupWindow {
 
   // What Ctrl+Z would take back, and the line it would put back in the capsule. Empty once the
   // notice is gone: undo is offered while it is on screen and not a second longer.
+  enum class UndoKind { Created, Deleted, Converted };
   struct Undone {
     std::wstring uid;
     bool isTask = false;
     std::wstring typed;
+    UndoKind kind = UndoKind::Created;
+    std::wstring other;  // Converted: the task that became the event `uid`
   };
+  // Deleted, as far as the screen is concerned, and not yet in the store: undo only has to
+  // stop hiding them, so nothing Google holds for the event -- guests, reminders -- is lost.
+  struct Pending {
+    std::wstring uid;
+    bool isTask = false;
+  };
+  std::vector<Pending> pendingDelete_;
+  std::wstring confirmUid_;
+
+  enum class DragKind { None, Create, Move, Resize, Task };
+  struct DragState {
+    DragKind kind = DragKind::None;
+    D2D1_POINT_2F down{};
+    bool moved = false;
+    int column = 0;       // the column the pointer went down in
+    int anchor = 0;       // Create: the minute it went down on
+    float grab = 0.0f;    // Move: minutes between the pointer and the start of the block
+    int length = 0;       // Move: how long the block is
+    DayItem item;         // what is being dragged
+    Date origin{};        // Move and Resize: the day it was on
+  };
+  DragState drag_;
   std::optional<Undone> undo_;
   Store* store_ = nullptr;
   sync::GoogleSync* sync_ = nullptr;

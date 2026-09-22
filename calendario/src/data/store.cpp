@@ -324,6 +324,32 @@ std::vector<DayItem> Store::UndatedTasks() {
   return items;
 }
 
+std::optional<EventDetail> Store::Event(const std::wstring& uid) {
+  if (!db_.IsOpen()) return std::nullopt;
+  std::optional<Stmt> stmt = db_.Prepare(
+      "SELECT calendar_id, title, location, notes, recurrence, start_day, start_min, end_day, "
+      "       end_min FROM events WHERE uid = ? AND deleted_at IS NULL");
+  if (!stmt) return std::nullopt;
+  stmt->Bind(1, uid);
+  if (!stmt->Step()) return std::nullopt;
+  const std::optional<Date> start = ParseDayKey(stmt->Text(5));
+  const std::optional<Date> end = ParseDayKey(stmt->Text(7));
+  if (!start || !end) return std::nullopt;
+
+  EventDetail out;
+  out.uid = uid;
+  out.calendarId = stmt->Text(0);
+  out.title = stmt->Wide(1);
+  out.location = stmt->Wide(2);
+  out.notes = stmt->Wide(3);
+  out.recurrence = stmt->Wide(4);
+  out.startDay = *start;
+  out.startMin = stmt->OptInt(6);
+  out.endDay = *end;
+  out.endMin = stmt->OptInt(8);
+  return out;
+}
+
 int Store::PendingOpCount() {
   if (!db_.IsOpen()) return 0;
   std::optional<Stmt> stmt = db_.Prepare("SELECT COUNT(*) FROM pending_ops");
@@ -333,7 +359,20 @@ int Store::PendingOpCount() {
 
 // --- Writes -------------------------------------------------------------------------------
 
-bool Store::QueueOp(const char* entity, const std::wstring& uid, const char* op) {
+bool Store::DropOthers(const std::wstring& uid, const char* opLike, std::int64_t keep) {
+  std::optional<Stmt> stmt =
+      db_.Prepare("DELETE FROM pending_ops WHERE uid = ? AND op LIKE ? AND id != ?");
+  if (!stmt) return false;
+  stmt->Bind(1, uid);
+  stmt->Bind(2, opLike);
+  stmt->Bind(3, keep);
+  bool ok = false;
+  stmt->Step(&ok);
+  return ok;
+}
+
+bool Store::QueueOp(const char* entity, const std::wstring& uid, const char* op,
+                    std::int64_t* id) {
   std::optional<Stmt> stmt =
       db_.Prepare("INSERT INTO pending_ops (entity, uid, op, queued_at) VALUES (?, ?, ?, ?)");
   if (!stmt) return false;
@@ -343,6 +382,7 @@ bool Store::QueueOp(const char* entity, const std::wstring& uid, const char* op)
   stmt->Bind(4, NowSeconds());
   bool ok = false;
   stmt->Step(&ok);
+  if (ok && id != nullptr) *id = db_.LastInsertId();
   return ok;
 }
 
@@ -454,7 +494,8 @@ DayItem Store::Create(const Draft& draft) {
 
   // The colour the card paints with has to be right on the first frame, so it is read here
   // instead of waited for. One row, by primary key.
-  const std::string list = DefaultCalendar(draft.isTask);
+  const std::string list =
+      draft.calendar.empty() ? DefaultCalendar(draft.isTask) : draft.calendar;
   if (std::optional<Stmt> stmt = db_.Prepare("SELECT color FROM calendars WHERE id = ?")) {
     stmt->Bind(1, list);
     if (stmt->Step()) item.color = static_cast<std::uint32_t>(stmt->Int(0));
@@ -538,16 +579,87 @@ void Store::SetDone(const std::wstring& uid, bool done) {
       stmt->Step(&ok);
     }
     // At most one pending update per item: what goes out is built by reading the row when it
-    // is sent, so ticking and unticking five times still has one thing to say.
-    if (ok) {
-      if (std::optional<Stmt> stmt =
-              db_.Prepare("DELETE FROM pending_ops WHERE uid = ? AND op = 'update'")) {
-        stmt->Bind(1, uid);
-        stmt->Step(&ok);
+    // is sent, so ticking and unticking five times still has one thing to say. New one in
+    // first, old ones out after (see QueueOp).
+    std::int64_t queued = 0;
+    if (ok) ok = QueueOp("task", uid, "update", &queued);
+    if (ok) ok = DropOthers(uid, "update", queued);
+    if (!ok || !tx.Commit()) {
+      Report(uid, L"no se pudo marcar la tarea");
+      return;
+    }
+    Notify();
+  });
+}
+
+void Store::UpdateEvent(const EventDetail& edit, unsigned edits) {
+  Enqueue([this, edit, edits] {
+    Transaction tx(db_);
+    if (!tx.Begin()) {
+      Report(edit.uid, L"no se pudo guardar el cambio");
+      return;
+    }
+
+    std::string calendar;
+    bool sent = false;
+    std::string movedFrom;
+    if (std::optional<Stmt> stmt = db_.Prepare(
+            "SELECT calendar_id, remote_id IS NOT NULL, moved_from FROM events WHERE uid = ?")) {
+      stmt->Bind(1, edit.uid);
+      if (stmt->Step()) {
+        calendar = stmt->Text(0);
+        sent = stmt->Int(1) != 0;
+        movedFrom = stmt->IsNull(2) ? std::string() : stmt->Text(2);
       }
     }
-    if (!ok || !QueueOp("task", uid, "update") || !tx.Commit()) {
-      Report(uid, L"no se pudo marcar la tarea");
+    if (calendar.empty()) {
+      Report(edit.uid, L"ese evento ya no existe");
+      return;
+    }
+    // Only the first calendar counts: two changes in a row still move it out of the one Google
+    // has it in. And moving it back home means there is nothing to move at all.
+    if (sent && edit.calendarId != calendar && movedFrom.empty()) movedFrom = calendar;
+    if (movedFrom == edit.calendarId) movedFrom.clear();
+
+    bool ok = false;
+    if (std::optional<Stmt> stmt = db_.Prepare(
+            "UPDATE events SET calendar_id = ?, title = ?, notes = ?, location = ?, "
+            "  start_day = ?, start_min = ?, end_day = ?, end_min = ?, recurrence = ?, "
+            "  moved_from = ?, updated_at = ? WHERE uid = ?")) {
+      stmt->Bind(1, edit.calendarId);
+      stmt->Bind(2, edit.title);
+      stmt->Bind(3, edit.notes);
+      stmt->Bind(4, edit.location);
+      stmt->Bind(5, DayKey(edit.startDay));
+      stmt->Bind(6, edit.startMin);
+      stmt->Bind(7, DayKey(edit.endDay));
+      stmt->Bind(8, edit.endMin);
+      stmt->Bind(9, edit.recurrence);
+      if (movedFrom.empty()) {
+        stmt->BindNull(10);
+      } else {
+        stmt->Bind(10, movedFrom);
+      }
+      stmt->Bind(11, NowSeconds());
+      stmt->Bind(12, edit.uid);
+      stmt->Step(&ok);
+    }
+
+    // One update per event, carrying everything the ones before it said had changed. New one
+    // in first, old ones out after (see QueueOp).
+    unsigned merged = edits;
+    if (ok) {
+      if (std::optional<Stmt> stmt = db_.Prepare(
+              "SELECT op FROM pending_ops WHERE uid = ? AND op LIKE 'update%'")) {
+        stmt->Bind(1, edit.uid);
+        while (stmt->Step()) merged |= UpdateEdits(stmt->Text(0));
+      }
+    }
+    std::int64_t queued = 0;
+    if (ok) ok = QueueOp("event", edit.uid, UpdateOp(merged).c_str(), &queued);
+    if (ok) ok = DropOthers(edit.uid, "update%", queued);
+    if (!ok || !tx.Commit()) {
+      Report(edit.uid, L"no se pudo guardar el cambio");
       return;
     }
     Notify();
@@ -592,14 +704,11 @@ void Store::Remove(const std::wstring& uid, bool isTask) {
     }
 
     // Whatever was queued for this row is void either way: a creation that is being undone has
-    // nothing left to create, and an edit has nothing left to edit.
-    if (ok) {
-      if (std::optional<Stmt> stmt = db_.Prepare("DELETE FROM pending_ops WHERE uid = ?")) {
-        stmt->Bind(1, uid);
-        stmt->Step(&ok);
-      }
-    }
-    if (ok && sent) ok = QueueOp(isTask ? "task" : "event", uid, "delete");
+    // nothing left to create, and an edit has nothing left to edit. The deletion goes in before
+    // they go out (see QueueOp).
+    std::int64_t queued = 0;
+    if (ok && sent) ok = QueueOp(isTask ? "task" : "event", uid, "delete", &queued);
+    if (ok) ok = DropOthers(uid, "%", queued);
 
     if (!ok || !tx.Commit()) {
       Report(uid, L"no se pudo deshacer");

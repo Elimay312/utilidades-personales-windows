@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -57,6 +58,8 @@ class Store {
   // The tasks with no date at all, for the tray in the expanded view's sidebar. The ones still
   // to do first; done ones stay, struck, until somebody unticks or forgets them.
   std::vector<DayItem> UndatedTasks();
+  // One event whole, for the detail panel. Empty when it is gone or never was.
+  std::optional<EventDetail> Event(const std::wstring& uid);
   // How much is waiting to go up to Google. Nobody empties this queue until phase 5, so for
   // now it is what proves a row and its operation were written together.
   int PendingOpCount();
@@ -67,6 +70,14 @@ class Store {
   // interface takes the row out again.
   DayItem Create(const Draft& draft);
   void SetDone(const std::wstring& uid, bool done);
+  // Writes the event back as `edit` says, and queues one update for it -- merged with any
+  // update still waiting, so dragging an event five times sends it once. `edits` names the
+  // fields beyond the times and the title that changed (kEditLocation, kEditRecurrence).
+  //
+  // Moving it to another calendar of a row Google already has also writes down where it was,
+  // in moved_from: Google moves events with POST .../move on the calendar they are in, and by
+  // the time the queue sends this the row already says where it is going.
+  void UpdateEvent(const EventDetail& edit, unsigned edits);
   // Undo. While nothing had ever been sent, the row and its queued operation could just leave
   // together. With an account connected that is no longer true: the five seconds of the notice
   // are long enough for the creation to already be up at Google, and a row deleted here would
@@ -133,7 +144,16 @@ class Store {
   void StopWorker();
   void Enqueue(std::function<void()> job);
   void Notify();
-  bool QueueOp(const char* entity, const std::wstring& uid, const char* op);
+  // Queues one operation and hands back its id. Replacing the ones before it goes in that
+  // order -- the new one in first, the old ones out after -- and the order is the fix for a
+  // bug: pending_ops.id is a rowid without AUTOINCREMENT, so deleting the highest one first
+  // and then inserting reuses its number. A pass that was sending the old operation would then
+  // delete the new one by that id when it finished, and the newer edit never reached Google.
+  // With the new row in first, its id is above anything a pass can be holding.
+  bool QueueOp(const char* entity, const std::wstring& uid, const char* op,
+               std::int64_t* id = nullptr);
+  // Takes out the operations for `uid` that `opLike` matches, except the one just queued.
+  bool DropOthers(const std::wstring& uid, const char* opLike, std::int64_t keep);
 
   Db db_;
   HWND hwnd_ = nullptr;

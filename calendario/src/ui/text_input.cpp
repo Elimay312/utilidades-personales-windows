@@ -40,7 +40,7 @@ void TextInput::Insert(std::wstring_view inserted) {
   std::wstring clean;
   clean.reserve(inserted.size());
   for (const wchar_t c : inserted) {
-    if (c >= 0x20 && c != 0x7F) clean.push_back(c);
+    if ((c >= 0x20 && c != 0x7F) || (newlines_ && c == L'\n')) clean.push_back(c);
   }
   if (clean.empty()) return;
   text_.insert(caret_, clean);

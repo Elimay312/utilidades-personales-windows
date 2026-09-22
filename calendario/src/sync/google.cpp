@@ -136,8 +136,8 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
     uid = NewUid();
     std::optional<Stmt> stmt = db.Prepare(
         "INSERT INTO events (uid, calendar_id, title, notes, start_day, start_min, end_day, "
-        "                    end_min, recurrence, remote_id, etag, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        "                    end_min, recurrence, remote_id, etag, updated_at, location) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     if (!stmt) return;
     stmt->Bind(1, uid);
     stmt->Bind(2, calendarId);
@@ -151,17 +151,24 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
     stmt->Bind(10, row->remoteId);
     stmt->Bind(11, row->etag);
     stmt->Bind(12, row->updatedAt);
+    stmt->Bind(13, row->location);
     stmt->Step();
     return;
   }
 
   // The etag is Google's bookkeeping and not the user's data, so it is refreshed whoever wins.
   // It is what a retried PATCH after a 412 needs in order to go through.
-  if (std::optional<Stmt> stmt =
-          db.Prepare("UPDATE events SET etag = ?, remote_id = ? WHERE uid = ?")) {
+  //
+  // The location rides along when there is none here: rows cached before schema v2 never had
+  // the column, and this is how they learn it without losing to a tie on updated_at. A location
+  // typed here is never overwritten this way.
+  if (std::optional<Stmt> stmt = db.Prepare(
+          "UPDATE events SET etag = ?, remote_id = ?, "
+          "  location = CASE WHEN location = '' THEN ? ELSE location END WHERE uid = ?")) {
     stmt->Bind(1, row->etag);
     stmt->Bind(2, row->remoteId);
-    stmt->Bind(3, uid);
+    stmt->Bind(3, row->location);
+    stmt->Bind(4, uid);
     stmt->Step();
   }
 
@@ -178,7 +185,7 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
   std::optional<Stmt> stmt = db.Prepare(
       "UPDATE events SET calendar_id = ?, title = ?, notes = ?, start_day = ?, start_min = ?, "
       "                  end_day = ?, end_min = ?, recurrence = ?, updated_at = ?, "
-      "                  deleted_at = NULL "
+      "                  location = ?, moved_from = NULL, deleted_at = NULL "
       "WHERE uid = ?");
   if (!stmt) return;
   stmt->Bind(1, calendarId);
@@ -190,7 +197,8 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
   stmt->Bind(7, row->endMin);
   stmt->Bind(8, row->recurrence);
   stmt->Bind(9, row->updatedAt);
-  stmt->Bind(10, uid);
+  stmt->Bind(10, row->location);
+  stmt->Bind(11, uid);
   stmt->Step();
 }
 
@@ -293,6 +301,7 @@ struct Outgoing {
   std::string container;  // calendar_id or list_id
   std::string remoteId;
   std::string etag;
+  std::string movedFrom;  // events only: the calendar Google still has it in
   EventRow event;
   TaskRow task;
 };
@@ -301,7 +310,7 @@ Outgoing LoadEvent(Db& db, const std::wstring& uid) {
   Outgoing out;
   std::optional<Stmt> stmt = db.Prepare(
       "SELECT calendar_id, title, notes, start_day, start_min, end_day, end_min, recurrence, "
-      "       remote_id, etag, updated_at, deleted_at "
+      "       remote_id, etag, updated_at, deleted_at, location, moved_from "
       "FROM events WHERE uid = ?");
   if (!stmt) return out;
   stmt->Bind(1, uid);
@@ -320,6 +329,8 @@ Outgoing LoadEvent(Db& db, const std::wstring& uid) {
   out.etag = stmt->IsNull(9) ? std::string() : stmt->Text(9);
   out.event.updatedAt = stmt->Int(10);
   out.deleted = !stmt->IsNull(11);
+  out.event.location = stmt->Text(12);
+  out.movedFrom = stmt->IsNull(13) ? std::string() : stmt->Text(13);
   return out;
 }
 
@@ -921,6 +932,33 @@ bool GoogleSync::PushPending(const std::wstring& auth) {
       });
     };
 
+    // A refusal that repeating will not fix. The count goes up, and after enough of them the
+    // operation is thrown away with the reason written down -- one poisoned row must not block
+    // everything behind it for ever.
+    const auto refuse = [&](const HttpResponse& answer) {
+      const int tries = item.tries + 1;
+      const std::wstring reason = std::format(L"{}: {}", answer.status, Why(answer));
+      LogError(L"sync: Google rechazó {} ({} de {}) -- {}", item.uid, tries, kMaxTries, reason);
+      store_.Run([&] {
+        if (tries >= kMaxTries) {
+          if (std::optional<Stmt> stmt =
+                  store_.db().Prepare("DELETE FROM pending_ops WHERE id = ?")) {
+            stmt->Bind(1, item.id);
+            stmt->Step();
+          }
+        } else if (std::optional<Stmt> stmt = store_.db().Prepare(
+                       "UPDATE pending_ops SET tries = ?, last_err = ? WHERE id = ?")) {
+          stmt->Bind(1, tries);
+          stmt->Bind(2, reason);
+          stmt->Bind(3, item.id);
+          stmt->Step();
+        }
+      });
+      if (tries >= kMaxTries) {
+        store_.Report(item.uid, L"Google no aceptó este cambio");
+      }
+    };
+
     // The row went away underneath its operation -- undone, or overwritten by a pull that won.
     if (!row.found) {
       forget();
@@ -931,6 +969,44 @@ bool GoogleSync::PushPending(const std::wstring& auth) {
     if (row.container == kLocalCalendarId || row.container == kLocalTaskListId) continue;
 
     const bool deleting = item.op == "delete" || row.deleted;
+    const unsigned edits = UpdateEdits(item.op);
+
+    // Moved to another calendar here: Google moves it with a POST on the calendar it is still
+    // in, and only then will a PATCH on the new one find it. A 404 there means it is not in the
+    // old calendar any more -- a move whose answer got lost -- so the PATCH gets its chance.
+    if (!isTask && !deleting && !row.remoteId.empty() && !row.movedFrom.empty()) {
+      HttpResponse moved;
+      const std::wstring movePath =
+          ToWide(MovePath(row.movedFrom, row.remoteId, row.container));
+      if (!http_.Send(kApiHost, L"POST", movePath, headers, {}, moved)) {
+        LogInfo(L"sync: sin conexión, quedan {} operaciones en la cola", queue.size());
+        return false;
+      }
+      if (ShouldRetry(moved.status)) {
+        LogError(L"sync: Google pide calma ({}), la cola espera", moved.status);
+        return false;
+      }
+      const bool movedOk = moved.status >= 200 && moved.status < 300;
+      if (!movedOk && moved.status != 404) {
+        refuse(moved);
+        continue;
+      }
+      if (movedOk) {
+        nlohmann::json parsed;
+        if (ReadJson(moved, parsed)) row.etag = Str(parsed, "etag");
+      }
+      LogInfo(L"sync: {} pasa de {} a {}", item.uid, ToWide(row.movedFrom),
+              ToWide(row.container));
+      store_.Run([&] {
+        if (std::optional<Stmt> stmt = store_.db().Prepare(
+                "UPDATE events SET moved_from = NULL, etag = ? WHERE uid = ?")) {
+          stmt->Bind(1, row.etag);
+          stmt->Bind(2, item.uid);
+          stmt->Step();
+        }
+      });
+    }
+
     std::wstring path;
     const wchar_t* verb = L"POST";
     std::string body;
@@ -971,11 +1047,11 @@ bool GoogleSync::PushPending(const std::wstring& auth) {
         verb = L"POST";
         path = base;
         // Our own identifier, which is what makes this safe to send twice.
-        body = WriteEvent(row.event, EventIdFor(item.uid)).dump();
+        body = WriteEvent(row.event, EventIdFor(item.uid), edits).dump();
       } else {
         verb = L"PATCH";
         path = base + L"/" + ToWide(UrlEscape(row.remoteId));
-        body = WriteEvent(row.event, {}).dump();
+        body = WriteEvent(row.event, {}, edits).dump();
         if (!row.etag.empty()) requestHeaders += L"If-Match: " + ToWide(row.etag) + L"\r\n";
       }
     }
@@ -1070,30 +1146,7 @@ bool GoogleSync::PushPending(const std::wstring& auth) {
       return false;
     }
 
-    // A refusal that repeating will not fix. The count goes up, and after enough of them the
-    // operation is thrown away with the reason written down -- one poisoned row must not block
-    // everything behind it for ever.
-    const int tries = item.tries + 1;
-    const std::wstring reason = std::format(L"{}: {}", status, Why(response));
-    LogError(L"sync: Google rechazó {} ({} de {}) -- {}", item.uid, tries, kMaxTries, reason);
-    store_.Run([&] {
-      if (tries >= kMaxTries) {
-        if (std::optional<Stmt> stmt =
-                store_.db().Prepare("DELETE FROM pending_ops WHERE id = ?")) {
-          stmt->Bind(1, item.id);
-          stmt->Step();
-        }
-      } else if (std::optional<Stmt> stmt = store_.db().Prepare(
-                     "UPDATE pending_ops SET tries = ?, last_err = ? WHERE id = ?")) {
-        stmt->Bind(1, tries);
-        stmt->Bind(2, reason);
-        stmt->Bind(3, item.id);
-        stmt->Step();
-      }
-    });
-    if (tries >= kMaxTries) {
-      store_.Report(item.uid, L"Google no aceptó este cambio");
-    }
+    refuse(response);
   }
   return true;
 }

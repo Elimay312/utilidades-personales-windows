@@ -336,3 +336,65 @@ TEST_CASE("the day before and the day after survive the ends of things") {
   // Something that is not a day comes back untouched rather than becoming a wrong one.
   REQUIRE(NextDay("mañana") == "mañana");
 }
+
+TEST_CASE("an edit names what it touched, and the queue reads it back") {
+  CHECK(UpdateOp(0) == "update");
+  CHECK(UpdateOp(kEditLocation | kEditRecurrence) == "update+location+recurrence");
+  CHECK(UpdateEdits("update") == 0u);
+  CHECK(UpdateEdits("update+recurrence") == kEditRecurrence);
+  CHECK(UpdateEdits(UpdateOp(kEditLocation | kEditRecurrence)) ==
+        (kEditLocation | kEditRecurrence));
+}
+
+TEST_CASE("a move says nothing about the repetition, an edit of it says all of it") {
+  EventRow row;
+  row.title = "Gym";
+  row.startDay = "2026-09-28";
+  row.startMin = 7 * 60;
+  row.endDay = "2026-09-28";
+  row.endMin = 8 * 60;
+  row.recurrence = "RRULE:FREQ=WEEKLY;BYDAY=MO";
+
+  // Dragged: Google keeps its rule and whatever EXDATEs Agenda never saw.
+  CHECK_FALSE(WriteEvent(row, "").contains("recurrence"));
+  // Edited: the rule goes up, and "Nunca" goes up as an empty list.
+  CHECK(WriteEvent(row, "", kEditRecurrence)["recurrence"] ==
+        nlohmann::json::array({"RRULE:FREQ=WEEKLY;BYDAY=MO"}));
+  row.recurrence.clear();
+  CHECK(WriteEvent(row, "", kEditRecurrence)["recurrence"] == nlohmann::json::array());
+}
+
+TEST_CASE("the parser's bare rule goes up with the prefix Google wants") {
+  EventRow row;
+  row.title = "Gym";
+  row.startDay = "2026-09-28";
+  row.startMin = 7 * 60;
+  row.endDay = "2026-09-28";
+  row.endMin = 8 * 60;
+  row.recurrence = "FREQ=WEEKLY;BYDAY=MO";
+  CHECK(WriteEvent(row, "abc")["recurrence"] ==
+        nlohmann::json::array({"RRULE:FREQ=WEEKLY;BYDAY=MO"}));
+  CHECK(RruleLine("RRULE:FREQ=DAILY") == "RRULE:FREQ=DAILY");
+}
+
+TEST_CASE("the location comes down, and goes up when there is one or it was emptied") {
+  nlohmann::json event = Timed("2026-09-23T17:00:00Z", "2026-09-23T18:00:00Z");
+  event["location"] = "Calle 10 # 5-20";
+  const std::optional<EventRow> row = ReadEvent(event);
+  REQUIRE(row.has_value());
+  CHECK(row->location == "Calle 10 # 5-20");
+  CHECK(WriteEvent(*row, "")["location"] == "Calle 10 # 5-20");
+
+  EventRow empty = *row;
+  empty.location.clear();
+  // Empty because Agenda never read it: say nothing, Google keeps its own.
+  CHECK_FALSE(WriteEvent(empty, "").contains("location"));
+  // Empty because somebody emptied it: say so.
+  CHECK(WriteEvent(empty, "", kEditLocation)["location"] == "");
+}
+
+TEST_CASE("moving to another calendar is a POST on the calendar it is still in") {
+  CHECK(MovePath("casa@gmail.com", "abc123", "trabajo#1@group.calendar.google.com") ==
+        "/calendar/v3/calendars/casa%40gmail.com/events/abc123/move?destination="
+        "trabajo%231%40group.calendar.google.com");
+}

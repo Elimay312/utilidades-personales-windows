@@ -483,3 +483,132 @@ TEST_CASE("a job handed to the writing thread has finished by the time Run retur
   });
   CHECK(CountRows(store->db(), "SELECT COUNT(*) FROM calendars WHERE id = 'desde-el-sync'") == 1);
 }
+
+TEST_CASE("an event is read back whole, location and rule included") {
+  Open store;
+  Draft draft = EventAt(L"Gym", Day(2026, 9, 28), 7 * 60, 8 * 60);
+  draft.recurrence = L"FREQ=WEEKLY;BYDAY=MO";
+  const DayItem shown = store->Create(draft);
+  store.settle();
+
+  const std::optional<EventDetail> event = store->Event(shown.uid);
+  REQUIRE(event.has_value());
+  CHECK(event->title == L"Gym");
+  CHECK(event->calendarId == kLocalCalendarId);
+  CHECK(event->startDay == Day(2026, 9, 28));
+  CHECK(event->startMin == 7 * 60);
+  CHECK(event->endMin == 8 * 60);
+  CHECK(event->recurrence == L"FREQ=WEEKLY;BYDAY=MO");
+  CHECK(event->location.empty());
+  CHECK_FALSE(store->Event(L"no-existe").has_value());
+}
+
+TEST_CASE("dragging an event five times leaves one update carrying every field it touched") {
+  Open store;
+  const DayItem shown = store->Create(EventAt(L"Dentista", Day(2026, 9, 23), 17 * 60, 18 * 60));
+  store.settle();
+
+  EventDetail edit = *store->Event(shown.uid);
+  for (int i = 1; i <= 5; ++i) {
+    edit.startMin = (17 + i) * 60;
+    edit.endMin = (18 + i) * 60;
+    store->UpdateEvent(edit, i == 2 ? kEditLocation : 0u);
+  }
+  edit.location = L"Calle 10";
+  store->UpdateEvent(edit, kEditRecurrence);
+  store.settle();
+
+  const std::optional<EventDetail> after = store->Event(shown.uid);
+  REQUIRE(after.has_value());
+  CHECK(after->startMin == 22 * 60);
+  CHECK(after->location == L"Calle 10");
+  // The creation and one update behind it, not six.
+  CHECK(store->PendingOpCount() == 2);
+  CHECK(CountRows(store->db(),
+                  "SELECT COUNT(*) FROM pending_ops WHERE op = 'update+location+recurrence'") ==
+        1);
+  CHECK(store->ItemsForDay(Day(2026, 9, 23), false)[0].startMin == 22 * 60);
+}
+
+TEST_CASE("changing calendar writes down where Google has it, once, and forgets it going back") {
+  Open store;
+  REQUIRE(store->db().RunOnce(
+      "INSERT INTO calendars (id, kind, title, color) VALUES "
+      "('casa', 'calendar', 'Casa', 1), ('trabajo', 'calendar', 'Trabajo', 2)"));
+  Draft draft = EventAt(L"Reunión", Day(2026, 9, 23), 9 * 60, 10 * 60);
+  draft.calendar = "casa";
+  const DayItem shown = store->Create(draft);
+  store.settle();
+  CHECK(shown.color == 1u);  // the chosen calendar's colour, on the first frame
+
+  const auto movedFrom = [&store, &shown] {
+    std::optional<Stmt> stmt = store->db().Prepare("SELECT moved_from FROM events WHERE uid = ?");
+    REQUIRE(stmt.has_value());
+    stmt->Bind(1, shown.uid);
+    REQUIRE(stmt->Step());
+    return stmt->IsNull(0) ? std::string("(null)") : stmt->Text(0);
+  };
+
+  // Never sent: the creation will simply go to the new calendar, there is nothing to move.
+  EventDetail edit = *store->Event(shown.uid);
+  edit.calendarId = "trabajo";
+  store->UpdateEvent(edit, 0);
+  store.settle();
+  CHECK(movedFrom() == "(null)");
+
+  // Already at Google, in 'trabajo': moving it to 'local' remembers 'trabajo'...
+  REQUIRE(store->db().RunOnce("UPDATE events SET remote_id = 'r1'"));
+  edit.calendarId = kLocalCalendarId;
+  store->UpdateEvent(edit, 0);
+  store.settle();
+  CHECK(movedFrom() == "trabajo");
+  // ...keeps remembering it through a second move...
+  edit.calendarId = "casa";
+  store->UpdateEvent(edit, 0);
+  store.settle();
+  CHECK(movedFrom() == "trabajo");
+  // ...and forgets it when it goes back where Google has it.
+  edit.calendarId = "trabajo";
+  store->UpdateEvent(edit, 0);
+  store.settle();
+  CHECK(movedFrom() == "(null)");
+}
+
+TEST_CASE("a replaced operation never takes the number of one a pass may still be sending") {
+  // pending_ops.id is a rowid: delete the highest and the next insert reuses it. A pass that
+  // was sending the old operation would delete the new one by that number when it finished.
+  Open store;
+  const DayItem shown = store->Create(EventAt(L"Dentista", Day(2026, 9, 23), 17 * 60, 18 * 60));
+  store.settle();
+  REQUIRE(store->db().RunOnce("UPDATE events SET remote_id = 'r1'"));
+  const auto highest = [&store] {
+    return CountRows(store->db(), "SELECT COALESCE(MAX(id), 0) FROM pending_ops");
+  };
+
+  EventDetail edit = *store->Event(shown.uid);
+  edit.startMin = 9 * 60;
+  store->UpdateEvent(edit, 0);
+  store.settle();
+  // The creation went up meanwhile, and a pass is now holding the update.
+  REQUIRE(store->db().RunOnce("DELETE FROM pending_ops WHERE op = 'create'"));
+  const int held = highest();
+
+  edit.recurrence = L"RRULE:FREQ=WEEKLY;BYDAY=WE";
+  store->UpdateEvent(edit, kEditRecurrence);
+  store.settle();
+  CHECK(highest() > held);
+  CHECK(store->PendingOpCount() == 1);
+  // What the pass does when its request comes back: forget the one it sent, by its number.
+  REQUIRE(store->db().RunOnce(("DELETE FROM pending_ops WHERE id = " + std::to_string(held))
+                                  .c_str()));
+  CHECK(CountRows(store->db(),
+                  "SELECT COUNT(*) FROM pending_ops WHERE op = 'update+recurrence'") == 1);
+
+  // The same holds for a deletion queued behind an update in flight.
+  const int before = highest();
+  store->Remove(shown.uid, /*isTask=*/false);
+  store.settle();
+  CHECK(highest() > before);
+  CHECK(CountRows(store->db(), "SELECT COUNT(*) FROM pending_ops WHERE op = 'delete'") == 1);
+  CHECK(store->PendingOpCount() == 1);
+}

@@ -49,6 +49,7 @@ struct EventRow {
   std::string etag;
   std::string title;
   std::string notes;
+  std::string location;
   std::string startDay;
   std::optional<int> startMin;  // empty means all day
   std::string endDay;           // INCLUSIVE: Google's exclusive end already had its day taken off
@@ -123,7 +124,21 @@ std::optional<TaskRow> ReadTask(const nlohmann::json& task);
 //
 // `id` empty leaves the field out, which is what a modification wants; a creation passes
 // EventIdFor(uid).
-nlohmann::json WriteEvent(const EventRow& row, std::string_view id);
+//
+// `edits` is what the queued operation says changed beyond the times and the title
+// (kEditLocation, kEditRecurrence in data/model.h). A modification only mentions the location
+// when it has one or when it was emptied on purpose, and the repetition only when it was
+// edited: Agenda keeps the RRULE and not the EXDATEs, so sending the rule with every move would
+// bring back the occurrences somebody deleted on the web. A creation sends whatever it has.
+nlohmann::json WriteEvent(const EventRow& row, std::string_view id, unsigned edits = 0);
+
+// The rule as Google takes it: with its "RRULE:" in front. The parser writes it without one,
+// and Google refuses the bare "FREQ=WEEKLY" with a 400.
+std::string RruleLine(std::string_view rule);
+
+// POST .../calendars/{from}/events/{id}/move?destination={to}: how Google moves an event to
+// another calendar. A PATCH with another calendar in the path is a 404, not a move.
+std::string MovePath(std::string_view from, std::string_view remoteId, std::string_view to);
 nlohmann::json WriteTask(const TaskRow& row);
 
 // Our uid as an identifier Google will accept: the hexadecimal without dashes, lowercase.

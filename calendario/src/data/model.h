@@ -139,6 +139,7 @@ struct Reminder {
   std::optional<int> endMin;
   int minutesBefore = 0;
   long long at = 0;
+  std::uint32_t color = 0;  // its calendar's, for the dot the island draws
 };
 
 // A day that has something on it, and the colour its dot takes.

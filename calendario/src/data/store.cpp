@@ -263,7 +263,7 @@ std::vector<Reminder> Store::DueReminders(long long from, long long to) {
 
   std::optional<Stmt> stmt = db_.Prepare(
       "SELECT e.uid, e.title, e.location, e.start_day, e.start_min, e.end_min, e.recurrence, "
-      "       COALESCE(e.reminders, c.reminders) "
+      "       COALESCE(e.reminders, c.reminders), c.color "
       "FROM events e JOIN calendars c ON c.id = e.calendar_id "
       "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
       "  AND COALESCE(e.reminders, c.reminders) != '' "
@@ -314,6 +314,7 @@ std::vector<Reminder> Store::DueReminders(long long from, long long to) {
         reminder.endMin = stmt->OptInt(5);
         reminder.minutesBefore = lead;
         reminder.at = due;
+        reminder.color = static_cast<std::uint32_t>(stmt->Int(8));
         out.push_back(std::move(reminder));
       }
       if (rule.empty()) break;

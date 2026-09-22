@@ -11,7 +11,7 @@ Las decisiones de producto, el stack y el sistema de diseño están en [CLAUDE.m
 
 **Versión 1.0.0: lista para usar a diario.** Se instala con un solo archivo, arranca con
 Windows, se configura desde su propia ventana y avisa de los recordatorios de Google con
-notificaciones nativas. Se maneja entera con el teclado, Narrador la lee, respeta el alto
+notificaciones nativas, o en la [Isla](../isla/README.md) si está corriendo. Se maneja entera con el teclado, Narrador la lee, respeta el alto
 contraste y el cambio de escala entre monitores.
 
 Agenda se queda residente en la bandeja. El atajo abre un popup con fondo acrylic en la esquina
@@ -321,6 +321,15 @@ de hora; lo demás ya pasó. Un calendario oculto en la barra lateral no avisa.
 
 Las notificaciones nativas necesitan el acceso del menú Inicio que crea el instalador. Una build
 lanzada desde su carpeta avisa con el globo de la bandeja, que Windows muestra igual.
+
+**Con la [Isla](../isla/README.md) corriendo, el aviso va a la isla y no hay toast.** Asoma ocho
+segundos con el título y la hora, y después queda un punto del color del calendario junto a la
+isla; al pasar el ratón por el punto (o con `Ctrl+Alt+I`) se abre la tarjeta con **Terminado**,
+**5 min**, **10 min** y **Abrir**. Terminado cierra el aviso; los otros dos lo vuelven a dar
+pasado ese rato, y Abrir trae la app con el evento abierto. Si el evento termina sin respuesta,
+el aviso se retira solo. Cada proyecto funciona sin el otro: si la isla no está, o tiene ya tres
+avisos esperando, Agenda saca su toast de siempre. Hablan por una tubería con nombre de la isla,
+con el protocolo y sus límites en [`isla/SEGURIDAD.md` §3.7](../isla/SEGURIDAD.md).
 
 ### Accesibilidad
 

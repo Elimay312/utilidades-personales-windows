@@ -78,6 +78,8 @@ class PopupWindow final : public A11ySource {
   void Hide();
   // Opens -- or keeps open -- on `day`: where a click on a reminder takes you.
   void ShowDay(Date day);
+  // Opens the app on `day` with the event `uid` in the detail panel: "Abrir" in the island.
+  void ShowEvent(const std::wstring& uid, Date day);
 
   // The expansion, and back. Both can be called halfway through the other: the spring simply
   // turns round from wherever it is.

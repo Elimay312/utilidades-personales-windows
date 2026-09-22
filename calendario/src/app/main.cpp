@@ -11,6 +11,7 @@
 #include <string_view>
 
 #include "app/hotkey.h"
+#include "app/isla.h"
 #include "app/monitors.h"
 #include "app/toast.h"
 #include "app/tray.h"
@@ -47,6 +48,10 @@ struct App {
   std::optional<sync::GoogleSync> sync;
   SettingsWindow settings;
   Preferences prefs;
+  // The island next door (isla/), when it is running; the toast when it is not.
+  Isla isla;
+  // Snoozed from the island: said again at `first`, by whichever of the two is there then.
+  std::vector<std::pair<long long, Reminder>> snoozed;
   HWND hwnd = nullptr;
   HMONITOR monitor = nullptr;
   long long remindedUpTo = 0;  // the WallMinute the reminders have been checked up to
@@ -74,24 +79,64 @@ long long NowWall() {
   return WallMinute(today, local.wHour * 60 + local.wMinute);
 }
 
-// Everything that fell due since the last look, said once. A toast when Windows takes one, and
-// the tray balloon otherwise -- a build run from its folder has no Start Menu shortcut, and
-// Windows shows the balloon as a notification all the same.
+// Said without the island: a toast when Windows takes one, and the tray balloon otherwise -- a
+// build run from its folder has no Start Menu shortcut, and Windows shows the balloon as a
+// notification all the same.
+void Toast(App& app, const Reminder& reminder, long long now) {
+  const bool toast = ShowReminderToast(reminder, now, app.hwnd);
+  if (!toast) {
+    const std::wstring text = ReminderWhen(reminder, now) + L"\n" + ReminderSoon(reminder, now);
+    app.tray.Notify(reminder.title.c_str(), text.c_str());
+  }
+  LogInfo(L"reminder: {} ({} min antes, {})", reminder.title, reminder.minutesBefore,
+          toast ? L"toast" : L"globo de la bandeja");
+}
+
+// The island first, when it is there: never both, so one reminder is one notice.
+void Deliver(App& app, const Reminder& reminder, long long now) {
+  if (app.isla.Offer(reminder, now)) {
+    LogInfo(L"reminder: {} ({} min antes, isla)", reminder.title, reminder.minutesBefore);
+    return;
+  }
+  Toast(app, reminder, now);
+}
+
+// Everything that fell due since the last look, said once, and whatever was snoozed until now.
 void CheckReminders(App& app) {
   if (!app.store.IsOpen()) return;
   const long long now = NowWall();
+  app.isla.Withdraw(now);
   if (now <= app.remindedUpTo) return;
   const long long from = (std::max)(app.remindedUpTo, now - kStaleReminderMinutes);
-  for (const Reminder& reminder : app.store.DueReminders(from, now)) {
-    const bool toast = ShowReminderToast(reminder, now, app.hwnd);
-    if (!toast) {
-      const std::wstring text = ReminderWhen(reminder, now) + L"\n" + ReminderSoon(reminder, now);
-      app.tray.Notify(reminder.title.c_str(), text.c_str());
-    }
-    LogInfo(L"reminder: {} ({} min antes, {})", reminder.title, reminder.minutesBefore,
-            toast ? L"toast" : L"globo de la bandeja");
-  }
+  for (const Reminder& reminder : app.store.DueReminders(from, now)) Deliver(app, reminder, now);
+  std::erase_if(app.snoozed, [&app, now](const std::pair<long long, Reminder>& snoozed) {
+    if (snoozed.first > now) return false;
+    Deliver(app, snoozed.second, now);
+    return true;
+  });
   app.remindedUpTo = now;
+}
+
+// What the person pressed in the island. The island only hands back the id of a button this
+// side gave it; what it means is decided here.
+void OnIslaAnswers(App& app) {
+  const long long now = NowWall();
+  for (const Isla::Answer& answer : app.isla.TakeAnswers()) {
+    const Reminder& reminder = answer.reminder;
+    if (answer.button.empty()) {
+      // The island went away -- closed, or full -- with the reminder unanswered. It is not
+      // lost: it is said the other way.
+      Toast(app, reminder, now);
+    } else if (answer.button == Isla::kSnooze5 || answer.button == Isla::kSnooze10) {
+      app.snoozed.emplace_back(now + (answer.button == Isla::kSnooze5 ? 5 : 10), reminder);
+    } else if (answer.button == Isla::kOpen) {
+      app.popup.ShowEvent(reminder.uid, reminder.day);
+    }
+    // "hecho" is the reminder attended to: nothing more is said. The notes of an event will
+    // hang from here when that module exists.
+    LogInfo(L"isla: {} -> {}", reminder.title,
+            answer.button.empty() ? std::wstring(L"sin respuesta") : Widen(answer.button));
+  }
 }
 
 // The one thing CLAUDE.md says to stop and ask about before doing: opening the browser. The
@@ -210,6 +255,10 @@ LRESULT CALLBACK AppWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
                        L"Connect again from this icon. What you wrote is saved and goes up as "
                        L"soon as you give permission again.").data());
       LogInfo(L"google: permiso caducado o revocado, hay que volver a conectar");
+      return 0;
+
+    case kIslaAnswerMessage:
+      OnIslaAnswers(*app);
       return 0;
 
     case kReminderOpenMessage:
@@ -336,6 +385,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     return 2;
   }
   app.hwnd = hwnd;
+  app.isla.SetNotifyWindow(hwnd);
   SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
   ShowWindow(hwnd, SW_SHOWNA);
 
@@ -436,6 +486,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   // The network goes first. Cancelling closes the request handle from this thread, so quitting
   // in the middle of a pass is a moment and not the thirty seconds of a receive timeout.
   if (app.sync) app.sync->Stop();
+  app.isla.Stop();
   UnregisterHotKey(hwnd, kHotkeyId);
   app.tray.Remove();
   CoUninitialize();

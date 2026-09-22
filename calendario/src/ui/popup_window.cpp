@@ -516,6 +516,13 @@ void PopupWindow::ShowDay(Date day) {
   if (hwnd_ != nullptr && visible_) SelectDay(day);
 }
 
+void PopupWindow::ShowEvent(const std::wstring& uid, Date day) {
+  Show();
+  if (hwnd_ == nullptr || !visible_) return;
+  Expand(day);
+  OpenDetailFor(uid);
+}
+
 void PopupWindow::PreferencesChanged() {
   const Theme theme = ResolveTheme(ThemeChoice());
   const bool flipped = theme.light != theme_.light;

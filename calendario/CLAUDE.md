@@ -53,7 +53,7 @@ Un calendario nativo para Windows escrito en C++ que se abre con un atajo global
 | Secretos | Refresh token cifrado con `CryptProtectData` (DPAPI) |
 | Tests | Catch2 v3 (vcpkg) |
 | DPI | Per-Monitor v2 en el manifiesto; todo el layout en DIPs. El popup lee el DPI del **monitor** (`MonitorDpi` en `layout.h`), no el de la ventana: Windows no le manda `WM_DPICHANGED` cuando cambia la escala de su propio monitor (medido en la fase 7) |
-| Notificaciones | Toast de Windows por WinRT con WRL (`runtimeobject`, del SDK), escenario *reminder*; necesita el acceso del menú Inicio con el AUMID `Agenda.Desktop` (`src/core/aumid.h`) que crea el instalador |
+| Notificaciones | Toast de Windows por WinRT con WRL (`runtimeobject`, del SDK), escenario *reminder*; necesita el acceso del menú Inicio con el AUMID `Agenda.Desktop` (`src/core/aumid.h`) que crea el instalador. Si la [Isla](../isla/README.md) corre, el recordatorio va antes a su buzón (`\\.\pipe\IslaDinamica.avisos`, protocolo en `isla/SEGURIDAD.md` §3.7, cliente en `src/app/isla.*`) y el toast queda de respaldo |
 | Accesibilidad | UI Automation (`uiautomationcore`) con un proveedor genérico sobre una lista plana de nodos (`src/ui/accessibility.*`) |
 | Instalación | Instalador nativo propio (`Instalar-Agenda.exe`, `src/installer/`), por usuario y sin administrador; ni MSIX ni WiX (decisión de la fase 7) |
 
@@ -78,7 +78,7 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
 - **Tarjeta de evento:** barra de color de 3 px a la izquierda, hora en texto secundario y título en primario.
 - **Movimiento:**
   - Apertura: fade de 0 a 1 y desplazamiento de 8 px hacia arriba en 160 ms (ease-out).
-  - Cierre: 120 ms.
+  - Cierre: 120 ms. Antes de fundirse se quitan el material y el borde de DWM y el panel se pinta opaco: DWM los dibuja fuera del visual que se funde y, puestos, quedaban como un fantasma gris.
   - Expansión del popup a la app: spring (rigidez ~300, amortiguación ~30) que anima tamaño, posición y radio a la vez. Medido a 125 %: llega al tamaño final en ~320 ms y se asienta en ~520 ms.
 - **La app expandida (fase 6):**
   - Ocupa el 80 % del área de trabajo, centrada. Tamaño de diseño: 1536×826 DIP.

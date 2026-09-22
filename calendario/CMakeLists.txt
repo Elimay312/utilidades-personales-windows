@@ -115,6 +115,7 @@ target_compile_definitions(agenda_data PRIVATE UNICODE _UNICODE NOMINMAX WIN32_L
 target_link_libraries(agenda_data PUBLIC SQLite::SQLite3 nlohmann_json::nlohmann_json)
 
 add_executable(Agenda WIN32
+  src/app/isla.cpp
   src/app/main.cpp
   src/app/monitors.cpp
   src/app/toast.cpp

@@ -54,6 +54,11 @@ sigue [SemVer](https://semver.org/lang/es/).
   contrario. `--silent` para las dos cosas. `empaquetar.ps1` lo genera.
 - Fase 7: capturas `configuracion`, `configuracion-claro`, `popup-contraste` y
   `app-semana-contraste`.
+- **Los recordatorios van a la Isla** cuando está corriendo, como la isla de Xiaomi: asoman,
+  quedan como un punto del color del calendario y al abrirlos ofrecen Terminado, posponer 5 o
+  10 minutos y Abrir, que trae la app con el evento abierto (`src/app/isla.*`). Sin la isla, o
+  con su buzón lleno, sale el toast de siempre. Un aviso sin responder se retira al terminar su
+  evento.
 
 ### Cambiado
 
@@ -81,6 +86,10 @@ sigue [SemVer](https://semver.org/lang/es/).
 - Con la escala de su propio monitor cambiada, Windows no avisa a la ventana del popup ni le
   cambia el DPI (a una ventana con barra de título del mismo proceso sí). Agenda compara ahora
   el DPI del monitor al cambiar los ajustes o las pantallas y se reescala sola.
+- **Cerrar el popup dejaba un fantasma**: el material y el borde redondeado los dibuja DWM
+  detrás de la ventana, fuera del visual que se funde, así que durante los 120 ms del cierre
+  quedaba un panel gris entero con el contenido apagándose dentro. Ahora el cierre quita el
+  material y el borde, pinta el panel opaco y se funde todo a la vez.
 
 ## [0.6.0] - 2026-09-22
 

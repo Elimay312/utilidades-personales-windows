@@ -11,6 +11,7 @@ reunidas en este repositorio para poder clonarlas y probarlas en otro equipo.
 
 | Proyecto | Qué es | Estado |
 |---|---|---|
+| [`calendario/`](calendario/README.md) | **Agenda**: un calendario en C++ que sale con un atajo; escribes `mañana 5pm dentista` y lo crea, sincronizado con Google Calendar y Tasks. | 1.0.0, con instalador. |
 | [`dock/`](dock/README.md) | Un dock estilo macOS: magnificación, efecto genio, uno por pantalla, miniaturas de ventanas. | En uso diario. Falta pulir rendimiento. |
 | [`hud/`](hud/README.md) | El aviso de volumen, rehecho: cápsula de cristal abajo y centrada, que se transforma en vez de ir y venir. Las teclas son suyas, así que el recuadro gris de Windows no sale. | Funcionando en tres pantallas. Falta usarlo unos días. |
 | [`isla/`](isla/README.md) | Una isla dinámica en el borde superior de la pantalla en la que estés trabajando: qué suena, de quién, cuánto queda, y poder pausarlo. Más pomodoro, batería y volumen —con el número y por qué altavoces sale. | Funcionando. Falta probarla en otros equipos. |
@@ -55,6 +56,19 @@ contestando del anterior—. El HUD lo midió con una sonda, la isla tenía exac
 mismo fallo latente escrito desde su primer día, y arreglarlo allí costó leer el
 `CHANGELOG` del vecino. Eso es lo que estos proyectos comparten de verdad: no código, sino
 lo que a cada uno le costó averiguar.
+
+### La segunda vez sí hizo falta hablar
+
+Los recordatorios de **Agenda** tenían que salir en la **isla**, como en la de Xiaomi, y ahí
+el sistema no tiene nada que preguntar: el recordatorio solo lo sabe Agenda. Así que se hizo
+la interfaz, y la más pequeña que funciona: **una tubería con nombre y una línea de JSON**.
+Agenda deja un aviso —título, línea, color, botones— y la isla le contesta qué botón se
+pulsó. Sin biblioteca compartida, sin que ninguno cargue código del otro.
+
+La regla de arriba se sigue cumpliendo: **cada uno funciona solo.** Si la isla no está,
+Agenda saca su notificación de Windows; si Agenda no está, a la isla no le llega nada. Y como
+la isla era la que abría una puerta, la enmienda de sus reglas se escribió y se commiteó
+antes que el código: [`isla/SEGURIDAD.md` §3.7](isla/SEGURIDAD.md).
 
 ## Sobre las reglas de seguridad
 

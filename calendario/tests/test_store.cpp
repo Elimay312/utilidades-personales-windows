@@ -289,3 +289,89 @@ TEST_CASE("what was created is still there after the app is closed and opened ag
 
   Erase(file);
 }
+
+TEST_CASE("what is created lands in the calendar flagged as the default one") {
+  Open store;
+  const Date day = Day(2026, 9, 23);
+
+  // A Google calendar arrives and takes the flag. The seeded local one keeps existing -- the
+  // schema will not let a calendar with rows hanging off it be deleted -- it just stops being
+  // where new things go.
+  REQUIRE(store->db().RunOnce(
+      "INSERT INTO calendars (id, kind, title, color, is_primary) "
+      "VALUES ('eli@gmail.com', 'calendar', 'Personal', 0x7CB342, 1)"));
+  REQUIRE(store->db().RunOnce("UPDATE calendars SET is_primary = 0 WHERE id = 'local'"));
+
+  const DayItem shown = store->Create(EventAt(L"Dentista", day, 17 * 60, 18 * 60));
+  store.settle();
+
+  // The colour on the first frame is already the new calendar's, because Create reads it before
+  // it queues anything.
+  CHECK(shown.color == 0x7CB342);
+
+  std::optional<Stmt> stmt =
+      store->db().Prepare("SELECT calendar_id FROM events WHERE uid = ?");
+  REQUIRE(stmt.has_value());
+  stmt->Bind(1, shown.uid);
+  REQUIRE(stmt->Step());
+  CHECK(stmt->Text(0) == "eli@gmail.com");
+}
+
+TEST_CASE("undoing something that was never sent takes it away for good") {
+  Open store;
+  const Date day = Day(2026, 9, 23);
+
+  const DayItem shown = store->Create(EventAt(L"Dentista", day, 17 * 60, 18 * 60));
+  store.settle();
+  store->Remove(shown.uid, /*isTask=*/false);
+  store.settle();
+
+  CHECK(store->ItemsForDay(day, false).empty());
+  CHECK(CountRows(store->db(), "SELECT COUNT(*) FROM events") == 0);
+  // Nothing was ever up there, so there is nothing to tell Google about.
+  CHECK(store->PendingOpCount() == 0);
+}
+
+TEST_CASE("undoing something already at Google leaves a tombstone and a deletion queued") {
+  Open store;
+  const Date day = Day(2026, 9, 23);
+
+  const DayItem shown = store->Create(EventAt(L"Dentista", day, 17 * 60, 18 * 60));
+  store.settle();
+
+  // Stand in for a pass that already pushed it: the row now has an identity at Google.
+  std::optional<Stmt> sent =
+      store->db().Prepare("UPDATE events SET remote_id = 'abc', etag = '\"1\"' WHERE uid = ?");
+  REQUIRE(sent.has_value());
+  sent->Bind(1, shown.uid);
+  bool ok = false;
+  sent->Step(&ok);
+  REQUIRE(ok);
+  REQUIRE(store->db().RunOnce("DELETE FROM pending_ops"));
+
+  store->Remove(shown.uid, /*isTask=*/false);
+  store.settle();
+
+  // Gone from the day, because that is what undo means to whoever pressed it.
+  CHECK(store->ItemsForDay(day, false).empty());
+  // But still in the table, as a tombstone. Deleting the row here would leave the event on the
+  // phone for good and bring it back on the next pass.
+  CHECK(CountRows(store->db(), "SELECT COUNT(*) FROM events WHERE deleted_at IS NOT NULL") == 1);
+  CHECK(CountRows(store->db(), "SELECT COUNT(*) FROM pending_ops WHERE op = 'delete'") == 1);
+}
+
+TEST_CASE("a job handed to the writing thread has finished by the time Run returns") {
+  Open store;
+  // This is how the synchronisation touches SQLite: one connection, one writer, and no
+  // second connection to disagree with the first about what a transaction is.
+  int ran = 0;
+  store->Run([&ran] { ++ran; });
+  CHECK(ran == 1);
+
+  store->Run([&store] {
+    REQUIRE(store->db().RunOnce(
+        "INSERT INTO calendars (id, kind, title, color) "
+        "VALUES ('desde-el-sync', 'calendar', 'Trabajo', 0x4A8BF5)"));
+  });
+  CHECK(CountRows(store->db(), "SELECT COUNT(*) FROM calendars WHERE id = 'desde-el-sync'") == 1);
+}

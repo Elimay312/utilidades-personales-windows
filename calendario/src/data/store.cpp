@@ -133,6 +133,28 @@ void Store::Drain() {
   idle_.wait(lock, [this] { return jobs_.empty() && !busy_; });
 }
 
+void Store::Run(std::function<void()> job) {
+  if (!worker_.joinable()) return;
+
+  std::mutex done;
+  std::condition_variable ready;
+  bool finished = false;
+  // Captured by reference, which is safe for exactly one reason: this function does not return
+  // until the job has run. Stopping the worker drains what is queued before it exits, so the
+  // wait below cannot outlive the queue.
+  Enqueue([&] {
+    job();
+    {
+      std::lock_guard<std::mutex> lock(done);
+      finished = true;
+    }
+    ready.notify_one();
+  });
+
+  std::unique_lock<std::mutex> lock(done);
+  ready.wait(lock, [&finished] { return finished; });
+}
+
 void Store::Notify() {
   if (hwnd_ != nullptr) PostMessageW(hwnd_, kStoreChangedMessage, 0, 0);
 }
@@ -269,6 +291,19 @@ bool Store::QueueOp(const char* entity, const std::wstring& uid, const char* op)
   return ok;
 }
 
+std::string Store::DefaultCalendar(bool isTask) {
+  const char* kind = isTask ? "tasklist" : "calendar";
+  if (std::optional<Stmt> stmt = db_.Prepare(
+          "SELECT id FROM calendars WHERE kind = ? AND is_primary = 1 AND visible = 1 "
+          "ORDER BY sort, id LIMIT 1")) {
+    stmt->Bind(1, kind);
+    if (stmt->Step()) return stmt->Text(0);
+  }
+  // Nothing flagged means no account yet, or a calendar that has been hidden since it was
+  // chosen. Either way what is created has to land somewhere it can be seen.
+  return isTask ? kLocalTaskListId : kLocalCalendarId;
+}
+
 DayItem Store::Create(const Draft& draft) {
   DayItem item;
   item.uid = NewUid();
@@ -280,7 +315,7 @@ DayItem Store::Create(const Draft& draft) {
 
   // The colour the card paints with has to be right on the first frame, so it is read here
   // instead of waited for. One row, by primary key.
-  const char* list = draft.isTask ? kLocalTaskListId : kLocalCalendarId;
+  const std::string list = DefaultCalendar(draft.isTask);
   if (std::optional<Stmt> stmt = db_.Prepare("SELECT color FROM calendars WHERE id = ?")) {
     stmt->Bind(1, list);
     if (stmt->Step()) item.color = static_cast<std::uint32_t>(stmt->Int(0));
@@ -387,18 +422,46 @@ void Store::Remove(const std::wstring& uid, bool isTask) {
       Report(uid, L"no se pudo deshacer");
       return;
     }
-    bool ok = false;
-    if (std::optional<Stmt> stmt = db_.Prepare(isTask ? "DELETE FROM tasks WHERE uid = ?"
-                                                      : "DELETE FROM events WHERE uid = ?")) {
+
+    // Has this ever been up there? That is the whole question, and it decides between a delete
+    // and a tombstone. Five seconds is plenty for a creation to have reached Google.
+    bool sent = false;
+    if (std::optional<Stmt> stmt =
+            db_.Prepare(isTask ? "SELECT remote_id IS NOT NULL FROM tasks WHERE uid = ?"
+                               : "SELECT remote_id IS NOT NULL FROM events WHERE uid = ?")) {
       stmt->Bind(1, uid);
-      stmt->Step(&ok);
+      if (stmt->Step()) sent = stmt->Int(0) != 0;
     }
+
+    bool ok = false;
+    if (sent) {
+      const std::int64_t now = NowSeconds();
+      if (std::optional<Stmt> stmt = db_.Prepare(
+              isTask ? "UPDATE tasks SET deleted_at = ?, updated_at = ? WHERE uid = ?"
+                     : "UPDATE events SET deleted_at = ?, updated_at = ? WHERE uid = ?")) {
+        stmt->Bind(1, now);
+        stmt->Bind(2, now);
+        stmt->Bind(3, uid);
+        stmt->Step(&ok);
+      }
+    } else {
+      if (std::optional<Stmt> stmt = db_.Prepare(isTask ? "DELETE FROM tasks WHERE uid = ?"
+                                                        : "DELETE FROM events WHERE uid = ?")) {
+        stmt->Bind(1, uid);
+        stmt->Step(&ok);
+      }
+    }
+
+    // Whatever was queued for this row is void either way: a creation that is being undone has
+    // nothing left to create, and an edit has nothing left to edit.
     if (ok) {
       if (std::optional<Stmt> stmt = db_.Prepare("DELETE FROM pending_ops WHERE uid = ?")) {
         stmt->Bind(1, uid);
         stmt->Step(&ok);
       }
     }
+    if (ok && sent) ok = QueueOp(isTask ? "task" : "event", uid, "delete");
+
     if (!ok || !tx.Commit()) {
       Report(uid, L"no se pudo deshacer");
       return;

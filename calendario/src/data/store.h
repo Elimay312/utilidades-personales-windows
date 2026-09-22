@@ -64,9 +64,18 @@ class Store {
   // interface takes the row out again.
   DayItem Create(const Draft& draft);
   void SetDone(const std::wstring& uid, bool done);
-  // Undo: the row and its queued operation leave together, in one transaction. Nothing has
-  // been sent yet, so there is no tombstone to leave behind.
+  // Undo. While nothing had ever been sent, the row and its queued operation could just leave
+  // together. With an account connected that is no longer true: the five seconds of the notice
+  // are long enough for the creation to already be up at Google, and a row deleted here would
+  // leave the event on the phone for good and bring it back on the next pass. So a row that has
+  // a remote_id becomes a tombstone with a deletion queued behind it, and only one that was
+  // never sent goes for good.
   void Remove(const std::wstring& uid, bool isTask);
+
+  // Where new things land: the calendar flagged is_primary for its kind. Seeded on 'local',
+  // moved onto a Google calendar when one is connected, and moved again from the tray menu.
+  // One column that already existed instead of a settings store nobody asked for.
+  std::string DefaultCalendar(bool isTask);
 
   struct Failure {
     std::wstring uid;
@@ -77,6 +86,27 @@ class Store {
 
   // Waits until the queue is empty. For the tests, and for closing down.
   void Drain();
+
+  // --- What the synchronisation uses --------------------------------------------------
+  // Runs `job` on the writing thread and waits for it. This is how src/sync touches SQLite,
+  // and the reason is the one this file has always given: one connection, one writer. The
+  // network does NOT come through here -- the requests happen on the synchronisation thread
+  // and only the short writes are handed over, so a creation never waits behind a download.
+  //
+  // Never call this from inside a job. It would be waiting for the thread it is running on.
+  void Run(std::function<void()> job);
+
+  // The connection, for that same engine, valid only inside a Run.
+  //
+  // It is a hole, and it is open on purpose: the alternative was fifteen methods on Store that
+  // each say "the sync needs this SQL". What must never come through it is a write to
+  // pending_ops. Create, SetDone and Remove are the only three functions that queue anything
+  // (see QueueOp), the engine calls none of them, and that -- not a rule somebody has to
+  // remember -- is the whole of why what comes down from Google never goes back up.
+  Db& db() { return db_; }
+
+  // "Something changed, come and look." Once per pass, not once per event.
+  void Touch() { Notify(); }
 
  private:
   void StartWorker();

@@ -141,7 +141,10 @@ std::optional<Clock> ReadClock(std::wstring_view word) {
     const std::wstring_view minutes = word.substr(colon + 1);
     if (!AllDigits(hours) || !AllDigits(minutes) || minutes.size() != 2) return std::nullopt;
     if (Number(hours) > 23 || Number(minutes) > 59) return std::nullopt;
-    return Clock{Number(hours) * 60 + Number(minutes), true, false};
+    // "4:05" is how the time is written here in the afternoon too, so it goes by the same
+    // eight-to-twenty rule as "a las 4". "04:05", "16:05" and "12:30" say which one they mean.
+    const bool twelve = hours.size() == 1 || (hours[0] != L'0' && Number(hours) < 12);
+    return Clock{Number(hours) * 60 + Number(minutes), !twelve || Number(hours) == 0, false};
   }
 
   if (word.size() > 2 && (word.ends_with(L"am") || word.ends_with(L"pm"))) {
@@ -173,6 +176,7 @@ struct TimeHit {
   int minute = kNoTime;
   size_t from = 0;  // token indices, half open
   size_t to = 0;
+  bool twelve = false;  // the other half of the day would read just as well
 };
 
 bool RangeFree(const std::vector<bool>& used, size_t from, size_t to) {
@@ -205,7 +209,7 @@ std::optional<TimeHit> ReadTimeAt(const std::vector<Token>& t, const std::vector
   if (!clock->exact && AtAny(t, end, {L"am", L"pm"}) && RangeFree(used, end, end + 1)) {
     const int hour = minute / 60;
     if (hour < 1 || hour > 12) return std::nullopt;
-    minute = ((hour % 12) + (t[end].text == L"pm" ? 12 : 0)) * 60;
+    minute = ((hour % 12) + (t[end].text == L"pm" ? 12 : 0)) * 60 + minute % 60;
     clock->exact = true;
     bare = false;
     ++end;
@@ -221,6 +225,8 @@ std::optional<TimeHit> ReadTimeAt(const std::vector<Token>& t, const std::vector
     end += 3;
   }
 
+  // Nothing said morning or afternoon: 1 to 11 could be either, and ParseInput picks.
+  const bool twelve = !clock->exact && minute / 60 >= 1 && minute / 60 <= 11;
   if (!clock->exact) minute = Daylight(minute);
 
   // A naked number only counts as a time when something says so: a marker like "a las", or a
@@ -228,7 +234,7 @@ std::optional<TimeHit> ReadTimeAt(const std::vector<Token>& t, const std::vector
   // would both turn into times.
   if (bare && !marked && !(i > 0 && IsDateWord(t[i - 1].text))) return std::nullopt;
 
-  return TimeHit{minute, i, end};
+  return TimeHit{minute, i, end, twelve};
 }
 
 std::optional<TimeHit> FindTime(const std::vector<Token>& t, const std::vector<bool>& used) {
@@ -521,9 +527,12 @@ ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes) {
   }
   if (date) take(date->from, date->to, SpanKind::Date);
 
-  const int minute = duration && duration->startMinute ? *duration->startMinute
-                                                       : (time ? time->minute : kNoTime);
+  int minute = duration && duration->startMinute ? *duration->startMinute
+                                                 : (time ? time->minute : kNoTime);
   const bool hasTime = minute != kNoTime;
+  // The other half of the day, while nothing has ruled it out. "de 3 a 5" is left alone.
+  std::optional<int> other;
+  if (time && time->twelve) other = (minute + 12 * 60) % kMinutesPerDay;
 
   // A length with nothing to measure is not a length: "30 min llamada" is just a task whose
   // title happens to say thirty minutes, so those words go back where they came from.
@@ -540,10 +549,25 @@ ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes) {
   } else if (recurrence && recurrence->weekday) {
     when = NextWeekday(now.date, *recurrence->weekday, false);
   } else if (hasTime) {
-    when = minute <= now.minuteOfDay ? AddDays(now.date, 1) : now.date;
+    // With both halves still possible, today wins while either of them is still ahead.
+    const int latest = other ? (std::max)(minute, *other) : minute;
+    when = latest <= now.minuteOfDay ? AddDays(now.date, 1) : now.date;
   } else if (out.kind == Kind::Event) {
     when = now.date;  // "e: comprar pan" is an all day event, and all day still needs a day
   }
+
+  // "Hoy a las 5" said at ten in the morning is not five in the morning: of the two halves of
+  // today, the one that has not gone by. Only when both are still ahead, or on any other day,
+  // is it really in doubt, and then the preview asks (CLAUDE.md's eight-to-twenty is the guess).
+  if (other && when && *when == now.date) {
+    const bool mineGone = minute <= now.minuteOfDay;
+    const bool otherGone = *other <= now.minuteOfDay;
+    if (mineGone != otherGone) {
+      if (mineGone) minute = *other;
+      other.reset();
+    }
+  }
+  if (other && when) out.otherMinute = *other;
 
   if (when) {
     out.allDay = !hasTime;
@@ -560,6 +584,15 @@ ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes) {
             [](const Span& a, const Span& b) { return a.offset < b.offset; });
   out.title = BuildTitle(text, out.spans);
   return out;
+}
+
+ParsedInput Flipped(ParsedInput parsed) {
+  if (parsed.otherMinute == kNoTime || !parsed.start) return parsed;
+  std::swap(parsed.start->minuteOfDay, parsed.otherMinute);
+  if (parsed.end && parsed.end->minuteOfDay != kNoTime) {
+    parsed.end->minuteOfDay = (parsed.start->minuteOfDay + parsed.durationMin) % kMinutesPerDay;
+  }
+  return parsed;
 }
 
 std::wstring Capitalised(std::wstring text) {

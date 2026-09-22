@@ -227,6 +227,7 @@ monitor, aunque tenga otra escala; al contraerse cae en la esquina del monitor d
 | `Ctrl+Z` | Deshace lo creado mientras el aviso está en pantalla, y devuelve la frase al campo |
 | `Tab`, `Shift+Tab` | Campo → mes → tarjetas del día → campo |
 | `←` `→` `↑` `↓` | En el mes, un día o una semana (con texto escrito, `←` `→` mueven el cursor) |
+| `↑` `↓` | Con la vista previa preguntando a. m. o p. m., cambia la respuesta |
 | `RePág`, `AvPág` | En el mes, el mes anterior o el siguiente |
 | `Enter`, `Espacio` | En el mes, abre la app en ese día |
 | `↑` `↓`, `Inicio`, `Fin` | En las tarjetas, la anterior, la siguiente, la primera o la última |
@@ -319,6 +320,10 @@ minutos) y **Descartar**, que resuelve el propio Windows. Un clic en ella abre e
 día. Si el equipo estaba dormido, al despertar solo avisa de lo que venció en el último cuarto
 de hora; lo demás ya pasó. Un calendario oculto en la barra lateral no avisa.
 
+Si un evento se crea cuando ya pasaron todos sus recordatorios —algo a las 16:05 apuntado a las
+16:00, en un calendario que avisa 30 minutos antes— avisa **una vez, al empezar**. Si no, no
+diría nada nunca.
+
 Las notificaciones nativas necesitan el acceso del menú Inicio que crea el instalador. Una build
 lanzada desde su carpeta avisa con el globo de la bandeja, que Windows muestra igual.
 
@@ -410,10 +415,16 @@ Las reglas cuando la frase no lo dice todo:
 
 - Si hay hora, sale un **evento** de una hora. Si no la hay, sale una **tarea**. El prefijo
   manda sobre las dos.
-- Una hora sin `am` ni `pm` se entiende **entre las 8:00 y las 20:00**: `a las 3` son las 15:00
-  y `a las 9` son las 9:00.
-- Si esa hora ya pasó y no se escribió fecha, se usa la de mañana. Pero si la fecha está
-  escrita, se respeta: `hoy 17:00` sigue siendo hoy aunque sean las once de la noche.
+- Una hora sin `am` ni `pm` (`a las 3`, `4:05`) podría ser de mañana o de tarde. **Hoy vale la
+  que todavía no ha pasado**: `hoy a las 5` dicho a las diez son las 17:00, y `4:05` escrito a
+  las 16:00 son las 16:05. Si las dos siguen por delante, o el día es otro, la vista previa
+  **pregunta a. m. o p. m.** con la más probable marcada —la que cae entre las 8:00 y las
+  20:00— y se cambia con un clic o con `↑` `↓`. `04:05`, `16:05`, `4pm` y `de la tarde` dicen
+  cuál es y no preguntan.
+
+  ![La vista previa pregunta a. m. o p. m.](docs/img/popup-am-pm.png)
+- Si las dos ya pasaron y no se escribió fecha, se usa mañana. Pero si la fecha está escrita,
+  se respeta: `hoy 17:00` sigue siendo hoy aunque sean las once de la noche.
 - `el 25` es el próximo 25 que haya: el de este mes si no ha pasado, y si no el del siguiente,
   saltando de año en diciembre y saltando los meses que no tienen ese día.
 - Un día de la semana suelto puede ser hoy (`martes` un martes es hoy); `próximo martes` es

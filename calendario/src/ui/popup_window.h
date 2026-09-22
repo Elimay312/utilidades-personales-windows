@@ -144,6 +144,9 @@ class PopupWindow final : public A11ySource {
   // Enter: turns whatever the preview understood into a row. Optimistic -- the card is on
   // screen before the worker has written anything.
   bool CreateFromInput();
+  // The preview is asking a.m. or p.m. (nlp::ParsedInput::otherMinute), and the answer.
+  bool AskingMeridiem() const;
+  void FlipMeridiem();
   // Ctrl+Z while the notice is up: takes back a creation, a deletion or a task made into an
   // event, whichever the notice is about.
   void Undo();

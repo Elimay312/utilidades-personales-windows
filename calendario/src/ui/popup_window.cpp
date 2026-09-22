@@ -850,6 +850,21 @@ void PopupWindow::Reload() {
   if (InApp()) ReloadApp();
 }
 
+bool PopupWindow::AskingMeridiem() const {
+  return ShowingPreview(model_) && model_.preview.start &&
+         model_.preview.otherMinute != nlp::kNoTime;
+}
+
+void PopupWindow::FlipMeridiem() {
+  // Straight into the model: the text did not change, so Invalidate will not reparse over it,
+  // and Enter creates exactly what the card now says.
+  model_.preview = nlp::Flipped(model_.preview);
+  const int minute = model_.preview.start->minuteOfDay;
+  a11y_.Announce(std::format(L"{:02}:{:02} {}", minute / 60, minute % 60,
+                             minute >= 12 * 60 ? T(L"p. m.", L"p.m.") : T(L"a. m.", L"a.m.")));
+  Invalidate();
+}
+
 bool PopupWindow::CreateFromInput() {
   if (store_ == nullptr || !store_->IsOpen()) return false;
   const nlp::ParsedInput& understood = model_.preview;
@@ -1127,6 +1142,15 @@ void PopupWindow::OnLeftDown(float x, float y) {
     ChangeMonth(1);
     return;
   }
+  if (AskingMeridiem()) {
+    const Meridiem choice = MeridiemRects(ActiveLayout());
+    const bool afternoon = model_.preview.start->minuteOfDay >= 12 * 60;
+    if ((Inside(choice.am, x, y) && afternoon) || (Inside(choice.pm, x, y) && !afternoon)) {
+      FlipMeridiem();
+      return;
+    }
+    if (Inside(choice.am, x, y) || Inside(choice.pm, x, y)) return;
+  }
   if (Inside(ActiveLayout().input(), x, y)) {
     FocusInput(true);
     model_.input.MoveTo(InputIndexAt(fonts_, ActiveLayout(), model_, x),
@@ -1179,6 +1203,13 @@ bool PopupWindow::OnKeyDown(WPARAM key) {
   }
   // A Space the zones take is a command; the character it also produces is not typed.
   eatSpace_ = false;
+
+  // "a las 5" for Friday could be either half of the day, and the preview asks. Up and down
+  // answer while typing: a line of text has no use for them, and the question is right there.
+  if ((key == VK_UP || key == VK_DOWN) && !control && inputFocused_ && AskingMeridiem()) {
+    FlipMeridiem();
+    return true;
+  }
 
   if (InApp()) {
     if (drag_.kind != DragKind::None) {

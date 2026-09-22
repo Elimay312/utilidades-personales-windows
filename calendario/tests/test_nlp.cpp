@@ -199,6 +199,65 @@ TEST_CASE("an explicit today is taken at its word even at one minute to midnight
   CHECK(Clock(out.start) == L"17:00");
 }
 
+// --- morning or afternoon ---------------------------------------------------------------------
+
+// What happened on the day the reminders were tried: "Prueba 4:05" typed at 16:00 became four
+// in the morning, already gone, and nothing ever said a word.
+const nlp::Now kFour{Ymd(2026, 9, 22), 16 * 60};
+
+TEST_CASE("an hour and minutes with no am or pm goes by the eight to twenty rule") {
+  const nlp::ParsedInput out = nlp::ParseInput(L"prueba 4:05", kFour);
+  CHECK(When(out.start) == L"2026-09-22");
+  CHECK(Clock(out.start) == L"16:05");
+  // The morning one had gone by, so there is nothing to ask.
+  CHECK(out.otherMinute == nlp::kNoTime);
+}
+
+TEST_CASE("a leading zero or a twenty four hour clock says which half it means") {
+  CHECK(Clock(nlp::ParseInput(L"hoy 04:05 prueba", kFour).start) == L"04:05");
+  CHECK(nlp::ParseInput(L"hoy 04:05 prueba", kFour).otherMinute == nlp::kNoTime);
+  CHECK(Clock(nlp::ParseInput(L"mañana 16:05 prueba", kFour).start) == L"16:05");
+  CHECK(nlp::ParseInput(L"mañana 16:05 prueba", kFour).otherMinute == nlp::kNoTime);
+  CHECK(Clock(nlp::ParseInput(L"mañana 4:05 pm prueba", kFour).start) == L"16:05");
+}
+
+TEST_CASE("today at nine said at ten means tonight, not this morning") {
+  const nlp::ParsedInput out = nlp::ParseInput(L"hoy a las 9 cena", kTue);
+  CHECK(When(out.start) == L"2026-09-22");
+  CHECK(Clock(out.start) == L"21:00");
+  CHECK(out.otherMinute == nlp::kNoTime);
+  // And without the "hoy" too: the next nine is tonight, not tomorrow morning.
+  CHECK(Clock(nlp::ParseInput(L"a las 9 cena", kTue).start) == L"21:00");
+  CHECK(When(nlp::ParseInput(L"a las 9 cena", kTue).start) == L"2026-09-22");
+}
+
+TEST_CASE("another day keeps the guess and offers the other half") {
+  const nlp::ParsedInput out = nlp::ParseInput(L"el viernes a las 5 dentista", kTue);
+  CHECK(Clock(out.start) == L"17:00");
+  CHECK(out.otherMinute == 5 * 60);
+
+  const nlp::ParsedInput flipped = nlp::Flipped(out);
+  CHECK(Clock(flipped.start) == L"05:00");
+  CHECK(Clock(flipped.end) == L"06:00");
+  CHECK(flipped.otherMinute == 17 * 60);
+  CHECK(When(flipped.start) == When(out.start));
+}
+
+TEST_CASE("both halves still ahead today is still a question") {
+  const nlp::Now early{Ymd(2026, 9, 22), 3 * 60};
+  const nlp::ParsedInput out = nlp::ParseInput(L"a las 5 gimnasio", early);
+  CHECK(When(out.start) == L"2026-09-22");
+  CHECK(Clock(out.start) == L"17:00");
+  CHECK(out.otherMinute == 5 * 60);
+}
+
+TEST_CASE("an hour whose two halves are gone moves to tomorrow and asks there") {
+  const nlp::ParsedInput out = nlp::ParseInput(L"a las 5 gimnasio", kLate);
+  CHECK(When(out.start) == L"2026-09-23");
+  CHECK(Clock(out.start) == L"17:00");
+  CHECK(out.otherMinute == 5 * 60);
+}
+
 // --- hours that are not hours ---------------------------------------------------------------
 
 TEST_CASE("a marked hour out of range is left in the title") {

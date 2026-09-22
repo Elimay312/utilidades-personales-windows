@@ -7,6 +7,21 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Cambiado
+
+- **Una hora sin a. m. ni p. m. se decide mejor, y si hay duda se pregunta.** `4:05` ya no es
+  de madrugada por escribirse con dos puntos: va por la misma regla que `a las 4`. Hoy vale la
+  mitad del día que todavía no ha pasado (`hoy a las 5` a las diez son las 17:00). Si las dos
+  siguen por delante, o el día es otro, la vista previa pregunta **a. m. / p. m.** con la más
+  probable marcada, y se cambia con un clic o con `↑` `↓`. `04:05`, `16:05`, `4pm` y `de la
+  tarde` no preguntan.
+
+### Corregido
+
+- **Un evento creado a última hora nunca avisaba.** Con un recordatorio de 30 minutos, algo a
+  las 16:05 apuntado a las 16:00 ya había perdido su aviso al nacer. Ahora, si todos sus
+  recordatorios pasaron antes de escribirlo, avisa una vez al empezar.
+
 ## [1.0.0] - 2026-09-22
 
 ### Añadido

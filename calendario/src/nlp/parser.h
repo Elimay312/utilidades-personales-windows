@@ -45,7 +45,13 @@ struct ParsedInput {
   // in phase 5, and "cada lunes" already fits in one line of text.
   std::optional<std::wstring> recurrence;
   std::vector<Span> spans;  // sorted by offset
+  // The same hour in the other half of the day, when nothing said which one ("a las 5" for
+  // Friday): the preview offers a.m. and p.m. and Flipped swaps them. kNoTime when it is clear.
+  int otherMinute = kNoTime;
 };
+
+// `parsed` with the start in the other half of the day, and the end moved with it.
+ParsedInput Flipped(ParsedInput parsed);
 
 // The clock arrives as a parameter and is never read inside the parser, so a test can sit at
 // 23:59 on the last day of the year without waiting for it.

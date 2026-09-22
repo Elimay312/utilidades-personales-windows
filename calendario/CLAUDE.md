@@ -135,7 +135,8 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - `comprar leche` (tarea sin fecha)
   - `t: pagar luz el lunes`
   - `gym cada lunes 7am`
-- Ambigüedad de horas: "a las 3" sin am/pm se interpreta entre 8:00 y 20:00. Si la hora ya pasó hoy y no se indicó fecha, se usa la próxima ocurrencia.
+- Ambigüedad de horas: "a las 3" o "4:05" sin am/pm (y sin cero delante) pueden ser de mañana o de tarde. Hoy vale la mitad que todavía no ha pasado. Si las dos siguen por delante, o el día es otro, se toma la que cae entre 8:00 y 20:00 y `ParsedInput::otherMinute` lleva la otra: la vista previa pregunta a. m. / p. m. (clic o ↑↓). Si las dos pasaron y no se indicó fecha, mañana. (Cambiado por el usuario tras la 1.0.0: "4:05" se leía como 24 h y caía de madrugada.)
+- Un evento escrito cuando ya pasaron todos sus recordatorios avisa una vez al empezar (`Store::DueReminders`, con `updated_at`).
 
 ## Estructura de carpetas
 

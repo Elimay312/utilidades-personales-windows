@@ -325,10 +325,36 @@ void DrawPreviewCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme&
   FillRound(target, rect, layout.cardRadius, brush);
   target->PopAxisAlignedClip();
 
+  // "a las 5" for Friday: the card asks which half of the day, with the likelier one picked.
+  float textRight = rect.right - kCardRightPadDip * type;
+  if (model.preview.start && model.preview.otherMinute != nlp::kNoTime) {
+    const Meridiem choice = MeridiemRects(layout);
+    textRight = choice.am.left - layout.gap;
+    const D2D1_RECT_F all = choice.all();
+    const float capsule = (all.bottom - all.top) / 2.0f;
+    brush->SetColor(theme.panelOpaque);
+    FillRound(target, all, capsule, brush);
+    brush->SetColor(theme.border);
+    StrokeRound(target, all, capsule, brush, 1.0f);
+    const bool afternoon = model.preview.start->minuteOfDay >= 12 * 60;
+    for (const bool pm : {false, true}) {
+      const D2D1_RECT_F option = pm ? choice.pm : choice.am;
+      const bool on = pm == afternoon;
+      if (on) {
+        brush->SetColor(theme.highContrast ? theme.accent
+                                           : Fade(theme.textPrimary, theme.light ? 0.08f : 0.12f));
+        FillRound(target, Inset(option, 2.0f), capsule - 2.0f, brush);
+      }
+      brush->SetColor(on ? (theme.highContrast ? theme.onAccent : theme.textPrimary)
+                         : theme.textSecondary);
+      DrawTextIn(target, fonts.label.Get(), pm ? T(L"p. m.", L"p.m.") : T(L"a. m.", L"a.m."),
+                 option, brush, Align::Center);
+    }
+  }
+
   brush->SetColor(theme.textPrimary);
   DrawTextIn(target, fonts.event.Get(), nlp::PreviewText(model.preview, model.today),
-             D2D1_RECT_F{rect.left + kCardTextLeftDip * type, rect.top,
-                         rect.right - kCardRightPadDip * type, rect.bottom},
+             D2D1_RECT_F{rect.left + kCardTextLeftDip * type, rect.top, textRight, rect.bottom},
              brush);
 }
 

@@ -255,6 +255,27 @@ inline D2D1_RECT_F CardRect(const PanelLayout& layout, const D2D1_RECT_F& list,
   return D2D1_RECT_F{list.left, top, list.right, top + layout.cardHeight};
 }
 
+// The a.m. / p.m. question at the right end of the preview card, when the hour could be either:
+// the capsule the app's tabs and the settings use, small enough to leave the line its room.
+inline constexpr float kMeridiemHeightDip = 22.0f;
+inline constexpr float kMeridiemOptionDip = 40.0f;
+
+struct Meridiem {
+  D2D1_RECT_F am{};
+  D2D1_RECT_F pm{};
+  D2D1_RECT_F all() const { return D2D1_RECT_F{am.left, am.top, pm.right, pm.bottom}; }
+};
+
+inline Meridiem MeridiemRects(const PanelLayout& layout) {
+  const D2D1_RECT_F card = layout.preview();
+  const float height = std::round(kMeridiemHeightDip * layout.type);
+  const float option = std::round(kMeridiemOptionDip * layout.type);
+  const float right = card.right - std::round(kCardRightPadDip * layout.type);
+  const float top = std::round((card.top + card.bottom - height) / 2.0f);
+  return Meridiem{D2D1_RECT_F{right - 2.0f * option, top, right - option, top + height},
+                  D2D1_RECT_F{right - option, top, right, top + height}};
+}
+
 // The tick box on a task, in the column an event puts its clock in.
 inline D2D1_RECT_F CheckboxRect(const PanelLayout& layout, const D2D1_RECT_F& card) {
   const float side = std::round(kCheckboxDip * layout.type);

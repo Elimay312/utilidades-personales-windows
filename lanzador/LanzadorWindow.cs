@@ -207,7 +207,11 @@ internal sealed unsafe class LanzadorWindow : IDisposable
                 //
                 // Aqui NO va WS_EX_NOACTIVATE, al reves que en la isla y el dock: este
                 // programa SI tiene que recibir el foco, porque hay que escribir en el.
-                WINDOW_EX_STYLE.WS_EX_TOOLWINDOW | WINDOW_EX_STYLE.WS_EX_TOPMOST,
+                //
+                // NOREDIRECTIONBITMAP: sin superficie de redireccion, lo que Composition no
+                // pinta es transparente. Es lo que deja ver solo la pildora y el panel.
+                WINDOW_EX_STYLE.WS_EX_TOOLWINDOW | WINDOW_EX_STYLE.WS_EX_TOPMOST
+                | WINDOW_EX_STYLE.WS_EX_NOREDIRECTIONBITMAP,
                 new PCWSTR(clase), new PCWSTR(titulo),
                 WINDOW_STYLE.WS_POPUP,
                 0, 0, _ancho, Escalar(AltoFranja),
@@ -216,7 +220,7 @@ internal sealed unsafe class LanzadorWindow : IDisposable
 
         if (_hwnd.IsNull) throw new InvalidOperationException("CreateWindowEx fallo");
 
-        Acristalar();
+        QuitarMarco();
         _visuals = new LanzadorVisuals(_hwnd, _dpi / 96f, _ancho, config.MaxResultados);
 
         if (!Config.LeerAtajo(config.Atajo, out HOT_KEY_MODIFIERS mods, out uint tecla))
@@ -976,44 +980,23 @@ internal sealed unsafe class LanzadorWindow : IDisposable
     // --- montaje ----------------------------------------------------------------------
 
     /// <summary>
-    /// El acrilico lo pone DWM, no nosotros: el sistema ya sabe difuminar lo que hay
-    /// detras mejor y mas barato de lo que lo hariamos aqui. Hace falta extender el
-    /// marco al area de cliente para que ese fondo llegue hasta el borde.
+    /// La ventana en si no se ve: solo la pildora y el panel de resultados, que los
+    /// dibujamos nosotros. Aqui se le quita a DWM todo lo que pintaria alrededor.
+    /// <para>
+    /// <b>Sin el acrilico del sistema</b>, y no por gusto. Con DWMSBT_TRANSIENTWINDOW la
+    /// ventana entera era un rectangulo oscuro con la pildora dentro, y ese rectangulo no
+    /// se puede hacer pildora: la maqueta midio que SetWindowRgn no recorta el backdrop de
+    /// DWM, y CreateHostBackdropBrush pinta negro en una app Win32 sin empaquetar (lo midio
+    /// la isla). Asi que el fondo lo pone la pildora, casi opaco y sin desenfoque.
+    /// </para>
     /// </summary>
-    private void Acristalar()
+    private void QuitarMarco()
     {
-        // SIN DwmExtendFrameIntoClientArea, y es una correccion medida, no un olvido.
-        // Con el marco extendido a toda la ventana, lo que pinta GDI queda con alfa cero
-        // y DWM lo mezcla: el EDIT salia gris #7F7F7F en vez del color que se le daba, y
-        // el cuerpo un #545454 plano. El backdrop de Windows 11 no lo necesita â€” basta
-        // con que la ventana no pinte un fondo opaco, y por eso hbrBackground es null.
-        // DWMSBT_TRANSIENTWINDOW, y esta elegido midiendo los tres, no por defecto:
-        //   3 acrilico + oscuro  -> algo de color del fondo, legible        <- este
-        //   4 mica alt + oscuro  -> (32,32,32), mas oscuro y sin nada de color
-        //   3 acrilico + claro   -> coge mucho color pero el texto no se lee
-        // La translucidez del panel es la que da Windows; no hay perilla documentada
-        // para subirla. Lo que si controlamos es la pildora, y ahi va el cristal.
-        uint acrilico = 3;
-        PInvoke.DwmSetWindowAttribute(_hwnd, DWMWINDOWATTRIBUTE.DWMWA_SYSTEMBACKDROP_TYPE,
-            &acrilico, sizeof(uint));
-
-        // Oscuro. Se probo lo contrario —acrilico CLARO con un velo oscuro nuestro
-        // encima, para que arrastrase el color del fondo— y se midio que no compensa:
-        // con velo 0,34 el panel quedaba a 163-185 de luminancia y el texto blanco daba
-        // 1,5:1 de contraste, ilegible; subiendolo a 0,60 para que se leyera, el panel
-        // salia (84,84,84), gris neutro y sin nada del color que se buscaba. O sea que
-        // para ser legible hay que tapar justo lo que se queria ensenar.
-        uint oscuro = 1;
-        PInvoke.DwmSetWindowAttribute(_hwnd, DWMWINDOWATTRIBUTE.DWMWA_USE_IMMERSIVE_DARK_MODE,
-            &oscuro, sizeof(uint));
-
-        // DWMWCP_ROUND, y no una region propia: MEDIDO en la maqueta, SetWindowRgn NO
-        // recorta el backdrop de DWM. Con region y DWMWCP_DONOTROUND las esquinas salian
-        // cuadradas; con esto salen redondeadas y suavizadas. El radio es el que da
-        // Windows y no se puede subir sin renunciar al acrilico del sistema.
-        uint redondas = 2;
+        // DONOTROUND: con ROUND, DWM dibuja borde y sombra alrededor del rectangulo de la
+        // ventana, que ahora es invisible y dejaria un marco flotando.
+        uint cuadradas = 1;
         PInvoke.DwmSetWindowAttribute(_hwnd, DWMWINDOWATTRIBUTE.DWMWA_WINDOW_CORNER_PREFERENCE,
-            &redondas, sizeof(uint));
+            &cuadradas, sizeof(uint));
     }
 
     private static void RegistrarClase()

@@ -42,8 +42,8 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
     private const float AltoFranja = 64f;
     private const float MargenLista = 8f;
 
-    /// <summary>Margen exterior: donde empieza el icono y donde acaba el realce.</summary>
-    private const float MargenTexto = 16f;
+    /// <summary>Donde empieza el icono: deja aire entre el realce y el borde del panel.</summary>
+    private const float MargenTexto = 20f;
 
     /// <summary>
     /// El hueco del icono. Se reserva aunque el icono no haya llegado todavia: asi el
@@ -139,7 +139,7 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
 
     /// <summary>
     /// La pildora de busqueda, dibujada por nosotros. Es lo que un control EDIT no puede
-    /// ser: transparente, con el radio que queramos y dejando ver el acrilico de detras.
+    /// ser: con el radio que queramos y sin nada alrededor.
     /// </summary>
     private void Pildora(ID2D1DeviceContext ctx, float x, float y, string consulta)
     {
@@ -148,13 +148,8 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
         float arr = y + (S(AltoFranja) - S(AltoPildora)) / 2f;
         float aba = arr + S(AltoPildora);
 
-        // Un velo claro muy tenue: sobre el acrilico oscuro se lee como cristal, no como
-        // un rectangulo pintado. Y el radio es la mitad del alto, que es lo que la hace
-        // pildora y no caja.
-        Redondeado(ctx, izq, arr, der, aba, S(AltoPildora) / 2f, 1f, 1f, 1f, 0.13f);
-
-        // El borde, medio punto mas claro: es lo que le da el canto de cristal.
-        Borde(ctx, izq, arr, der, aba, S(AltoPildora) / 2f, 1f, 1f, 1f, 0.22f, S(1f));
+        // El radio es la mitad del alto, que es lo que la hace pildora y no caja.
+        Fondo(ctx, izq, arr, der, aba, S(AltoPildora) / 2f);
 
         float dentro = izq + S(18f);
 
@@ -254,9 +249,23 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
     {
         if (!CaretEncendido) return;
 
-        // Dos puntos de ancho: uno solo casi desaparece sobre el acrilico.
+        // Dos puntos de ancho: uno solo casi desaparece sobre el fondo gris.
         Redondeado(ctx, x, arribaPildora + S(10f), x + S(2f),
                    arribaPildora + S(AltoPildora) - S(10f), S(1f), 1f, 1f, 1f, 0.9f);
+    }
+
+    /// <summary>
+    /// El fondo de la pildora y del panel de resultados. Es lo unico que se ve de la
+    /// ventana, que ya no lleva acrilico (ver QuitarMarco). Opaco a proposito: sin
+    /// desenfoque detras, cualquier alfa deja leer la ventana de abajo. Medido al 96 %, un
+    /// bloque rojo y las lineas de codigo del editor se leian a traves del panel.
+    /// </summary>
+    private void Fondo(ID2D1DeviceContext ctx, float izq, float arr, float der, float aba, float radio)
+    {
+        Redondeado(ctx, izq, arr, der, aba, radio, 0.23f, 0.23f, 0.24f, 1f);
+
+        // El borde, mas claro que el fondo: es lo que le da el canto de cristal.
+        Borde(ctx, izq, arr, der, aba, radio, 1f, 1f, 1f, 0.16f, S(1f));
     }
 
     private void Borde(ID2D1DeviceContext ctx, float izq, float arr, float der, float aba,
@@ -308,6 +317,17 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
 
             Pildora(ctx, desplazamiento.X, desplazamiento.Y, Caja?.Texto ?? string.Empty);
 
+            // Los resultados van en su propio panel, separado de la pildora por el hueco
+            // transparente de la franja. Termina un punto antes que la ventana: el borde se
+            // dibuja centrado en la linea y la mitad de abajo se perderia.
+            if (resultados.Count > 0)
+            {
+                float arriba = desplazamiento.Y + S(AltoFranja);
+                Fondo(ctx, desplazamiento.X + S(MargenPildora), arriba,
+                      desplazamiento.X + _ancho - S(MargenPildora),
+                      arriba + S(MargenLista) * 2 + resultados.Count * S(AltoFila) - S(1f), S(16f));
+            }
+
             for (int i = 0; i < resultados.Count; i++)
             {
                 float y = desplazamiento.Y + S(AltoFranja) + S(MargenLista) + i * S(AltoFila);
@@ -324,9 +344,9 @@ internal sealed unsafe class LanzadorVisuals : IDisposable
     {
         if (elegida)
         {
-            // Un rectangulo claro a poca opacidad: sobre el acrilico oscuro se lee como
-            // un realce y no tapa lo de detras.
-            Redondeado(ctx, x + S(8f), y + S(2f), x + _ancho - S(8f), y + S(AltoFila) - S(2f),
+            // Un rectangulo claro a poca opacidad: sobre el fondo oscuro se lee como un
+            // realce. Metido dentro del panel, que empieza en MargenPildora.
+            Redondeado(ctx, x + S(MargenPildora + 4f), y + S(2f), x + _ancho - S(MargenPildora + 4f), y + S(AltoFila) - S(2f),
                        S(10f), 1f, 1f, 1f, 0.14f);
         }
 

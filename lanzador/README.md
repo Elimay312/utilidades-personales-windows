@@ -92,6 +92,11 @@ cobrar: un `EDIT` pinta su fondo opaco con GDI y no puede ser transparente. Lo q
 hacía por nosotros —caret, selección, teclas muertas, pegar— vive ahora en
 [`Caja.cs`](Caja.cs), sin nada de Win32 dentro para poder comprobarlo con `--check`.
 
+**La ventana no se ve**: es `WS_EX_NOREDIRECTIONBITMAP` y sin backdrop de DWM, así que solo
+aparecen la píldora y, debajo, el panel de resultados. El acrílico del sistema se quitó porque
+rellena el rectángulo entero de la ventana y no hay forma de darle forma de píldora:
+`SetWindowRgn` no lo recorta y `CreateHostBackdropBrush` pinta negro en una app sin empaquetar.
+
 Una sola dependencia, `Microsoft.Windows.CsWin32`, que es un generador y no aparece en la
 salida. Todo lo Win32 sale de `NativeMethods.txt`, que es una lista cerrada y auditada.
 

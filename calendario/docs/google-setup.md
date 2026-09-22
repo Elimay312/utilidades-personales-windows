@@ -50,13 +50,30 @@ En **API y servicios → Pantalla de consentimiento de OAuth**:
 4. **Publica la aplicación** (botón «Publicar aplicación», estado *En producción*).
 
    Esto importa más de lo que parece. Si la dejas en *Prueba*, Google **caduca el token de
-   actualización a los siete días** y tendrías que volver a dar permiso cada semana. Publicada,
-   el token dura hasta que lo revoques.
+   actualización a los siete días** y hay que volver a dar permiso cada semana. Publicada, el
+   token dura hasta que lo revoques.
+
+   **Publicar no exige dominio, página principal ni política de privacidad.** Si el botón está
+   desactivado y pone «para publicar tu app, debes completar la configuración en la página de
+   desarrollo de la marca», lo que falta es un campo obligatorio de esa página, y casi siempre
+   es el último: **Información de contacto del desarrollador → Direcciones de correo
+   electrónico**. Pon el tuyo y guarda. Deja **vacíos** «Dominio de la app» y «Dominios
+   autorizados»: esos solo hacen falta si envías la app a verificación, que es otra cosa y que
+   tú no necesitas.
+
+   **No subas el logotipo.** La propia página lo avisa: en cuanto subes uno, la app tiene que
+   pasar por verificación. Es la única trampa de esa pantalla.
 
    Como la aplicación no está verificada, al dar permiso verás una pantalla de advertencia
    —«Google no ha verificado esta aplicación»—. Es lo normal para algo que has creado tú para
-   ti: entra en **Configuración avanzada → Ir a Agenda (no seguro)**. La verificación solo hace
-   falta para repartir la app a desconocidos, y el límite sin verificar son 100 usuarios.
+   ti: entra en **Configuración avanzada → Ir a Agenda (no seguro)**. La verificación solo sirve
+   para quitar ese aviso y repartir la app a desconocidos; el límite sin verificar son 100
+   usuarios, y aquí el usuario eres tú.
+
+   **Si aun así te quedas en *Prueba*, Agenda no se rompe en silencio.** Cuando Google deje de
+   renovar el permiso, un globo en la bandeja lo dice y el menú vuelve a ofrecer «Conectar con
+   Google…». Reconectar son dos clics, porque la sesión y el consentimiento ya están dados. Lo
+   que hayas escrito entretanto sigue guardado y sube en cuanto vuelvas a dar permiso.
 
 ## 4. Crea las credenciales
 
@@ -97,7 +114,8 @@ lo que borres de aquí desaparece.
 
 Un JSON mal formado no rompe la aplicación: se registra en el log y se ignora, lo que significa
 que **si te falta una coma, Agenda arranca como si no hubiera credenciales**. Si «Conectar con
-Google…» no aparece habilitado, mira `%LOCALAPPDATA%\Agenda\agenda.log`.
+Google…» no aparece en el menú de la bandeja, mira el log del día en
+`%LOCALAPPDATA%\Agenda\logs\`.
 
 ## 6. Conecta
 
@@ -119,12 +137,17 @@ otro equipo o a otra cuenta no sirve de nada, hay que volver a conectar.
 |---|---|
 | `access_denied` en el navegador | No pasaste la pantalla de «aplicación no verificada», o tu cuenta no está en la lista de usuarios de prueba y la app sigue en modo *Prueba*. |
 | `invalid_client` | El `clientId` o el `clientSecret` están mal copiados, o las credenciales son de otro proyecto. |
-| `invalid_grant` al arrancar, semanas después | El token de actualización caducó: la aplicación se quedó en modo *Prueba* (paso 3.4). Vuelve a conectar y publícala. |
+| Un globo que dice «se acabó el permiso de Google» | El token de actualización caducó o lo revocaste. Casi siempre es lo primero, y significa que la app sigue en modo *Prueba* (paso 3.4). Vuelve a conectar desde la bandeja; nada de lo escrito se ha perdido. |
+| El botón «Publicar aplicación» está desactivado | Falta un campo obligatorio en «Información de marca», normalmente el correo de contacto del desarrollador (paso 3.4). No es por los dominios. |
 | Los eventos sincronizan y las tareas no | Falta activar **Google Tasks API** (paso 2). |
 | El indicador de sin conexión no se apaga | No es Google: no hay red, o un proxy está cortando la salida. Lo creado no se pierde, sube cuando vuelva. |
 
 ## Cómo desconectar
 
-Borra `%LOCALAPPDATA%\Agenda\token.bin` y, si quieres retirarle el permiso a la aplicación,
-entra en [myaccount.google.com/permissions](https://myaccount.google.com/permissions) y quita
-`Agenda`. La caché local se queda como estaba; nada de lo que has creado desaparece.
+Clic derecho en el icono de la bandeja → **Desconectar de Google**. Eso borra
+`%LOCALAPPDATA%\Agenda\token.bin`, que es donde vive el permiso. Si además quieres retirárselo
+del lado de Google, entra en
+[myaccount.google.com/permissions](https://myaccount.google.com/permissions) y quita `Agenda`.
+
+La caché local se queda como estaba: nada de lo que has creado desaparece, y sigue ahí si
+vuelves a conectar.

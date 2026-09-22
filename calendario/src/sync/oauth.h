@@ -60,6 +60,14 @@ class GoogleAuth {
   // means there is no usable permission right now and the caller should stop, not retry.
   bool Header(std::wstring& out);
 
+  // True once, the first time somebody asks after Google has refused to renew the permission.
+  //
+  // It is not the same as being offline and must not be shown as such: the account is gone and
+  // the only thing that brings it back is the user connecting again. In a Google Cloud project
+  // left in testing mode this happens every seven days, which is exactly the case that must not
+  // fail quietly -- Agenda would keep writing to the cache and nothing would ever go up.
+  bool TakeLostAccount();
+
   std::wstring error() const;
 
  private:
@@ -78,6 +86,7 @@ class GoogleAuth {
   std::string refresh_;
   std::int64_t expiresAt_ = 0;  // epoch seconds UTC
   bool loaded_ = false;
+  bool lostAccount_ = false;
   std::wstring error_;
 };
 

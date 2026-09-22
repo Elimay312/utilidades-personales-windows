@@ -31,6 +31,11 @@ class Store;
 
 namespace sync {
 
+// Google refused to renew the permission, so there is no account any more. Sent once, without
+// payload, to whatever window has the tray icon: it is the only thing in this phase the user
+// has to be told about out loud, because it is the only one they have to act on.
+inline constexpr UINT kSyncLostAccountMessage = WM_APP + 3;
+
 class GoogleSync {
  public:
   GoogleSync(Store& store, OAuthConfig config);
@@ -45,6 +50,10 @@ class GoogleSync {
   // Cuts whatever is in flight and waits for the thread. Cancelling closes the request handle,
   // so this takes a moment and not the thirty seconds of a timeout.
   void Stop();
+
+  // Where kSyncLostAccountMessage goes. Not set means nobody is listening, which is the case
+  // in a test.
+  void SetNotifyWindow(HWND hwnd) { hwnd_ = hwnd; }
 
   // Asks for a pass. Does nothing if the last one was less than `notBefore` ago; with zero, now.
   // Never blocks -- this is what the popup calls as it opens and right after Enter.
@@ -79,6 +88,7 @@ class GoogleSync {
   Store& store_;
   Http http_;
   GoogleAuth auth_;
+  HWND hwnd_ = nullptr;
 
   std::thread worker_;
   std::mutex mutex_;

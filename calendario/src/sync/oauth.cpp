@@ -373,7 +373,14 @@ bool GoogleAuth::Refresh() {
     // so, and this line is where somebody finds out.
     Fail(std::format(L"Google rechazó la renovación ({}): {}", response.status,
                      ToWide(response.body)));
-    if (response.status == 400 || response.status == 401) Disconnect();
+    if (response.status == 400 || response.status == 401) {
+      // The account is gone, not unreachable. Forgetting it quietly would leave Agenda writing
+      // to the cache for ever with nothing going up and nothing saying so, which is the exact
+      // shape of the failure this whole phase exists to avoid.
+      Disconnect();
+      std::lock_guard<std::mutex> lock(mutex_);
+      lostAccount_ = true;
+    }
     return false;
   }
   if (!ReadTokenResponse(response.body)) return false;
@@ -430,6 +437,13 @@ bool GoogleAuth::Header(std::wstring& out) {
   if (access_.empty()) return false;
   out = L"Authorization: Bearer " + ToWide(access_) + L"\r\n";
   return true;
+}
+
+bool GoogleAuth::TakeLostAccount() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const bool lost = lostAccount_;
+  lostAccount_ = false;
+  return lost;
 }
 
 // --- At rest ------------------------------------------------------------------------------

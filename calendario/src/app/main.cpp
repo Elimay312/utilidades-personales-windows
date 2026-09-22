@@ -150,6 +150,16 @@ LRESULT CALLBACK AppWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
       }
       break;
 
+    case sync::kSyncLostAccountMessage:
+      // The one thing in this phase worth interrupting somebody for. Everything else -- a slow
+      // pass, no network, a rejected change -- resolves itself or waits; this one stays broken
+      // until a person clicks something, and until then nothing written here reaches the phone.
+      app->tray.Warn(L"Agenda: se acabó el permiso de Google",
+                     L"Vuelve a conectar desde este icono. Lo que hayas escrito está guardado "
+                     L"y subirá en cuanto vuelvas a dar permiso.");
+      LogInfo(L"google: permiso caducado o revocado, hay que volver a conectar");
+      return 0;
+
     case WM_DESTROY:
       PostQuitMessage(0);
       return 0;
@@ -274,6 +284,9 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
       credentials.clientSecret = ReadString(*google, "clientSecret", "");
     }
     app.sync.emplace(app.store, std::move(credentials));
+    // To this window and not the popup's: what it has to say is said with a tray balloon, and
+    // the tray icon hangs off this one.
+    app.sync->SetNotifyWindow(hwnd);
     app.popup.SetSync(&*app.sync);
     app.sync->Start();
   } else {

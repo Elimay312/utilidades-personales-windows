@@ -456,9 +456,15 @@ void GoogleSync::RunPass(bool pushOnly) {
 
   std::wstring header;
   if (!auth_.Header(header)) {
-    // No usable permission. Either the network is down -- which the dot already says -- or the
-    // refresh token is dead, which auth_ has logged with the reason.
-    offline_.store(!http_.reachable());
+    // No usable permission. Either the network is down -- which the dot already says by itself
+    // -- or Google refused to renew, which is a different thing and the only one the user has
+    // to be told about, because it is the only one they can do something about.
+    if (auth_.TakeLostAccount()) {
+      offline_.store(false);
+      if (hwnd_ != nullptr) PostMessageW(hwnd_, kSyncLostAccountMessage, 0, 0);
+    } else {
+      offline_.store(!http_.reachable());
+    }
     store_.Touch();
     return;
   }

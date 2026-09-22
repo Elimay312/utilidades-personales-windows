@@ -93,6 +93,9 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - Si no trae hora, se crea una **tarea**.
   - El prefijo `t:` o `!` fuerza que sea tarea. El prefijo `e:` fuerza que sea evento.
 - La caché local es la fuente de verdad para la interfaz. La sincronización ocurre en segundo plano con `syncToken` en eventos y `updatedMin` en tareas. En conflictos gana el cambio más reciente, y cada conflicto se registra en el log.
+- **`calendars.is_primary` significa «aquí cae lo que se crea»**, no «es el primary de Google». Se siembra con el primary en la primera conexión y a partir de ahí la mueve el submenú de la bandeja. Es la desviación que evitó inventar un almacén de ajustes para una elección que se hace una vez.
+- **La sincronización corre en su propio hilo, no en la cola del `Store`**, aunque `store.h` diera eso por hecho en la fase 4. Esa cola lleva también las escrituras del popup, y una petición de veinte segundos por delante dejaría una creación sin escribir veinte segundos. Lo que sí pasa por el `Store` es cada escritura en SQLite, con `Store::Run`: una conexión y un escritor. Dos conexiones habrían sido peor, porque en SQLite las transacciones son de la conexión y no del hilo.
+- **El esquema se quedó en v1 en la fase 5.** Todo lo que hacía falta ya estaba reservado; el token es lo único que no cabía en una tabla y va a un archivo cifrado con DPAPI.
 
 ## Parser de lenguaje natural
 
@@ -171,4 +174,5 @@ ctest --preset debug
 build\debug\Agenda.exe --monitor=3
 build\debug\Agenda.exe --render-snapshot=popup --out=docs\img\popup.png
 build\debug\Agenda.exe --render-snapshot=popup-creado --out=docs\img\popup-creado.png
+build\debug\Agenda.exe --render-snapshot=popup-sin-conexion --out=docs\img\popup-sin-conexion.png
 ```

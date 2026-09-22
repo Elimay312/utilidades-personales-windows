@@ -9,15 +9,19 @@ Las decisiones de producto, el stack y el sistema de diseño están en [CLAUDE.m
 
 ## Estado
 
-**Fase 4 terminada; la siguiente es la 5.** Agenda se queda residente en la bandeja, el atajo
+**Fase 5 terminada; la siguiente es la 6.** Agenda se queda residente en la bandeja, el atajo
 abre un popup con fondo acrylic en la esquina inferior derecha del monitor de trabajo, y el
 popup muestra el mes, lo que hay ese día y el campo de texto. El panel se adapta al monitor:
 su alto es el 42 % del área de trabajo, entre 380 y 560 DIP, y todo lo de dentro escala con
 él. Al escribir,
 Agenda **entiende lo que lee**: resalta los trozos que reconoce y muestra encima una tarjeta
 con lo que se va a crear. **Con Enter lo crea, y sigue ahí al volver a abrir la aplicación**:
-todo se guarda en SQLite, en `%LOCALAPPDATA%\Agenda\agenda.db`. Todavía no hay
-sincronización con Google: lo que se escribe se queda en el equipo.
+todo se guarda en SQLite, en `%LOCALAPPDATA%\Agenda\agenda.db`. Y **se sincroniza en los
+dos sentidos con Google Calendar y Google Tasks**: lo creado aquí aparece en el móvil y lo
+creado en la web aparece aquí en la siguiente pasada. La interfaz nunca espera a la red, y sin
+conexión todo sigue funcionando: lo escrito se guarda igual, un punto discreto en la cabecera
+lo dice, y la cola se vacía sola cuando la red vuelve. Los pasos para crear las credenciales
+están en [docs/google-setup.md](docs/google-setup.md).
 
 | Tema oscuro | Tema claro |
 |---|---|
@@ -63,8 +67,9 @@ build\debug\Agenda.exe --monitor=3
 ```
 
 Al arrancar no se ve nada: Agenda deja el icono en la bandeja y espera el atajo. Con el
-clic izquierdo en el icono se abre el popup; con el derecho aparece un menú con **Abrir** y
-**Salir**. Si otra aplicación ya usa el atajo, Agenda lo registra en el log, avisa con un
+clic izquierdo en el icono se abre el popup; con el derecho aparece un menú con **Abrir**,
+**Salir** y, si hay credenciales de Google puestas, **Conectar con Google…** y **Calendario
+por defecto**. Si otra aplicación ya usa el atajo, Agenda lo registra en el log, avisa con un
 globo en la bandeja y sigue funcionando: se abre desde el icono. Y si la caché no se puede
 abrir, lo dice también con un globo en vez de callárselo: una agenda que olvida en silencio
 lo que le escriben es peor que una que admite que no puede guardar.
@@ -190,9 +195,11 @@ build\debug\Agenda.exe --render-snapshot=popup "--text=mañana 5pm dentista" --o
 build\debug\Agenda.exe --render-snapshot=popup-creado --out=docs\img\popup-creado.png
 ```
 
-Hay dos vistas: `popup` es el panel tal como se abre y `popup-creado` es el instante siguiente
-a pulsar Enter, con el aviso puesto y la tarjeta nueva a medio subir. La segunda existe porque
-ese momento dura ciento sesenta milisegundos y no hay otra forma de mirarlo con calma.
+Hay tres vistas: `popup` es el panel tal como se abre, `popup-creado` es el instante siguiente
+a pulsar Enter —con el aviso puesto y la tarjeta nueva a medio subir— y `popup-sin-conexion`
+es el mismo panel con el punto de sin conexión encendido. La segunda existe porque ese momento
+dura ciento sesenta milisegundos y no hay otra forma de mirarlo con calma; la tercera, porque
+el punto es tan discreto que hay que poder juzgarlo sin desenchufar nada.
 
 ![El popup justo después de crear algo](docs/img/popup-creado.png)
 
@@ -218,6 +225,9 @@ PowerShell conviene lanzarlo con `Start-Process ... -Wait` si hace falta esperar
   Las horas se guardan como **reloj de pared local** —un día y un minuto de ese día—, que
   es lo que guarda también Google Calendar. Se crea sola la primera vez y se migra con
   `PRAGMA user_version`; una base escrita por una versión más nueva de Agenda no se toca.
+- Token de Google: `%LOCALAPPDATA%\Agenda\token.bin`, el *refresh token* cifrado con
+  **DPAPI**. Va atado a la cuenta de Windows: copiarlo a otro equipo o a otro usuario no sirve
+  de nada. Borrarlo es desconectar. El *access token* no se escribe en ningún sitio.
 - Log: `%LOCALAPPDATA%\Agenda\logs\agenda-AAAAMMDD.log` (UTF-8, un archivo por día).
 - Configuración: `config.json` y, opcionalmente, `config.local.json`, primero junto al
   ejecutable y después en `%LOCALAPPDATA%\Agenda`. Se fusionan en ese orden, así que el
@@ -229,6 +239,8 @@ PowerShell conviene lanzarlo con `Start-Process ... -Wait` si hace falta esperar
 | `hotkey` | `"Alt+Shift+C"` | Atajo global. Combina `Ctrl`, `Alt`, `Shift` y `Win` con una letra, un dígito, `F1`–`F24`, `Space`, `Enter`, `Tab` o `Esc`. |
 | `popup.openMs` | `160` | Duración de la animación de apertura, en milisegundos. |
 | `popup.closeMs` | `120` | Duración de la de cierre. |
+| `google.clientId` | — | El ID de cliente OAuth. Sin él, Agenda es un calendario local y el menú de la bandeja no menciona Google. |
+| `google.clientSecret` | — | El secreto de cliente. Va en `config.local.json`, nunca en el repositorio. |
 
 ```json
 {
@@ -239,6 +251,55 @@ PowerShell conviene lanzarlo con `Start-Process ... -Wait` si hace falta esperar
 
 Si Windows tiene desactivadas las animaciones (Configuración → Accesibilidad → Efectos
 visuales), el popup aparece y desaparece sin animación.
+
+### Sincronización con Google
+
+Las credenciales las creas tú: los pasos están en
+[docs/google-setup.md](docs/google-setup.md), y el `clientId` y el `clientSecret` van a
+`config.local.json`. Sin ellos Agenda funciona igual, solo que en este equipo, y el menú de la
+bandeja no menciona Google en vez de ofrecer algo que no puede funcionar.
+
+Con las credenciales puestas, **Conectar con Google…** abre un aviso que dice que se va a abrir
+el navegador y espera confirmación. El permiso se pide con OAuth 2.0 y PKCE, y la respuesta
+vuelve a `http://127.0.0.1` en un puerto libre que se cierra en cuanto llega. Se piden tres
+permisos y ninguno más: escribir eventos, leer la lista de calendarios —de ahí salen los
+nombres y los colores— y las tareas.
+
+Cuándo sincroniza:
+
+- Al abrir el popup, si hace más de **60 segundos** de la última vez.
+- Cada **5 minutos** en segundo plano.
+- **De inmediato** después de crear, marcar o deshacer algo; ahí solo sube, no baja.
+
+La interfaz nunca espera a la red: todo eso ocurre en un hilo aparte y el popup sigue
+apareciendo en menos de 100 ms leyendo la caché local.
+
+Qué se sincroniza:
+
+- **Los calendarios que tengas marcados** en Google Calendar web. El que escondiste allí lo
+  escondiste a propósito. **El color de cada evento es el de su calendario.**
+- **Eventos** de forma incremental, con `syncToken`. La primera vez baja el calendario entero,
+  porque Google no da un `syncToken` a una consulta que lleve un rango de fechas.
+- **Tareas** con `updatedMin`.
+- En un conflicto **gana el cambio más reciente**, y cada conflicto queda escrito en el log.
+
+**Calendario por defecto**: dónde cae lo que creas. Se elige en el submenú de la bandeja, que
+lista tus calendarios con una marca en el activo. Lo que hubieras creado antes de conectar la
+cuenta no se queda huérfano: en la primera sincronización se sube al calendario elegido.
+
+**Sin conexión** no se pierde nada. Lo que escribes se guarda en la caché igual que siempre y
+queda en una cola; la cabecera del popup enseña un punto pequeño a la izquierda de las flechas,
+y nada más, porque no hay nada que hacer al respecto. Cuando la red vuelve, la cola se vacía
+sola. Cerrar y volver a abrir Agenda no la pierde: vive en SQLite.
+
+![El popup sin conexión](docs/img/popup-sin-conexion.png)
+
+Dos límites que conviene saber:
+
+- **Google Tasks no guarda la hora de una tarea.** Solo el día. Agenda conserva la hora en
+  local mientras el día no cambie, pero en el móvil esa tarea no tendrá hora.
+- **Una repetición se guarda y no se despliega** todavía, aquí ni allí: la regla viaja, pero
+  Agenda solo enseña el evento en su primer día hasta que existan las vistas de semana y mes.
 
 ## Estructura del proyecto
 
@@ -264,7 +325,7 @@ docs/       capturas y decisiones de arquitectura
 | 2 | Sistema de diseño y vista de mes compacta con datos de ejemplo | Hecha |
 | 3 | Parser de lenguaje natural con vista previa en vivo | Hecha |
 | 4 | Almacenamiento en SQLite: eventos, tareas y caché local | Hecha |
-| 5 | Sincronización con Google Calendar y Google Tasks (OAuth) | Pendiente |
+| 5 | Sincronización con Google Calendar y Google Tasks (OAuth) | Hecha |
 | 6 | Expansión animada a la app completa con vistas de día, semana y mes | Pendiente |
 | 7 | Pulido, rendimiento, empaquetado y arranque con Windows | Pendiente |
 

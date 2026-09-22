@@ -9,6 +9,62 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- Fase 5: **sincronización bidireccional con Google Calendar y Google Tasks.** Lo creado en el
+  popup aparece en la web, lo creado en la web aparece en el popup en la siguiente pasada, y la
+  interfaz no espera a la red en ningún momento: todo ocurre en un hilo propio y el popup sigue
+  leyendo la caché local. El esquema de SQLite **no cambió**: la fase 4 ya había reservado
+  `remote_id`, `etag`, `sync_state` y `pending_ops`, y al repasar hueco por hueco no faltaba
+  ninguno.
+- Fase 5: **OAuth 2.0 con PKCE y redirect a `127.0.0.1`**, que es el flujo que Google documenta
+  para una aplicación de escritorio y el único que no necesita un secreto que sea de verdad
+  secreto —el `client_secret` de una app de escritorio está en el ejecutable de todo el que la
+  tenga—. Lo que protege el intercambio es el verificador, que no sale del proceso. El oyente
+  es un socket a secas con el puerto que dé el sistema, y no la API de servidor HTTP, que
+  querría una reserva de URL y por tanto un administrador para recibir un GET. El refresh token
+  se cifra con **DPAPI** en `%LOCALAPPDATA%\Agenda\token.bin`; el access token no se escribe en
+  ningún sitio. **Antes de abrir el navegador se avisa y se espera confirmación**, en un
+  TaskDialog y en el hilo de la interfaz, que es el único que tiene una ventana con la que
+  preguntar.
+- Fase 5: **el orden dentro de una pasada no es arbitrario: primero se sube.** Al revés, una
+  bajada machacaría una edición local que todavía no ha salido, y la cola que la sostenía se
+  tiraría por vieja.
+- Fase 5: **el color de cada evento es el de su calendario de Google**, y eso no costó una sola
+  línea nueva de dibujo: `ItemsForDay` ya leía el color con un JOIN contra `calendars`, así que
+  bastó con que la sincronización llenara esa tabla. Solo se bajan los calendarios que estén
+  marcados en Google Calendar web: quien escondió uno allí lo escondió a propósito.
+- Fase 5: **el calendario por defecto se elige en un submenú de la bandeja**, y vive en la
+  columna `is_primary`, que ya existía. Esa columna pasa a significar «aquí cae lo que se crea»
+  en vez de «es el primary de Google»: se siembra con el primary y la mueve el menú. Una
+  columna que ya estaba en lugar de inventar un almacén de ajustes para una elección que se
+  hace una vez en la vida.
+- Fase 5: **sin conexión no se pierde nada.** Lo escrito se guarda en la caché igual que
+  siempre y espera en la cola; el popup enseña un punto de 2 DIP a la izquierda de las flechas
+  y nada más, porque no hay nada que el usuario pueda hacer al respecto. Al volver la red la
+  cola se vacía sola, y cerrar Agenda por el medio no la pierde: vive en SQLite. Hay una vista
+  `--render-snapshot=popup-sin-conexion` para juzgar el punto sin desenchufar nada.
+- Fase 5: **deshacer algo que ya está en Google deja lápida.** Los cinco segundos del aviso son
+  de sobra para que la creación haya subido, y borrar la fila entonces dejaría el evento en el
+  móvil para siempre y además lo traería de vuelta en la siguiente pasada. Una fila con
+  `remote_id` se convierte en lápida con un borrado encolado detrás; una que nunca se envió se
+  sigue yendo entera, como en la fase 4.
+- Fase 5: **una creación de evento se puede enviar dos veces sin duplicarse.** Agenda le da a
+  Google su propio `uid` como identificador —el hexadecimal sin guiones cae entero dentro del
+  alfabeto base32hex que Google exige—, así que un reintento contesta 409, que significa «ya
+  estaba». Google Tasks no admite identificador del cliente y por eso ahí esa red no existe.
+- Fase 5: `docs/google-setup.md`, los pasos para crear las credenciales. Incluye lo que muerde
+  de verdad: un proyecto de Google Cloud en modo *Prueba* caduca el refresh token a los siete
+  días, así que hay que publicarlo.
+
+### Corregido
+
+- El `due` de una tarea de Google es **una fecha disfrazada de instante**: la API solo guarda el
+  día y siempre lo devuelve como medianoche UTC. Convertirlo al huso local movería el día a
+  cualquiera al oeste de Londres. Los eventos convierten huso, las tareas no, y las dos reglas
+  viven una al lado de la otra en `src/sync/map.cpp` con sus pruebas.
+- El `end.date` de un evento de todo el día es **exclusivo**: Google dice que un evento de un
+  día termina mañana. Sin restarle el día, todos los eventos de una jornada medirían dos en la
+  rejilla del mes.
+
 - Fase 4: **Enter crea, y lo creado sobrevive a cerrar la aplicación.** Todo va a SQLite, en
   `%LOCALAPPDATA%\Agenda\agenda.db`, en modo WAL. El esquema tiene cinco tablas —`calendars`,
   `events`, `tasks`, `sync_state` y `pending_ops`— con migraciones versionadas en

@@ -42,4 +42,24 @@ std::optional<State> StateFromSlug(std::string_view slug) {
     return std::nullopt;
 }
 
+// 'sin-clasificar' para None, y no 'ninguno': lo que se guarda con este slug es la pregunta
+// que se aplazó, y la pregunta de un repositorio sin desajuste es la de estar sin clasificar
+// (ver el comentario de Mismatch en Types.h). Es el mismo texto que el slug de esa prioridad
+// y no molesta: viven en columnas distintas.
+const char* SlugOf(Mismatch mismatch) {
+    switch (mismatch) {
+    case Mismatch::None:              return "sin-clasificar";
+    case Mismatch::FocusDormant:      return "enfoque-parado";
+    case Mismatch::ArchivedButActive: return "archivado-activo";
+    }
+    return "sin-clasificar";
+}
+
+std::optional<Mismatch> MismatchFromSlug(std::string_view slug) {
+    if (slug == "sin-clasificar") return Mismatch::None;
+    if (slug == "enfoque-parado") return Mismatch::FocusDormant;
+    if (slug == "archivado-activo") return Mismatch::ArchivedButActive;
+    return std::nullopt;
+}
+
 }  // namespace Model

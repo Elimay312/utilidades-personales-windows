@@ -76,13 +76,52 @@ martes, y al cruzar la medianoche UTC el marcador dejaba de coincidir y volvía 
 misma noche: dos avisos del mismo recordatorio. El día se escribe ahora del mismo reloj con
 el que se decidió disparar.
 
+**Aplazar una pregunta (P)**
+
+Lo que faltaba para que la revisión sirva la segunda semana: sin esto, los mismos desajustes
+vuelven a preguntarse cada vez y la única salida es cambiar la prioridad o hacer un push.
+
+- **Esquema v4**: `pospuesto_hasta` (el día, como número de días desde la época) y
+  `pospuesto_por` (qué desajuste se aparcó) en `local`, las dos por omisión vacías, así que
+  una caché de la fase 7 se ve igual después de migrar. Comprobada la migración v3→v4 contra
+  la base real, dos veces.
+- **Silencia una pregunta, no un repositorio.** Si durante el plazo aparece un desajuste
+  distinto, se vuelve a preguntar. El caso que lo justifica: aparcar «está en Enfoque y
+  parado» no puede tapar durante un mes que un archivado volvió a recibir pushes, que es el
+  desajuste más informativo de los tres.
+- **Vence por día y no por segundo** (`Model::DayNumber`): quien aplaza algo un mes no espera
+  que vuelva el día que vence a la hora exacta a la que lo aplazó, en medio de otra cosa.
+- **Vista «Pospuestos»** en la barra lateral, con su contador. Un aplazado SIGUE contando en
+  «Necesita decisión» —esa vista dice lo que pasa— y cuando la pila sale vacía por
+  aplazamientos, la aplicación lo dice en vez de decir «no hay nada».
+- **Se deshace** con Ctrl+Z, como todo lo demás, y se cuenta aparte en el resumen: mueve la
+  barra de progreso pero no entra en ningún grupo.
+
+**Sobre «se ve un toque borroso»: tres hipótesis, tres medidas, y ninguna era**
+
+Vale la pena dejarlo escrito porque las tres parecían buenas:
+
+- *Remuestreo por una escala.* No: el borde de la tarjeta pasa de fondo a tarjeta en UN
+  píxel y mide 620 px justos. (La animación de escala se quitó igual, pero por otro fallo.)
+- *La sombra y su LayerVisual.* No: quitando `CreateShadow` el texto sale idéntico.
+- *Está temblando.* No: con la revisión abierta y sin tocar nada, tres capturas separadas
+  350 ms y una cuarta a los dos segundos salen **idénticas píxel a píxel**.
+
+Lo que queda es el suavizado en gris de toda la aplicación —la fase 1 lo eligió porque
+ClearType no existe sobre alfa premultiplicado— que canta aquí porque es la primera pantalla
+con texto de 26 DIP. Apuntado para la fase 8 con el arreglo a probar: `IDWriteRenderingParams`
+propios con más contraste y otra gamma.
+
 **Medido**
 
-- Los 268 tests pasan, dos nuevos sobre `App::ReviewQueue`.
+- Los 275 tests pasan, nueve nuevos: dos sobre `App::ReviewQueue` y siete sobre aplazar —el
+  borde del último día, que otra pregunta no queda tapada, y que los nombres del desajuste
+  van y vuelven.
 - Compila sin warnings con `/W4 /permissive-`.
 - `auditar.ps1`: las once reglas limpias.
 - Probado contra la cuenta real de 109 repositorios: la pila entera, el límite de Enfoque
-  con su hoja y su relevo, editar el siguiente paso, saltar, el resumen y la vuelta a la
+  con su hoja y su relevo, editar el siguiente paso, saltar, aplazar —y que el aplazado
+  desaparezca de la pila siguiente y aparezca en «Pospuestos»—, el resumen y la vuelta a la
   lista. La base de datos se respaldó antes y se restauró después.
 
 **Lo que no se ha podido comprobar**, cinco cosas, cuatro heredadas y una nueva: la nitidez

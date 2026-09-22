@@ -24,7 +24,9 @@ Ctrl+Z deshace. En Enfoque no caben más de cinco: el sexto se para con un tembl
 elegir cuál baja. Y con **Ctrl+Mayús+R** la lista se aleja y llega la revisión semanal: una
 pila de tarjetas con los repositorios que piden una decisión, que se pasa entera con el
 teclado y termina en un resumen de cómo quedó cada grupo — con un recordatorio opcional que
-avisa el día y la hora que se elija.
+avisa el día y la hora que se elija. Lo que no toca ahora se aplaza con **P**, y aplazar
+silencia esa pregunta y no el repositorio: si mientras tanto le aparece otro desajuste,
+vuelve a preguntarse.
 La sincronización con GitHub ocurre detrás, sin que la ventana la espere. Medido
 contra la cuenta del autor —109 repositorios— y con la caché llena, **la ventana está en
 pantalla con la lista en 106 ms** y filtrar mientras se escribe cuesta **0,006 ms por

@@ -95,4 +95,8 @@ std::int64_t DaysBetween(Instant from, Instant to) {
     return std::chrono::floor<std::chrono::days>(to - from).count();
 }
 
+std::int64_t DayNumber(Instant when) {
+    return std::chrono::floor<std::chrono::days>(when.time_since_epoch()).count();
+}
+
 }  // namespace Model

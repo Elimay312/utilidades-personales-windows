@@ -64,6 +64,7 @@ const wchar_t* NameOf(Lens lens) {
     case Lens::NeedsDecision: return L"Necesita decisión";
     case Lens::Dormant:       return L"Dormidos";
     case Lens::ThisWeek:      return L"Actividad esta semana";
+    case Lens::Snoozed:       return L"Pospuestos";
     }
     return L"";
 }
@@ -79,6 +80,7 @@ const char* SlugOf(Lens lens) {
     case Lens::NeedsDecision: return "necesita-decision";
     case Lens::Dormant:       return "dormidos";
     case Lens::ThisWeek:      return "esta-semana";
+    case Lens::Snoozed:       return "pospuestos";
     }
     return "todos";
 }
@@ -178,6 +180,7 @@ bool InLens(const Entry& entry, Lens lens) {
     case Lens::NeedsDecision: return entry.mismatch != Model::Mismatch::None;
     case Lens::Dormant:       return entry.activity == Model::Activity::Dormant;
     case Lens::ThisWeek:      return entry.thisWeek;
+    case Lens::Snoozed:       return entry.snoozed;
     }
     return false;
 }
@@ -190,6 +193,10 @@ void Derive(Entry& entry, Model::Instant now, const Model::Thresholds& limits) {
         entry.daysSincePush = Model::DaysBetween(*entry.repo.pushedAt, now);
     }
     entry.thisWeek = entry.daysSincePush.has_value() && *entry.daysSincePush < kThisWeekDays;
+    // La pregunta de hoy es 'mismatch' —con None queriendo decir "está sin clasificar"— y
+    // aplazar solo silencia ESA. Un repositorio sin clasificar al que le aparece un
+    // desajuste vuelve a preguntarse aunque el plazo siga vivo.
+    entry.snoozed = Model::Snoozed(entry.local, entry.mismatch, now);
     entry.key = Hash(entry.repo.id);
 
     entry.haystack.clear();
@@ -350,9 +357,11 @@ std::vector<std::string> ReviewQueue(const State& state) {
     // por Earlier, así que recorrerla dos veces sale ordenada dentro de cada grupo sin
     // volver a ordenar nada.
     for (const Entry& entry : state.Entries()) {
+        if (entry.snoozed) continue;
         if (InLens(entry, Lens::NeedsDecision)) queue.push_back(entry.repo.id);
     }
     for (const Entry& entry : state.Entries()) {
+        if (entry.snoozed) continue;
         // InLens ya deja fuera los que se fueron de la cuenta: una pila para decidir no
         // puede tener dentro cosas sobre las que ya no se puede decidir.
         if (InLens(entry, Lens::NeedsDecision)) continue;

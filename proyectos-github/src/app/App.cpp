@@ -1171,7 +1171,15 @@ void Application::StartReview() {
 
     const std::vector<std::string> queue = ReviewQueue(m_state);
     if (queue.empty()) {
-        Toast(L"No hay nada que revisar: todo está clasificado y ninguno se ha desajustado.");
+        // Y se dice POR QUÉ está vacía. Con los aplazados callados, la barra lateral diría
+        // «Necesita decisión 3» y la revisión «no hay nada»: dos verdades que juntas se leen
+        // como un fallo.
+        const int parked = m_state.CountOf(Lens::Snoozed);
+        Toast(parked > 0
+                  ? L"Nada que revisar ahora: los " + std::to_wstring(parked) +
+                        L" que quedaban están pospuestos. Los ves en «Pospuestos»."
+                  : std::wstring(L"No hay nada que revisar: todo está clasificado y ninguno "
+                                 L"se ha desajustado."));
         return;
     }
 
@@ -1194,6 +1202,7 @@ void Application::WireReview() {
         if (m_state.EntryOf(repoId) == nullptr) return true;
         return ApplyPriority(repoId, priority);
     });
+    review->OnSnooze([this](const std::string& repoId) { Snooze(repoId); });
     review->OnNextStep([this](const std::string& repoId, const std::wstring& text) {
         const Entry* entry = m_state.EntryOf(repoId);
         if (entry == nullptr || entry->local.nextStep == text) return;
@@ -1203,6 +1212,25 @@ void Application::WireReview() {
         local.nextStep = text;
         SaveLocal(std::move(local));
     });
+}
+
+void Application::Snooze(const std::string& repoId) {
+    const Entry* entry = m_state.EntryOf(repoId);
+    if (entry == nullptr) return;
+
+    Model::Local local = entry->local;
+    const Model::Local before = local;
+    // Se guarda LA PREGUNTA que se está aplazando, no solo hasta cuándo: el desajuste que
+    // el repositorio tiene AHORA, con «ninguno» queriendo decir «está sin clasificar». Si
+    // mientras dura el plazo aparece otro distinto, la revisión lo vuelve a preguntar.
+    local.snoozeFor = entry->mismatch;
+    local.snoozeUntil =
+        Model::DayNumber(Now()) + static_cast<std::int64_t>(m_state.Thresholds().snoozeDays);
+    SaveLocal(local);
+
+    PushUndo(L"posponer " + entry->repo.name, [this, before] { SaveLocal(before); });
+    Toast(entry->repo.name + L" vuelve a preguntarse dentro de " +
+          std::to_wstring(m_state.Thresholds().snoozeDays) + L" días.");
 }
 
 // ------------------------------------------------------------------ El recordatorio --

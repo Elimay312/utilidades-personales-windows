@@ -493,3 +493,68 @@ TEST_CASE("la pila de la revisión no enseña dos veces al mismo ni mira la vist
     // cosas sobre las que ya no se puede decidir.
     for (const std::string& id : queue) CHECK(id != "R_ido");
 }
+
+TEST_CASE("la pila deja fuera lo aplazado y lo cuenta en Pospuestos") {
+    App::State state;
+    std::vector<Model::Repo> repos;
+    repos.push_back(MakeRepo("R_parado", L"yo/parado", "2026-01-01T00:00:00Z"));
+    repos.push_back(MakeRepo("R_nuevo", L"yo/nuevo", "2026-09-20T00:00:00Z"));
+
+    // El de Enfoque parado se aparta un mes; el sin clasificar no se toca.
+    Model::Local parado;
+    parado.repoId = "R_parado";
+    parado.priority = Model::Priority::Focus;
+    parado.snoozeFor = Model::Mismatch::FocusDormant;
+    parado.snoozeUntil = Model::DayNumber(kNow) + 30;
+
+    state.Load(repos, {parado}, kNow);
+
+    const std::vector<std::string> queue = App::ReviewQueue(state);
+    REQUIRE(queue.size() == 1);
+    CHECK(queue[0] == "R_nuevo");
+
+    // Y sigue contando en "Necesita decisión", que dice lo que PASA. "Pospuestos" dice lo
+    // que decidiste no mirar todavía. Que un repositorio esté en las dos no es un fallo:
+    // esconderlo de la primera sería que la barra lateral mintiera sobre los datos.
+    CHECK(state.CountOf(App::Lens::NeedsDecision) == 1);
+    CHECK(state.CountOf(App::Lens::Snoozed) == 1);
+}
+
+TEST_CASE("un aplazamiento vencido devuelve el repositorio a la pila") {
+    App::State state;
+    std::vector<Model::Repo> repos;
+    repos.push_back(MakeRepo("R_parado", L"yo/parado", "2026-01-01T00:00:00Z"));
+
+    Model::Local parado;
+    parado.repoId = "R_parado";
+    parado.priority = Model::Priority::Focus;
+    parado.snoozeFor = Model::Mismatch::FocusDormant;
+    // Venció ayer.
+    parado.snoozeUntil = Model::DayNumber(kNow) - 1;
+
+    state.Load(repos, {parado}, kNow);
+    CHECK(state.CountOf(App::Lens::Snoozed) == 0);
+    REQUIRE(App::ReviewQueue(state).size() == 1);
+}
+
+TEST_CASE("aplazar por estar sin clasificar no tapa un desajuste que llegue después") {
+    // Aparcado por «¿y esto qué es?» —Mismatch::None— y mientras tanto GitHub dice que el
+    // repositorio está archivado y sigue recibiendo pushes. La pregunta ya no es la misma,
+    // así que vuelve a la pila aunque al plazo le queden veintinueve días.
+    App::State state;
+    std::vector<Model::Repo> repos;
+    repos.push_back(MakeRepo("R_raro", L"yo/raro", "2026-09-20T00:00:00Z"));
+    repos[0].isArchived = true;
+
+    Model::Local raro;
+    raro.repoId = "R_raro";
+    raro.snoozeFor = Model::Mismatch::None;
+    raro.snoozeUntil = Model::DayNumber(kNow) + 30;
+
+    state.Load(repos, {raro}, kNow);
+    const App::Entry* entry = state.EntryOf("R_raro");
+    REQUIRE(entry != nullptr);
+    CHECK(entry->mismatch == Model::Mismatch::ArchivedButActive);
+    CHECK_FALSE(entry->snoozed);
+    REQUIRE(App::ReviewQueue(state).size() == 1);
+}

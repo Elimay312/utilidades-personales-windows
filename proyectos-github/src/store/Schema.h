@@ -16,7 +16,7 @@
 
 namespace Store {
 
-inline constexpr int kSchemaVersion = 3;
+inline constexpr int kSchemaVersion = 4;
 
 // Lleva la base hasta kSchemaVersion. Idempotente: llamarla con la base ya al día no hace
 // nada y no es un error.

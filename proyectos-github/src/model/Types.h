@@ -32,18 +32,35 @@ enum class State { Active, Blocked, Waiting, Done };
 // Deducida del último push, nunca escrita a mano.
 enum class Activity { Active, Paused, Dormant };
 
+// "Necesita decisión": lo que el usuario dijo y lo que el repositorio hace no coinciden. La
+// regla que lo deduce está en model/Rules.h; el tipo vive aquí porque 'Local' lo guarda, y
+// Rules.h ya incluye este archivo. Es la misma mudanza que la fase 3 le hizo a Priority y
+// Activity, y por lo mismo: el tipo es del dominio y quien lo deduce es una regla.
+//
+// 'None' tiene un segundo significado, y hay que saberlo: dentro de la pila de la revisión
+// semanal, un repositorio SIN desajuste está ahí por estar sin clasificar. Así que "la
+// pregunta que se hizo" es exactamente un Mismatch, con None queriendo decir «¿y esto qué
+// es?». De eso vive Local::snoozeFor.
+enum class Mismatch {
+    None,
+    FocusDormant,       // está en Enfoque y lleva demasiado sin un push
+    ArchivedButActive,  // está archivado y sin embargo le siguen llegando pushes
+};
+
 // Los nombres con los que viajan a SQLite y a PROYECTO.md. Son ESTABLES: cambiar uno
 // invalida las bases de datos que ya existen y los archivos que ya se escribieron, así que
 // se tocan solo con una migración al lado. Van en ASCII y en minúsculas porque también son
 // texto de un archivo que la gente edita a mano.
 const char* SlugOf(Priority priority);
 const char* SlugOf(State state);
+const char* SlugOf(Mismatch mismatch);
 
 // Vacío si el texto no es ninguno de los conocidos. Quien lea un PROYECTO.md escrito a mano
 // tiene que poder encontrarse "prioridad: lo-que-sea" y no romperse: el parser es tolerante
 // y quien llama decide con qué se queda.
 std::optional<Priority> PriorityFromSlug(std::string_view slug);
 std::optional<State> StateFromSlug(std::string_view slug);
+std::optional<Mismatch> MismatchFromSlug(std::string_view slug);
 
 // Un commit de la rama principal. El inspector enseña los cinco últimos.
 struct Commit {
@@ -130,6 +147,18 @@ struct Local {
     // siguiente sincronización. Sin esto, editar sin cobertura pierde el commit en silencio.
     bool pushPending = false;
     std::wstring folder;  // carpeta local, para el botón de abrir
+    // --- Aplazar una pregunta de la revisión semanal --------------------------------
+    //
+    // El DÍA (Model::DayNumber) a partir del cual vuelve a preguntarse, y por QUÉ se dejó
+    // de preguntar. Cero es "nunca se aplazó nada", igual que 'order'.
+    //
+    // Son dos columnas y no una a propósito: aplazar silencia UNA pregunta, no el
+    // repositorio. Si mientras dura el plazo aparece un desajuste distinto —un archivado al
+    // que le empiezan a llegar pushes, que es el más informativo de los tres— la pregunta ya
+    // no es la misma y se hace igual. Con solo la fecha, ese aviso se perdería sin que nadie
+    // se enterara, que es justo la clase de fallo que este proyecto persigue.
+    std::int64_t snoozeUntil = 0;
+    Mismatch snoozeFor = Mismatch::None;
     // El orden puesto a mano arrastrando. Cero es "nunca se ha tocado", y entonces manda la
     // fecha del último push, que es el orden de la fase 4. NO viaja a PROYECTO.md: el
     // formato de CLAUDE.md no tiene ese campo, y un commit por cada tarjeta que se arrastra

@@ -40,4 +40,13 @@ Instant FromEpoch(std::int64_t seconds);
 // un número negativo y contarse como recentísimo, no desbordar hacia dormido.
 std::int64_t DaysBetween(Instant from, Instant to);
 
+// En qué DÍA cae un instante, como número de días desde la época. Sirve para comparar dos
+// momentos por el día y no por el segundo, que es lo que quiere quien aplaza algo "un mes":
+// comparando segundos, lo pospuesto a las nueve de la mañana vuelve a aparecer el día que
+// vence a las nueve y un minuto — o sea a mitad de la mañana y en medio de otra cosa.
+//
+// En UTC, como FormatDay y por lo mismo: es el día con el que ya se guardan las novedades, y
+// dos ideas de "qué día es hoy" dentro de la misma caché es una de ellas equivocándose.
+std::int64_t DayNumber(Instant when);
+
 }  // namespace Model

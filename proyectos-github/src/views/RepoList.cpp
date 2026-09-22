@@ -283,6 +283,13 @@ RepoList::EmptyText RepoList::TextForEmpty() const {
         text.body = L"Ningún repositorio ha recibido un push en los últimos siete días.";
         text.action = L"Ver todos";
         break;
+    case App::Lens::Snoozed:
+        text.title = L"No has aparcado nada";
+        text.body = L"En la revisión semanal, la P aparta un repositorio un tiempo. Aquí "
+                    L"aparecen los que están esperando a que venza su plazo.";
+        text.action = L"Ver Necesita decisión";
+        text.lens = App::Lens::NeedsDecision;
+        break;
     }
     return text;
 }

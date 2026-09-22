@@ -25,6 +25,10 @@ struct Thresholds {
     int dormantDays = 90;
     int focusLimit = 5;
     int focusDormantDays = 14;
+    // Cuánto se aplaza una pregunta de la revisión semanal. Un mes y no una semana: la
+    // revisión es semanal, así que aplazar siete días es que vuelva a salir justo en la
+    // siguiente — o sea no aplazar nada. Configurable, como los otros tres.
+    int snoozeDays = 30;
 };
 
 // activo si hubo push en los últimos 14 días; en pausa entre 14 y 90; dormido MÁS de 90.
@@ -60,13 +64,25 @@ FocusPlan PlanFocus(const std::vector<FocusEntry>& inFocus, const std::string& c
                     Instant now, const Thresholds& limits);
 
 // "Necesita decisión". Solo estos dos casos: "Sin clasificar" y "Dormidos" son vistas
-// aparte de la barra lateral, no desajustes.
-enum class Mismatch {
-    None,
-    FocusDormant,       // está en Enfoque y lleva más de focusDormantDays sin un push
-    ArchivedButActive,  // está archivado y sin embargo le siguen llegando pushes
-};
-
+// aparte de la barra lateral, no desajustes. El tipo Mismatch vive en model/Types.h porque
+// 'Local' lo guarda; lo que está aquí es la regla que lo deduce.
 Mismatch Review(const Repo& repo, const Local& local, Instant now, const Thresholds& limits);
+
+// ¿Sigue aplazada la pregunta que este repositorio hace hoy?
+//
+// Dos condiciones, y las dos importan:
+//
+//   - El plazo no ha vencido. Se compara por DÍA y no por segundo (Model::DayNumber): quien
+//     aplaza algo "un mes" no espera que reaparezca el día que vence a la hora exacta en que
+//     lo aplazó, en medio de otra cosa. Vence al empezar el día, no a media tarde.
+//   - Y la pregunta es LA MISMA que se aplazó. Aplazar silencia una pregunta, no un
+//     repositorio: si mientras tanto aparece otro desajuste, se pregunta igual. Sin esto,
+//     decir "ya sé que está dormido" taparía durante un mes que un archivado volvió a
+//     recibir pushes, y eso es un aviso perdido sin que nadie se entere.
+//
+// 'asking' es lo que el repositorio pregunta AHORA: su Mismatch, con None queriendo decir
+// "está sin clasificar" (ver Types.h). 'today' entra por parámetro como en todo este
+// archivo, que es lo único que permite probar el borde del último día.
+bool Snoozed(const Local& local, Mismatch asking, Instant today);
 
 }  // namespace Model

@@ -89,6 +89,8 @@ private:
     // revisión más corta — y una revisión más corta se parece mucho a una terminada.
     void StartReview();
     void WireReview();
+    // «Esta pregunta, no ahora». Guarda hasta cuándo y, sobre todo, QUÉ se aplazó.
+    void Snooze(const std::string& repoId);
     // De un repositorio a una tarjeta de la pila: aquí se redacta todo lo que la vista
     // enseña, incluido por qué está ahí.
     Views::Review::Card ReviewCardOf(const Entry& entry);

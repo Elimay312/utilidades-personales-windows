@@ -397,7 +397,7 @@ Model::Result<Stats> Repos::Counts() {
 Model::Result<Model::Local> Repos::LocalOf(const std::string& repoId) {
     Model::Result<Stmt> prepared = m_db.Prepare(
         "SELECT priority, state, next_step, repo_mode, folder, updated_at, "
-        "       repo_confirmed, push_pending, orden "
+        "       repo_confirmed, push_pending, orden, pospuesto_hasta, pospuesto_por "
         "  FROM local WHERE repo_id = ?1");
     if (!prepared) return prepared.Err();
 
@@ -427,6 +427,8 @@ Model::Result<Model::Local> Repos::LocalOf(const std::string& repoId) {
     local.repoConfirmed = stmt.Int(6) != 0;
     local.pushPending = stmt.Int(7) != 0;
     local.order = static_cast<int>(stmt.Int(8));
+    local.snoozeUntil = stmt.Int(9);
+    if (const auto asking = Model::MismatchFromSlug(stmt.Text(10))) local.snoozeFor = *asking;
     return local;
 }
 
@@ -436,7 +438,8 @@ Model::Result<std::vector<Model::Local>> Repos::AllLocal() {
     // de enseñarla hay que poder contarlo con los dedos.
     Model::Result<Stmt> prepared = m_db.Prepare(
         "SELECT repo_id, priority, state, next_step, repo_mode, folder, updated_at, "
-        "       repo_confirmed, push_pending, orden FROM local");
+        "       repo_confirmed, push_pending, orden, pospuesto_hasta, pospuesto_por "
+        "  FROM local");
     if (!prepared) return prepared.Err();
 
     Stmt stmt = prepared.Take();
@@ -459,6 +462,10 @@ Model::Result<std::vector<Model::Local>> Repos::AllLocal() {
         local.repoConfirmed = stmt.Int(7) != 0;
         local.pushPending = stmt.Int(8) != 0;
         local.order = static_cast<int>(stmt.Int(9));
+        local.snoozeUntil = stmt.Int(10);
+        if (const auto asking = Model::MismatchFromSlug(stmt.Text(11))) {
+            local.snoozeFor = *asking;
+        }
         locals.push_back(std::move(local));
     }
     return locals;
@@ -476,13 +483,15 @@ Model::Outcome Repos::SaveLocal(const Model::Local& local) {
     // de arrastrarla devolvería el orden viejo sin que nadie lo pidiera.
     Model::Result<Stmt> prepared = m_db.Prepare(
         "INSERT INTO local (repo_id, priority, state, next_step, repo_mode, folder, "
-        "                   updated_at, repo_confirmed) "
-        "VALUES (?1,?2,?3,?4,?5,?6,?7,?8) "
+        "                   updated_at, repo_confirmed, pospuesto_hasta, pospuesto_por) "
+        "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) "
         "ON CONFLICT(repo_id) DO UPDATE SET "
         "  priority = excluded.priority, state = excluded.state, "
         "  next_step = excluded.next_step, repo_mode = excluded.repo_mode, "
         "  folder = excluded.folder, updated_at = excluded.updated_at, "
-        "  repo_confirmed = excluded.repo_confirmed");
+        "  repo_confirmed = excluded.repo_confirmed, "
+        "  pospuesto_hasta = excluded.pospuesto_hasta, "
+        "  pospuesto_por = excluded.pospuesto_por");
     if (!prepared) return prepared.Err();
 
     Stmt stmt = prepared.Take();
@@ -494,6 +503,11 @@ Model::Outcome Repos::SaveLocal(const Model::Local& local) {
     BindTextOrNull(stmt, 6, local.folder);
     stmt.Bind(7, Model::ToEpoch(local.updatedAt));
     stmt.Bind(8, local.repoConfirmed);
+    // El aplazamiento SÍ va por aquí, al revés que push_pending y orden: lo escribe quien
+    // edita el repositorio —la revisión semanal— y no un camino aparte, así que guardar
+    // cualquier otra cosa con el Local que se leyó antes lo devuelve igual que estaba.
+    stmt.Bind(9, local.snoozeUntil);
+    stmt.Bind(10, std::string_view(Model::SlugOf(local.snoozeFor)));
 
     if (Model::Result<bool> stepped = stmt.Step(); !stepped) return stepped.Err();
     return Model::Ok();

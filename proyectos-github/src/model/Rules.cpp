@@ -94,4 +94,10 @@ Mismatch Review(const Repo& repo, const Local& local, Instant now, const Thresho
     return Mismatch::None;
 }
 
+bool Snoozed(const Local& local, Mismatch asking, Instant today) {
+    if (local.snoozeUntil == 0) return false;
+    if (local.snoozeFor != asking) return false;
+    return DayNumber(today) < local.snoozeUntil;
+}
+
 }  // namespace Model

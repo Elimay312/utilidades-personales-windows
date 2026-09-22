@@ -45,12 +45,18 @@ enum class Lens {
     NeedsDecision,
     Dormant,
     ThisWeek,
+    // Los que están aparcados: la revisión no los pregunta hasta que venza el plazo. NO se
+    // les quita de "Necesita decisión", y no es un descuido: ahí siguen estando, porque el
+    // desajuste sigue siendo verdad. Esta vista existe para poder MIRAR lo aparcado sin
+    // cambiar lo que significa la otra — que es la diferencia entre esconder algo y
+    // acordarse de dónde se puso.
+    Snoozed,
 };
 
 inline constexpr Lens kPriorityLenses[] = {Lens::Focus, Lens::Secondary, Lens::Someday,
                                            Lens::Archived, Lens::Unsorted};
 inline constexpr Lens kSmartLenses[] = {Lens::All, Lens::NeedsDecision, Lens::Dormant,
-                                        Lens::ThisWeek};
+                                        Lens::ThisWeek, Lens::Snoozed};
 
 const wchar_t* NameOf(Lens lens);
 // Las cinco primeras vistas SON las cinco prioridades, en el mismo orden. Traducir de una a
@@ -82,6 +88,11 @@ struct Entry {
     // porque "esta semana" depende de la hora a la que se pregunte, y una vista cuyo
     // contenido cambia entre el contador y la lista es un fallo que nadie ve.
     bool thisWeek = false;
+    // La pregunta que este repositorio hace hoy está aplazada y el plazo no ha vencido. Se
+    // deriva aquí y no se mira al filtrar por lo mismo que thisWeek: depende del día en que
+    // se pregunte, y una vista cuyo contenido cambia entre el contador y la lista es un
+    // fallo que nadie ve.
+    bool snoozed = false;
     // Días completos desde el último push. Vacío si no hubo ninguno. Lo pinta la tarjeta, y
     // está precalculado por lo mismo que lo demás: pintar veinticinco tarjetas por
     // fotograma no puede consultar el reloj veinticinco veces.
@@ -203,7 +214,7 @@ private:
     std::wstring m_query;
     Model::Thresholds m_limits;
     Lens m_lens = Lens::All;
-    int m_counts[9] = {};
+    int m_counts[10] = {};
 };
 
 // Lo que la revisión semanal pregunta, y en el orden en que lo pregunta.
@@ -216,6 +227,10 @@ private:
 // repositorio en Enfoque que lleva un mes parado es una decisión que ya se tomó y se quedó
 // vieja, y uno recién aparecido es una que todavía no se ha tomado. Lo primero urge más.
 // Dentro de cada grupo manda el orden de la lista, que es el del último push.
+//
+// Los aplazados no entran: `Entry::snoozed` ya sabe si la pregunta de hoy es la que se
+// aparcó y si el plazo sigue vivo. Siguen contándose en "Necesita decisión", que dice lo que
+// pasa, y salen aparte en "Pospuestos", que dice lo que decidiste no mirar todavía.
 //
 // Devuelve IDENTIFICADORES y no posiciones, por lo mismo que el inspector de la fase 5: el
 // estado se reconstruye entero después de cada guardado y de cada sincronización, así que

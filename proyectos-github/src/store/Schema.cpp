@@ -119,6 +119,21 @@ constexpr const char* kV3 = R"SQL(
 ALTER TABLE local ADD COLUMN orden INTEGER NOT NULL DEFAULT 0;
 )SQL";
 
+// --- v4 ---------------------------------------------------------------------------
+//
+// Aplazar una pregunta de la revisión semanal. Dos columnas y no una: el DÍA en que vuelve
+// a preguntarse y POR QUÉ se dejó de preguntar, que es lo que hace que aplazar silencie una
+// pregunta y no el repositorio entero (ver el comentario de Local en model/Types.h).
+//
+// Van en 'local' porque son del usuario, como 'orden', y las dos nacen vacías: cero es
+// "nunca se aplazó nada", así que una caché de la fase 7 se ve exactamente igual después de
+// migrar. El día se guarda como número de días desde la época y no como segundos, que es lo
+// que hace que el plazo venza al empezar el día y no a la hora a la que se pidió.
+constexpr const char* kV4 = R"SQL(
+ALTER TABLE local ADD COLUMN pospuesto_hasta INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE local ADD COLUMN pospuesto_por   TEXT    NOT NULL DEFAULT '';
+)SQL";
+
 struct Migration {
     int version;
     const char* sql;
@@ -128,6 +143,7 @@ constexpr Migration kMigrations[] = {
     {1, kV1},
     {2, kV2},
     {3, kV3},
+    {4, kV4},
 };
 
 }  // namespace

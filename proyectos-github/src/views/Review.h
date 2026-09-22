@@ -75,6 +75,11 @@ public:
     void OnNextStep(std::function<void(const std::string&, const std::wstring&)> handler) {
         m_nextStep = std::move(handler);
     }
+    // Aplazar: «esta pregunta, no ahora». Quien sabe cuánto dura el plazo y qué pregunta se
+    // está aplazando es App, que tiene los umbrales y el estado; aquí solo se dice cuál.
+    void OnSnooze(std::function<void(const std::string&)> handler) {
+        m_snooze = std::move(handler);
+    }
     void OnFinished(std::function<void()> handler) { m_finished = std::move(handler); }
     // La hoja del límite de Enfoque acabó eligiendo a quién bajar: la tarjeta que se había
     // quedado esperando sale ahora.
@@ -98,6 +103,7 @@ private:
     void ShowCurrent(bool animate);
     void Decide(Model::Priority priority);
     void Skip();
+    void Postpone();
     void BeginEdit();
     void CommitEdit();
     bool CancelEdit();
@@ -117,6 +123,10 @@ private:
     // verdad, de m_decided, que no cuenta las saltadas.
     int m_at = 0;
     int m_decided = 0;
+    // De los decididos, cuántos lo fueron aplazándolos. Aparte del reparto por grupos
+    // porque un aplazado no entra en ninguno, y sin contarlo el resumen diría "106
+    // decididos" encima de unas barras que suman 104.
+    int m_postponed = 0;
     int m_total = 0;
     // Cuántas hay en cada prioridad al terminar, para el resumen. Se cuenta aquí y no se
     // le pregunta al estado: el resumen habla de lo que ACABA de pasar, y el estado
@@ -142,6 +152,7 @@ private:
 
     std::function<bool(const std::string&, Model::Priority)> m_decide;
     std::function<void(const std::string&, const std::wstring&)> m_nextStep;
+    std::function<void(const std::string&)> m_snooze;
     std::function<void()> m_finished;
 
     // Se esconde cuando el fundido de salida ha terminado, no antes: mientras se va hay

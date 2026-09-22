@@ -252,3 +252,71 @@ TEST_CASE("los nombres con los que se guardan van y vuelven") {
     CHECK_FALSE(Model::PriorityFromSlug("").has_value());
     CHECK_FALSE(Model::StateFromSlug("Activo").has_value());
 }
+
+// ------------------------------------------------------------------------ Aplazar --
+
+namespace {
+
+// Un Local ya aplazado: la pregunta 'asking' apartada 'days' días a partir de kNow.
+Local Parked(Mismatch asking, int days) {
+    Local local;
+    local.repoId = "R_1";
+    local.snoozeFor = asking;
+    local.snoozeUntil = Model::DayNumber(kNow) + days;
+    return local;
+}
+
+Instant DaysAhead(int days) {
+    return Model::FromEpoch(Model::ToEpoch(kNow) + static_cast<long long>(days) * 86400);
+}
+
+}  // namespace
+
+TEST_CASE("un aplazamiento vence al empezar el día, no a la hora a la que se pidió") {
+    // El borde entero: se aparta siete días a mediodía del 21. Sigue aparcado los días 1 a
+    // 6, y el séptimo ya no — y el séptimo cuenta desde que empieza, no desde mediodía.
+    const Local local = Parked(Mismatch::FocusDormant, 7);
+
+    CHECK(Model::Snoozed(local, Mismatch::FocusDormant, kNow));
+    CHECK(Model::Snoozed(local, Mismatch::FocusDormant, DaysAhead(6)));
+    // Un minuto antes de la medianoche del sexto día todavía está aparcado…
+    CHECK(Model::Snoozed(local, Mismatch::FocusDormant, At("2026-09-27T23:59:00Z")));
+    // …y el séptimo, de madrugada, ya vuelve a preguntarse. Comparando por segundos, este
+    // volvería a mediodía: a mitad de la mañana y en medio de otra cosa.
+    CHECK_FALSE(Model::Snoozed(local, Mismatch::FocusDormant, At("2026-09-28T00:01:00Z")));
+    CHECK_FALSE(Model::Snoozed(local, Mismatch::FocusDormant, DaysAhead(7)));
+    CHECK_FALSE(Model::Snoozed(local, Mismatch::FocusDormant, DaysAhead(30)));
+}
+
+TEST_CASE("aplazar silencia UNA pregunta, no el repositorio") {
+    // El caso que justifica guardar el porqué y no solo la fecha: alguien aparca "está en
+    // Enfoque y parado" y, mientras dura el plazo, ese mismo repositorio empieza a recibir
+    // pushes estando archivado. Es el desajuste más informativo de los tres y no puede
+    // quedarse tapado por una respuesta que era a otra cosa.
+    const Local local = Parked(Mismatch::FocusDormant, 30);
+
+    CHECK(Model::Snoozed(local, Mismatch::FocusDormant, kNow));
+    CHECK_FALSE(Model::Snoozed(local, Mismatch::ArchivedButActive, kNow));
+    CHECK_FALSE(Model::Snoozed(local, Mismatch::None, kNow));
+}
+
+TEST_CASE("sin aplazamiento no hay nada aparcado, y el cero no es una fecha") {
+    // Cero es "nunca se aplazó nada", como el orden. Sin esta comprobación, un repositorio
+    // recién creado estaría aparcado hasta 1970 — o sea nunca, por casualidad y no por
+    // diseño, hasta el día en que alguien invierta la comparación.
+    Local nuevo;
+    nuevo.repoId = "R_2";
+    CHECK(nuevo.snoozeUntil == 0);
+    CHECK_FALSE(Model::Snoozed(nuevo, Mismatch::None, kNow));
+    CHECK_FALSE(Model::Snoozed(nuevo, Mismatch::FocusDormant, kNow));
+}
+
+TEST_CASE("los nombres del desajuste aplazado van y vuelven") {
+    // Acaban escritos en la caché del usuario, como los de prioridad y estado.
+    const Mismatch all[] = {Mismatch::None, Mismatch::FocusDormant,
+                            Mismatch::ArchivedButActive};
+    for (const Mismatch one : all) {
+        CHECK(Model::MismatchFromSlug(Model::SlugOf(one)) == one);
+    }
+    CHECK_FALSE(Model::MismatchFromSlug("loquesea").has_value());
+}

@@ -29,6 +29,7 @@ constexpr wchar_t kGlyphAll[] = {0xE71D, 0};        // AllApps       — Todos
 constexpr wchar_t kGlyphWarning[] = {0xE7BA, 0};    // Warning       — Necesita decisión
 constexpr wchar_t kGlyphStopwatch[] = {0xE916, 0};  // Stopwatch     — Dormidos
 constexpr wchar_t kGlyphCalendar[] = {0xE787, 0};   // Calendar      — Esta semana
+constexpr wchar_t kGlyphSnooze[] = {0xED4D, 0};     // Snooze        — Pospuestos
 constexpr wchar_t kGlyphMore[] = {0xE712, 0};       // More          — los ajustes
 
 const wchar_t* GlyphOf(App::Lens lens) {
@@ -42,6 +43,7 @@ const wchar_t* GlyphOf(App::Lens lens) {
     case App::Lens::NeedsDecision: return kGlyphWarning;
     case App::Lens::Dormant:       return kGlyphStopwatch;
     case App::Lens::ThisWeek:      return kGlyphCalendar;
+    case App::Lens::Snoozed:       return kGlyphSnooze;
     }
     return kGlyphAll;
 }

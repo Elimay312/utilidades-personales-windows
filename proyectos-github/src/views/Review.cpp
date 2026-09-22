@@ -392,6 +392,7 @@ void Review::Begin(std::vector<Card> cards) {
     m_cards = std::move(cards);
     m_at = 0;
     m_decided = 0;
+    m_postponed = 0;
     m_total = static_cast<int>(m_cards.size());
     for (int& one : m_tally) one = 0;
     m_running = true;
@@ -497,6 +498,25 @@ void Review::Advance(Model::Priority priority) {
     m_front = 1 - m_front;
     ++m_at;
 
+    UpdateProgress(true);
+    ShowCurrent(true);
+}
+
+// Aplazar no es saltar: saltar manda la tarjeta al final de ESTA sesión, y aplazar la saca
+// de la pila hasta que venza el plazo. Cuenta como decidida —porque se decidió no decidir
+// todavía, que es una decisión— y por eso mueve la barra de progreso.
+void Review::Postpone() {
+    if (!m_running || m_done || m_at >= static_cast<int>(m_cards.size())) return;
+    if (m_snooze) m_snooze(m_cards[static_cast<std::size_t>(m_at)].repoId);
+
+    ++m_decided;
+    ++m_postponed;
+    CancelEdit();
+    // Sale por abajo, como la saltada: no va a ningún grupo, así que no tiene diana a la
+    // que ir. Lo que dice el viaje es «esta se aparta», y eso es hacia fuera.
+    m_faces[m_front]->FlyTo(CardFrame().Moved(0.0f, Frame().height));
+    m_front = 1 - m_front;
+    ++m_at;
     UpdateProgress(true);
     ShowCurrent(true);
 }
@@ -618,6 +638,10 @@ bool Review::Keys(const Input::Key& e) {
     }
     if (e.virtualKey == 'E') {
         BeginEdit();
+        return true;
+    }
+    if (e.virtualKey == 'P') {
+        Postpone();
         return true;
     }
     const int digit = e.virtualKey - '1';
@@ -801,7 +825,8 @@ void Review::PaintFooter(const Ui::Paint& paint, const Rect& box) {
              Ui::Align::Center);
     }
 
-    Line(paint, L"E  editar el siguiente paso     Espacio  saltar al final     Esc  terminar",
+    Line(paint,
+         L"E  editar     P  posponer     Espacio  saltar al final     Esc  terminar",
          Rect{box.x, box.y + kChipHeight + Metrics::kSpace1, box.width, kHintHeight},
          Ui::Style::Footnote, Ui::Weight::Regular, paint.tokens->textSecondary,
          Ui::Align::Center);
@@ -815,8 +840,13 @@ void Review::PaintSummary(const Ui::Paint& paint, const Rect& box) {
          Ui::Style::Title, Ui::Weight::Semibold, paint.tokens->textPrimary);
 
     const int pending = m_total - m_decided;
-    std::wstring sub = std::to_wstring(m_decided) +
-                       (m_decided == 1 ? L" repositorio decidido" : L" repositorios decididos");
+    const int sorted = m_decided - m_postponed;
+    std::wstring sub = std::to_wstring(sorted) +
+                       (sorted == 1 ? L" repositorio decidido" : L" repositorios decididos");
+    if (m_postponed > 0) {
+        sub += L" · " + std::to_wstring(m_postponed) +
+               (m_postponed == 1 ? L" pospuesto" : L" pospuestos");
+    }
     if (pending > 0) {
         sub += L" · " + std::to_wstring(pending) + L" quedan como estaban";
     }

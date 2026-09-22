@@ -103,6 +103,7 @@ Parser tolerante: si el archivo no tiene frontmatter o tiene campos desconocidos
 - **Prioridad manual:** Enfoque, Secundario, Algún día, Archivado, o Sin clasificar (repos nuevos).
 - **Límite de Enfoque:** máximo 5 (configurable). Al intentar añadir uno más, la app pide elegir cuál baja a Secundario; no se puede saltar.
 - **Alertas de desajuste:** un repo en Enfoque dormido más de 14 días, o un repo Archivado con pushes recientes, aparece en la vista "Necesita decisión".
+- **Aplazar una pregunta** (30 días, configurable): en la revisión semanal, la P aparta un repo hasta que venza el plazo. Silencia **esa** pregunta y no el repo: si mientras tanto le aparece un desajuste distinto, se vuelve a preguntar. Se compara por día, no por segundo — vence al empezar el día, no a la hora a la que se pidió. Sigue contando en "Necesita decisión", que dice lo que pasa, y sale además en "Pospuestos", que dice lo que decidiste no mirar todavía.
 
 ## Lenguaje visual (estilo Mac)
 
@@ -156,7 +157,7 @@ suyo, y lo que sobraba era el tiempo. Se cambian en `compositor/MotionSpec.h`, q
 
 ## Vistas
 
-- **Barra lateral:** grupos de prioridad con contador, y vistas inteligentes: Necesita decisión, Dormidos, Actividad esta semana, Sin clasificar.
+- **Barra lateral:** grupos de prioridad con contador, y vistas inteligentes: Necesita decisión, Dormidos, Actividad esta semana, Pospuestos, Sin clasificar.
 - **Lista principal:** tarjetas con nombre, siguiente paso (lo más visible tras el nombre), indicador de actividad, prioridad, lenguaje y "hace X días". Alternar entre lista compacta y cuadrícula.
 - **Inspector (panel derecho):** prioridad, estado, siguiente paso editable, novedades con fecha, últimos commits, issues/PRs abiertos, botones para abrir en GitHub y en la carpeta local.
 - **Revisión semanal:** modo a pantalla completa que presenta una tarjeta por repo que necesita decisión; con 1-4 asignas prioridad, E editas el siguiente paso, espacio salta. Cada decisión anima la tarjeta hacia su grupo.
@@ -176,6 +177,7 @@ suyo, y lo que sobraba era el tiempo. Se cambian en `compositor/MotionSpec.h`, q
 | N | Añadir novedad (con el inspector abierto) |
 | Ctrl+R | Sincronizar ahora |
 | Ctrl+Shift+R | Empezar revisión semanal |
+| P (en la revisión) | Aplazar esa pregunta 30 días |
 | Ctrl+O | Abrir el repo en GitHub |
 | Ctrl+Z | Deshacer el último cambio (prioridad, orden, ediciones y novedades) |
 | Ctrl+G | Alternar entre lista y cuadrícula |
@@ -276,19 +278,66 @@ tarjetas que no reciben entrada mientras vuelan», y no hizo falta: las tarjetas
 revisión son dueñas de su superficie y se mueven con `SlideTo`, que es un desplazamiento en
 la GPU y no dos capas de píxeles cruzándose. Queda para quien lo necesite o para borrarlo.
 
-**Y una medida para la fase 8: el texto se ve «un toque borroso», y no es de esta fase.**
-Se persiguió con capturas a 1:1 y no hay remuestreo por ningún lado: el borde de la tarjeta
-pasa de fondo a tarjeta en UN píxel, mide 620 px justos, y el mismo estilo de texto sale
-idéntico dentro de la tarjeta y fuera de ella. Lo que se ve es el **suavizado en gris** que
-la fase 1 eligió porque ClearType no existe sobre una superficie con alfa premultiplicado
-(`Gfx::Surface` pone `D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE`), y se nota aquí más que en ningún
-otro sitio porque la revisión es la primera pantalla con texto de 26 DIP. Lo que queda por
-probar, y es trabajo de pulido: unos `IDWriteRenderingParams` propios con más contraste y
-otra gamma, que es lo que endurece el gris sin tocar la decisión de la fase 1.
+**Para la fase 8: el texto se ve «un toque borroso», y no es de esta fase.** Se persiguieron
+tres hipótesis y las tres están descartadas con medidas, no a ojo:
 
-*Y un aviso para quien mida esto:* PowerShell es DPI-unaware, así que `GetDpiForWindow` y
-`GetClientRect` desde ahí devuelven lo del sistema y no lo de la ventana. Hay que llamar
-antes a `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` o se persigue un fantasma.
+- *¿Remuestreo por una escala?* No. El borde de la tarjeta pasa de fondo a tarjeta en UN
+  píxel —sin degradado— y mide 620 px justos. Aun así se le quitó la animación de escala,
+  que tenía otro fallo de verdad.
+- *¿La sombra?* No. Quitando `CreateShadow` de la tarjeta el texto sale exactamente igual.
+- *¿Está temblando?* No. Tres capturas del área de cliente separadas 350 ms y una cuarta a
+  los dos segundos, con la revisión abierta y sin tocar nada, salen **idénticas píxel a
+  píxel**. En pantalla no se mueve nada.
+
+Lo que queda, y es lo único que las medidas sostienen, es el **suavizado en gris**: la fase 1
+lo eligió porque ClearType no existe sobre una superficie con alfa premultiplicado
+(`Gfx::Surface` pone `D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE`), y canta aquí más que en ningún
+otro sitio porque la revisión es la primera pantalla con texto de 26 DIP. Lo que hay que
+probar en el pulido: unos `IDWriteRenderingParams` propios con más contraste mejorado y otra
+gamma, que endurecen el gris sin tocar la decisión de la fase 1 — y juzgarlo con la
+aplicación delante, no con una captura.
+
+*Y dos avisos para quien vuelva a medir esto:* PowerShell es DPI-unaware, así que
+`GetDpiForWindow` y `GetClientRect` desde ahí devuelven lo del sistema y no lo de la ventana
+—daban 120 ppp donde la ventana está a 96— y hay que llamar antes a
+`SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)`. Y comparar tamaños de letra distintos
+ampliados no dice nada: dos textos del MISMO estilo, uno dentro de la tarjeta y otro fuera,
+es la única comparación que separa un problema de la tarjeta de uno de toda la aplicación.
+
+**Aplazar guarda QUÉ se aplazó, no solo hasta cuándo.** Son dos columnas —`pospuesto_hasta`
+y `pospuesto_por`— y la segunda es la que importa: aplazar silencia una PREGUNTA y no un
+repositorio. Si alguien aparca «está en Enfoque y parado» y durante ese mes ese mismo
+repositorio empieza a recibir pushes estando archivado —el desajuste más informativo de los
+tres, según la propia `Model::Review`— la pregunta ya no es la misma y se hace igual. Con
+solo la fecha, ese aviso se perdería sin que nadie se enterara, que es exactamente la clase
+de fallo que este proyecto persigue. El código lo dice en una línea: `local.snoozeFor !=
+asking`.
+
+**`Mismatch` se mudó a `model/Types.h`, y `None` significa dos cosas.** Se muda porque
+`Local` lo guarda y `Rules.h` ya incluye `Types.h`; es la misma mudanza que la fase 3 le hizo
+a `Priority` y `Activity`. Y dentro de la pila de la revisión, un repositorio SIN desajuste
+está ahí por estar sin clasificar, así que «la pregunta que se hizo» es exactamente un
+`Mismatch` con `None` queriendo decir «¿y esto qué es?». Reusarlo evita una segunda
+enumeración que diría lo mismo con otras palabras — pero hay que saberlo, y por eso está
+escrito en los dos sitios.
+
+**El plazo vence por DÍA y no por segundo.** `Model::DayNumber` y no `DaysBetween`: quien
+aplaza algo un mes no espera que reaparezca el día que vence a la hora exacta en que lo
+aplazó, en medio de otra cosa. En UTC, como `FormatDay` y como las novedades — dos ideas de
+«qué día es hoy» dentro de la misma caché es una de ellas equivocándose, que es justo el
+fallo del recordatorio de más arriba.
+
+**Un aplazado sigue contando en «Necesita decisión».** No se le quita, y no es un descuido:
+esa vista dice lo que PASA con los datos y esconderlo sería que la barra lateral mintiera. Lo
+que se añade es una vista aparte, «Pospuestos», que dice lo que decidiste no mirar todavía.
+Un repositorio puede estar en las dos. Y para que las dos verdades no se lean como un fallo,
+cuando la pila sale vacía por aplazamientos la aplicación lo DICE: «los N que quedaban están
+pospuestos».
+
+**Aplazar cuenta como decidido en la barra de progreso y aparte en el resumen.** Decidir no
+decidir todavía es una decisión y mueve la barra; pero no entra en ningún grupo, así que el
+resumen lo dice por separado — sin eso pondría «106 decididos» encima de unas barras que
+suman 104.
 
 **Falta comprobar cinco cosas**, cuatro heredadas y una nueva: la nitidez a otras escalas
 —`WM_DPICHANGED` sigue sin dispararse, y esta vez está comprobado por qué: esta máquina

@@ -102,6 +102,8 @@ class PopupWindow final : public A11ySource {
   LRESULT Handle(UINT message, WPARAM wparam, LPARAM lparam);
 
   void ApplyDwmAttributes();
+  // Puts the system material and DWM's border on, or takes them off for the close fade.
+  void Backdrop(bool on);
   bool CreateDevices();
   void Place(const RECT& work);
   // --- Moving between monitors (phase 7) -----------------------------------------------------
@@ -254,7 +256,8 @@ class PopupWindow final : public A11ySource {
   SIZE size_{};    // the window, which is what everything is laid out in
   SIZE buffer_{};  // the swap chain: big enough for the app, so growing never resizes it
   bool visible_ = false;
-  bool acrylic_ = false;
+  bool acrylic_ = false;   // the panel is drawn translucent over the material right now
+  bool backdrop_ = false;  // this Windows has a system backdrop at all
   bool placing_ = false;  // Place is moving the window and measures the DPI itself
 
   Fonts fonts_;

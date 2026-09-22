@@ -101,13 +101,25 @@ void PopupWindow::ApplyDwmAttributes() {
   const DWORD corner = DWMWCP_ROUND;
   DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
 
-  const DWORD backdrop = DWMSBT_TRANSIENTWINDOW;
-  acrylic_ = SUCCEEDED(
-      DwmSetWindowAttribute(hwnd_, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop)));
-  if (!acrylic_) {
+  Backdrop(true);
+  if (!backdrop_) {
     // Windows 10 has no system backdrop, so the panel is painted opaque instead.
     LogInfo(L"popup: no system backdrop available, falling back to a solid panel");
   }
+}
+
+void PopupWindow::Backdrop(bool on) {
+  // The material and the rounded border are DWM's, drawn behind the window and not part of the
+  // visual that fades: left on while closing, they stayed whole for the 120 ms of the fade, a
+  // grey panel with the content dying inside it. So closing takes them off and paints the panel
+  // opaque, and what fades is everything at once.
+  const DWORD type = on ? DWMSBT_TRANSIENTWINDOW : DWMSBT_NONE;
+  const HRESULT set =
+      DwmSetWindowAttribute(hwnd_, DWMWA_SYSTEMBACKDROP_TYPE, &type, sizeof(type));
+  if (on) backdrop_ = SUCCEEDED(set);
+  const COLORREF border = on ? DWMWA_COLOR_DEFAULT : DWMWA_COLOR_NONE;
+  DwmSetWindowAttribute(hwnd_, DWMWA_BORDER_COLOR, &border, sizeof(border));
+  acrylic_ = on && backdrop_;
 }
 
 bool PopupWindow::CreateDevices() {
@@ -457,6 +469,8 @@ void PopupWindow::Show() {
   hoverPrev_ = false;
   hoverNext_ = false;
   inputFocused_ = true;
+  // The material back on before the first frame: it came off when this last closed.
+  Backdrop(true);
   zone_ = Zone::Grid;
   listFocus_ = 0;
   focusVisible_ = false;
@@ -483,6 +497,8 @@ void PopupWindow::Hide() {
   KillTimer(hwnd_, kCaretTimer);
   KillTimer(hwnd_, kNowTimer);
   ticking_ = false;
+  Backdrop(false);
+  Render();
   Animate(/*opening=*/false);
 
   if (timing_.closeMs == 0 || !AnimationsEnabled()) {

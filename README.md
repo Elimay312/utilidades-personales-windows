@@ -11,14 +11,14 @@ reunidas en este repositorio para poder clonarlas y probarlas en otro equipo.
 
 | Proyecto | Qué es | Estado |
 |---|---|---|
-| [`calendario/`](calendario/README.md) | **Agenda**: un calendario en C++ que sale con un atajo; escribes `mañana 5pm dentista` y lo crea, sincronizado con Google Calendar y Tasks. | 1.0.0, con instalador. |
+| [`calendario/`](calendario/README.md) | **Agenda**: un calendario en C++ que sale con un atajo en el monitor del ratón; escribes `mañana 5pm dentista` y lo crea, sincronizado con Google Calendar y Tasks. | 1.0.0, con instalador. |
 | [`dock/`](dock/README.md) | Un dock estilo macOS: magnificación, efecto genio, uno por pantalla, miniaturas de ventanas. | En uso diario. Falta pulir rendimiento. |
-| [`hud/`](hud/README.md) | El aviso de volumen, rehecho: cápsula de cristal abajo y centrada, que se transforma en vez de ir y venir. Las teclas son suyas, así que el recuadro gris de Windows no sale. | Funcionando en tres pantallas. Falta usarlo unos días. |
-| [`isla/`](isla/README.md) | Una isla dinámica en el borde superior de la pantalla en la que estés trabajando: qué suena, de quién, cuánto queda, y poder pausarlo. Más pomodoro, batería y volumen —con el número y por qué altavoces sale—, y los recordatorios de Agenda en su propia burbuja. | Funcionando. Falta probarla en otros equipos. |
+| [`hud/`](hud/README.md) | El aviso de volumen, rehecho: cápsula de cristal abajo y centrada, que se transforma en vez de ir y venir. Las teclas son suyas, así que el recuadro gris de Windows no sale. | Terminado. Funciona en tres pantallas y sigue al dispositivo de salida. |
+| [`isla/`](isla/README.md) | Una isla dinámica en el borde superior de la pantalla en la que estés trabajando: qué suena, de quién, cuánto queda, y poder pausarlo. Más pomodoro, batería y volumen —con el número y por qué altavoces sale—, y los recordatorios de Agenda en su propia burbuja. | Funcionando (dos islas: principal y avisos). Falta probarla en otros equipos. |
 | [`lanzador/`](lanzador/README.md) | `Alt+Espacio` y escribes: aplicaciones, ficheros (vía Everything), prefijos web, sitios del sistema y cuentas, ordenados por lo que más abres. | Funcionando. Falta usarlo unos días. |
-| [`proyectos-github/`](proyectos-github/README.md) | **Brújula**: los ~120 repositorios de GitHub ordenados por en cuál conviene trabajar, con el siguiente paso de cada uno guardado para no tener que reconstruirlo. | En construcción: fase 1 de 8. Hay ventana, todavía no hay datos. |
+| [`proyectos-github/`](proyectos-github/README.md) | **Brújula**: los ~120 repositorios de GitHub ordenados por en cuál conviene trabajar, con el siguiente paso de cada uno guardado para no tener que reconstruirlo. | Terminado (8 de 8 fases). Sincronización en segundo plano, inspector, revisión semanal y empaquetador. |
 | [`quicklook/`](quicklook/README.md) | Vista previa con la barra espaciadora: seleccionas un archivo en el Explorador, pulsas espacio, lo ves. Imágenes, PDF, vídeo y audio. | Funcionando. Falta usarlo unos días. |
-| [`rayo-file-manager/`](rayo-file-manager/CLAUDE.md) | **Rayo**: un gestor de archivos en C++ con vista previa, vigilancia de carpetas y orden natural. | Funcionando. Le falta README propio; por ahora su documentación es `CLAUDE.md`. |
+| [`rayo-file-manager/`](rayo-file-manager/CLAUDE.md) | **Rayo**: un gestor de archivos en C++ con vista previa, vigilancia de carpetas y orden natural. | 1.0.0, con instalador (8 de 8 fases). Su documentación es `CLAUDE.md`. |
 | [`renombrar/`](renombrar/README.md) | Renombrado masivo con vista previa: ves la tabla antes → después de todo el lote, y solo entonces se aplica. Con deshacer. | Funcionando. Falta usarlo unos días en la oficina. |
 
 ## Qué podría haber

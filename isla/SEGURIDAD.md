@@ -271,8 +271,9 @@ un campo más, `insignia`, de **1 o 2 letras o dígitos** (Agenda manda el día 
 Opcional; sin él, la burbuja lleva un punto de su color. Cualquier otro carácter la anula entera,
 en vez de recortarla: dos caracteres no dan para esconder nada, y así tampoco se cuela un símbolo
 que parezca de otra app. No cambia nada más: sigue siendo texto, se pinta con la misma fuente que
-el resto, y **la región de la ventana crece solo lo que mide la burbuja** (28 × 32 px lógicos)
-mientras hay un aviso esperando, para no quitarle al navegador ni un clic más.
+el resto, y **la región de la ventana crece solo lo que mide la burbuja** mientras hay un aviso
+esperando, para no quitarle al navegador ni un clic más: escondida, como la brasa, asoman 28 × 8
+px lógicos; solo con el ratón encima baja entera y ocupa 28 × 32.
 
 ---
 

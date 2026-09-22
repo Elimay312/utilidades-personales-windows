@@ -99,14 +99,19 @@ target_compile_definitions(agenda_nlp PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LE
 
 # La capa de datos, aparte por el mismo motivo que el parser: aqui dentro no entra ni Direct2D
 # ni una ventana, asi que los tests la prueban directa contra una base en memoria.
+#
+# src/sync/map.cpp vive aqui y no con el resto de src/sync por lo mismo: es el borde entre el
+# JSON de Google y estas columnas, no tiene red ni handles, y es lo unico de la fase 5 que se
+# puede probar sin cuenta y sin internet. Por eso agenda_data enlaza nlohmann.
 add_library(agenda_data STATIC
   src/data/db.cpp
   src/data/schema.cpp
-  src/data/store.cpp)
+  src/data/store.cpp
+  src/sync/map.cpp)
 target_include_directories(agenda_data PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_options(agenda_data PRIVATE ${AGENDA_WARNINGS})
 target_compile_definitions(agenda_data PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_link_libraries(agenda_data PUBLIC SQLite::SQLite3)
+target_link_libraries(agenda_data PUBLIC SQLite::SQLite3 nlohmann_json::nlohmann_json)
 
 add_executable(Agenda WIN32
   src/app/main.cpp
@@ -139,6 +144,7 @@ add_executable(agenda_tests
   tests/test_nlp.cpp
   tests/test_popup.cpp
   tests/test_store.cpp
+  tests/test_sync.cpp
   tests/test_text_input.cpp
   src/app/monitors.cpp
   # agenda_data registra sus errores, y el log es del ejecutable: se recompila aqui igual que

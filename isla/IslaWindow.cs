@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Numerics;
 using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
@@ -722,7 +722,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         Cancion? c = Medios.Ultima;
         if (c is null) return new Aviso(string.Empty, false);
         return new Aviso(
-            string.IsNullOrWhiteSpace(c.Artista) ? c.Titulo : $"{c.Titulo}   Â·   {c.Artista}",
+            string.IsNullOrWhiteSpace(c.Artista) ? c.Titulo : $"{c.Titulo}   ·   {c.Artista}",
             true);
     }
 
@@ -746,7 +746,7 @@ internal sealed unsafe class IslaWindow : IDisposable
     ///
     /// <para>
     /// Y lo cuenta <b>con el dispositivo</b>, que es lo que le faltaba: con tres salidas
-    /// enchufadas, un Â«Volumen 45 %Â» a secas dice que algo cambio, no donde.
+    /// enchufadas, un «Volumen 45 %» a secas dice que algo cambio, no donde.
     /// </para>
     /// </summary>
     private void OnVolumen()
@@ -762,7 +762,7 @@ internal sealed unsafe class IslaWindow : IDisposable
 
         string donde = Audio.Dispositivo();
         Avisar(
-            donde.Length == 0 ? $"Volumen   {porcentaje} %" : $"Volumen   {porcentaje} %   Â·   {donde}",
+            donde.Length == 0 ? $"Volumen   {porcentaje} %" : $"Volumen   {porcentaje} %   ·   {donde}",
             MsAvisoAudio);
     }
 
@@ -792,7 +792,7 @@ internal sealed unsafe class IslaWindow : IDisposable
 
         float v = Audio.Volumen();
         Avisar(
-            v < 0f ? $"Salida   {donde}" : $"Salida   {donde}   Â·   {(int)Math.Round(v * 100)} %",
+            v < 0f ? $"Salida   {donde}" : $"Salida   {donde}   ·   {(int)Math.Round(v * 100)} %",
             MsAvisoAudio);
     }
 
@@ -821,7 +821,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         if ((energia.BatteryFlag & 128) != 0) return;
 
         string carga = energia.BatteryLifePercent <= 100 ? $"{energia.BatteryLifePercent} %" : "";
-        Avisar(energia.ACLineStatus == 1 ? $"Bateria   {carga}   Â·   cargando" : $"Bateria   {carga}");
+        Avisar(energia.ACLineStatus == 1 ? $"Bateria   {carga}   ·   cargando" : $"Bateria   {carga}");
     }
 
     private void OnPomodoro()
@@ -960,7 +960,7 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// La isla se escondia al ocultar la barra y no volvia.
     ///
     /// Solo se lee la ventana en primer plano, y el marco raiz si esa ventana es una
-    /// CoreWindow. No se enumera nada y no se toca nada (SEGURIDAD.md Â§3.5).
+    /// CoreWindow. No se enumera nada y no se toca nada (SEGURIDAD.md §3.5).
     /// </summary>
     private bool HayPlenoPantalla()
     {

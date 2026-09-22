@@ -300,7 +300,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
     }
 
     /// <summary>
-    /// El latido del audio. Un solo float por lectura, ver Audio y SEGURIDAD.md Â§3.3.
+    /// El latido del audio. Un solo float por lectura, ver Audio y SEGURIDAD.md §3.3.
     ///
     /// <para>
     /// En brasa mueve el ANCHO de la tira; abierta o asomada, las cuatro barras. Cada

@@ -23,10 +23,13 @@ en su burbuja junto a la isla —un círculo con el día del evento en el color 
 La burbuja se esconde como la brasa y solo asoma su aro; con el ratón encima baja, y si te
 quedas crece desde ella la tarjeta.
 
-- **Dos espacios, y cada cosa vuelve al suyo.** Lo que abre la burbuja nace en ella, lleva el
-  color del aviso y al cerrarse se recoge en ella; lo que suena, en el centro y con el color de
-  su carátula. Antes el aviso se cerraba en la isla principal, con el aura de la canción, y la
-  burbuja reaparecía al lado: parecían dos cosas distintas.
+- **Dos islas, y cada cosa vuelve a la suya.** La del aviso es otra pastilla entera —su muelle,
+  su aura del color del aviso, su borde— que en reposo es la burbuja: asoma desde ella y se
+  recoge en ella. La principal no se entera: su línea sigue en el centro con lo que suena. El
+  primer intento prestaba el panel de la principal al aviso, y la principal se encogía hasta
+  la forma de la burbuja o desaparecía mientras tanto; un suplente de su línea tapaba solo
+  parte del problema. Desplegadas ocuparían el mismo sitio, así que solo se despliega una: al
+  abrirse la del aviso, la principal se queda en su línea.
 - **El punto del primer intento no se veía.** Medía 8 px y quedaba fuera de la región de la
   ventana, que en reposo son los 140 × 5 de la brasa: Windows lo recortaba entero. El hover
   funcionaba porque lee el cursor, así que se podía abrir algo que no estaba. Ahora la región

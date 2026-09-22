@@ -226,18 +226,25 @@ internal sealed unsafe class IslaWindow : IDisposable
     private TimeSpan _duracion;
     private bool _apartada;
     private DateTime _regionCuando;
-    private Estado _regionEstado = Estado.Brasa;
+    // Lo que la region tiene puesto ahora de cada isla. Crecer se pone ya; encoger espera al
+    // muelle, y el tic pone las dos al dia a la vez.
+    private Estado _regionMain = Estado.Brasa;
+    private Estado _regionAviso = Estado.Brasa;
     // Con que se hizo la ultima region: si lleva burbuja y si la brasa estaba a su lado.
     private (bool Burbuja, bool Principal) _regionBurbuja;
-    // La burbuja del aviso, bajada entera porque el raton esta cerca; si no, solo asoma.
-    private bool _burbujaFuera;
-    // La isla es ahora del aviso: nacio en la burbuja y se recoge en ella, con su color. La
-    // del contenido nace y se recoge en el centro. Dos espacios, y cada uno vuelve al suyo.
-    private bool _lado;
-    private Aviso? _titularAviso;
 
-    /// <summary>Si el panel abierto ensena la tarjeta del aviso en vez de lo que suena.</summary>
-    private bool _vistaAviso;
+    // --- la isla del aviso (SEGURIDAD.md s.3.7) -----------------------------------------------
+    // Otra isla, no un modo de la principal: en reposo es la burbuja junto a la brasa, asoma con
+    // un aviso nuevo y se abre en su tarjeta. Solo una de las dos se despliega a la vez, porque
+    // ocupan el mismo sitio; la otra se queda en su linea o en su burbuja.
+    private Estado _avisoEstado = Estado.Brasa;
+    private bool _avisoVisible;
+    // Abierta con el atajo: se queda aunque el raton no este encima, como la principal.
+    private bool _avisoFijo;
+    private int _seguidosAviso;
+    private DateTime _finAvisoAsomo;
+    // La burbuja, bajada entera porque el raton esta cerca; si no, solo asoma.
+    private bool _burbujaFuera;
     private AvisoApp? _enTarjeta;
 
     public static IslaWindow? Create(IslaConfig config)
@@ -302,7 +309,7 @@ internal sealed unsafe class IslaWindow : IDisposable
 
         // La region ES el hit-test de esta ventana, no un adorno: recorta los 520x260
         // a lo que se este dibujando de verdad. Empieza en la brasa, que son 140x5.
-        AplicarRegion(Estado.Brasa);
+        AplicarRegion();
 
         _visuals = new IslaVisuals(_hwnd, Scale(1f), _w);
         _visuals.GoTo(Estado.Brasa, abriendo: false, instantaneo: true);
@@ -661,14 +668,36 @@ internal sealed unsafe class IslaWindow : IDisposable
         Vigilar();
         if (_visible && _actual == Estado.Brasa) Latir();
 
-        // La zona crece al estar abierta: eso es la histeresis, y sale gratis. La burbuja del
-        // aviso tiene la suya, y va primero porque cae dentro de la de la isla principal.
-        bool enBurbuja = !_hover && _enTarjeta is not null && Dentro(ZonaBurbuja(), p);
-        bool dentro = enBurbuja || Dentro(ZonaCaliente(_hover), p);
+        // Desplegada, la isla del aviso tiene el raton: ocupa el sitio de la principal abierta.
+        // Abierta se queda mientras el raton este encima; asomada pasa a abierta si te quedas.
+        if (_avisoEstado != Estado.Brasa)
+        {
+            if (!Dentro(ZonaCaliente(_avisoEstado == Estado.Abierta), p))
+            {
+                _seguidosAviso = 0;
+                if (_avisoEstado == Estado.Abierta && !_avisoFijo) AvisoA(Estado.Brasa);
+                return;
+            }
+            if (_avisoEstado == Estado.Abierta || ++_seguidosAviso < TicksParaAbrir) return;
+            AvisoA(Estado.Abierta);
+            return;
+        }
 
-        // La burbuja baja en cuanto llega el raton, sin esperar: es la respuesta a que te
-        // acercas. Abrir el aviso si espera, como abrir la isla.
+        // La burbuja tiene su zona, y va primero porque cae dentro de la franja de la principal.
+        // Baja en cuanto llega el raton, sin esperar: es la respuesta a que te acercas. Abrirse
+        // si espera, como la isla.
+        bool enBurbuja = !_hover && _enTarjeta is not null && Dentro(ZonaBurbuja(), p);
         if (enBurbuja != _burbujaFuera) SacarBurbuja(enBurbuja);
+        if (enBurbuja)
+        {
+            _seguidos = 0;
+            if (++_seguidosAviso >= TicksParaAbrir) AvisoA(Estado.Abierta);
+            return;
+        }
+        _seguidosAviso = 0;
+
+        // La zona crece al estar abierta: eso es la histeresis, y sale gratis.
+        bool dentro = Dentro(ZonaCaliente(_hover), p);
 
         if (!dentro)
         {
@@ -687,14 +716,6 @@ internal sealed unsafe class IslaWindow : IDisposable
         // opaca antes de 300 ms.
         if (++_seguidos < TicksParaAbrir) return;
         _hover = true;
-        // Por la burbuja se abre el aviso; por la isla, lo que suena. Sin nada sonando, la
-        // isla solo puede estar abierta por el aviso. Y desde reposo, el aviso crece desde su
-        // burbuja y lo que suena desde el centro.
-        bool aviso = _enTarjeta is not null && (enBurbuja || !HayPrincipal());
-        Vista(aviso);
-        if (aviso) _titularAviso = TitularDe(_enTarjeta!);
-        // Abrir lo que suena encima de un aviso asomado tambien devuelve la isla al contenido.
-        if (_actual == Estado.Brasa || !aviso) Espacio(aviso, LiftBurbuja(), _enTarjeta?.Color ?? 0);
         Aplicar();
     }
 
@@ -720,12 +741,6 @@ internal sealed unsafe class IslaWindow : IDisposable
         return new RECT { left = _x + r.left, right = _x + r.right, top = _y + r.top, bottom = _y + r.bottom };
     }
 
-    private void Vista(bool aviso)
-    {
-        _vistaAviso = aviso;
-        _visuals.VistaAviso(aviso);
-    }
-
     /// <summary>Lo que la isla principal tiene que ensenar por si misma: algo sonando o un pomodoro.</summary>
     private bool HayPrincipal() => Medios.Ultima is not null || _hayPomodoro;
 
@@ -746,14 +761,28 @@ internal sealed unsafe class IslaWindow : IDisposable
     {
         // El atajo tambien sirve para invocarla cuando no suena nada.
         Ensenar(true);
+        // Con la tarjeta del aviso abierta, la siguiente pulsacion lo recoge todo.
+        if (_avisoEstado == Estado.Abierta)
+        {
+            AvisoA(Estado.Brasa);
+            Console.WriteLine("[isla] atajo -> Brasa");
+            return;
+        }
         _base = (Estado)(((int)_base + 1) % 3);
+        // Con un aviso esperando, abierta es su tarjeta: es lo que pide atencion, y sin esto
+        // solo se llegaria a el con el raton.
+        if (_base == Estado.Abierta && _enTarjeta is not null)
+        {
+            _base = Estado.Brasa;
+            AvisoA(Estado.Abierta);
+            _avisoFijo = true;
+            Console.WriteLine("[isla] atajo -> aviso");
+            return;
+        }
         // Asomada por el atajo tiene que durar lo que dura un asomo. Sin esto el tic la
         // devolvia a la brasa en 120 ms -- su caducidad era la del ultimo aviso, ya pasada -- y
         // la segunda pulsacion volvia a empezar: el atajo no llegaba nunca a abierta.
         if (_base == Estado.Asomada) _finAsomo = DateTime.UtcNow.AddSeconds(AsomoSegundos);
-        // Con un aviso esperando, el atajo abre el aviso: es lo que pide atencion, y sin esto
-        // solo se llegaria a el con el raton.
-        if (_base == Estado.Abierta) Vista(_enTarjeta is not null);
         Console.WriteLine($"[isla] atajo -> {_base}");
         Aplicar();
     }
@@ -814,102 +843,111 @@ internal sealed unsafe class IslaWindow : IDisposable
         IReadOnlyList<AvisoApp> pendientes = Avisos.Pendientes;
         _enTarjeta = pendientes.Count > 0 ? pendientes[0] : null;
         _visuals.MostrarAviso(_enTarjeta);
+        Ensenar(HayPrincipal() || _enTarjeta is not null || _transitorio is not null);
+
+        if (_enTarjeta is null)
+        {
+            // Contestado o retirado: la isla del aviso se recoge y se apaga. La principal ni se
+            // entera.
+            AvisoA(Estado.Brasa);
+            if (_avisoVisible) _visuals.AvisoVisible(false, _burbujaFuera);
+            _avisoVisible = false;
+            Burbuja();
+            return;
+        }
 
         AvisoApp? nuevo = pendientes.LastOrDefault(a => a.Numero > _anunciado);
+        if (!_avisoVisible)
+        {
+            // Sale de detras del borde, junto a la brasa.
+            _avisoVisible = true;
+            _visuals.PintarBurbuja(nuevo ?? _enTarjeta);
+            _visuals.AvisoVisible(true, _burbujaFuera);
+        }
         if (nuevo is not null)
         {
             _anunciado = pendientes.Max(a => a.Numero);
             Aviso titular = TitularDe(nuevo);
-            // La isla pasa a ser del aviso, aunque estuviera asomada con otra cosa: se recogera en
-            // su burbuja. Desde reposo, ademas, asoma saliendo de donde va a quedarse la burbuja,
-            // de detras del borde. Con el raton encima no se le quita a nadie lo que esta mirando.
-            if (!_hover)
+            _visuals.TitularAviso(titular.Texto, titular.Color);
+            _visuals.PintarBurbuja(nuevo);
+            // Asoma con lo que es, salvo que ya este abierta ensenando otro.
+            if (_avisoEstado == Estado.Brasa)
             {
-                _titularAviso = titular;
-                Espacio(true, -BurbujaLado, nuevo.Color);
+                _finAvisoAsomo = DateTime.UtcNow.AddMilliseconds(MsAsomoAviso);
+                AvisoA(Estado.Asomada);
             }
-            Avisar(titular.Texto, MsAsomoAviso, titular.Color);
         }
-
-        // Sin aviso esperando, la isla vuelve a ser del contenido, con su color.
-        if (_enTarjeta is null && _lado) Espacio(false);
-
-        if (_enTarjeta is null && _vistaAviso)
+        else if (_avisoEstado == Estado.Brasa)
         {
-            // Contestado: si el panel estaba en el aviso, vuelve a lo que suena, o se recoge.
-            Vista(false);
-            if (!HayPrincipal()) { _hover = false; _base = Estado.Brasa; Aplicar(); }
+            _visuals.PintarBurbuja(_enTarjeta);
+        }
+        Burbuja();
+    }
+
+    /// <summary>
+    /// La isla del aviso al estado pedido; <see cref="Estado.Brasa"/> es la burbuja. Las dos
+    /// islas desplegadas ocuparian el mismo sitio, asi que al desplegarse esta la principal se
+    /// recoge en su linea, que sigue ahi.
+    /// </summary>
+    private void AvisoA(Estado e)
+    {
+        if (e == Estado.Brasa) _avisoFijo = false;
+        if (e == _avisoEstado) return;
+        bool abriendo = e > _avisoEstado;
+        _avisoEstado = e;
+        _seguidosAviso = 0;
+
+        if (e != Estado.Brasa && (_hover || _base != Estado.Brasa || _actual != Estado.Brasa))
+        {
+            _hover = false;
+            _seguidos = 0;
+            _base = Estado.Brasa;
+            Aplicar();
+        }
+        // Abierta es la tarjeta del mas antiguo que espera; recogida, la burbuja tambien es suya.
+        if (_enTarjeta is not null && e != Estado.Asomada)
+        {
+            Aviso titular = TitularDe(_enTarjeta);
+            _visuals.TitularAviso(titular.Texto, titular.Color);
+            _visuals.PintarBurbuja(_enTarjeta);
         }
 
-        Ensenar(HayPrincipal() || _enTarjeta is not null || _transitorio is not null);
-        Burbuja();
-    }
-
-    /// <summary>
-    /// La burbuja solo se ve con la isla recogida: asomada o abierta, el aviso esta dentro. Y
-    /// la isla principal, en brasa, se apaga cuando no tiene nada suyo.
-    /// </summary>
-    /// <summary>La forma de la burbuja, para que el panel nazca o muera en ella.</summary>
-    private static (float W, float H, float R, float Lift) FormaBurbuja(float lift) =>
-        (BurbujaLado, BurbujaLado, BurbujaLado * 0.5f, lift);
-
-    private float LiftBurbuja() => _burbujaFuera ? BurbujaY : BurbujaAsoma - BurbujaLado;
-
-    /// <summary>
-    /// Da la isla al aviso o se la devuelve al contenido. Al darsela, el panel se pone ya en la
-    /// forma y el sitio de la burbuja, a <paramref name="lift"/>, para crecer desde ahi.
-    /// </summary>
-    private void Espacio(bool burbuja, float lift = 0f, uint color = 0)
-    {
-        if (burbuja == _lado) return;
-        _lado = burbuja;
-        _visuals.Espacio(burbuja, Scale(BurbujaDx(HayPrincipal())), color, HayPrincipal());
-        // El suplente de la brasa entra o sale de la region, y el titular cambia de espacio.
-        if (_regionCuando == default) AplicarRegion(_regionEstado);
-        RefrescarTitular();
-        if (burbuja && _actual == Estado.Brasa)
-            _visuals.GoTo(Estado.Brasa, abriendo: false, instantaneo: true, forma: FormaBurbuja(lift));
-        // Devuelta estando recogida (contestaron el aviso a media vuelta): a la forma de la brasa,
-        // o se quedaria con la de la burbuja en el centro.
-        else if (_actual == Estado.Brasa) _visuals.GoTo(Estado.Brasa, abriendo: false);
-    }
-
-    /// <summary>
-    /// El panel del aviso termino de recogerse en la burbuja: la burbuja vuelve a ser la suya y
-    /// la isla principal vuelve al centro, con lo que suena.
-    /// </summary>
-    private void Relevo()
-    {
-        _lado = false;
-        _visuals.Espacio(false, 0f, 0, HayPrincipal());
-        _visuals.GoTo(Estado.Brasa, abriendo: false, instantaneo: true);
-        _visuals.Relevo(HayPrincipal(), _burbujaFuera);
-        RefrescarTitular();
-        Burbuja();
+        _visuals.AvisoGoTo(e, abriendo, _burbujaFuera);
+        // Al crecer la region se pone ya; al encogerse espera a que el muelle termine.
+        if (abriendo)
+        {
+            _regionAviso = e;
+            AplicarRegion();
+        }
+        else
+        {
+            _regionCuando = DateTime.UtcNow.AddMilliseconds(380);
+        }
     }
 
     private void SacarBurbuja(bool fuera)
     {
         _burbujaFuera = fuera;
-        Burbuja();
-        // Al bajar, la region crece ya o recortaria la burbuja; al subir, espera al muelle, como
-        // la isla. Con un encogimiento ya esperando, el tic la pone con la burbuja como este.
-        if (_regionCuando != default) return;
-        if (fuera) AplicarRegion(_regionEstado);
-        else _regionCuando = DateTime.UtcNow.AddMilliseconds(380);
+        if (_avisoEstado != Estado.Brasa) return;
+        _visuals.AvisoGoTo(Estado.Brasa, abriendo: fuera, fuera);
+        // Al bajar, la region crece ya o recortaria la burbuja; al subir, espera al muelle.
+        if (fuera) AplicarRegion();
+        else if (_regionCuando == default) _regionCuando = DateTime.UtcNow.AddMilliseconds(380);
     }
 
+    /// <summary>
+    /// Lo que depende de si la principal tiene algo: donde cae la burbuja, a su lado o en medio,
+    /// y si la linea de la principal se ve.
+    /// </summary>
     private void Burbuja()
     {
-        bool brasa = _actual == Estado.Brasa;
-        // Con la isla en el espacio del aviso, la burbuja es el propio panel.
-        _visuals.Burbuja(_enTarjeta, _enTarjeta is not null && brasa && !_lado, HayPrincipal(), _burbujaFuera);
-        _visuals.Principal(!brasa || HayPrincipal() || _lado);
-        // Llega o se va un aviso con la isla ya quieta: la region gana o pierde la burbuja ya.
-        // Si hay un encogimiento esperando, lo pondra el tic con la burbuja dentro. Y solo si
-        // cambio algo: esto corre con cada aviso de medios, y Spotify avisa a menudo.
+        _visuals.AvisoDx(Scale(BurbujaDx(HayPrincipal())));
+        _visuals.Principal(_actual != Estado.Brasa || HayPrincipal());
+        // Llega o se va un aviso, o la brasa aparece a su lado, con la isla quieta: la region al
+        // dia ya. Si hay un encogimiento esperando, lo pondra el tic. Y solo si cambio algo: esto
+        // corre con cada aviso de medios, y Spotify avisa a menudo.
         if (_regionCuando == default && (_enTarjeta is not null, HayPrincipal()) != _regionBurbuja)
-            AplicarRegion(_regionEstado);
+            AplicarRegion();
     }
 
     /// <summary>
@@ -919,8 +957,6 @@ internal sealed unsafe class IslaWindow : IDisposable
     private Aviso Titular()
     {
         if (_transitorio is Aviso t) return t;
-        // Recogiendose en la burbuja sigue diciendo lo del aviso: lo que suena es del otro espacio.
-        if (_lado && _titularAviso is Aviso a) return a;
 
         if (_hayPomodoro)
         {
@@ -1101,9 +1137,13 @@ internal sealed unsafe class IslaWindow : IDisposable
         if (_regionCuando != default && ahora > _regionCuando)
         {
             _regionCuando = default;
-            AplicarRegion(_regionEstado);
-            if (_lado && _actual == Estado.Brasa) Relevo();
+            _regionMain = _actual;
+            _regionAviso = _avisoEstado;
+            AplicarRegion();
         }
+
+        if (_avisoEstado == Estado.Asomada && _seguidosAviso == 0 && ahora > _finAvisoAsomo)
+            AvisoA(Estado.Brasa);
 
         // Una vez por segundo: apartarse de lo que este a pantalla completa y volver
         // al principio de la banda topmost. El mismo criterio corre al cambiar un
@@ -1316,21 +1356,17 @@ internal sealed unsafe class IslaWindow : IDisposable
         bool abriendo = efectivo > _actual;
         _actual = efectivo;
 
-        // Recogerse: lo del aviso vuelve a la burbuja, si queda un aviso al que volver; lo
-        // demas, al centro. El relevo a la burbuja de verdad lo hace el tic, con la region.
-        if (efectivo == Estado.Brasa && _lado && _enTarjeta is null) Espacio(false);
-        _visuals.GoTo(efectivo, abriendo,
-            forma: efectivo == Estado.Brasa && _lado ? FormaBurbuja(LiftBurbuja()) : null);
+        _visuals.GoTo(efectivo, abriendo);
         Burbuja();
 
         // Al CRECER la region se pone ya, o recortaria lo que esta creciendo. Al
         // ENCOGERSE hay que esperar a que el muelle termine, o se recortaria la
         // animacion de cierre a media carrera. La espera la vigila el tic de 120 ms.
-        _regionEstado = efectivo;
+        // Crecer no cancela el encogimiento que la isla del aviso pueda tener esperando.
         if (abriendo)
         {
-            _regionCuando = default;
-            AplicarRegion(efectivo);
+            _regionMain = efectivo;
+            AplicarRegion();
         }
         else
         {
@@ -1360,7 +1396,7 @@ internal sealed unsafe class IslaWindow : IDisposable
 
         // En la tarjeta del aviso solo hay botones, y el que se pulse vuelve por la tuberia a
         // la app que lo mando. Que significa es cosa suya (SEGURIDAD.md s.3.7).
-        if (_vistaAviso)
+        if (_avisoEstado == Estado.Abierta)
         {
             int boton = _visuals.GolpeBoton(p);
             if (_enTarjeta is not null && boton >= 0 && boton < _enTarjeta.Botones.Count)
@@ -1427,29 +1463,25 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// Recogida, la isla pasa de tragarse un rectangulo invisible de 380x190 a ocupar
     /// los 140x5 que de verdad se ven.
     /// </summary>
-    private void AplicarRegion(Estado estado)
+    private void AplicarRegion()
+    {
+        _regionBurbuja = (_enTarjeta is not null, HayPrincipal());
+        HRGN region = PInvoke.CreateRectRgn(0, 0, 0, 0);
+        Sumar(region, RectDe(_regionMain));
+        // La isla del aviso, mientras hay uno: su burbuja -- solo su cuadrado, nada del hueco que
+        // la separa de la brasa --, o la pastilla entera si esta desplegada.
+        if (_enTarjeta is not null) Sumar(region, _regionAviso == Estado.Brasa ? Burbuja(0) : RectDe(_regionAviso));
+        // La ventana se queda la region: no se suelta aqui.
+        PInvoke.SetWindowRgn(_hwnd, region, false);
+    }
+
+    private RECT RectDe(Estado estado)
     {
         (float w, float h, _, float lift) = Medidas(estado);
         int rw = (int)Scale(w);
-        int rh = (int)Scale(h);
         int rx = (_w - rw) / 2;
         int ry = (int)Scale(lift);
-
-        _regionBurbuja = (_enTarjeta is not null, HayPrincipal());
-        HRGN region = PInvoke.CreateRectRgn(rx, ry, rx + rw, ry + rh);
-        // Con un aviso esperando, la burbuja tambien: sin ella en la region, Windows la recorta
-        // y no se ve. Solo su cuadrado, nada del hueco que la separa de la brasa.
-        if (_enTarjeta is not null) Sumar(region, Burbuja(0));
-        // Con el panel prestado al aviso y despegado del borde, la linea del suplente queda
-        // encima de el, fuera de su rectangulo.
-        if (_lado && estado != Estado.Brasa)
-        {
-            (float bw, float bh, _, _) = Medidas(Estado.Brasa);
-            int sw = (int)Scale(bw);
-            Sumar(region, new RECT { left = (_w - sw) / 2, right = (_w + sw) / 2, top = 0, bottom = (int)Scale(bh) });
-        }
-        // La ventana se queda la region: no se suelta aqui.
-        PInvoke.SetWindowRgn(_hwnd, region, false);
+        return new RECT { left = rx, right = rx + rw, top = ry, bottom = ry + (int)Scale(h) };
     }
 
     private static void Sumar(HRGN region, RECT r)

@@ -57,6 +57,19 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Corregido
 
+- **Perder el permiso de Google ya no es silencioso.** Si el proyecto de Google Cloud se queda
+  en modo *Prueba*, el token de actualización muere a los siete días. Hasta ahora Agenda se
+  limitaba a registrarlo y olvidar la cuenta: seguía escribiendo en la caché, nada subía, y nada
+  lo decía. Ahora sale un globo en la bandeja y el menú vuelve a ofrecer «Conectar con
+  Google…». Es deliberadamente distinto del punto de sin conexión: sin red se arregla solo y no
+  hay nada que hacer; sin permiso se queda roto hasta que una persona pulse algo.
+- **Al conectar quedaban dos calendarios marcados como «por defecto»** de cada tipo —el marcador
+  local sembrado en la fase 4 y el que acababa de bajar—, y cuál ganaba dependía del orden
+  alfabético de los identificadores. Apagar el marcador local colgaba de haber movido filas
+  hacia el calendario elegido, y quien conecta sin haber creado nada antes no mueve ninguna.
+  Mudar lo local y retirar el marcador son una sola cosa, no dos. Visto en una cuenta de verdad,
+  no en una prueba.
+
 - El `due` de una tarea de Google es **una fecha disfrazada de instante**: la API solo guarda el
   día y siempre lo devuelve como medianoche UTC. Convertirlo al huso local movería el día a
   cualquiera al oeste de Londres. Los eventos convierten huso, las tareas no, y las dos reglas

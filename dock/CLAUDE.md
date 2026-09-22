@@ -38,6 +38,12 @@ escribir seis funciones y depurar al final. Al terminar uno: commit, y reportar
 eso. Los mensajes de este repo son la documentación de por qué las cosas son como son;
 `git log` es el sitio donde vive el historial de decisiones.
 
+**Y el cambio se apunta en `CHANGELOG.md`, siempre.** Va en `## Sin publicar`, bajo
+Añadido, Cambiado o Arreglado, con el número medido igual que las entradas de al lado —el
+estilo del fichero es «de X a Y», no adjetivos—. El commit es para quien viene a leer el
+porqué; el CHANGELOG, para quien solo quiere saber qué ha cambiado. Si un commit se fue
+sin entrada, se recupera en el siguiente.
+
 ---
 
 ## Medir, no suponer

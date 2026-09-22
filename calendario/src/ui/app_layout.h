@@ -283,6 +283,21 @@ inline constexpr int kRepeatChoices = 5;  // Nunca, Diaria, Semanal, Mensual, An
 // Título, Fecha, Inicio, Fin, Calendario, Ubicación, Notas, Repetición.
 inline constexpr int kDetailLabels = 8;
 
+// What the keyboard reaches in the panel that is not a text field.
+enum DetailControl { kControlCalendar, kControlRepeat, kControlDelete };
+
+// The order Tab walks the panel in, top to bottom as it reads. A text field is its own index; a
+// control is kDetailFields plus its own.
+inline constexpr int kDetailStops[] = {kFieldTitle,
+                                       kFieldDate,
+                                       kFieldStart,
+                                       kFieldEnd,
+                                       kDetailFields + kControlCalendar,
+                                       kFieldLocation,
+                                       kFieldNotes,
+                                       kDetailFields + kControlRepeat,
+                                       kDetailFields + kControlDelete};
+
 struct DetailLayout {
   D2D1_RECT_F panel{};
   D2D1_RECT_F close{};

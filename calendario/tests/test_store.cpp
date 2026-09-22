@@ -276,10 +276,13 @@ TEST_CASE("v1 caches migrate to v2 and keep what they had") {
     store.Drain();
   }
   {
-    // Put the file back the way a phase 5 build left it: the v2 columns gone, the stamp at 1.
+    // Put the file back the way a phase 5 build left it: the v2 and v3 columns gone, the stamp
+    // at 1.
     Db db;
     REQUIRE(db.Open(file));
-    REQUIRE(db.Exec("ALTER TABLE events DROP COLUMN location; "
+    REQUIRE(db.Exec("ALTER TABLE events DROP COLUMN reminders; "
+                    "ALTER TABLE calendars DROP COLUMN reminders; "
+                    "ALTER TABLE events DROP COLUMN location; "
                     "ALTER TABLE events DROP COLUMN moved_from; "
                     "ALTER TABLE calendars DROP COLUMN hidden;"));
     REQUIRE(db.SetUserVersion(1));
@@ -295,6 +298,108 @@ TEST_CASE("v1 caches migrate to v2 and keep what they had") {
     CHECK(CountRows(store.db(), "SELECT COUNT(*) FROM calendars WHERE hidden = 0") == 2);
   }
   Erase(file);
+}
+
+TEST_CASE("v2 caches migrate to v3, learn the reminders and download everything once more") {
+  const std::filesystem::path file = ScratchFile();
+  Erase(file);
+  {
+    Store store;
+    REQUIRE(store.Open(file));
+    store.Create(EventAt(L"Dentista", Day(2026, 9, 23), 17 * 60, 18 * 60));
+    store.Drain();
+  }
+  {
+    // A phase 6 cache: no reminder columns, and a sync token the next pass would carry on from.
+    Db db;
+    REQUIRE(db.Open(file));
+    REQUIRE(db.Exec("ALTER TABLE events DROP COLUMN reminders; "
+                    "ALTER TABLE calendars DROP COLUMN reminders; "
+                    "UPDATE sync_state SET sync_token = 'CPDAlvWDx70CEPDAlvWDx70CGAU=';"));
+    REQUIRE(db.SetUserVersion(2));
+  }
+  {
+    Store store;
+    REQUIRE(store.Open(file));
+    CHECK(store.db().UserVersion() == kSchemaVersion);
+    // The event keeps no list of its own: it goes by its calendar's, and the local one says ten.
+    CHECK(CountRows(store.db(), "SELECT COUNT(*) FROM events WHERE reminders IS NULL") == 1);
+    CHECK(CountRows(store.db(),
+                    "SELECT COUNT(*) FROM calendars WHERE id = 'local' AND reminders = '10'") == 1);
+    CHECK(CountRows(store.db(), "SELECT COUNT(*) FROM sync_state WHERE sync_token != ''") == 0);
+  }
+  Erase(file);
+}
+
+TEST_CASE("a reminder falls due once, at its minute, and not before or after") {
+  Open store;
+  const Date day = Day(2026, 9, 23);
+  store->Create(EventAt(L"Dentista", day, 17 * 60, 18 * 60));
+  store.settle();
+
+  // The local calendar reminds ten minutes before: 16:50.
+  const long long due = WallMinute(day, 16 * 60 + 50);
+  CHECK(store->DueReminders(due - 20, due - 1).empty());
+  const std::vector<Reminder> found = store->DueReminders(due - 1, due);
+  REQUIRE(found.size() == 1);
+  CHECK(found[0].title == L"Dentista");
+  CHECK(found[0].minutesBefore == 10);
+  CHECK(found[0].at == due);
+  CHECK(found[0].day == day);
+  // The window is open at the start: a check that already covered the minute does not repeat it.
+  CHECK(store->DueReminders(due, due + 20).empty());
+}
+
+TEST_CASE("an event's own reminders win over its calendar's, and none means none") {
+  Open store;
+  const Date day = Day(2026, 9, 23);
+  const DayItem first = store->Create(EventAt(L"Vuelo", day, 9 * 60, 11 * 60));
+  const DayItem second = store->Create(EventAt(L"Almuerzo", day, 13 * 60, 14 * 60));
+  store.settle();
+  store->Run([&] {
+    store->db().Exec("UPDATE events SET reminders = '60,1440' WHERE title = 'Vuelo'");
+    store->db().Exec("UPDATE events SET reminders = '' WHERE title = 'Almuerzo'");
+  });
+
+  const std::vector<Reminder> found =
+      store->DueReminders(WallMinute(AddDays(day, -2), 0), WallMinute(AddDays(day, 1), 0));
+  REQUIRE(found.size() == 2);
+  // In the order they fall due: the day before at nine, then an hour before.
+  CHECK(found[0].uid == first.uid);
+  CHECK(found[0].minutesBefore == 1440);
+  CHECK(found[0].at == WallMinute(AddDays(day, -1), 9 * 60));
+  CHECK(found[1].minutesBefore == 60);
+  CHECK(found[1].at == WallMinute(day, 8 * 60));
+  (void)second;
+}
+
+TEST_CASE("a repetition reminds on the day it lands on, not on the day it began") {
+  Open store;
+  Draft draft = EventAt(L"Gimnasio", Day(2026, 9, 21), 7 * 60, 8 * 60);
+  draft.recurrence = L"FREQ=WEEKLY;BYDAY=MO";
+  store->Create(draft);
+  store.settle();
+
+  const Date monday = Day(2026, 10, 5);
+  const std::vector<Reminder> found =
+      store->DueReminders(WallMinute(monday, 0), WallMinute(monday, 12 * 60));
+  REQUIRE(found.size() == 1);
+  CHECK(found[0].day == monday);
+  CHECK(found[0].at == WallMinute(monday, 6 * 60 + 50));
+  // And nothing on the Tuesday after it.
+  CHECK(store->DueReminders(WallMinute(AddDays(monday, 1), 0),
+                            WallMinute(AddDays(monday, 1), 23 * 60))
+            .empty());
+}
+
+TEST_CASE("a calendar switched off in the sidebar does not remind either") {
+  Open store;
+  const Date day = Day(2026, 9, 23);
+  store->Create(EventAt(L"Dentista", day, 17 * 60, 18 * 60));
+  store.settle();
+  store->SetCalendarHidden(kLocalCalendarId, true);
+  store.settle();
+  CHECK(store->DueReminders(WallMinute(day, 0), WallMinute(day, 23 * 60)).empty());
 }
 
 TEST_CASE("switching a calendar off hides its days without touching what Google lists") {

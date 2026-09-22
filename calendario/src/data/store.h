@@ -60,6 +60,10 @@ class Store {
   std::vector<DayItem> UndatedTasks();
   // One event whole, for the detail panel. Empty when it is gone or never was.
   std::optional<EventDetail> Event(const std::wstring& uid);
+  // The reminders that fall due after `from` and up to `to`, both WallMinute. An event's own
+  // list, or its calendar's when it has none; a calendar switched off in the sidebar says
+  // nothing, like it shows nothing.
+  std::vector<Reminder> DueReminders(long long from, long long to);
   // How much is waiting to go up to Google. Nobody empties this queue until phase 5, so for
   // now it is what proves a row and its operation were written together.
   int PendingOpCount();

@@ -128,6 +128,19 @@ inline unsigned UpdateEdits(std::string_view op) {
   return edits;
 }
 
+// A reminder that has fallen due: one occurrence of an event, and how long before it somebody
+// asked to hear about it. `at` is the WallMinute it is due at.
+struct Reminder {
+  std::wstring uid;
+  std::wstring title;
+  std::wstring location;
+  Date day{};
+  std::optional<int> startMin;  // empty means all day
+  std::optional<int> endMin;
+  int minutesBefore = 0;
+  long long at = 0;
+};
+
 // A day that has something on it, and the colour its dot takes.
 struct DayDot {
   Date date{};

@@ -23,6 +23,10 @@ struct DetailModel {
   EventDetail event;
   TextInput fields[kDetailFields];
   int focus = -1;  // the text field with the keyboard, or -1
+  // The keyboard on one of the three controls that are not text -- kControlCalendar,
+  // kControlRepeat, kControlDelete -- or -1. Never at the same time as `focus`.
+  int control = -1;
+  int calendarPick = 0;  // the entry of the open calendar list the arrows are on
   bool caretOn = false;
   unsigned invalid = 0;  // one bit per field that did not read, which turns it red
   bool calendarOpen = false;
@@ -93,6 +97,9 @@ int AllDayRows(const AppModel& model);
 
 // "Martes 22 de septiembre", "21 – 27 de septiembre", "Septiembre de 2026".
 std::wstring PeriodTitle(AppView view, Date anchor);
+
+// The question Supr asks before anything is deleted, in the interface language.
+std::wstring ConfirmDeleteText(std::wstring_view title);
 
 // The whole window at `progress` of the way from the popup (0) to the app (1). With 0 it is
 // DrawPopup; with 1 it is the app; in between the month stays pinned to the corner, the day

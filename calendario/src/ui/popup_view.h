@@ -54,6 +54,16 @@ struct PopupModel {
   // network comes back, so this is information and not a problem to solve.
   bool offline = false;
 
+  // Where the keyboard is, outlined, once the keyboard has been used: a day of the grid, a
+  // card, a calendar, a control of the detail panel. The window works it out from the layout
+  // it already has; drawing only draws it, last, over everything.
+  bool ringOn = false;
+  D2D1_RECT_F ring{};
+  float ringRadius = 0.0f;
+  // The card the keyboard is on, which the list keeps on screen the way it keeps the one that
+  // was just created; -1 when the keyboard is elsewhere.
+  int focusCard = -1;
+
   // Hover and focus, each walking to its target over kStateMs.
   float dayHover[kGridCells] = {};
   float prevHover = 0.0f;
@@ -106,5 +116,13 @@ void DrawPopupBody(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
                    const PanelLayout& layout, const PopupModel& model, float listAlpha);
 void DrawPopupInput(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                     const PanelLayout& layout, const PopupModel& model);
+
+// The keyboard's ring, when there is one: two DIP in the primary text colour, the focus visual
+// Windows draws around its own controls.
+void DrawFocusRing(ID2D1RenderTarget* target, const Theme& theme, const PanelLayout& layout,
+                   const PopupModel& model);
+
+// The card the list keeps on screen: the one arriving, or else the one with the keyboard.
+int KeptCard(const PopupModel& model);
 
 }  // namespace agenda

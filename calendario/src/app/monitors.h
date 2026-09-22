@@ -20,7 +20,7 @@ struct Options {
   int monitor = kDefaultMonitor;
   std::wstring snapshotView;  // --render-snapshot=<view>, empty when the app should just run
   std::wstring snapshotOut;   // --out=<file.png>, defaults to shot.png
-  std::wstring theme;         // --theme=dark|light, empty means follow the system
+  std::wstring theme;         // --theme=dark|light|contrast, empty means follow the settings
   std::wstring text;          // --text=..., what a snapshot should have typed in the input
   int panelWidth = 0;         // --panel=WxH for a snapshot; zero means the design size
   int panelHeight = 0;

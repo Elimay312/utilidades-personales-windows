@@ -19,8 +19,8 @@ TEST_CASE("the week starts on Monday") {
   CHECK(MondayIndex(std::chrono::Monday) == 0);
   CHECK(MondayIndex(std::chrono::Thursday) == 3);
   CHECK(MondayIndex(std::chrono::Sunday) == 6);
-  CHECK(kWeekdayInitials[0] == L"L");
-  CHECK(kWeekdayInitials[6] == L"D");
+  CHECK(WeekdayInitial(0) == L"L");
+  CHECK(WeekdayInitial(6) == L"D");
 }
 
 TEST_CASE("the grid starts on the Monday of the week holding the first") {

@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <d2d1.h>
+#include <shellscalingapi.h>  // GetDpiForMonitor
 
 #include <algorithm>
 #include <cmath>
@@ -41,6 +42,21 @@ inline constexpr float kCheckboxDip = 14.0f;
 
 inline constexpr int kPopupMarginDip = 12;
 inline constexpr float kPopupSlideDip = 8.0f;  // how far the popup rises while opening
+
+// The DPI of the monitor `hwnd` is on right now. Not GetDpiForWindow: Windows only moves the
+// popup's window to a new DPI when it moves, and when the scale of its own monitor changes it
+// is left at the old one without a WM_DPICHANGED -- measured on Windows 11 in phase 7, while a
+// captioned window of the same process got its message at once.
+inline UINT MonitorDpi(HWND hwnd) {
+  UINT x = 0;
+  UINT y = 0;
+  if (FAILED(GetDpiForMonitor(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                              MDT_EFFECTIVE_DPI, &x, &y)) ||
+      x == 0) {
+    return GetDpiForWindow(hwnd);
+  }
+  return x;
+}
 
 inline int ScaleDip(int dip, UINT dpi) {
   return MulDiv(dip, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI);

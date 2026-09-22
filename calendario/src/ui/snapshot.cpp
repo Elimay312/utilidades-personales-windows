@@ -17,6 +17,7 @@
 #include "ui/popup_view.h"
 #include "ui/fields.h"
 #include "ui/sample_data.h"
+#include "ui/settings_window.h"
 #include "ui/theme.h"
 
 using Microsoft::WRL::ComPtr;
@@ -59,13 +60,13 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
   const bool offline = view == L"popup-sin-conexion";
   const bool app = view.starts_with(L"app-");
   const bool transition = view == L"app-transicion";
+  const bool settings = view == L"configuracion";
   if (!KnowsSnapshotView(view)) {
     LogError(L"--render-snapshot does not know the view '{}'", view);
     return false;
   }
 
-  const Theme palette =
-      theme == L"light" ? LightTheme() : (theme == L"dark" ? DarkTheme() : SystemTheme());
+  const Theme palette = ResolveTheme(theme);
 
   // The design size unless asked otherwise, never the size this monitor would give: a
   // committed PNG must not depend on the machine that produced it.
@@ -96,7 +97,7 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
     std::sort(model.day.begin(), model.day.end(), EarlierThan);
     model.enterUid = fresh.uid;
     model.enterT = 0.30f;  // caught on the way up, where the lift and the fade are visible
-    model.toast = L"Creado · Deshacer";
+    model.toast = T(L"Creado · Deshacer", L"Created · Undo");
     model.toastT = 1.0f;
   }
   if (!text.empty()) {
@@ -141,7 +142,7 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
                              L"Entrevista", L"week-6", {}};
     } else if (view == L"app-borrar") {
       appModel.selected = L"week-3";
-      appModel.confirm = L"¿Borrar «Revisión de código»?   Supr para borrar · Esc para dejarlo";
+      appModel.confirm = ConfirmDeleteText(L"Revisión de código");
     }
     if (transition) {
       progress = 0.5f;
@@ -165,6 +166,10 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
   if (transition) {
     width = static_cast<UINT>(kSnapshotWork.right - kSnapshotWork.left);
     height = static_cast<UINT>(kSnapshotWork.bottom - kSnapshotWork.top);
+  } else if (settings) {
+    // No margin: it is a window with its own frame, and what is judged is its client area.
+    width = static_cast<UINT>(SettingsWindow::SizeDip().width);
+    height = static_cast<UINT>(SettingsWindow::SizeDip().height);
   } else if (app) {
     width = static_cast<UINT>(appSize.width) + 2 * kMarginDip;
     height = static_cast<UINT>(appSize.height) + 2 * kMarginDip;
@@ -206,7 +211,18 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
   const float originX = transition ? static_cast<float>(window.left) : margin;
   const float originY = transition ? static_cast<float>(window.top) : margin;
   target->SetTransform(D2D1::Matrix3x2F::Translation(originX, originY));
-  if (app) {
+  if (settings) {
+    target->SetTransform(D2D1::Matrix3x2F::Identity());
+    Preferences prefs;
+    prefs.theme = std::wstring(theme);
+    SettingsWindow settingsWindow;
+    settingsWindow.Init(nullptr, &prefs, nullptr, nullptr, {});
+    std::vector<CalendarInfo> calendars;
+    for (const CalendarInfo& calendar : SampleCalendars()) {
+      if (!calendar.isTaskList) calendars.push_back(calendar);
+    }
+    settingsWindow.PaintForSnapshot(target.Get(), palette, std::move(calendars));
+  } else if (app) {
     DrawApp(target.Get(), fonts, palette, layout, appLayout, model, appModel, progress,
             /*acrylic=*/true);
   } else {

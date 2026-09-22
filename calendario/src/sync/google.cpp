@@ -100,6 +100,15 @@ int QueuedFor(Db& db, const std::wstring& uid) {
 
 // --- Applying what came down ----------------------------------------------------------------
 
+// Nullopt goes in as NULL, which is what "use the calendar's" is stored as.
+void BindReminders(Stmt& stmt, int index, const std::optional<std::string>& reminders) {
+  if (reminders) {
+    stmt.Bind(index, *reminders);
+  } else {
+    stmt.BindNull(index);
+  }
+}
+
 void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarId) {
   const std::optional<EventRow> row = ReadEvent(item);
   if (!row) return;
@@ -136,8 +145,9 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
     uid = NewUid();
     std::optional<Stmt> stmt = db.Prepare(
         "INSERT INTO events (uid, calendar_id, title, notes, start_day, start_min, end_day, "
-        "                    end_min, recurrence, remote_id, etag, updated_at, location) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        "                    end_min, recurrence, remote_id, etag, updated_at, location, "
+        "                    reminders) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     if (!stmt) return;
     stmt->Bind(1, uid);
     stmt->Bind(2, calendarId);
@@ -152,6 +162,7 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
     stmt->Bind(11, row->etag);
     stmt->Bind(12, row->updatedAt);
     stmt->Bind(13, row->location);
+    BindReminders(*stmt, 14, row->reminders);
     stmt->Step();
     return;
   }
@@ -162,13 +173,17 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
   // The location rides along when there is none here: rows cached before schema v2 never had
   // the column, and this is how they learn it without losing to a tie on updated_at. A location
   // typed here is never overwritten this way.
+  //
+  // The reminders ride along whoever wins too: Agenda never edits them, so Google's are always
+  // the right ones, and a tie on updated_at must not keep a stale list.
   if (std::optional<Stmt> stmt = db.Prepare(
-          "UPDATE events SET etag = ?, remote_id = ?, "
+          "UPDATE events SET etag = ?, remote_id = ?, reminders = ?, "
           "  location = CASE WHEN location = '' THEN ? ELSE location END WHERE uid = ?")) {
     stmt->Bind(1, row->etag);
     stmt->Bind(2, row->remoteId);
-    stmt->Bind(3, row->location);
-    stmt->Bind(4, uid);
+    BindReminders(*stmt, 3, row->reminders);
+    stmt->Bind(4, row->location);
+    stmt->Bind(5, uid);
     stmt->Step();
   }
 
@@ -567,12 +582,14 @@ bool GoogleSync::PullCalendars(const std::wstring& auth) {
 
     const auto upsert = [&](const std::string& id, const char* kind, const std::string& title,
                             std::uint32_t color, const std::string& zone, bool primary,
-                            int sort) {
+                            int sort, const std::string& reminders) {
       std::optional<Stmt> stmt = store_.db().Prepare(
-          "INSERT INTO calendars (id, kind, title, color, time_zone, is_primary, visible, sort) "
-          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7) "
+          "INSERT INTO calendars (id, kind, title, color, time_zone, is_primary, visible, sort, "
+          "                       reminders) "
+          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8) "
           "ON CONFLICT(id) DO UPDATE SET title = excluded.title, color = excluded.color, "
-          "  time_zone = excluded.time_zone, visible = 1, sort = excluded.sort");
+          "  time_zone = excluded.time_zone, visible = 1, sort = excluded.sort, "
+          "  reminders = excluded.reminders");
       if (!stmt) return;
       stmt->Bind(1, id);
       stmt->Bind(2, kind);
@@ -583,6 +600,7 @@ bool GoogleSync::PullCalendars(const std::wstring& auth) {
       // because by then it means what the tray menu last said and not what Google thinks.
       stmt->Bind(6, primary ? 1 : 0);
       stmt->Bind(7, sort);
+      stmt->Bind(8, reminders);
       stmt->Step();
 
       if (std::optional<Stmt> state =
@@ -608,8 +626,9 @@ bool GoogleSync::PullCalendars(const std::wstring& auth) {
         if (title.empty()) title = id;
         const std::uint32_t color = ReadColor(Str(item, "backgroundColor")).value_or(0x4A8BF5u);
         if (Flag(item, "primary") || fallbackCalendar.empty()) fallbackCalendar = id;
+        const auto defaults = item.find("defaultReminders");
         upsert(id, "calendar", title, color, Str(item, "timeZone"), Flag(item, "primary"),
-               sort++);
+               sort++, defaults != item.end() ? ReadReminders(*defaults) : std::string());
       }
     }
 
@@ -625,7 +644,7 @@ bool GoogleSync::PullCalendars(const std::wstring& auth) {
         if (fallbackList.empty()) fallbackList = id;
         // Google Tasks has no colours, so every list keeps the amber the design system gives
         // tasks. Inventing one per list would be a colour that means nothing.
-        upsert(id, "tasklist", title, 0xF5A623u, {}, listSort == 0, listSort);
+        upsert(id, "tasklist", title, 0xF5A623u, {}, listSort == 0, listSort, {});
         ++listSort;
       }
     }
@@ -955,7 +974,7 @@ bool GoogleSync::PushPending(const std::wstring& auth) {
         }
       });
       if (tries >= kMaxTries) {
-        store_.Report(item.uid, L"Google no aceptó este cambio");
+        store_.Report(item.uid, T(L"Google no aceptó este cambio", L"Google did not accept this change"));
       }
     };
 

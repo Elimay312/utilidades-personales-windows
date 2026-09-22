@@ -15,7 +15,7 @@
 
 namespace agenda {
 
-inline constexpr int kSchemaVersion = 2;
+inline constexpr int kSchemaVersion = 3;
 
 // Ids of the rows v1 seeds, so an event has somewhere to hang before there is a Google
 // account.

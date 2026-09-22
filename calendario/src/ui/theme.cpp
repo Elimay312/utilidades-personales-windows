@@ -46,6 +46,44 @@ Theme LightTheme() {
   return theme;
 }
 
+Theme HighContrastTheme() {
+  const bool live = HighContrastOn();
+  const auto sys = [live](int index, UINT32 fallback) {
+    if (!live) return Rgb(fallback);
+    const COLORREF color = GetSysColor(index);
+    return Rgb((static_cast<UINT32>(GetRValue(color)) << 16) |
+               (static_cast<UINT32>(GetGValue(color)) << 8) | GetBValue(color));
+  };
+  Theme theme;
+  theme.highContrast = true;
+  theme.panel = sys(COLOR_WINDOW, 0x000000);
+  theme.panelOpaque = theme.panel;
+  theme.surface = theme.panel;
+  theme.textPrimary = sys(COLOR_WINDOWTEXT, 0xFFFFFF);
+  theme.textSecondary = theme.textPrimary;
+  theme.textMuted = sys(COLOR_GRAYTEXT, 0xA6A6A6);
+  theme.accent = sys(COLOR_HIGHLIGHT, 0x8EE3F0);
+  theme.onAccent = sys(COLOR_HIGHLIGHTTEXT, 0x263B50);
+  theme.alt = theme.accent;
+  theme.border = theme.textPrimary;
+  theme.hover = theme.accent;
+  theme.hover.a = 0.35f;
+  theme.selection = theme.accent;
+  theme.selection.a = 0.5f;
+  theme.now = sys(COLOR_HOTLIGHT, 0xFFFF00);
+  // Which way DWM draws the frame, and which way anything picked by lightness goes.
+  const D2D1_COLOR_F& back = theme.panel;
+  theme.light = 0.2126f * back.r + 0.7152f * back.g + 0.0722f * back.b > 0.5f;
+  return theme;
+}
+
+bool HighContrastOn() {
+  HIGHCONTRASTW contrast{};
+  contrast.cbSize = sizeof(contrast);
+  return SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
+         (contrast.dwFlags & HCF_HIGHCONTRASTON) != 0;
+}
+
 bool SystemUsesLightTheme() {
   DWORD value = 0;
   DWORD size = sizeof(value);

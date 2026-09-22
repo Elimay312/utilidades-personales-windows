@@ -50,7 +50,7 @@ void DrawWeekdays(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& th
   brush->SetColor(theme.textSecondary);
   for (int column = 0; column < kGridCols; ++column) {
     const float left = layout.contentLeft + static_cast<float>(column) * layout.cellWidth;
-    DrawTextIn(target, fonts.label.Get(), kWeekdayInitials[column],
+    DrawTextIn(target, fonts.label.Get(), WeekdayInitial(column),
                D2D1_RECT_F{left, layout.weekdayTop, left + layout.cellWidth,
                            layout.weekdayTop + layout.weekdayHeight},
                brush, Align::Center);
@@ -86,7 +86,7 @@ void DrawEventList(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
   const int total = static_cast<int>(model.day.size());
   if (total == 0) {
     brush->SetColor(theme.textMuted);
-    DrawTextIn(target, fonts.event.Get(), L"Sin eventos", list, brush, Align::Center);
+    DrawTextIn(target, fonts.event.Get(), T(L"Sin eventos", L"No events"), list, brush, Align::Center);
     return;
   }
 
@@ -97,7 +97,7 @@ void DrawEventList(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
     if (!model.enterUid.empty() && model.day[i].uid == model.enterUid) entering = i;
   }
 
-  const CardSlots slots = PlaceCards(layout, list, total, entering);
+  const CardSlots slots = PlaceCards(layout, list, total, KeptCard(model));
   if (slots.shown == 0) return;
 
   for (int position = 0; position < slots.shown; ++position) {
@@ -199,11 +199,30 @@ void DrawPopupInput(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& 
   DrawTextInput(target, fonts, theme, layout, brush.Get(), accent.Get(), model);
 }
 
+int KeptCard(const PopupModel& model) {
+  for (int i = 0; i < static_cast<int>(model.day.size()); ++i) {
+    if (!model.enterUid.empty() && model.day[static_cast<size_t>(i)].uid == model.enterUid) {
+      return i;
+    }
+  }
+  return model.focusCard;
+}
+
+void DrawFocusRing(ID2D1RenderTarget* target, const Theme& theme, const PanelLayout& layout,
+                   const PopupModel& model) {
+  if (!model.ringOn) return;
+  ComPtr<ID2D1SolidColorBrush> brush;
+  if (FAILED(target->CreateSolidColorBrush(theme.textPrimary, &brush))) return;
+  const float width = (std::max)(2.0f, std::round(2.0f * layout.type));
+  StrokeRound(target, model.ring, model.ringRadius, brush.Get(), width);
+}
+
 void DrawPopup(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                const PanelLayout& layout, const PopupModel& model, bool acrylic) {
   DrawPanel(target, theme, layout.size(), layout.panelRadius, acrylic);
   DrawPopupBody(target, fonts, theme, layout, model, 1.0f);
   DrawPopupInput(target, fonts, theme, layout, model);
+  DrawFocusRing(target, theme, layout, model);
 }
 
 }  // namespace agenda

@@ -202,6 +202,19 @@ std::optional<std::uint32_t> ReadColor(std::string_view hex) {
   return value;
 }
 
+std::string ReadReminders(const nlohmann::json& list) {
+  std::string out;
+  if (!list.is_array()) return out;
+  for (const nlohmann::json& reminder : list) {
+    if (!reminder.is_object() || Str(reminder, "method") != "popup") continue;
+    const auto minutes = reminder.find("minutes");
+    if (minutes == reminder.end() || !minutes->is_number_integer()) continue;
+    if (!out.empty()) out += ',';
+    out += std::to_string(minutes->get<int>());
+  }
+  return out;
+}
+
 std::optional<EventRow> ReadEvent(const nlohmann::json& event) {
   if (!event.is_object()) return std::nullopt;
 
@@ -237,6 +250,13 @@ std::optional<EventRow> ReadEvent(const nlohmann::json& event) {
   // without this line every one of them would be two days long in the month grid.
   row.endDay = start->minute.has_value() ? end->day : PrevDay(end->day);
   if (row.endDay < row.startDay) row.endDay = row.startDay;
+
+  if (const auto found = event.find("reminders"); found != event.end() && found->is_object()) {
+    if (!Flag(*found, "useDefault")) {
+      const auto overrides = found->find("overrides");
+      row.reminders = overrides != found->end() ? ReadReminders(*overrides) : std::string();
+    }
+  }
 
   if (const auto found = event.find("recurrence"); found != event.end() && found->is_array()) {
     // Only the RRULE. EXDATE and RDATE are dropped, which is honest while nothing expands a

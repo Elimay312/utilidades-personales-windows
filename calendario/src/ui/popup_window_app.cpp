@@ -90,6 +90,7 @@ void PopupWindow::Expand(Date day) {
   goal_ = 1.0f;
   hoverDay_ = -1;
   FocusInput(false);
+  zone_ = Zone::Events;
   SelectDay(day);  // rereads the day, and now that the mode says app, the app's days too
 
   if (fromPopup) {
@@ -104,6 +105,8 @@ void PopupWindow::Expand(Date day) {
     // An app is a window among the others: it stops floating over everything.
     SetWindowPos(hwnd_, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     ScheduleNowTick();
+    // The buffer grows to the app now, once, while what it shows is still the popup.
+    Resize(size_);
     LogInfo(L"popup: expanding to {}x{} px", Width(appRect_), Height(appRect_));
   }
 
@@ -180,6 +183,7 @@ void PopupWindow::FinishMorph() {
 
   // Back to the popup: floating again, the capsule waiting for text again.
   mode_ = Mode::Popup;
+  zone_ = Zone::Grid;
   KillTimer(hwnd_, kNowTimer);
   size_ = SIZE{Width(popupRect_), Height(popupRect_)};
   SetWindowPos(hwnd_, HWND_TOPMOST, popupRect_.left, popupRect_.top, size_.cx, size_.cy,
@@ -310,9 +314,12 @@ bool PopupWindow::OnAppKeyDown(WPARAM key) {
       return true;
     }
     case VK_ESCAPE:
-      // In layers: the panel first, the app after it.
+      // In layers: the panel first, then the selection, the app after them.
       if (app_.detail.open) {
         CloseDetail();
+      } else if (!app_.selected.empty()) {
+        app_.selected.clear();
+        Invalidate();
       } else {
         Contract();
       }
@@ -356,10 +363,9 @@ bool PopupWindow::OnAppLeftDown(float x, float y) {
   const int calendars = static_cast<int>(app_.calendars.size());
   for (int i = 0; i < calendars; ++i) {
     if (!Inside(appLayout_.calendarRowRect(i), x, y)) continue;
-    CalendarInfo& calendar = app_.calendars[static_cast<size_t>(i)];
-    calendar.hidden = !calendar.hidden;  // the switch flips now; the days follow the worker
-    if (store_ != nullptr) store_->SetCalendarHidden(calendar.id, calendar.hidden);
-    Invalidate();
+    zone_ = Zone::Calendars;
+    listFocus_ = i;
+    ToggleCalendar(i);
     return true;
   }
 
@@ -369,11 +375,10 @@ bool PopupWindow::OnAppLeftDown(float x, float y) {
     const D2D1_RECT_F row = appLayout_.taskRow(calendars, i);
     if (!Inside(row, x, y)) continue;
     DayItem& item = app_.undated[static_cast<size_t>(i)];
-    if (store_ != nullptr && Inside(CheckboxRect(layout_, row), x, y)) {
-      item.done = !item.done;
-      store_->SetDone(item.uid, item.done);
-      if (sync_ != nullptr) sync_->Push();
-      Invalidate();
+    zone_ = Zone::Tasks;
+    listFocus_ = i;
+    if (Inside(CheckboxRect(layout_, row), x, y)) {
+      ToggleUndated(i);
       return true;
     }
     // Anywhere else on the card picks the task up, to be dropped on an hour.
@@ -386,6 +391,7 @@ bool PopupWindow::OnAppLeftDown(float x, float y) {
     return true;
   }
 
+  zone_ = Zone::Events;
   if (SelectAllDayAt(x, y)) return true;
   if (BeginDrag(x, y)) return true;
 
@@ -407,6 +413,23 @@ bool PopupWindow::OnAppLeftDown(float x, float y) {
     }
   }
   return false;
+}
+
+void PopupWindow::ToggleCalendar(int index) {
+  if (index < 0 || index >= static_cast<int>(app_.calendars.size())) return;
+  CalendarInfo& calendar = app_.calendars[static_cast<size_t>(index)];
+  calendar.hidden = !calendar.hidden;  // the switch flips now; the days follow the worker
+  if (store_ != nullptr) store_->SetCalendarHidden(calendar.id, calendar.hidden);
+  Invalidate();
+}
+
+void PopupWindow::ToggleUndated(int index) {
+  if (store_ == nullptr || index < 0 || index >= static_cast<int>(app_.undated.size())) return;
+  DayItem& item = app_.undated[static_cast<size_t>(index)];
+  item.done = !item.done;
+  store_->SetDone(item.uid, item.done);
+  if (sync_ != nullptr) sync_->Push();
+  Invalidate();
 }
 
 bool PopupWindow::OnAppMouseMove(float x, float y) {
@@ -534,7 +557,7 @@ void PopupWindow::UpdateDrag(float x, float y) {
       for (const CalendarInfo& calendar : app_.calendars) {
         if (calendar.isDefault && !calendar.isTaskList) ghost.color = calendar.color;
       }
-      ghost.title = L"Nuevo evento";
+      ghost.title = T(L"Nuevo evento", L"New event");
       break;
     }
     case DragKind::Move: {
@@ -608,7 +631,7 @@ void PopupWindow::EndDrag() {
     case DragKind::Create: {
       if (store_ == nullptr) break;
       Draft draft;
-      draft.title = L"Nuevo evento";
+      draft.title = T(L"Nuevo evento", L"New event");
       draft.day = AddDays(app_.first, ghost.column);
       draft.startMin = ghost.start;
       draft.endMin = ghost.end;
@@ -697,7 +720,7 @@ void PopupWindow::ConvertTask(const DayItem& task, int column, int start) {
   pendingDelete_.push_back(Pending{task.uid, true});
   DropPending(app_.undated);
   undo_ = Undone{created.uid, false, {}, UndoKind::Converted, task.uid};
-  ShowToast(L"Ahora es un evento · Deshacer");
+  ShowToast(std::wstring(T(L"Ahora es un evento · Deshacer", L"Now an event · Undo")));
   if (sync_ != nullptr) sync_->Push();
   app_.selected = created.uid;
   // With the panel open it follows the selection, or it would go on editing another event.
@@ -768,7 +791,9 @@ void PopupWindow::CloseDetail() {
   if (detail.focus >= 0) CommitField(detail.focus);
   detail.open = false;
   detail.focus = -1;
+  detail.control = -1;
   detail.calendarOpen = false;
+  if (zone_ == Zone::Detail) zone_ = Zone::Events;
   RestartCaret();
   StartTicking();
   Invalidate();
@@ -792,6 +817,8 @@ void PopupWindow::FillDetailFields() {
 
 void PopupWindow::FocusDetail(int field) {
   DetailModel& detail = app_.detail;
+  detail.control = -1;
+  zone_ = Zone::Detail;
   if (detail.focus == field) return;
   if (detail.focus >= 0) CommitField(detail.focus);
   if (inputFocused_) FocusInput(false);
@@ -942,8 +969,8 @@ bool PopupWindow::OnDetailKeyDown(WPARAM key) {
       Invalidate();
       return true;
     case VK_TAB:
-      FocusDetail((detail.focus + (shift ? kDetailFields - 1 : 1)) % kDetailFields);
-      app_.detail.fields[app_.detail.focus].SelectAll();
+      focusVisible_ = true;
+      MoveDetailStop(shift);
       Invalidate();
       return true;
     case VK_LEFT:
@@ -1090,7 +1117,8 @@ void PopupWindow::AskDelete(const std::wstring& uid) {
     RestartCaret();
   }
   confirmUid_ = uid;
-  app_.confirm = std::format(L"¿Borrar «{}»?   Supr para borrar · Esc para dejarlo", title);
+  app_.confirm = ConfirmDeleteText(title);
+  a11y_.Announce(app_.confirm);
   Invalidate();
 }
 
@@ -1111,7 +1139,7 @@ void PopupWindow::ConfirmDelete() {
   }
   app_.selected.clear();
   undo_ = Undone{uid, false, {}, UndoKind::Deleted, {}};
-  ShowToast(L"Borrado · Deshacer");
+  ShowToast(std::wstring(T(L"Borrado · Deshacer", L"Deleted · Undo")));
   Relayout();
   Invalidate();
 }

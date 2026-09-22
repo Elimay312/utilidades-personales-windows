@@ -170,6 +170,17 @@ inline std::vector<DayItem> SampleAppDay(Date date) {
 
 }  // namespace detail
 
+// The sidebar's calendars and the settings window's chooser, the same five everywhere.
+inline std::vector<CalendarInfo> SampleCalendars() {
+  return {
+      CalendarInfo{"personal", L"Personal", true, false, detail::kSampleEventColor, false},
+      CalendarInfo{"familia", L"Familia", false, false, detail::kSampleTaskColor, false},
+      CalendarInfo{"trabajo", L"Trabajo", false, false, detail::kSampleWorkColor, false},
+      CalendarInfo{"cumples", L"Cumpleaños", false, false, 0x34C38F, true},
+      CalendarInfo{"tareas", L"Tareas", true, true, detail::kSampleTaskColor, false},
+  };
+}
+
 // Fills both models for the app's snapshots: the mini month's dots, the days on screen, the
 // sidebar's calendars (one of them switched off) and the tray.
 inline void FillSampleApp(PopupModel& model, AppModel& app) {
@@ -188,13 +199,7 @@ inline void FillSampleApp(PopupModel& model, AppModel& app) {
     app.days.push_back(detail::SampleAppDay(AddDays(app.first, i)));
   }
 
-  app.calendars = {
-      CalendarInfo{"personal", L"Personal", true, false, detail::kSampleEventColor, false},
-      CalendarInfo{"familia", L"Familia", false, false, detail::kSampleTaskColor, false},
-      CalendarInfo{"trabajo", L"Trabajo", false, false, detail::kSampleWorkColor, false},
-      CalendarInfo{"cumples", L"Cumpleaños", false, false, 0x34C38F, true},
-      CalendarInfo{"tareas", L"Tareas", true, true, detail::kSampleTaskColor, false},
-  };
+  app.calendars = SampleCalendars();
   app.calendarHover.assign(app.calendars.size(), 0.0f);
 
   const auto task = [](const wchar_t* uid, const wchar_t* title, bool done) {

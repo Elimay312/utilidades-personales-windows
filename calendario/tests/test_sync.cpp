@@ -186,6 +186,34 @@ TEST_CASE("a row with no recurrence says nothing about recurrence") {
   REQUIRE_FALSE(WriteEvent(*row, "").contains("recurrence"));
 }
 
+TEST_CASE("an event's reminders are the notification ones, or its calendar's") {
+  nlohmann::json event = AllDay("2026-09-23", "2026-09-24");
+  // Nothing said is the calendar's list, which is also what useDefault says.
+  CHECK_FALSE(ReadEvent(event)->reminders.has_value());
+  event["reminders"] = {{"useDefault", true}};
+  CHECK_FALSE(ReadEvent(event)->reminders.has_value());
+
+  // Its own: the e-mail one is Google's to send, so only the notifications stay.
+  event["reminders"] = {{"useDefault", false},
+                        {"overrides",
+                         {{{"method", "email"}, {"minutes", 1440}},
+                          {{"method", "popup"}, {"minutes", 10}},
+                          {{"method", "popup"}, {"minutes", 60}}}}};
+  CHECK(ReadEvent(event)->reminders == std::optional<std::string>("10,60"));
+
+  // Switched off on purpose is an empty list, which is not the same as the calendar's.
+  event["reminders"] = {{"useDefault", false}};
+  CHECK(ReadEvent(event)->reminders == std::optional<std::string>(""));
+}
+
+TEST_CASE("a calendar's default reminders are read the same way") {
+  const nlohmann::json list = {{{"method", "popup"}, {"minutes", 30}},
+                               {{"method", "email"}, {"minutes", 10}}};
+  CHECK(ReadReminders(list) == "30");
+  CHECK(ReadReminders(nlohmann::json::array()).empty());
+  CHECK(ReadReminders(nlohmann::json::object()).empty());
+}
+
 TEST_CASE("the due date of a task is read as a date and never converted") {
   // Google keeps only the day and always hands it back as midnight UTC. Converting it would
   // move the day by one for everybody west of London, so this is the first ten characters and

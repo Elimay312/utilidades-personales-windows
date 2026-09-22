@@ -9,7 +9,7 @@ endif()
 
 # C ademas de CXX: la amalgamacion de SQLite es C, y sin declararlo CMake no sabe con que
 # enlazar ese objetivo.
-project(Agenda VERSION 0.6.0 LANGUAGES C CXX)
+project(Agenda VERSION 1.0.0 LANGUAGES C CXX)
 
 if(NOT MSVC)
   message(FATAL_ERROR "Agenda solo se compila con MSVC x64 (Visual Studio 2022).")
@@ -117,18 +117,22 @@ target_link_libraries(agenda_data PUBLIC SQLite::SQLite3 nlohmann_json::nlohmann
 add_executable(Agenda WIN32
   src/app/main.cpp
   src/app/monitors.cpp
+  src/app/toast.cpp
   src/app/tray.cpp
   src/core/config.cpp
   src/core/log.cpp
   src/sync/google.cpp
   src/sync/http.cpp
   src/sync/oauth.cpp
+  src/ui/accessibility.cpp
   src/ui/app_view.cpp
   src/ui/components.cpp
   src/ui/paint.cpp
   src/ui/popup_view.cpp
   src/ui/popup_window.cpp
+  src/ui/popup_window_access.cpp
   src/ui/popup_window_app.cpp
+  src/ui/settings_window.cpp
   src/ui/snapshot.cpp
   src/ui/text_input.cpp
   src/ui/theme.cpp
@@ -136,7 +140,8 @@ add_executable(Agenda WIN32
   assets/agenda.rc)
 target_include_directories(Agenda PRIVATE src)
 target_compile_options(Agenda PRIVATE ${AGENDA_WARNINGS})
-target_compile_definitions(Agenda PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_definitions(Agenda PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
+  AGENDA_VERSION_TEXT=L"${PROJECT_VERSION}")
 # user32, shell32, ole32 y uuid ya vienen en CMAKE_C_STANDARD_LIBRARIES de MSVC. dwrite entra
 # con el texto de la fase 2 e imm32 con el IME del campo de entrada. winhttp entra con la
 # fase 5.
@@ -145,7 +150,12 @@ target_link_libraries(Agenda PRIVATE agenda_nlp agenda_data nlohmann_json::nlohm
   # La fase 5: winhttp habla con Google, crypt32 cifra el refresh token con DPAPI, bcrypt hace
   # el PKCE (aleatorio y SHA-256) y ws2_32 escucha el redirect en 127.0.0.1.
   # comctl32 es el TaskDialog con el que se avisa antes de abrir el navegador.
-  winhttp crypt32 bcrypt ws2_32 comctl32)
+  winhttp crypt32 bcrypt ws2_32 comctl32
+  # La fase 7: uiautomationcore es lo que Narrador lee, y runtimeobject el toast de Windows.
+  uiautomationcore runtimeobject
+  # shcore es GetDpiForMonitor: el DPI del monitor, que para el popup no siempre es el de la
+  # ventana.
+  shcore)
 # El manifiesto (DPI Per-Monitor v2) entra por agenda.rc, no por el generado por el linker.
 target_link_options(Agenda PRIVATE /MANIFEST:NO)
 
@@ -156,6 +166,7 @@ add_executable(agenda_tests
   tests/test_dates.cpp
   tests/test_nlp.cpp
   tests/test_popup.cpp
+  tests/test_prefs.cpp
   tests/test_recurrence.cpp
   tests/test_store.cpp
   tests/test_sync.cpp
@@ -164,6 +175,7 @@ add_executable(agenda_tests
   # agenda_data registra sus errores, y el log es del ejecutable: se recompila aqui igual que
   # monitors.cpp y text_input.cpp. Sin LogInit no abre archivo y solo sale por el depurador,
   # que es lo que se quiere en una prueba.
+  src/core/config.cpp
   src/core/log.cpp
   src/ui/text_input.cpp)
 target_include_directories(agenda_tests PRIVATE src)

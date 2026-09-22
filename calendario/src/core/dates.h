@@ -4,6 +4,8 @@
 #include <ctime>
 #include <string_view>
 
+#include "core/i18n.h"
+
 namespace agenda {
 
 using Date = std::chrono::year_month_day;
@@ -15,25 +17,37 @@ inline constexpr int kGridRows = 6;
 inline constexpr int kGridCols = 7;
 inline constexpr int kGridCells = kGridRows * kGridCols;
 
-// Monday first, as the week reads in Spanish: L M X J V S D.
-inline constexpr std::wstring_view kWeekdayInitials[7] = {L"L", L"M", L"X", L"J", L"V", L"S", L"D"};
+// Monday first in both languages: L M X J V S D, M T W T F S S.
+inline constexpr std::wstring_view kWeekdayInitials[2][7] = {
+    {L"L", L"M", L"X", L"J", L"V", L"S", L"D"}, {L"M", L"T", L"W", L"T", L"F", L"S", L"S"}};
 
 // Spelled out for the preview card, which has room for the whole word.
-inline constexpr std::wstring_view kWeekdayNames[7] = {
-    L"Lunes", L"Martes", L"Miércoles", L"Jueves", L"Viernes", L"Sábado", L"Domingo"};
+inline constexpr std::wstring_view kWeekdayNames[2][7] = {
+    {L"Lunes", L"Martes", L"Miércoles", L"Jueves", L"Viernes", L"Sábado", L"Domingo"},
+    {L"Monday", L"Tuesday", L"Wednesday", L"Thursday", L"Friday", L"Saturday", L"Sunday"}};
 
 // Spelled out here instead of asked to GetLocaleInfoEx, so a snapshot taken on a machine set to
-// English still says "Septiembre".
-inline constexpr std::wstring_view kMonthNames[12] = {
-    L"Enero", L"Febrero",    L"Marzo",      L"Abril",   L"Mayo",      L"Junio",
-    L"Julio", L"Agosto",     L"Septiembre", L"Octubre", L"Noviembre", L"Diciembre"};
+// English still says "Septiembre" when the interface is in Spanish.
+inline constexpr std::wstring_view kMonthNames[2][12] = {
+    {L"Enero", L"Febrero", L"Marzo", L"Abril", L"Mayo", L"Junio", L"Julio", L"Agosto",
+     L"Septiembre", L"Octubre", L"Noviembre", L"Diciembre"},
+    {L"January", L"February", L"March", L"April", L"May", L"June", L"July", L"August",
+     L"September", L"October", L"November", L"December"}};
 
 inline int MondayIndex(std::chrono::weekday day) {
   return static_cast<int>((day.c_encoding() + 6u) % 7u);
 }
 
+inline std::wstring_view WeekdayInitial(int mondayIndex) {
+  return kWeekdayInitials[English() ? 1 : 0][mondayIndex];
+}
+
+inline std::wstring_view WeekdayName(int mondayIndex) {
+  return kWeekdayNames[English() ? 1 : 0][mondayIndex];
+}
+
 inline std::wstring_view MonthName(std::chrono::month month) {
-  return kMonthNames[static_cast<unsigned>(month) - 1u];
+  return kMonthNames[English() ? 1 : 0][static_cast<unsigned>(month) - 1u];
 }
 
 inline Date AddDays(Date date, int days) {
@@ -60,6 +74,19 @@ inline Date GridStart(Month month) {
 
 inline Date CellDate(Month month, int cell) {
   return AddDays(GridStart(month), cell);
+}
+
+// A day and a minute of it as one number: minutes of wall clock since 1 January 1970. Not an
+// instant -- no time zone goes in or comes out -- which is exactly what comparing two readings
+// of the same wall needs, the one a reminder is due at and the one the clock says now.
+inline long long WallMinute(Date day, int minute) {
+  return static_cast<long long>(std::chrono::sys_days{day}.time_since_epoch().count()) * 1440 +
+         minute;
+}
+
+inline Date DayOfWall(long long wall) {
+  const long long days = wall >= 0 ? wall / 1440 : (wall - 1439) / 1440;
+  return Date{std::chrono::sys_days{std::chrono::days{days}}};
 }
 
 inline Date TodayLocal() {

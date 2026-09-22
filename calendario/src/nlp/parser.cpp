@@ -10,7 +10,6 @@ namespace {
 using std::chrono::sys_days;
 
 constexpr int kMinutesPerDay = 24 * 60;
-constexpr int kDefaultEventMinutes = 60;
 
 // Every character folds to exactly one character and none of them ever disappear, so an index
 // into the folded text is the same index in the original. That is what lets a span point back
@@ -449,11 +448,11 @@ std::wstring BuildTitle(std::wstring_view original, const std::vector<Span>& spa
 
 std::wstring DayLabel(Date date, Date today) {
   const int delta = static_cast<int>((sys_days{date} - sys_days{today}).count());
-  if (delta == 0) return L"Hoy";
-  if (delta == 1) return L"Mañana";
-  if (delta == 2) return L"Pasado mañana";
+  if (delta == 0) return std::wstring(T(L"Hoy", L"Today"));
+  if (delta == 1) return std::wstring(T(L"Mañana", L"Tomorrow"));
+  if (delta == 2) return std::wstring(T(L"Pasado mañana", L"Day after tomorrow"));
   if (delta > 2 && delta < 7) {
-    return std::wstring{kWeekdayNames[MondayIndex(std::chrono::weekday{sys_days{date}})]};
+    return std::wstring{WeekdayName(MondayIndex(std::chrono::weekday{sys_days{date}}))};
   }
   return std::format(L"{} {}", static_cast<unsigned>(date.day()),
                      MonthName(date.month()).substr(0, 3));
@@ -465,14 +464,14 @@ std::wstring HourMinute(int minute) {
 
 // The card says a rule repeats, not what the rule reads like. RRULE is for the Google API.
 std::wstring RepeatLabel(const std::wstring& rule) {
-  if (rule == L"FREQ=DAILY") return L"Cada día";
-  if (rule.starts_with(L"FREQ=WEEKLY")) return L"Cada semana";
-  return L"Se repite";
+  if (rule == L"FREQ=DAILY") return std::wstring(T(L"Cada día", L"Every day"));
+  if (rule.starts_with(L"FREQ=WEEKLY")) return std::wstring(T(L"Cada semana", L"Every week"));
+  return std::wstring(T(L"Se repite", L"Repeats"));
 }
 
 }  // namespace
 
-ParsedInput ParseInput(std::wstring_view text, Now now) {
+ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes) {
   ParsedInput out;
 
   std::wstring folded;
@@ -550,7 +549,7 @@ ParsedInput ParseInput(std::wstring_view text, Now now) {
     out.allDay = !hasTime;
     out.start = DateTime{*when, hasTime ? minute : kNoTime};
     if (hasTime && out.kind == Kind::Event) {
-      out.durationMin = duration ? duration->minutes : kDefaultEventMinutes;
+      out.durationMin = duration ? duration->minutes : defaultMinutes;
       out.end = DateTime{*when, (minute + out.durationMin) % kMinutesPerDay};
     } else {
       out.end = out.start;
@@ -584,11 +583,11 @@ std::wstring PreviewText(const ParsedInput& parsed, Date today) {
       add(HourMinute(parsed.start->minuteOfDay) + L"–" + HourMinute(parsed.end->minuteOfDay));
     }
   } else if (parsed.start) {
-    out = L"☑ Tarea";
+    out = L"☑ " + std::wstring(T(L"Tarea", L"Task"));
     add(DayLabel(parsed.start->date, today));
     if (!parsed.allDay) add(HourMinute(parsed.start->minuteOfDay));
   } else {
-    out = L"☑ Tarea sin fecha";
+    out = L"☑ " + std::wstring(T(L"Tarea sin fecha", L"Task, no date"));
   }
 
   if (parsed.recurrence) add(RepeatLabel(*parsed.recurrence));

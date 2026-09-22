@@ -54,7 +54,9 @@ struct Now {
   int minuteOfDay = 0;
 };
 
-ParsedInput ParseInput(std::wstring_view text, Now now);
+// `defaultMinutes` is how long an event with a time and no length lasts: the settings window
+// moves it, and CLAUDE.md's hour is where it starts.
+ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes = 60);
 
 // First letter up. It lives here because the preview card uses it to say what will be
 // created, and what gets created has to be what the preview promised -- the window titles its

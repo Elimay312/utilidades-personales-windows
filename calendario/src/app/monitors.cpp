@@ -92,8 +92,8 @@ Options ParseOptions(int argc, const wchar_t* const* argv, std::wstring_view env
       }
       options.snapshotView = value;
     } else if (Flag(arg, L"--theme=", value)) {
-      if (value != L"dark" && value != L"light") {
-        options.error = std::format(L"--theme expects dark or light, got '{}'", value);
+      if (value != L"dark" && value != L"light" && value != L"contrast") {
+        options.error = std::format(L"--theme expects dark, light or contrast, got '{}'", value);
         return options;
       }
       options.theme = value;

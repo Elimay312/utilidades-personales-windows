@@ -20,6 +20,7 @@ enum TrayCommand : UINT {
   kTrayExit = 2,
   kTrayConnect = 3,
   kTrayDisconnect = 4,
+  kTraySettings = 5,
   // And one per calendar, from here up: the command that comes back is this plus the position
   // in the list that was handed in. A range instead of a name, because the entries are whatever
   // Google last said there was.
@@ -39,6 +40,9 @@ class Tray {
   bool Add(HINSTANCE instance, HWND owner);
   void Remove();
   void Warn(const wchar_t* title, const wchar_t* text);
+  // The same balloon without the warning sign, and quiet during focus assist: what a reminder
+  // falls back to when Windows will not take a toast.
+  void Notify(const wchar_t* title, const wchar_t* text);
   UINT ShowMenu(POINT at, const TrayState& state) const;
 
  private:

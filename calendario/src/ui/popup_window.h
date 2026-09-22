@@ -8,13 +8,16 @@
 #include <dxgi1_2.h>
 #include <wrl/client.h>
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
 
 #include <chrono>
 
+#include "core/config.h"
 #include "data/store.h"
+#include "ui/accessibility.h"
 #include "ui/app_layout.h"
 #include "ui/app_view.h"
 #include "ui/paint.h"
@@ -41,7 +44,7 @@ inline constexpr UINT kFrameMessage = WM_APP + 4;
 // -- phase 6 -- and the code for that half lives in popup_window_app.cpp, as more members of
 // this class: two windows would be a cut between them, which is the one thing the expansion
 // must not look like.
-class PopupWindow {
+class PopupWindow final : public A11ySource {
  public:
   struct Timing {
     UINT openMs = 160;
@@ -61,10 +64,20 @@ class PopupWindow {
   void SetStore(Store* store) { store_ = store; }
   // Declared and not included: the popup asks it two questions and never looks inside.
   void SetSync(sync::GoogleSync* sync) { sync_ = sync; }
+  // The settings the popup reads -- theme, language through the global, the length of a new
+  // event -- owned by the app and changed by the settings window.
+  void SetPreferences(const Preferences* prefs) { prefs_ = prefs; }
+  // Ctrl+, from the popup or the app; main knows where the settings window lives.
+  void SetOpenSettings(std::function<void()> open) { openSettings_ = std::move(open); }
+  // The settings window changed something: the theme is resolved again and everything redrawn
+  // in the language that is current now.
+  void PreferencesChanged();
 
   void Toggle();
   void Show();
   void Hide();
+  // Opens -- or keeps open -- on `day`: where a click on a reminder takes you.
+  void ShowDay(Date day);
 
   // The expansion, and back. Both can be called halfway through the other: the spring simply
   // turns round from wherever it is.
@@ -72,6 +85,14 @@ class PopupWindow {
   void Contract();
 
   HWND hwnd() const { return hwnd_; }
+
+  // --- UI Automation (popup_window_access.cpp) ---
+  std::vector<A11yNode> A11yNodes() override;
+  void A11yInvoke(int id) override;
+  void A11yToggle(int id) override;
+  void A11ySelect(int id) override;
+  void A11ySetValue(int id, const std::wstring& value) override;
+  void A11yFocus(int id) override;
 
  private:
   template <class T>
@@ -83,12 +104,32 @@ class PopupWindow {
   void ApplyDwmAttributes();
   bool CreateDevices();
   void Place(const RECT& work);
+  // --- Moving between monitors (phase 7) -----------------------------------------------------
+  // The app is dragged by the empty part of its top row, like any title bar.
+  bool IsCaption(float x, float y) const;
+  // Dragged onto a monitor with another scale, or the scale of this one changed: the window
+  // keeps its size in DIP and everything is drawn again at the new DPI.
+  void OnDpiChanged(UINT dpi, const RECT& suggested);
+  // Where the popup folds back to after the app was moved: the corner of the monitor it is on
+  // now, not the one it opened on.
+  void AdoptPosition();
+  // The scale of the monitor changed with the window on it, which Windows does not report to
+  // this window: compared by hand whenever a setting or the displays change.
+  void FollowMonitorDpi();
   void Resize(SIZE size);
+  // Hidden for good: the swap chain shrinks back to the popup, the size it idles at.
+  void Shelve();
   void Render();
   void Animate(bool opening);
   void Rest();  // hidden state: fully transparent and slid down, ready to open
   float SlidePx() const;
   bool AnimationsEnabled() const;
+  // --theme first, which is how a snapshot or a test pins it; the settings after that.
+  std::wstring_view ThemeChoice() const {
+    return !themeOverride_.empty() || prefs_ == nullptr ? std::wstring_view(themeOverride_)
+                                                        : std::wstring_view(prefs_->theme);
+  }
+  int DefaultMinutes() const { return prefs_ != nullptr ? prefs_->durationMin : 60; }
 
   // There is no WM_PAINT on a window with no redirection bitmap, so anything that changes the
   // model redraws by hand.
@@ -111,6 +152,11 @@ class PopupWindow {
   void ShowToast(std::wstring text);
   void HideToast();
   bool ToggleCardAt(float x, float y);
+  // Ticks or unticks the day's task at `index`, with the line drawing itself across it.
+  void ToggleDone(size_t index);
+  // The sidebar's switch and the tray's tick box, shared by the mouse, the keys and UIA.
+  void ToggleCalendar(int index);
+  void ToggleUndated(int index);
   bool Tick(float ms);  // advances hover, focus and the month slide; true while still moving
   void StartTicking();
   void RestartCaret();
@@ -171,11 +217,36 @@ class PopupWindow {
   void CopySelection(bool cut);
   void Paste();
 
+  // --- The keyboard beyond the capsule (popup_window_access.cpp) ---------------------------
+  // Where the keyboard is when it is not in the capsule. The capsule keeps its own flag,
+  // inputFocused_, because half of the popup already reads it.
+  enum class Zone { Grid, List, Events, Detail, Calendars, Tasks };
+  bool OnTab(bool back);
+  void EnterZone(Zone zone, bool back);
+  bool OnZoneKey(WPARAM key);
+  bool OnDetailControlKey(WPARAM key);
+  void FocusDetailStop(int stop);
+  void MoveDetailStop(bool back);
+  int DetailStop() const;
+  std::vector<const DayItem*> ShownEvents() const;
+  void SelectAdjacentEvent(int direction);
+  void RevealSelected();
+  void NudgeSelected(int minutes, int days, int endMinutes);
+  void OpenFocusedCard();
+  void ToggleFocusedCard();
+  void UpdateRing();
+  int TodayColumnOf(const std::wstring& uid) const;
+
   // Moves the red line on the turn of every minute while the app is open.
   static constexpr UINT_PTR kNowTimer = 5;
 
   HWND hwnd_ = nullptr;
   HMONITOR monitor_ = nullptr;
+  Zone zone_ = Zone::Grid;
+  int listFocus_ = 0;           // the card, the calendar or the tray task the keyboard is on
+  bool focusVisible_ = false;   // the keyboard has been used since the last click
+  bool eatSpace_ = false;       // a Space that was a command, not a character to type
+  Accessibility a11y_;
   Timing timing_{};
   std::wstring themeOverride_;
   D2D1_SIZE_F panelOverride_{};
@@ -184,6 +255,7 @@ class PopupWindow {
   SIZE buffer_{};  // the swap chain: big enough for the app, so growing never resizes it
   bool visible_ = false;
   bool acrylic_ = false;
+  bool placing_ = false;  // Place is moving the window and measures the DPI itself
 
   Fonts fonts_;
   Theme theme_ = DarkTheme();
@@ -237,6 +309,8 @@ class PopupWindow {
   std::optional<Undone> undo_;
   Store* store_ = nullptr;
   sync::GoogleSync* sync_ = nullptr;
+  const Preferences* prefs_ = nullptr;
+  std::function<void()> openSettings_;
   ULONGLONG lastTick_ = 0;
   std::wstring parsed_;  // the text the preview in the model was built from
 

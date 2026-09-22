@@ -240,6 +240,11 @@ void DrawEventCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
 
   brush->SetColor(theme.surface);
   FillRound(target, rect, layout.cardRadius, brush);
+  if (theme.highContrast) {
+    // The surface is the panel's colour in high contrast, so the card needs its edge drawn.
+    brush->SetColor(theme.border);
+    StrokeRound(target, rect, layout.cardRadius, brush, 1.0f);
+  }
 
   // The colour bar inherits the rounded corners: clip to its width and fill the whole rounded
   // rectangle again, this time in the calendar colour.
@@ -287,6 +292,10 @@ void DrawToast(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme
   const D2D1_RECT_F rect = layout.preview();
   brush->SetColor(Fade(theme.surface, model.toastT));
   FillRound(target, rect, layout.cardRadius, brush);
+  if (theme.highContrast) {
+    brush->SetColor(Fade(theme.border, model.toastT));
+    StrokeRound(target, rect, layout.cardRadius, brush, 1.0f);
+  }
   brush->SetColor(Fade(theme.textSecondary, model.toastT));
   DrawTextIn(target, fonts.event.Get(), model.toast,
              D2D1_RECT_F{rect.left + kCardTextLeftDip * layout.type, rect.top,
@@ -302,6 +311,10 @@ void DrawPreviewCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme&
 
   brush->SetColor(theme.surface);
   FillRound(target, rect, layout.cardRadius, brush);
+  if (theme.highContrast) {
+    brush->SetColor(theme.border);
+    StrokeRound(target, rect, layout.cardRadius, brush, 1.0f);
+  }
 
   // The same bar an event card wears: the accent when this will be an event, muted when it
   // will be a task, so the shape of what Enter would create reads before the words do.
@@ -361,7 +374,7 @@ void DrawTextInput(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
     target->DrawTextLayout(D2D1_POINT_2F{originX, rect.top}, input.layout.Get(), brush);
   } else {
     brush->SetColor(theme.textMuted);
-    DrawTextIn(target, fonts.event.Get(), L"mañana 5pm dentista…", input.inner, brush);
+    DrawTextIn(target, fonts.event.Get(), T(L"mañana 5pm dentista…", L"tomorrow 5pm dentist…"), input.inner, brush);
   }
 
   if (model.caretOn) {

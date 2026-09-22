@@ -4,6 +4,7 @@
 
 #include <cwchar>
 
+#include "core/i18n.h"
 #include "core/log.h"
 
 namespace agenda {
@@ -64,11 +65,21 @@ void Tray::Warn(const wchar_t* title, const wchar_t* text) {
   Shell_NotifyIconW(NIM_MODIFY, &data);
 }
 
+void Tray::Notify(const wchar_t* title, const wchar_t* text) {
+  if (!added_) return;
+  NOTIFYICONDATAW data = Data();
+  data.uFlags = NIF_INFO;
+  data.dwInfoFlags = NIIF_INFO | NIIF_RESPECT_QUIET_TIME;
+  wcsncpy_s(data.szInfoTitle, title, _TRUNCATE);
+  wcsncpy_s(data.szInfo, text, _TRUNCATE);
+  Shell_NotifyIconW(NIM_MODIFY, &data);
+}
+
 UINT Tray::ShowMenu(POINT at, const TrayState& state) const {
   HMENU menu = CreatePopupMenu();
   if (menu == nullptr) return kTrayNone;
 
-  AppendMenuW(menu, MF_STRING, kTrayOpen, L"Abrir");
+  AppendMenuW(menu, MF_STRING, kTrayOpen, T(L"Abrir", L"Open").data());
 
   // Nothing about Google appears at all without credentials. An entry that would only ever say
   // "you have not set this up" is worse than no entry: it makes a setup step look like a
@@ -77,9 +88,11 @@ UINT Tray::ShowMenu(POINT at, const TrayState& state) const {
   if (state.configured) {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     if (state.connected) {
-      AppendMenuW(menu, MF_STRING, kTrayDisconnect, L"Desconectar de Google");
+      AppendMenuW(menu, MF_STRING, kTrayDisconnect,
+                  T(L"Desconectar de Google", L"Disconnect from Google").data());
     } else {
-      AppendMenuW(menu, MF_STRING, kTrayConnect, L"Conectar con Google…");
+      AppendMenuW(menu, MF_STRING, kTrayConnect,
+                  T(L"Conectar con Google…", L"Connect to Google…").data());
     }
 
     if (!state.calendars.empty()) {
@@ -92,13 +105,14 @@ UINT Tray::ShowMenu(POINT at, const TrayState& state) const {
                       calendar.title.c_str());
         }
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(calendars),
-                    L"Calendario por defecto");
+                    T(L"Calendario por defecto", L"Default calendar").data());
       }
     }
   }
 
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  AppendMenuW(menu, MF_STRING, kTrayExit, L"Salir");
+  AppendMenuW(menu, MF_STRING, kTraySettings, T(L"Configuración…", L"Settings…").data());
+  AppendMenuW(menu, MF_STRING, kTrayExit, T(L"Salir", L"Exit").data());
   SetMenuDefaultItem(menu, kTrayOpen, FALSE);
 
   // The documented dance for tray menus: without the foreground window the menu never closes

@@ -2,6 +2,8 @@
 
 #include <d2d1.h>
 
+#include <string_view>
+
 namespace agenda {
 
 constexpr D2D1_COLOR_F Rgb(UINT32 rgb, float alpha = 1.0f) {
@@ -47,6 +49,9 @@ inline constexpr UINT kToastMs = 5000;
 // design system describes, and the light one is derived from it.
 struct Theme {
   bool light = false;
+  // Windows high contrast is on: every colour is one the user picked, nothing is translucent,
+  // and shapes that were told apart by a tint get an outline instead.
+  bool highContrast = false;
   D2D1_COLOR_F panel;         // over the acrylic, so it carries the 85% alpha
   D2D1_COLOR_F panelOpaque;   // same colour at full alpha, for Windows 10 with no backdrop
   D2D1_COLOR_F surface;       // event cards and the input capsule
@@ -64,10 +69,26 @@ struct Theme {
 
 Theme DarkTheme();
 Theme LightTheme();
+// Built from GetSysColor while high contrast is on. Off, it falls back to the colours of
+// "Contraste nocturno", so --theme=contrast renders the same PNG on any machine.
+Theme HighContrastTheme();
 
-// Reads AppsUseLightTheme. Read only: Agenda never writes to the registry.
+// Reads AppsUseLightTheme. Read only: the theme never writes to the registry.
 bool SystemUsesLightTheme();
+bool HighContrastOn();
 
-inline Theme SystemTheme() { return SystemUsesLightTheme() ? LightTheme() : DarkTheme(); }
+inline Theme SystemTheme() {
+  if (HighContrastOn()) return HighContrastTheme();
+  return SystemUsesLightTheme() ? LightTheme() : DarkTheme();
+}
+
+// "dark", "light" or "contrast" from --theme or the settings; anything else follows Windows.
+// High contrast wins over a preference: somebody who turned it on needs it everywhere.
+inline Theme ResolveTheme(std::wstring_view choice) {
+  if (choice == L"contrast" || HighContrastOn()) return HighContrastTheme();
+  if (choice == L"light") return LightTheme();
+  if (choice == L"dark") return DarkTheme();
+  return SystemTheme();
+}
 
 }  // namespace agenda

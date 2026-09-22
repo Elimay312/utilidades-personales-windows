@@ -252,6 +252,78 @@ std::vector<DayItem> Store::ItemsForDay(Date day, bool includeUndated) {
   return items;
 }
 
+std::vector<Reminder> Store::DueReminders(long long from, long long to) {
+  std::vector<Reminder> out;
+  if (!db_.IsOpen() || to <= from) return out;
+  // The longest lead Google allows is four weeks, so nothing starting later than that past `to`
+  // can be due yet.
+  constexpr int kMaxLeadMinutes = 40320;
+  const Date first = DayOfWall(from);
+  const Date last = DayOfWall(to + kMaxLeadMinutes);
+
+  std::optional<Stmt> stmt = db_.Prepare(
+      "SELECT e.uid, e.title, e.location, e.start_day, e.start_min, e.end_min, e.recurrence, "
+      "       COALESCE(e.reminders, c.reminders) "
+      "FROM events e JOIN calendars c ON c.id = e.calendar_id "
+      "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
+      "  AND COALESCE(e.reminders, c.reminders) != '' "
+      "  AND e.start_day <= ?2 AND (e.start_day >= ?1 OR e.recurrence != '')");
+  if (!stmt) return out;
+  stmt->Bind(1, DayKey(first));
+  stmt->Bind(2, DayKey(last));
+  while (stmt->Step()) {
+    const std::optional<Date> start = ParseDayKey(stmt->Text(3));
+    if (!start) continue;
+    std::vector<int> leads;
+    const std::string list = stmt->Text(7);
+    for (size_t at = 0; at <= list.size();) {
+      size_t comma = list.find(',', at);
+      if (comma == std::string::npos) comma = list.size();
+      int minutes = 0;
+      bool digits = comma > at;
+      for (size_t i = at; i < comma && digits; ++i) {
+        digits = list[i] >= '0' && list[i] <= '9';
+        minutes = minutes * 10 + (list[i] - '0');
+      }
+      if (digits && minutes <= kMaxLeadMinutes) leads.push_back(minutes);
+      at = comma + 1;
+    }
+    if (leads.empty()) continue;
+    const int longest = *std::max_element(leads.begin(), leads.end());
+
+    const std::optional<int> startMin = stmt->OptInt(4);
+    const std::string rule = stmt->Text(6);
+    // Every day this event happens on whose reminders could land inside the window: the day it
+    // starts, or, for a repetition, the days its rule lands on between the two ends.
+    const Date lastDay = DayOfWall(to + longest);
+    for (Date day = rule.empty() ? *start : (std::max)(*start, first); day <= lastDay;
+         day = AddDays(day, 1)) {
+      if (day != *start && (rule.empty() || !OccursOn(rule, *start, day))) {
+        if (rule.empty()) break;
+        continue;
+      }
+      for (const int lead : leads) {
+        const long long due = WallMinute(day, startMin.value_or(0)) - lead;
+        if (due <= from || due > to) continue;
+        Reminder reminder;
+        reminder.uid = stmt->Wide(0);
+        reminder.title = stmt->Wide(1);
+        reminder.location = stmt->Wide(2);
+        reminder.day = day;
+        reminder.startMin = startMin;
+        reminder.endMin = stmt->OptInt(5);
+        reminder.minutesBefore = lead;
+        reminder.at = due;
+        out.push_back(std::move(reminder));
+      }
+      if (rule.empty()) break;
+    }
+  }
+  std::sort(out.begin(), out.end(),
+            [](const Reminder& a, const Reminder& b) { return a.at < b.at; });
+  return out;
+}
+
 std::vector<DayDot> Store::DotsForRange(Date from, Date to) {
   std::vector<DayDot> dots;
   if (!db_.IsOpen()) return dots;
@@ -507,7 +579,7 @@ DayItem Store::Create(const Draft& draft) {
     // is an event that never reaches Google, with no error anywhere.
     Transaction tx(db_);
     if (!tx.Begin()) {
-      Report(uid, L"no se pudo empezar a guardar");
+      Report(uid, T(L"no se pudo empezar a guardar", L"could not start saving"));
       return;
     }
 
@@ -549,7 +621,7 @@ DayItem Store::Create(const Draft& draft) {
     }
 
     if (!ok || !QueueOp(draft.isTask ? "task" : "event", uid, "create") || !tx.Commit()) {
-      Report(uid, L"no se pudo guardar");
+      Report(uid, T(L"no se pudo guardar", L"could not save"));
       return;
     }
     Notify();
@@ -562,7 +634,7 @@ void Store::SetDone(const std::wstring& uid, bool done) {
   Enqueue([this, uid, done] {
     Transaction tx(db_);
     if (!tx.Begin()) {
-      Report(uid, L"no se pudo marcar la tarea");
+      Report(uid, T(L"no se pudo marcar la tarea", L"could not tick the task"));
       return;
     }
     const std::int64_t now = NowSeconds();
@@ -585,7 +657,7 @@ void Store::SetDone(const std::wstring& uid, bool done) {
     if (ok) ok = QueueOp("task", uid, "update", &queued);
     if (ok) ok = DropOthers(uid, "update", queued);
     if (!ok || !tx.Commit()) {
-      Report(uid, L"no se pudo marcar la tarea");
+      Report(uid, T(L"no se pudo marcar la tarea", L"could not tick the task"));
       return;
     }
     Notify();
@@ -596,7 +668,7 @@ void Store::UpdateEvent(const EventDetail& edit, unsigned edits) {
   Enqueue([this, edit, edits] {
     Transaction tx(db_);
     if (!tx.Begin()) {
-      Report(edit.uid, L"no se pudo guardar el cambio");
+      Report(edit.uid, T(L"no se pudo guardar el cambio", L"could not save the change"));
       return;
     }
 
@@ -613,7 +685,7 @@ void Store::UpdateEvent(const EventDetail& edit, unsigned edits) {
       }
     }
     if (calendar.empty()) {
-      Report(edit.uid, L"ese evento ya no existe");
+      Report(edit.uid, T(L"ese evento ya no existe", L"that event no longer exists"));
       return;
     }
     // Only the first calendar counts: two changes in a row still move it out of the one Google
@@ -659,7 +731,7 @@ void Store::UpdateEvent(const EventDetail& edit, unsigned edits) {
     if (ok) ok = QueueOp("event", edit.uid, UpdateOp(merged).c_str(), &queued);
     if (ok) ok = DropOthers(edit.uid, "update%", queued);
     if (!ok || !tx.Commit()) {
-      Report(edit.uid, L"no se pudo guardar el cambio");
+      Report(edit.uid, T(L"no se pudo guardar el cambio", L"could not save the change"));
       return;
     }
     Notify();
@@ -670,7 +742,7 @@ void Store::Remove(const std::wstring& uid, bool isTask) {
   Enqueue([this, uid, isTask] {
     Transaction tx(db_);
     if (!tx.Begin()) {
-      Report(uid, L"no se pudo deshacer");
+      Report(uid, T(L"no se pudo deshacer", L"could not undo"));
       return;
     }
 
@@ -711,7 +783,7 @@ void Store::Remove(const std::wstring& uid, bool isTask) {
     if (ok) ok = DropOthers(uid, "%", queued);
 
     if (!ok || !tx.Commit()) {
-      Report(uid, L"no se pudo deshacer");
+      Report(uid, T(L"no se pudo deshacer", L"could not undo"));
       return;
     }
     Notify();

@@ -18,8 +18,18 @@ namespace {
 
 // Short enough for a week column, and in capitals because at 11 DIP a word in lower case reads
 // as a sentence that got cut off.
-constexpr std::wstring_view kWeekdayShort[7] = {L"LUN", L"MAR", L"MIÉ", L"JUE",
-                                                L"VIE", L"SÁB", L"DOM"};
+constexpr std::wstring_view kWeekdayShort[2][7] = {
+    {L"LUN", L"MAR", L"MIÉ", L"JUE", L"VIE", L"SÁB", L"DOM"},
+    {L"MON", L"TUE", L"WED", L"THU", L"FRI", L"SAT", L"SUN"}};
+
+std::wstring_view WeekdayShort(int mondayIndex) {
+  return kWeekdayShort[English() ? 1 : 0][mondayIndex];
+}
+
+// "+3 más", "+3 more": what did not fit in a cell or a strip.
+std::wstring More(int count) {
+  return std::vformat(T(L"+{} más", L"+{} more"), std::make_wformat_args(count));
+}
 
 constexpr float kBlockTextPadDip = 6.0f;
 constexpr float kBlockLineDip = 16.0f;
@@ -40,6 +50,8 @@ bool SameMonth(Date a, Date b) { return a.year() == b.year() && a.month() == b.m
 // The tint an event block wears on the timeline: its calendar's colour washed into the card
 // surface, strong enough to tell calendars apart and quiet enough to read black or white on.
 D2D1_COLOR_F BlockFill(const Theme& theme, std::uint32_t color) {
+  // In high contrast the text has to sit on the colour the user chose, not on a tint of it.
+  if (theme.highContrast) return theme.surface;
   return Lerp(theme.surface, Rgb(color), theme.light ? 0.16f : 0.26f);
 }
 
@@ -78,6 +90,10 @@ void DrawTinted(ID2D1RenderTarget* target, const Theme& theme, ID2D1SolidColorBr
   brush->SetColor(Rgb(color));
   FillRound(target, rect, radius, brush);
   target->PopAxisAlignedClip();
+  if (theme.highContrast) {
+    brush->SetColor(theme.border);
+    StrokeRound(target, rect, radius, brush, 1.0f);
+  }
 }
 
 // --- Top row --------------------------------------------------------------------------------
@@ -123,19 +139,21 @@ void DrawTopRow(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
   brush->SetColor(theme.border);
   StrokeRound(target, all, radius, brush, 1.0f);
 
-  constexpr std::wstring_view kNames[3] = {L"Día", L"Semana", L"Mes"};
+  const std::wstring_view kNames[3] = {T(L"Día", L"Day"), T(L"Semana", L"Week"),
+                                       T(L"Mes", L"Month")};
   const float inset = std::round(3.0f * app.type);
   for (int i = 0; i < 3; ++i) {
     const bool on = static_cast<int>(appModel.view) == i;
     const D2D1_RECT_F pill = Inset(app.tabs[i], inset);
     if (on) {
-      brush->SetColor(Fade(theme.textPrimary, theme.light ? 0.08f : 0.12f));
+      brush->SetColor(theme.highContrast ? theme.accent
+                                         : Fade(theme.textPrimary, theme.light ? 0.08f : 0.12f));
       FillRound(target, pill, radius - inset, brush);
     } else if (appModel.tabHover[i] > 0.0f) {
       brush->SetColor(Fade(theme.hover, appModel.tabHover[i]));
       FillRound(target, pill, radius - inset, brush);
     }
-    brush->SetColor(on ? theme.textPrimary
+    brush->SetColor(on ? (theme.highContrast ? theme.onAccent : theme.textPrimary)
                        : Lerp(theme.textSecondary, theme.textPrimary, appModel.tabHover[i]));
     DrawTextIn(target, fonts.event.Get(), kNames[i], app.tabs[i], brush, Align::Center);
   }
@@ -157,7 +175,7 @@ void DrawDayHeaders(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& 
     const bool today = date == model.today;
 
     brush->SetColor(today ? theme.accent : theme.textSecondary);
-    DrawTextIn(target, fonts.label.Get(), kWeekdayShort[weekday],
+    DrawTextIn(target, fonts.label.Get(), WeekdayShort(weekday),
                D2D1_RECT_F{cell.left, cell.top, cell.right, cell.top + half - app.gap / 2.0f},
                brush, Align::Center);
 
@@ -192,7 +210,7 @@ void DrawAllDay(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
         StrokeRound(target, chip, radius, brush, (std::max)(1.0f, std::round(1.5f * app.type)));
       }
       const bool last = row == app.allDayRows - 1 && total > app.allDayRows;
-      const std::wstring text = last ? std::format(L"+{} más", total - row) : item.title;
+      const std::wstring text = last ? More(total - row) : item.title;
       brush->SetColor(item.done ? theme.textMuted : theme.textPrimary);
       DrawTextIn(target, fonts.label.Get(), text,
                  D2D1_RECT_F{chip.left + pad, chip.top, chip.right - app.gap, chip.bottom},
@@ -354,7 +372,7 @@ void DrawMonthView(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
   for (int column = 0; column < kGridCols; ++column) {
     const float left = app.main.left + static_cast<float>(column) * app.monthCellWidth;
     brush->SetColor(theme.textSecondary);
-    DrawTextIn(target, fonts.label.Get(), kWeekdayShort[column],
+    DrawTextIn(target, fonts.label.Get(), WeekdayShort(column),
                D2D1_RECT_F{left, app.monthLabelsTop, left + app.monthCellWidth,
                            app.monthLabelsTop + app.monthLabelsHeight},
                brush, Align::Center);
@@ -417,7 +435,7 @@ void DrawMonthView(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
     if (shownCount < total) {
       const float top = listTop + static_cast<float>(shownCount) * app.monthLine;
       brush->SetColor(theme.textSecondary);
-      DrawTextIn(target, fonts.label.Get(), std::format(L"+{} más", total - shownCount),
+      DrawTextIn(target, fonts.label.Get(), More(total - shownCount),
                  D2D1_RECT_F{cell.left + pad, top, cell.right - pad / 2.0f, top + app.monthLine},
                  brush);
     }
@@ -434,7 +452,7 @@ void DrawSidebar(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& the
       D2D1_RECT_F{app.sidebarRight, 0.0f, app.sidebarRight + 1.0f, app.height}, brush);
 
   brush->SetColor(theme.textSecondary);
-  DrawTextIn(target, fonts.label.Get(), L"Calendarios", app.calendarsLabel(), brush);
+  DrawTextIn(target, fonts.label.Get(), T(L"Calendarios", L"Calendars"), app.calendarsLabel(), brush);
 
   const float box = std::round(kCheckboxDip * app.type);
   const float boxRadius = std::round(4.0f * app.type);
@@ -473,10 +491,10 @@ void DrawSidebar(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& the
   }
 
   brush->SetColor(theme.textSecondary);
-  DrawTextIn(target, fonts.label.Get(), L"Sin fecha", app.tasksLabel(calendars), brush);
+  DrawTextIn(target, fonts.label.Get(), T(L"Sin fecha", L"No date"), app.tasksLabel(calendars), brush);
   if (appModel.undated.empty()) {
     brush->SetColor(theme.textMuted);
-    DrawTextIn(target, fonts.event.Get(), L"Nada pendiente", app.taskRow(calendars, 0), brush);
+    DrawTextIn(target, fonts.event.Get(), T(L"Nada pendiente", L"Nothing to do"), app.taskRow(calendars, 0), brush);
     return;
   }
   const int fits = app.tasksThatFit(calendars);
@@ -492,10 +510,12 @@ void DrawSidebar(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& the
 
 // --- The detail panel -----------------------------------------------------------------------
 
-constexpr std::wstring_view kDetailLabelNames[kDetailLabels] = {
-    L"Título", L"Fecha", L"Inicio", L"Fin", L"Calendario", L"Ubicación", L"Notas", L"Repetición"};
-constexpr std::wstring_view kRepeatNames[kRepeatChoices] = {L"Nunca", L"Diaria", L"Semanal",
-                                                            L"Mensual", L"Anual"};
+constexpr std::wstring_view kDetailLabelNames[2][kDetailLabels] = {
+    {L"Título", L"Fecha", L"Inicio", L"Fin", L"Calendario", L"Ubicación", L"Notas", L"Repetición"},
+    {L"Title", L"Date", L"Start", L"End", L"Calendar", L"Location", L"Notes", L"Repeat"}};
+constexpr std::wstring_view kRepeatNames[2][kRepeatChoices] = {
+    {L"Nunca", L"Diaria", L"Semanal", L"Mensual", L"Anual"},
+    {L"Never", L"Daily", L"Weekly", L"Monthly", L"Yearly"}};
 
 // A field's text, laid out the way it is drawn: one line that scrolls to keep the caret in
 // sight, or -- for the notes -- wrapped inside the box. The drawing and the click both build
@@ -631,13 +651,17 @@ void DrawDetail(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
 
   for (int i = 0; i < kDetailLabels; ++i) {
     brush->SetColor(theme.textSecondary);
-    DrawTextIn(target, fonts.label.Get(), kDetailLabelNames[i], layout.labels[i], brush);
+    DrawTextIn(target, fonts.label.Get(), kDetailLabelNames[English() ? 1 : 0][i], layout.labels[i], brush);
   }
 
   const bool allDay = !detail.event.startMin;
   const std::wstring_view placeholders[kDetailFields] = {
-      L"Sin título",  L"dd/mm/aaaa",           allDay ? L"Todo el día" : L"--:--",
-      L"--:--",       L"Añadir una ubicación", L"Añadir notas"};
+      T(L"Sin título", L"Untitled"),
+      T(L"dd/mm/aaaa", L"dd/mm/yyyy"),
+      allDay ? T(L"Todo el día", L"All day") : L"--:--",
+      L"--:--",
+      T(L"Añadir una ubicación", L"Add a location"),
+      T(L"Añadir notas", L"Add notes")};
   for (int i = 0; i < kDetailFields; ++i) {
     DrawField(target, fonts, theme, brush, layout.fields[i], layout.radius, detail.fields[i],
               detail.focus == i, detail.caretOn, ((detail.invalid >> i) & 1u) != 0,
@@ -689,11 +713,11 @@ void DrawDetail(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
       StrokeRound(target, pill, radius, brush, 1.0f);
     }
     brush->SetColor(on ? theme.onAccent : theme.textSecondary);
-    DrawTextIn(target, fonts.label.Get(), kRepeatNames[i], pill, brush, Align::Center);
+    DrawTextIn(target, fonts.label.Get(), kRepeatNames[English() ? 1 : 0][i], pill, brush, Align::Center);
   }
   if (repeat == Repeat::Custom) {
     brush->SetColor(theme.textSecondary);
-    DrawTextIn(target, fonts.label.Get(), L"Personalizada: se conserva",
+    DrawTextIn(target, fonts.label.Get(), T(L"Personalizada: se conserva", L"Custom: kept as is"),
                D2D1_RECT_F{layout.labels[7].left + std::round(80.0f * type), layout.labels[7].top,
                            layout.labels[7].right, layout.labels[7].bottom},
                brush, Align::Right);
@@ -702,7 +726,7 @@ void DrawDetail(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
   brush->SetColor(Fade(theme.now, theme.light ? 0.08f : 0.12f));
   FillRound(target, layout.remove, layout.radius, brush);
   brush->SetColor(theme.now);
-  DrawTextIn(target, fonts.event.Get(), L"Borrar evento", layout.remove, brush, Align::Center);
+  DrawTextIn(target, fonts.event.Get(), T(L"Borrar evento", L"Delete event"), layout.remove, brush, Align::Center);
 
   // The list, last, because it opens over the fields below the chooser.
   if (detail.calendarOpen) {
@@ -847,24 +871,40 @@ std::wstring PeriodTitle(AppView view, Date anchor) {
   switch (view) {
     case AppView::Day: {
       const int weekday = MondayIndex(std::chrono::weekday{std::chrono::sys_days{anchor}});
-      return std::format(L"{} {} de {}", kWeekdayNames[weekday],
+      if (English()) {
+        return std::format(L"{}, {} {}", WeekdayName(weekday), MonthName(anchor.month()),
+                           static_cast<unsigned>(anchor.day()));
+      }
+      return std::format(L"{} {} de {}", WeekdayName(weekday),
                          static_cast<unsigned>(anchor.day()), Lower(MonthName(anchor.month())));
     }
     case AppView::Week: {
       const Date first = FirstShown(AppView::Week, anchor);
       const Date last = AddDays(first, 6);
-      if (SameMonth(first, last)) {
-        return std::format(L"{} – {} de {}", static_cast<unsigned>(first.day()),
-                           static_cast<unsigned>(last.day()), Lower(MonthName(last.month())));
+      const unsigned from = static_cast<unsigned>(first.day());
+      const unsigned to = static_cast<unsigned>(last.day());
+      if (English()) {
+        if (SameMonth(first, last)) {
+          return std::format(L"{} {} – {}", MonthName(last.month()), from, to);
+        }
+        return std::format(L"{} {} – {} {}", MonthName(first.month()), from,
+                           MonthName(last.month()), to);
       }
-      return std::format(L"{} de {} – {} de {}", static_cast<unsigned>(first.day()),
-                         Lower(MonthName(first.month())), static_cast<unsigned>(last.day()),
+      if (SameMonth(first, last)) {
+        return std::format(L"{} – {} de {}", from, to, Lower(MonthName(last.month())));
+      }
+      return std::format(L"{} de {} – {} de {}", from, Lower(MonthName(first.month())), to,
                          Lower(MonthName(last.month())));
     }
     case AppView::Month:
       return std::format(L"{} {}", MonthName(anchor.month()), static_cast<int>(anchor.year()));
   }
   return {};
+}
+
+std::wstring ConfirmDeleteText(std::wstring_view title) {
+  if (English()) return std::format(L"Delete “{}”?   Del to delete · Esc to keep it", title);
+  return std::format(L"¿Borrar «{}»?   Supr para borrar · Esc para dejarlo", title);
 }
 
 void DrawApp(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
@@ -916,6 +956,7 @@ void DrawApp(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
       DrawFreeGhost(target, fonts, theme, app, appModel.ghost, brush.Get());
     }
   }
+  if (p >= 1.0f) DrawFocusRing(target, theme, popup, model);
 }
 
 }  // namespace agenda

@@ -123,6 +123,26 @@ ALTER TABLE events ADD COLUMN location TEXT NOT NULL DEFAULT '';
 ALTER TABLE events ADD COLUMN moved_from TEXT;
 )SQL";
 
+// --- v3 -----------------------------------------------------------------------------------
+//
+// Phase 7, with the user's permission, and again only columns added: the reminders, which is
+// what the Windows notifications are raised from. They are "notification" reminders only --
+// Google sends the e-mail ones itself -- as minutes before the start, comma-separated.
+//
+// `events.reminders` NULL means "whatever the calendar says", which is Google's useDefault and
+// what every event created here is born with; an empty string means none at all. A calendar's
+// own list is its defaultReminders. The local calendar gets ten minutes, the same Google gives
+// a new account, so an agenda with no account still says something before the dentist.
+//
+// The sync tokens are emptied so the next pass downloads every event once and fills the column.
+// An incremental pass only sends what changed, and a reminder nobody touched would never come.
+constexpr const char* kV3 = R"SQL(
+ALTER TABLE events ADD COLUMN reminders TEXT;
+ALTER TABLE calendars ADD COLUMN reminders TEXT NOT NULL DEFAULT '';
+UPDATE calendars SET reminders = '10' WHERE id = 'local';
+UPDATE sync_state SET sync_token = '';
+)SQL";
+
 struct Migration {
   int version;
   const char* sql;
@@ -131,6 +151,7 @@ struct Migration {
 constexpr Migration kMigrations[] = {
     {1, kV1},
     {2, kV2},
+    {3, kV3},
 };
 
 }  // namespace

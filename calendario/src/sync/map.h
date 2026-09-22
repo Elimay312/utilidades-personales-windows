@@ -55,6 +55,9 @@ struct EventRow {
   std::string endDay;           // INCLUSIVE: Google's exclusive end already had its day taken off
   std::optional<int> endMin;
   std::string recurrence;      // the first RRULE, stored and not expanded
+  // Minutes before the start, "10,60", of the notification reminders; nullopt is Google's
+  // useDefault -- the calendar's own list -- and an empty string is "no reminders at all".
+  std::optional<std::string> reminders;
   std::int64_t updatedAt = 0;  // epoch seconds UTC, the one instant in the schema
   bool cancelled = false;      // how a deletion arrives in an incremental pass
 };
@@ -107,6 +110,10 @@ std::string LocalZoneName();
 
 // One `start` or `end` of an event: either `date` (all day) or `dateTime` (an instant).
 std::optional<Wall> ReadStamp(const nlohmann::json& node);
+
+// A list of Google reminders -- an event's `overrides` or a calendar's `defaultReminders` --
+// as the minutes of the notification ones, "10,60". E-mail reminders are Google's to send.
+std::string ReadReminders(const nlohmann::json& list);
 
 // '#039be5' as 0x039BE5. Nullopt for anything that is not six hex digits behind a hash.
 std::optional<std::uint32_t> ReadColor(std::string_view hex);

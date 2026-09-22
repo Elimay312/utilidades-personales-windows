@@ -29,12 +29,6 @@ constexpr UINT_PTR kCaretTimer = 3;
 constexpr UINT_PTR kToastTimer = 4;
 constexpr UINT kTickMs = 16;  // one frame at 60 Hz, which is all the content fades need
 
-Theme ResolveTheme(std::wstring_view override) {
-  if (override == L"light") return LightTheme();
-  if (override == L"dark") return DarkTheme();
-  return SystemTheme();
-}
-
 // Ease-out cubic as a single DirectComposition segment. f(u) = 3u - 3u^2 + u^3 with
 // u = t / seconds is a cubic polynomial, so AddCubic expresses it exactly and the compositor
 // interpolates it on the GPU: no timer, no thread, no dropped frames.
@@ -53,7 +47,7 @@ bool PopupWindow::Create(HINSTANCE instance, HMONITOR monitor, Timing timing,
   monitor_ = monitor;
   timing_ = timing;
   themeOverride_ = themeOverride;
-  theme_ = ResolveTheme(themeOverride_);
+  theme_ = ResolveTheme(ThemeChoice());
   model_ = MakeModel(TodayLocal());
   model_.focus = 1.0f;
 
@@ -88,6 +82,7 @@ bool PopupWindow::Create(HINSTANCE instance, HMONITOR monitor, Timing timing,
   ApplyDwmAttributes();
   Place(info.rcWork);
   if (!CreateDevices()) return false;
+  a11y_.Attach(hwnd_, this);
 
   Rest();
   Render();
@@ -199,6 +194,7 @@ bool PopupWindow::CreateDevices() {
 }
 
 void PopupWindow::Place(const RECT& work) {
+  placing_ = true;
   const auto panelFor = [&](UINT dpi) {
     return panelOverride_.width > 0.0f ? panelOverride_ : PanelSize(work, dpi);
   };
@@ -211,7 +207,7 @@ void PopupWindow::Place(const RECT& work) {
 
   // Now that the window sits on the target monitor, its real DPI is known. Doing this while it
   // is still hidden means the corrected size never shows up as a resize on screen.
-  const UINT dpi = GetDpiForWindow(hwnd_);
+  const UINT dpi = MonitorDpi(hwnd_);
   if (dpi != 0 && dpi != dpi_) {
     dpi_ = dpi;
     panel = panelFor(dpi_);
@@ -229,16 +225,98 @@ void PopupWindow::Place(const RECT& work) {
 
   popupRect_ = rect;
   Resize(SIZE{rect.right - rect.left, rect.bottom - rect.top});
+  placing_ = false;
+}
+
+bool PopupWindow::IsCaption(float x, float y) const {
+  if (mode_ != Mode::App || x < appLayout_.sidebarRight || y >= appLayout_.main.top) return false;
+  if (Inside(appLayout_.prev, x, y) || Inside(appLayout_.next, x, y) ||
+      Inside(appLayout_.input, x, y) || Inside(appLayout_.collapse, x, y)) {
+    return false;
+  }
+  for (const D2D1_RECT_F& tab : appLayout_.tabs) {
+    if (Inside(tab, x, y)) return false;
+  }
+  return true;
+}
+
+void PopupWindow::OnDpiChanged(UINT dpi, const RECT& suggested) {
+  if (placing_ || dpi == 0) return;
+  if (mode_ == Mode::Morphing) {
+    // Halfway through growing is no moment to change scale: it lands where it was going first.
+    spring_.Snap(goal_);
+    ApplyMorph();
+    FinishMorph();
+  }
+  dpi_ = dpi;
+  if (mode_ == Mode::App) {
+    appRect_ = suggested;
+    SetWindowPos(hwnd_, nullptr, suggested.left, suggested.top, suggested.right - suggested.left,
+                 suggested.bottom - suggested.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    Resize(SIZE{suggested.right - suggested.left, suggested.bottom - suggested.top});
+    Relayout();
+    // And the corner it folds back into, measured at the new DPI: without this the popup would
+    // come back at the old size in pixels with the new size drawn inside it, cut off.
+    AdoptPosition();
+  } else if (visible_) {
+    // The popup's own monitor changed scale under it: laid out again, where it already is.
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &info)) {
+      Place(info.rcWork);
+    }
+  }
+  LogInfo(L"popup: now at {} dpi, {}x{} px", dpi_, size_.cx, size_.cy);
+  Invalidate();
+}
+
+void PopupWindow::FollowMonitorDpi() {
+  if (!visible_ || placing_ || hwnd_ == nullptr) return;
+  const UINT dpi = MonitorDpi(hwnd_);
+  if (dpi == dpi_) return;
+  // What Windows would have suggested: the same size in DIP, around the same centre, kept
+  // inside the work area.
+  RECT now{};
+  GetWindowRect(hwnd_, &now);
+  const float ratio = static_cast<float>(dpi) / static_cast<float>(dpi_);
+  const LONG width = std::lround(static_cast<float>(now.right - now.left) * ratio);
+  const LONG height = std::lround(static_cast<float>(now.bottom - now.top) * ratio);
+  const LONG cx = (now.left + now.right) / 2;
+  const LONG cy = (now.top + now.bottom) / 2;
+  RECT suggested{cx - width / 2, cy - height / 2, cx - width / 2 + width, cy - height / 2 + height};
+  MONITORINFO info{};
+  info.cbSize = sizeof(info);
+  if (GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &info)) {
+    const RECT& work = info.rcWork;
+    const LONG dx = (std::max)(work.left - suggested.left, (std::min)(0L, work.right - suggested.right));
+    const LONG dy = (std::max)(work.top - suggested.top, (std::min)(0L, work.bottom - suggested.bottom));
+    OffsetRect(&suggested, dx, dy);
+  }
+  LogInfo(L"popup: the monitor went from {} to {} dpi under the window", dpi_, dpi);
+  OnDpiChanged(dpi, suggested);
+}
+
+void PopupWindow::AdoptPosition() {
+  if (mode_ != Mode::App) return;
+  GetWindowRect(hwnd_, &appRect_);
+  MONITORINFO info{};
+  info.cbSize = sizeof(info);
+  if (!GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &info)) return;
+  popupRect_ = PlaceRect(info.rcWork, layout_.size(), dpi_);
 }
 
 void PopupWindow::Resize(SIZE size) {
   size_ = size;
-  // The buffer is the size of the app from the start, and a little over: the spring overshoots
-  // by well under one percent. Growing the window every frame is then a SetWindowPos and never
-  // a ResizeBuffers, which is what would make it flicker.
+  // As the popup the buffer is the popup's size: that is what sits in memory all day in the
+  // tray. As soon as the expansion starts it becomes the size of the app, and a little over --
+  // the spring overshoots by well under one percent -- so growing the window every frame is a
+  // SetWindowPos and never a ResizeBuffers, which is what would make it flicker. The one
+  // ResizeBuffers happens before the first frame of the spring, while the content is still the
+  // popup's, so it cannot be seen.
   const auto grown = [](LONG side) { return side + side / 50 + 1; };
-  const SIZE want{(std::max)(size.cx, grown(appRect_.right - appRect_.left)),
-                  (std::max)(size.cy, grown(appRect_.bottom - appRect_.top))};
+  const bool app = mode_ != Mode::Popup;
+  const SIZE want{(std::max)(size.cx, app ? grown(appRect_.right - appRect_.left) : 0),
+                  (std::max)(size.cy, app ? grown(appRect_.bottom - appRect_.top) : 0)};
   if (want.cx == buffer_.cx && want.cy == buffer_.cy) return;
   buffer_ = want;
   if (!swapChain_) return;  // still creating the devices, which will pick up the new size
@@ -357,7 +435,7 @@ void PopupWindow::Show() {
 
   // The popup always opens on today with an empty line waiting, and picks up a theme the user
   // may have flipped while it was hidden.
-  const Theme theme = ResolveTheme(themeOverride_);
+  const Theme theme = ResolveTheme(ThemeChoice());
   const bool flipped = theme.light != theme_.light;
   theme_ = theme;
   if (flipped) ApplyDwmAttributes();
@@ -379,6 +457,9 @@ void PopupWindow::Show() {
   hoverPrev_ = false;
   hoverNext_ = false;
   inputFocused_ = true;
+  zone_ = Zone::Grid;
+  listFocus_ = 0;
+  focusVisible_ = false;
   RestartCaret();
   Render();
 
@@ -406,11 +487,40 @@ void PopupWindow::Hide() {
 
   if (timing_.closeMs == 0 || !AnimationsEnabled()) {
     ShowWindow(hwnd_, SW_HIDE);
+    Shelve();
     return;
   }
   // DirectComposition has no completion callback, so a timer takes the window off screen once
   // the fade is over. Until then it is still there, just fully transparent.
   SetTimer(hwnd_, kHideTimer, timing_.closeMs, nullptr);
+}
+
+void PopupWindow::ShowDay(Date day) {
+  Show();
+  if (hwnd_ != nullptr && visible_) SelectDay(day);
+}
+
+void PopupWindow::PreferencesChanged() {
+  const Theme theme = ResolveTheme(ThemeChoice());
+  const bool flipped = theme.light != theme_.light;
+  theme_ = theme;
+  if (flipped) ApplyDwmAttributes();
+  // The preview is worded in the language of the moment and lasts as long as the setting says.
+  parsed_.assign(1, wchar_t{1});
+  if (InApp()) ReloadApp();
+  Invalidate();
+}
+
+void PopupWindow::Shelve() {
+  // Whatever it was, it opens next time as the popup (Show says so), so the buffer can go back
+  // to the popup's size now instead of holding an app's worth of pixels while nobody looks.
+  mode_ = Mode::Popup;
+  Resize(SIZE{popupRect_.right - popupRect_.left, popupRect_.bottom - popupRect_.top});
+  // And the pages go back to Windows until they are wanted: most of them are the graphics
+  // driver's code, shared with every other program drawing with Direct3D, and they come back
+  // from the standby list in the few milliseconds the next opening can spare.
+  SetProcessWorkingSetSizeEx(GetCurrentProcess(), static_cast<SIZE_T>(-1),
+                             static_cast<SIZE_T>(-1), 0);
 }
 
 void PopupWindow::Toggle() {
@@ -474,10 +584,44 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       return 0;
 
     case WM_LBUTTONDOWN: {
+      // The mouse is in charge again: the keyboard's ring goes until a key brings it back.
+      focusVisible_ = false;
       const D2D1_POINT_2F point = ToDip(lparam);
       OnLeftDown(point.x, point.y);
       return 0;
     }
+
+    case WM_GETOBJECT: {
+      LRESULT result = 0;
+      if (a11y_.OnGetObject(wparam, lparam, result)) return result;
+      break;
+    }
+
+    case WM_SYSKEYDOWN:
+      // Alt with an arrow moves the selected event in the app. Windows sends those as system
+      // keys; everything else with Alt is left to it.
+      if (InApp() && (wparam == VK_UP || wparam == VK_DOWN || wparam == VK_LEFT ||
+                      wparam == VK_RIGHT)) {
+        if (OnKeyDown(wparam)) return 0;
+      }
+      break;
+
+    case WM_SETTINGCHANGE:
+    case WM_THEMECHANGED:
+    case WM_SYSCOLORCHANGE:
+      // High contrast switched on or off, or the app theme changed, while this was open. A
+      // change of scale arrives here too, and not as a WM_DPICHANGED.
+      FollowMonitorDpi();
+      PreferencesChanged();
+      break;
+
+    case WM_DISPLAYCHANGE:
+      FollowMonitorDpi();
+      break;
+
+    case WM_DESTROY:
+      a11y_.Detach();
+      break;
 
     case WM_SETCURSOR: {
       POINT cursor{};
@@ -503,6 +647,11 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       // is no reason to let them look like something was typed.
       const wchar_t typed = static_cast<wchar_t>(wparam);
       if (typed < 0x20 || typed == 0x7F) return 0;
+      // The Space that ticked a task or opened a day already did its job.
+      if (typed == L' ' && eatSpace_) {
+        eatSpace_ = false;
+        return 0;
+      }
       // In the app a letter is a shortcut until Ctrl+K or a click puts the capsule -- or a field
       // of the detail panel -- in charge.
       if (InApp() && !inputFocused_) {
@@ -553,6 +702,32 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       return 0;
     }
 
+    case WM_NCHITTEST: {
+      if (mode_ != Mode::App) break;
+      POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+      ScreenToClient(hwnd_, &point);
+      const float scale = static_cast<float>(USER_DEFAULT_SCREEN_DPI) / static_cast<float>(dpi_);
+      if (IsCaption(static_cast<float>(point.x) * scale, static_cast<float>(point.y) * scale)) {
+        return HTCAPTION;
+      }
+      break;
+    }
+
+    case WM_NCLBUTTONDBLCLK:
+      // A title bar maximises on a double click; this one is a fixed share of the work area.
+      if (wparam == HTCAPTION) return 0;
+      break;
+
+    case WM_EXITSIZEMOVE:
+      AdoptPosition();
+      break;
+
+    case WM_DPICHANGED:
+      LogInfo(L"popup: WM_DPICHANGED {} dpi (mode {}, {})", HIWORD(wparam),
+              static_cast<int>(mode_), placing_ ? L"placing" : (visible_ ? L"visible" : L"hidden"));
+      OnDpiChanged(HIWORD(wparam), *reinterpret_cast<const RECT*>(lparam));
+      return 0;
+
     case WM_ACTIVATE:
       // The popup goes when something else is clicked; the app stays, like any window does.
       if (LOWORD(wparam) == WA_INACTIVE && !InApp()) {
@@ -576,6 +751,7 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       if (wparam == kHideTimer) {
         KillTimer(hwnd_, kHideTimer);
         ShowWindow(hwnd_, SW_HIDE);
+        Shelve();
         return 0;
       }
       if (wparam == kAnimTimer) {
@@ -621,9 +797,12 @@ void PopupWindow::Invalidate() {
   // the text. So this one guard is the whole "reparse when it changed" rule.
   if (model_.input.text() != parsed_) {
     parsed_ = model_.input.text();
-    model_.preview = nlp::ParseInput(parsed_, nlp::Now{TodayLocal(), NowMinuteLocal()});
+    model_.preview = nlp::ParseInput(parsed_, nlp::Now{TodayLocal(), NowMinuteLocal()},
+                                     DefaultMinutes());
   }
+  UpdateRing();
   if (swapChain_) Render();
+  a11y_.Changed();
 }
 
 void PopupWindow::Reload() {
@@ -701,7 +880,7 @@ bool PopupWindow::CreateFromInput() {
   model_.enterT = 0.0f;
   FlushDeletes();
   undo_ = Undone{created.uid, created.isTask, typed};
-  ShowToast(L"Creado · Deshacer");
+  ShowToast(std::wstring(T(L"Creado · Deshacer", L"Created · Undo")));
 
   model_.input.Clear();
   RestartCaret();
@@ -754,6 +933,7 @@ void PopupWindow::Undo() {
 }
 
 void PopupWindow::ShowToast(std::wstring text) {
+  a11y_.Announce(text);
   model_.toast = std::move(text);
   toastOn_ = true;
   SetTimer(hwnd_, kToastTimer, kToastMs, nullptr);
@@ -775,34 +955,35 @@ bool PopupWindow::ToggleCardAt(float x, float y) {
   const D2D1_RECT_F list = DayListRect(layout_, model_);
   if (!Inside(list, x, y)) return false;
 
-  int entering = -1;
-  for (size_t i = 0; i < model_.day.size(); ++i) {
-    if (!model_.enterUid.empty() && model_.day[i].uid == model_.enterUid) {
-      entering = static_cast<int>(i);
-    }
-  }
   const CardSlots slots =
-      PlaceCards(layout_, list, static_cast<int>(model_.day.size()), entering);
+      PlaceCards(layout_, list, static_cast<int>(model_.day.size()), KeptCard(model_));
 
   for (int position = 0; position < slots.shown; ++position) {
     const D2D1_RECT_F card = CardRect(layout_, list, slots, position);
     if (!Inside(card, x, y)) continue;
-    DayItem& item = model_.day[static_cast<size_t>(slots.first + position)];
+    const size_t index = static_cast<size_t>(slots.first + position);
+    zone_ = Zone::List;
+    listFocus_ = static_cast<int>(index);
     // A click anywhere else on a card is still a click on the card, not on the day behind it.
-    if (!item.isTask || !Inside(CheckboxRect(layout_, card), x, y)) return true;
-
-    item.done = !item.done;
-    store_->SetDone(item.uid, item.done);
-    if (sync_ != nullptr) sync_->Push();
-    model_.strikeUid = item.uid;
-    // Start from where the line is drawn right now, which is the state it had a moment ago.
-    model_.strikeT = item.done ? 0.0f : 1.0f;
-    strikeOn_ = item.done;
-    StartTicking();
-    Invalidate();
+    if (!model_.day[index].isTask || !Inside(CheckboxRect(layout_, card), x, y)) return true;
+    ToggleDone(index);
     return true;
   }
   return false;
+}
+
+void PopupWindow::ToggleDone(size_t index) {
+  if (store_ == nullptr || index >= model_.day.size()) return;
+  DayItem& item = model_.day[index];
+  item.done = !item.done;
+  store_->SetDone(item.uid, item.done);
+  if (sync_ != nullptr) sync_->Push();
+  model_.strikeUid = item.uid;
+  // Start from where the line is drawn right now, which is the state it had a moment ago.
+  model_.strikeT = item.done ? 0.0f : 1.0f;
+  strikeOn_ = item.done;
+  StartTicking();
+  Invalidate();
 }
 
 void PopupWindow::StartTicking() {
@@ -956,6 +1137,26 @@ bool PopupWindow::OnKeyDown(WPARAM key) {
   const bool control = GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0;
   TextInput& input = model_.input;
 
+  switch (key) {
+    case VK_TAB:
+    case VK_UP:
+    case VK_DOWN:
+    case VK_LEFT:
+    case VK_RIGHT:
+    case VK_PRIOR:
+    case VK_NEXT:
+      focusVisible_ = true;
+      break;
+    default:
+      break;
+  }
+  if (control && key == VK_OEM_COMMA) {  // Ctrl+, : the settings, as in every Windows app
+    if (openSettings_) openSettings_();
+    return true;
+  }
+  // A Space the zones take is a command; the character it also produces is not typed.
+  eatSpace_ = false;
+
   if (InApp()) {
     if (drag_.kind != DragKind::None) {
       if (key == VK_ESCAPE) CancelDrag();
@@ -972,7 +1173,9 @@ bool PopupWindow::OnKeyDown(WPARAM key) {
       }
       return true;
     }
+    if (app_.detail.control >= 0) return OnDetailControlKey(key);
     if (app_.detail.focus >= 0 && !(control && key == 0x4B)) return OnDetailKeyDown(key);
+    if (key == VK_TAB && !control) return OnTab(shift);
     if (control && key == 0x4B) {  // Ctrl+K: the capsule, from anywhere in the app
       FocusInput(true);
       RestartCaret();
@@ -981,12 +1184,21 @@ bool PopupWindow::OnKeyDown(WPARAM key) {
     }
     // With the capsule idle the keys are the app's; with it busy only Esc is, to let go of it.
     // What the app does not take and comes with Ctrl -- undo, paste -- is still the capsule's.
+    if (!inputFocused_ && OnZoneKey(key)) {
+      eatSpace_ = key == VK_SPACE;
+      return true;
+    }
     if (!inputFocused_ || key == VK_ESCAPE) {
       if (OnAppKeyDown(key)) return true;
       if (!control) return false;
     }
   } else if (control && key == VK_RETURN) {
     Expand(model_.selected);
+    return true;
+  } else if (key == VK_TAB && !control) {
+    return OnTab(shift);
+  } else if (!inputFocused_ && OnZoneKey(key)) {
+    eatSpace_ = key == VK_SPACE;
     return true;
   }
 

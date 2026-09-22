@@ -158,6 +158,19 @@ internal sealed unsafe class DockWindow : IDisposable
     /// porque reconstruir borra el arbol de visuals y se comeria la animacion.
     private const nuint PuffTimerId = 3;
 
+    /// Identificador del temporizador que encoge la región al acabar de esconderse.
+    private const nuint SlideTimerId = 7;
+
+    /// <summary>
+    /// Cuánto se espera, tras mandar esconder, para encoger la región a la franja.
+    ///
+    /// No se puede encoger a la vez: la región recorta el dibujo, así que la barra
+    /// desaparecería de golpe en vez de deslizarse. El muelle de <c>SetHidden</c> es
+    /// críticamente amortiguado con periodo 70 ms, o sea que a los 100 ms ya ha
+    /// recorrido el 99,9% del camino; 150 da margen de sobra.
+    /// </summary>
+    private const uint SlideSettleMs = 150;
+
 
     /// Los iconos terminaron de extraerse en background. WM_APP + 1.
     private const uint WM_APP_ICONS_READY = 0x8001;
@@ -317,6 +330,21 @@ internal sealed unsafe class DockWindow : IDisposable
     private int _regionLeft = int.MinValue;
     private int _regionRight = int.MinValue;
     private int _regionTop = int.MinValue;
+
+    /// Si la región aplicada es solo la franja, por estar el dock escondido.
+    private bool _regionShrunk;
+
+    /// <summary>
+    /// Mientras la barra baja. No se puede encoger la región a la franja todavía:
+    /// la región recorta el DIBUJO, así que la barra desaparecería de golpe en vez de
+    /// deslizarse —parecía que se metía detrás de la ventana de delante—.
+    ///
+    /// Y hace falta una bandera aparte de <c>_hidden</c> porque cualquiera puede
+    /// reaplicar la región mientras tanto: el propio <c>Hide</c> llama a
+    /// <c>CloseMenu</c>, que la reaplica, y eso cortaba la bajada en el primer
+    /// fotograma.
+    /// </summary>
+    private bool _slidingOut;
 
     /// <summary>
     /// Si la región llega hasta arriba del todo. Solo hace falta cuando hay algo
@@ -726,7 +754,11 @@ internal sealed unsafe class DockWindow : IDisposable
         if (_config.AutoHide)
         {
             _hidden = true;
+            _slidingOut = true;
             _visuals.SetHidden(true, HiddenOffset);
+
+            // Igual que en Hide: la región se encoge a la franja cuando haya bajado.
+            PInvoke.SetTimer(_hwnd, SlideTimerId, SlideSettleMs, null);
         }
 
         // Estado inicial de los puntos, sin esperar al primer latido.
@@ -819,6 +851,15 @@ internal sealed unsafe class DockWindow : IDisposable
 
             case WM_TIMER when wParam.Value == HideTimerId:
                 self?.Hide();
+                return new LRESULT(0);
+
+            case WM_TIMER when wParam.Value == SlideTimerId:
+                PInvoke.KillTimer(hwnd, SlideTimerId);
+                if (self is not null)
+                {
+                    self._slidingOut = false;
+                    self.ApplyRegion();
+                }
                 return new LRESULT(0);
 
             case WM_APP_ICONS_READY:
@@ -1032,11 +1073,26 @@ internal sealed unsafe class DockWindow : IDisposable
     /// (el cursor quedaría fuera de la barra, llegaría WM_MOUSELEAVE y se ocultaría),
     /// o sea un parpadeo. Con la franja siempre nuestra, el dock se queda quieto
     /// mientras el ratón siga abajo.
+    ///
+    /// <b>Escondido, la franja es lo ÚNICO nuestro.</b> Antes no: la ventana seguía
+    /// recogiendo el ratón en toda la altura de la barra aunque no se viera nada ahí,
+    /// así que el dock saltaba al acercarse y tapaba lo que hubiera pegado al borde
+    /// inferior —el botón de un chat, la barra de una tienda—. Ahora hay que empujar
+    /// el ratón hasta el filo, que es lo que hace macOS y lo que Fitts regala: el
+    /// borde de la pantalla se acierta sin mirar.
     /// </summary>
     private int OnHitTest(LPARAM lParam)
     {
-        // La franja del borde inferior: siempre nuestra, de lado a lado.
-        if (_config.AutoHide && HiWord(lParam) >= _revealTop) return HTCLIENT;
+        if (_config.AutoHide)
+        {
+            // La franja del borde inferior: siempre nuestra, de lado a lado.
+            if (HiWord(lParam) >= _revealTop) return HTCLIENT;
+
+            // Y escondido, nada más. La región ya lo corta (los clics no atraviesan
+            // por HTTRANSPARENT), pero mientras el deslizamiento acaba la región
+            // todavía es la grande y esto es lo que evita revelar al acercarse.
+            if (_hidden) return HTTRANSPARENT;
+        }
 
         // Por encima del techo de la región no somos nadie. La región ya lo corta, así
         // que esto es cinturón además de tirantes — pero OJO: en WM_NCHITTEST lParam
@@ -1098,13 +1154,19 @@ internal sealed unsafe class DockWindow : IDisposable
     private void Reveal()
     {
         PInvoke.KillTimer(_hwnd, HideTimerId);
+        PInvoke.KillTimer(_hwnd, SlideTimerId);
         if (!_hidden) return;
 
         if (Environment.GetEnvironmentVariable("DOCK_HOVER_LOG") is not null)
             Console.WriteLine($"[visible] {_device}");
 
         _hidden = false;
+        _slidingOut = false;
         _visuals?.SetHidden(false, HiddenOffset);
+
+        // La región crece ANTES de que empiece a subir: si no, el deslizamiento se
+        // vería recortado a la franja.
+        ApplyRegion();
     }
 
     /// <summary>Programa el ocultamiento, con margen para no parpadear al rozarlo.</summary>
@@ -1138,12 +1200,17 @@ internal sealed unsafe class DockWindow : IDisposable
             Console.WriteLine($"[escondido] {_device}");
 
         _hidden = true;
+        _slidingOut = true;
         _visuals?.SetLabel(-1);
 
         // El menú vive dentro de esta ventana, así que se va con ella. La rejilla no:
         // es una ventana aparte y se cierra por su cuenta al salirse el ratón.
         CloseMenu();
         _visuals?.SetHidden(true, HiddenOffset);
+
+        // Y cuando haya acabado de bajar, la ventana se encoge a la franja: ahí es
+        // donde de verdad dejan de ser nuestros los clics del borde inferior.
+        PInvoke.SetTimer(_hwnd, SlideTimerId, SlideSettleMs, null);
     }
 
     /// <summary>
@@ -2071,21 +2138,38 @@ internal sealed unsafe class DockWindow : IDisposable
         // volver a cargar iconos. Reformar la ventana por nada es justo el momento en
         // que otra cosa puede ganarle la carrera por el borde inferior de la pantalla.
         int techo = (int)MathF.Floor(MathF.Max(0f, top));
-        if (left == _regionLeft && right == _regionRight && techo == _regionTop) return;
+        bool shrunk = _config.AutoHide && _hidden && !_slidingOut;
+        if (left == _regionLeft && right == _regionRight && techo == _regionTop
+            && shrunk == _regionShrunk) return;
 
         _regionLeft = left;
         _regionRight = right;
         _regionTop = techo;
+        _regionShrunk = shrunk;
 
-        HRGN region = PInvoke.CreateRectRgn(left, (int)MathF.Floor(MathF.Max(0f, top)), right, (int)_windowHeight);
+        HRGN region;
 
-        if (_config.AutoHide)
+        if (shrunk)
         {
-            HRGN strip = PInvoke.CreateRectRgn(
+            // Escondido, la ventana ES la franja y nada más: por encima no se dibuja
+            // nada y, sobre todo, ahí el ratón tiene que llegar a la app de debajo.
+            // Fuera de la región los píxeles no son de la ventana ni para el kernel,
+            // que es lo único que deja pasar clics y sueltas entre procesos.
+            region = PInvoke.CreateRectRgn(
                 0, _revealTop - _windowTop, (int)_windowWidth, (int)_windowHeight);
+        }
+        else
+        {
+            region = PInvoke.CreateRectRgn(left, techo, right, (int)_windowHeight);
 
-            PInvoke.CombineRgn(region, region, strip, RGN_COMBINE_MODE.RGN_OR);
-            PInvoke.DeleteObject((HGDIOBJ)(nint)strip.Value);
+            if (_config.AutoHide)
+            {
+                HRGN strip = PInvoke.CreateRectRgn(
+                    0, _revealTop - _windowTop, (int)_windowWidth, (int)_windowHeight);
+
+                PInvoke.CombineRgn(region, region, strip, RGN_COMBINE_MODE.RGN_OR);
+                PInvoke.DeleteObject((HGDIOBJ)(nint)strip.Value);
+            }
         }
 
         // SetWindowRgn se queda con la región: no hay que borrarla después.
@@ -2747,6 +2831,7 @@ internal sealed unsafe class DockWindow : IDisposable
         if (_hwnd.IsNull) return;
         PInvoke.KillTimer(_hwnd, TopmostTimerId);
         PInvoke.KillTimer(_hwnd, HideTimerId);
+        PInvoke.KillTimer(_hwnd, SlideTimerId);
         PInvoke.KillTimer(_hwnd, RunningTimerId);
         PInvoke.KillTimer(_hwnd, SafetyTimerId);
         ClosePreview();

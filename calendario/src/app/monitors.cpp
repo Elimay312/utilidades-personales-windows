@@ -1,9 +1,28 @@
 #include "app/monitors.h"
 
 #include <format>
+#include <utility>
 
 namespace agenda {
 namespace {
+
+// "453x560" into its two numbers. Both have to be there and both have to be sane.
+std::optional<std::pair<int, int>> ParsePanelSize(std::wstring_view text) {
+  const size_t cross = text.find(L'x');
+  if (cross == std::wstring_view::npos) return std::nullopt;
+
+  int side[2] = {0, 0};
+  const std::wstring_view parts[2] = {text.substr(0, cross), text.substr(cross + 1)};
+  for (int i = 0; i < 2; ++i) {
+    if (parts[i].empty() || parts[i].size() > 4) return std::nullopt;
+    for (const wchar_t c : parts[i]) {
+      if (c < L'0' || c > L'9') return std::nullopt;
+      side[i] = side[i] * 10 + (c - L'0');
+    }
+    if (side[i] < 200 || side[i] > 2000) return std::nullopt;
+  }
+  return std::pair<int, int>{side[0], side[1]};
+}
 
 std::optional<int> ParseMonitorNumber(std::wstring_view text) {
   if (text.empty() || text.size() > 2) return std::nullopt;
@@ -68,6 +87,14 @@ Options ParseOptions(int argc, const wchar_t* const* argv, std::wstring_view env
         return options;
       }
       options.theme = value;
+    } else if (Flag(arg, L"--panel=", value)) {
+      const std::optional<std::pair<int, int>> parsed = ParsePanelSize(value);
+      if (!parsed) {
+        options.error = std::format(L"--panel expects WxH between 200 and 2000, got '{}'", value);
+        return options;
+      }
+      options.panelWidth = parsed->first;
+      options.panelHeight = parsed->second;
     } else if (Flag(arg, L"--out=", value)) {
       if (value.empty()) {
         options.error = L"--out expects a file path";

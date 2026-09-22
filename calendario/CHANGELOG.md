@@ -9,6 +9,14 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- Fase 2: el panel se adapta al monitor. Su alto es el 42 % del área de trabajo, recortado
+  entre 380 y 560 DIP, y el ancho sale de la proporción 340:420 del diseño. Todo lo de dentro
+  escala uno a uno con él —letras, círculos de los días, tarjetas y espacios—, así que un panel
+  más grande significa contenido más grande y no el mismo contenido flotando en más hueco. Las
+  medidas se calculan una vez en `MakeLayout` y las leen igual el dibujo y la detección de
+  clics; a 340×420 salen exactamente los números del sistema de diseño.
+- Fase 2: `--panel=WxH` fuerza el tamaño del panel en DIP, en la app y en las capturas, para
+  poder juzgar en una pantalla un tamaño que esa pantalla no produciría.
 - Fase 2: sistema de diseño en `src/ui/theme.{h,cpp}` con los tokens de CLAUDE.md (colores,
   tipografía, radios y rejilla de 4 DIP) y un tema claro derivado. La app sigue el tema del
   sistema leyendo `AppsUseLightTheme` del registro, solo lectura, y lo relee cada vez que se
@@ -73,6 +81,14 @@ sigue [SemVer](https://semver.org/lang/es/).
 - Pruebas de Catch2 para el parseo de argumentos, del atajo y de la geometría del popup.
 - README.md, CHANGELOG.md, `.gitignore` (build, secretos y `config.local.json`) y
   `.editorconfig`.
+
+### Corregido
+
+- El panel se dibujaba a 96 ppp dentro de una ventana dimensionada al DPI del monitor, así que
+  en una pantalla escalada ocupaba solo una esquina y el resto de la ventana se veía como un
+  rectángulo gris vacío. El contexto de Direct2D no hereda el DPI del bitmap de destino, de modo
+  que ahora se le fija con `SetDpi` en cada cuadro. No se notaba en el monitor de desarrollo,
+  que está al 100 %, ni en las capturas, que se renderizan siempre a 96 ppp.
 
 ### Cambiado
 

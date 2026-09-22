@@ -58,7 +58,8 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - Punto de evento en el día: 4 px con el color del calendario.
 - **Colores (tema claro, derivado del oscuro):** panel `#F4F4F7` al 85 %, superficie `#FFFFFF`, texto primario `#1B1C21`, secundario `#6C6D75`, borde negro al 10 %. El acento baja a `#2F6FE0`, porque el número del día va en blanco sobre el círculo y `#4A8BF5` no da contraste suficiente sobre un panel claro. La app sigue el tema del sistema (`AppsUseLightTheme`, solo lectura).
 - **Formas:** radio de 14 px en el panel, 8 px en las tarjetas de evento, cápsula completa en el input y círculo en el día de hoy.
-- **Espaciado:** rejilla de 4 px. El panel mide 340×420 DIP y tiene 16 px de padding interno.
+- **Espaciado:** rejilla de 4 px y 16 px de padding interno.
+- **Tamaño del panel:** 340×420 DIP es el tamaño en el que está escrito el diseño, no un tamaño fijo. En ejecución el alto es el 42 % del área de trabajo del monitor, recortado entre 380 y 560 DIP, y el ancho sale de la proporción 340:420. **Todo escala uno a uno**: letras, círculos, tarjetas y espacios. Un panel más grande tiene que significar contenido más grande, nunca el mismo contenido flotando en más panel vacío. Las medidas se calculan una vez en `MakeLayout` y las leen igual el dibujo y la detección de clics.
 - **Tarjeta de evento:** barra de color de 3 px a la izquierda, hora en texto secundario y título en primario.
 - **Movimiento:**
   - Apertura: fade de 0 a 1 y desplazamiento de 8 px hacia arriba en 160 ms (ease-out).
@@ -66,7 +67,7 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - Expansión del popup a la app: spring (rigidez ~300, amortiguación ~30) que anima tamaño, posición y radio a la vez.
   - Respeta la preferencia de "reducir animaciones" de Windows (`SPI_GETCLIENTAREAANIMATION`).
 - **Semana:** empieza en lunes. Iniciales en español: L M X J V S D. El locale por defecto es es-CO.
-- Cada vista nueva debe verificarse con `--render-snapshot` antes de darla por terminada.
+- Cada vista nueva debe verificarse con `--render-snapshot` antes de darla por terminada. El PNG se renderiza siempre a 96 ppp y al tamaño base, así que **no puede pillar errores de DPI ni de escalado**: eso hay que mirarlo con la app delante en un monitor escalado. `--panel=WxH` fuerza un tamaño de panel para poder juzgarlo en cualquier pantalla.
 
 ## Modelo de datos: evento o tarea
 

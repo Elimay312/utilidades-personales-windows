@@ -9,9 +9,10 @@ Las decisiones de producto, el stack y el sistema de diseño están en [CLAUDE.m
 
 ## Estado
 
-**En desarrollo, fase 2.** Agenda se queda residente en la bandeja, el atajo abre un popup de
-340×420 con fondo acrylic en la esquina inferior derecha del monitor de trabajo, y el popup ya
-muestra el mes, los eventos del día y el campo de texto. Los eventos son **datos de ejemplo en
+**En desarrollo, fase 2.** Agenda se queda residente en la bandeja, el atajo abre un popup con
+fondo acrylic en la esquina inferior derecha del monitor de trabajo, y el popup ya muestra el
+mes, los eventos del día y el campo de texto. El panel se adapta al monitor: su alto es el
+42 % del área de trabajo, entre 380 y 560 DIP, y todo lo de dentro escala con él. Los eventos son **datos de ejemplo en
 memoria**: todavía no hay SQLite, ni parser, ni sincronización, y pulsar Enter no hace nada.
 
 | Tema oscuro | Tema claro |
@@ -83,6 +84,9 @@ globo en la bandeja y sigue funcionando: se abre desde el icono.
   argumento ni variable, se usa el monitor primario.
 - `--theme=dark` o `--theme=light` fuerza un tema sin tocar la configuración de Windows. Sin
   el argumento, Agenda sigue al sistema.
+- `--panel=WxH` fuerza el tamaño del panel en DIP, por ejemplo `--panel=453x560`, en vez de
+  calcularlo desde el monitor. Sirve para juzgar en una pantalla un tamaño que esa pantalla no
+  produciría, y vale tanto para la app como para `--render-snapshot`.
 - Si el monitor indicado no está conectado, se registra el error y el proceso termina con
   código **2**. No hay fallback silencioso a otro monitor. Si ya hay otra instancia
   ejecutándose, termina con código **1**.
@@ -99,7 +103,11 @@ Así se revisa el diseño: **no con capturas del escritorio**. No necesita monit
 instancia esté libre, así que funciona con la app abierta. Si falta `--out`, escribe
 `shot.png`. Como el acrylic no existe fuera de pantalla, el PNG lleva detrás un gris neutro
 que hace su papel, más claro u oscuro según el tema. La captura fija el 22 de septiembre de
-2026 como «hoy», para que el PNG solo cambie cuando cambie el diseño.
+2026 como «hoy» y el panel en su tamaño base de 340×420, para que el PNG solo cambie cuando
+cambie el diseño y no cuando cambie el monitor.
+
+Ojo: por eso mismo la captura se renderiza siempre a 96 ppp y **no sirve para revisar el
+escalado**. Los fallos de DPI solo se ven con la app abierta en un monitor escalado.
 
 Es un ejecutable de subsistema Windows, así que no devuelve el control a la consola: en
 PowerShell conviene lanzarlo con `Start-Process ... -Wait` si hace falta esperar al archivo.

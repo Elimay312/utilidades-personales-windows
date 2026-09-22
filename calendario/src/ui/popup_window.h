@@ -31,6 +31,10 @@ class PopupWindow {
   // `themeOverride` is "dark" or "light" from --theme; empty follows the system.
   bool Create(HINSTANCE instance, HMONITOR monitor, Timing timing,
               std::wstring_view themeOverride);
+
+  // Forces the panel size in DIP instead of working it out from the monitor. Only --panel
+  // sets this, so a size can be judged on a screen that would not produce it.
+  void SetPanelOverride(D2D1_SIZE_F panel) { panelOverride_ = panel; }
   void Toggle();
   void Show();
   void Hide();
@@ -78,6 +82,7 @@ class PopupWindow {
   HMONITOR monitor_ = nullptr;
   Timing timing_{};
   std::wstring themeOverride_;
+  D2D1_SIZE_F panelOverride_{};
   UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
   SIZE size_{};
   bool visible_ = false;
@@ -85,6 +90,7 @@ class PopupWindow {
 
   Fonts fonts_;
   Theme theme_ = DarkTheme();
+  PanelLayout layout_ = BaseLayout();
   PopupModel model_;
 
   // What the pointer is over and where the keyboard is going. The model carries the fades;

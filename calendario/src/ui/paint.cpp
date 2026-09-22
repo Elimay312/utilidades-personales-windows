@@ -56,7 +56,8 @@ DWRITE_TEXT_ALIGNMENT ToDWrite(Align align) {
 
 }  // namespace
 
-bool Fonts::Create() {
+bool Fonts::Create(const PanelLayout& layout) {
+  scale = layout.type;
   if (Failed(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
                                  reinterpret_cast<IUnknown**>(factory.GetAddressOf())),
              L"DWriteCreateFactory")) {
@@ -64,10 +65,11 @@ bool Fonts::Create() {
   }
 
   const wchar_t* family = PickFamily(factory.Get());
-  return MakeFormat(factory.Get(), family, kFontLabel, DWRITE_FONT_WEIGHT_NORMAL, label) &&
-         MakeFormat(factory.Get(), family, kFontDay, DWRITE_FONT_WEIGHT_NORMAL, day) &&
-         MakeFormat(factory.Get(), family, kFontEvent, DWRITE_FONT_WEIGHT_NORMAL, event) &&
-         MakeFormat(factory.Get(), family, kFontTitle, DWRITE_FONT_WEIGHT_SEMI_BOLD, title);
+  return MakeFormat(factory.Get(), family, layout.fontLabel, DWRITE_FONT_WEIGHT_NORMAL, label) &&
+         MakeFormat(factory.Get(), family, layout.fontDay, DWRITE_FONT_WEIGHT_NORMAL, day) &&
+         MakeFormat(factory.Get(), family, layout.fontEvent, DWRITE_FONT_WEIGHT_NORMAL, event) &&
+         MakeFormat(factory.Get(), family, layout.fontTitle, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                    title);
 }
 
 void FillRound(ID2D1RenderTarget* target, const D2D1_RECT_F& rect, float radius,

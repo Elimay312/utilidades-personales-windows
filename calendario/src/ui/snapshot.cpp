@@ -33,7 +33,7 @@ constexpr Date kSnapshotToday{std::chrono::year{2026}, std::chrono::September,
 
 }  // namespace
 
-bool RenderSnapshot(std::wstring_view view, std::wstring_view theme,
+bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F panel,
                     const std::filesystem::path& out) {
   if (view != L"popup") {
     LogError(L"--render-snapshot only knows 'popup', got '{}'", view);
@@ -43,16 +43,21 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme,
   const Theme palette =
       theme == L"light" ? LightTheme() : (theme == L"dark" ? DarkTheme() : SystemTheme());
 
+  // The design size unless asked otherwise, never the size this monitor would give: a
+  // committed PNG must not depend on the machine that produced it.
+  const PanelLayout layout =
+      panel.width > 0.0f && panel.height > 0.0f ? MakeLayout(panel) : BaseLayout();
+
   Fonts fonts;
-  if (!fonts.Create()) return false;
+  if (!fonts.Create(layout)) return false;
 
   // How the popup looks the instant it opens: the input focused and waiting, nothing typed.
   PopupModel model = MakeModel(kSnapshotToday);
   model.focus = 1.0f;
   model.caretOn = true;
 
-  const UINT width = static_cast<UINT>(kPopupWidthDip + 2 * kMarginDip);
-  const UINT height = static_cast<UINT>(kPopupHeightDip + 2 * kMarginDip);
+  const UINT width = static_cast<UINT>(layout.width) + 2 * kMarginDip;
+  const UINT height = static_cast<UINT>(layout.height) + 2 * kMarginDip;
 
   ComPtr<IWICImagingFactory> wic;
   if (Failed(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
@@ -88,9 +93,7 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme,
   target->Clear(palette.light ? kLightBackdrop : kDarkBackdrop);
   target->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(kMarginDip),
                                                      static_cast<float>(kMarginDip)));
-  DrawPopup(target.Get(), fonts, palette, model,
-            D2D1_SIZE_F{static_cast<float>(kPopupWidthDip), static_cast<float>(kPopupHeightDip)},
-            /*acrylic=*/true);
+  DrawPopup(target.Get(), fonts, palette, layout, model, /*acrylic=*/true);
   if (Failed(target->EndDraw(), L"ID2D1RenderTarget::EndDraw")) return false;
 
   std::error_code ec;

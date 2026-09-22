@@ -16,10 +16,10 @@ inline constexpr float kFontDay = 12.0f;     // day numbers
 inline constexpr float kFontEvent = 13.0f;   // event cards and the input
 inline constexpr float kFontTitle = 15.0f;   // month title, semibold
 
-// Shapes.
+// Shapes. The layout scales these with the panel; the numbers here are the ones the design
+// system is written at.
 inline constexpr float kRadiusPanel = 14.0f;
 inline constexpr float kRadiusCard = 8.0f;
-inline constexpr float kDayCircleDip = 24.0f;
 inline constexpr float kEventDotDip = 4.0f;
 inline constexpr float kEventBarDip = 3.0f;
 

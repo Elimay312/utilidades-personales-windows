@@ -6,7 +6,7 @@
 
 #include <string_view>
 
-#include "ui/theme.h"
+#include "ui/layout.h"
 
 namespace agenda {
 
@@ -19,8 +19,9 @@ struct Fonts {
   Microsoft::WRL::ComPtr<IDWriteTextFormat> day;    // 12, day numbers
   Microsoft::WRL::ComPtr<IDWriteTextFormat> event;  // 13, event cards and the input
   Microsoft::WRL::ComPtr<IDWriteTextFormat> title;  // 15 semibold, the month
+  float scale = 0.0f;  // the panel scale these were built at, so a resize knows to rebuild
 
-  bool Create();
+  bool Create(const PanelLayout& layout);
   bool ok() const { return title != nullptr; }
 };
 

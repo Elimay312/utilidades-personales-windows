@@ -118,7 +118,10 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   // The snapshot draws offscreen, so it needs neither a monitor nor the instance lock: it has
   // to work while the app is running.
   if (!options.snapshotView.empty()) {
-    const bool written = RenderSnapshot(options.snapshotView, options.theme, options.snapshotOut);
+    const bool written = RenderSnapshot(options.snapshotView, options.theme,
+                       D2D1_SIZE_F{static_cast<float>(options.panelWidth),
+                                   static_cast<float>(options.panelHeight)},
+                       options.snapshotOut);
     CoUninitialize();
     return written ? 0 : 2;
   }
@@ -185,6 +188,8 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
   ShowWindow(hwnd, SW_SHOWNA);
 
+  app.popup.SetPanelOverride(D2D1_SIZE_F{static_cast<float>(options.panelWidth),
+                                         static_cast<float>(options.panelHeight)});
   if (!app.popup.Create(instance, monitor, timing, options.theme)) return 2;
   app.tray.Add(instance, hwnd);
 

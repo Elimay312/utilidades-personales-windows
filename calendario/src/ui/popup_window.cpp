@@ -64,9 +64,6 @@ bool PopupWindow::Create(HINSTANCE instance, HMONITOR monitor, Timing timing,
   theme_ = ResolveTheme(themeOverride_);
   model_ = MakeModel(TodayLocal());
   model_.focus = 1.0f;
-  if (!fonts_.Create()) {
-    LogError(L"popup: DirectWrite is unavailable, the panel will open without text");
-  }
 
   WNDCLASSEXW windowClass{};
   windowClass.cbSize = sizeof(windowClass);
@@ -103,7 +100,9 @@ bool PopupWindow::Create(HINSTANCE instance, HMONITOR monitor, Timing timing,
   Rest();
   Render();
   composition_->Commit();
-  LogInfo(L"popup: ready, {}x{} at {} dpi", size_.cx, size_.cy, dpi_);
+  LogInfo(L"popup: ready, {}x{} px at {} dpi, panel {}x{} dip with {} cards", size_.cx,
+          size_.cy, dpi_, static_cast<int>(layout_.width), static_cast<int>(layout_.height),
+          layout_.visibleCards);
   return true;
 }
 
@@ -208,7 +207,12 @@ bool PopupWindow::CreateDevices() {
 }
 
 void PopupWindow::Place(const RECT& work) {
-  RECT rect = PopupRect(work, dpi_);
+  const auto panelFor = [&](UINT dpi) {
+    return panelOverride_.width > 0.0f ? panelOverride_ : PanelSize(work, dpi);
+  };
+
+  D2D1_SIZE_F panel = panelFor(dpi_);
+  RECT rect = PlaceRect(work, panel, dpi_);
   SetWindowPos(hwnd_, HWND_TOPMOST, rect.left, rect.top, rect.right - rect.left,
                rect.bottom - rect.top, SWP_NOACTIVATE);
 
@@ -217,10 +221,19 @@ void PopupWindow::Place(const RECT& work) {
   const UINT dpi = GetDpiForWindow(hwnd_);
   if (dpi != 0 && dpi != dpi_) {
     dpi_ = dpi;
-    rect = PopupRect(work, dpi_);
+    panel = panelFor(dpi_);
+    rect = PlaceRect(work, panel, dpi_);
     SetWindowPos(hwnd_, HWND_TOPMOST, rect.left, rect.top, rect.right - rect.left,
                  rect.bottom - rect.top, SWP_NOACTIVATE);
   }
+
+  // The panel takes a share of this monitor, so its measurements and the text sizes that go
+  // with them are worked out here, once, and everything below just reads them.
+  layout_ = MakeLayout(panel);
+  if (fonts_.scale != layout_.type && !fonts_.Create(layout_)) {
+    LogError(L"popup: DirectWrite is unavailable, the panel will open without text");
+  }
+
   Resize(SIZE{rect.right - rect.left, rect.bottom - rect.top});
 }
 
@@ -257,11 +270,13 @@ void PopupWindow::Render() {
   }
 
   dc_->SetTarget(bitmap.Get());
+  // The device context keeps its own DPI and starts at 96, whatever the target bitmap says. On
+  // a scaled monitor that drew the panel one DIP to one pixel, so it covered only a corner of
+  // the window and the rest showed through as bare backdrop.
+  dc_->SetDpi(static_cast<float>(dpi_), static_cast<float>(dpi_));
   dc_->BeginDraw();
   dc_->Clear(D2D1_COLOR_F{0.0f, 0.0f, 0.0f, 0.0f});
-  DrawPopup(dc_.Get(), fonts_, theme_, model_,
-            D2D1_SIZE_F{static_cast<float>(kPopupWidthDip), static_cast<float>(kPopupHeightDip)},
-            acrylic_);
+  DrawPopup(dc_.Get(), fonts_, theme_, layout_, model_, acrylic_);
   if (Failed(dc_->EndDraw(), L"ID2D1DeviceContext::EndDraw")) return;
   dc_->SetTarget(nullptr);
 
@@ -415,7 +430,7 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       if (GetCursorPos(&cursor) && ScreenToClient(hwnd_, &cursor)) {
         const float scale =
             static_cast<float>(USER_DEFAULT_SCREEN_DPI) / static_cast<float>(dpi_);
-        const bool overInput = Inside(InputRect(), static_cast<float>(cursor.x) * scale,
+        const bool overInput = Inside(layout_.input(), static_cast<float>(cursor.x) * scale,
                                       static_cast<float>(cursor.y) * scale);
         SetCursor(LoadCursorW(nullptr, overInput ? IDC_IBEAM : IDC_ARROW));
         return TRUE;
@@ -549,9 +564,9 @@ D2D1_POINT_2F PopupWindow::ToDip(LPARAM lparam) const {
 }
 
 int PopupWindow::HitDay(float x, float y) const {
-  if (!Inside(GridRect(), x, y)) return -1;
+  if (!Inside(layout_.grid(), x, y)) return -1;
   for (int cell = 0; cell < kGridCells; ++cell) {
-    if (Inside(CellRect(cell), x, y)) return cell;
+    if (Inside(layout_.cell(cell), x, y)) return cell;
   }
   return -1;
 }
@@ -566,8 +581,8 @@ void PopupWindow::OnMouseMove(float x, float y) {
   // Mid-slide the cell under the pointer belongs to a month that is still moving, so nothing
   // lights up until it lands.
   const int day = model_.slideDir == 0 ? HitDay(x, y) : -1;
-  const bool prev = Inside(PrevArrowRect(), x, y);
-  const bool next = Inside(NextArrowRect(), x, y);
+  const bool prev = Inside(layout_.prevArrow(), x, y);
+  const bool next = Inside(layout_.nextArrow(), x, y);
   if (day == hoverDay_ && prev == hoverPrev_ && next == hoverNext_) return;
 
   hoverDay_ = day;
@@ -577,17 +592,17 @@ void PopupWindow::OnMouseMove(float x, float y) {
 }
 
 void PopupWindow::OnLeftDown(float x, float y) {
-  if (Inside(PrevArrowRect(), x, y)) {
+  if (Inside(layout_.prevArrow(), x, y)) {
     ChangeMonth(-1);
     return;
   }
-  if (Inside(NextArrowRect(), x, y)) {
+  if (Inside(layout_.nextArrow(), x, y)) {
     ChangeMonth(1);
     return;
   }
-  if (Inside(InputRect(), x, y)) {
+  if (Inside(layout_.input(), x, y)) {
     FocusInput(true);
-    model_.input.MoveTo(InputIndexAt(fonts_, model_, x), GetKeyState(VK_SHIFT) < 0);
+    model_.input.MoveTo(InputIndexAt(fonts_, layout_, model_, x), GetKeyState(VK_SHIFT) < 0);
     RestartCaret();
     Invalidate();
     return;
@@ -794,7 +809,7 @@ void PopupWindow::PlaceCandidateWindow() {
   if (context == nullptr) return;
 
   // The candidate list belongs under the caret, not in the corner Windows would pick.
-  const D2D1_POINT_2F caret = InputCaretPoint(fonts_, model_);
+  const D2D1_POINT_2F caret = InputCaretPoint(fonts_, layout_, model_);
   const float scale = static_cast<float>(dpi_) / static_cast<float>(USER_DEFAULT_SCREEN_DPI);
   CANDIDATEFORM form{};
   form.dwStyle = CFS_CANDIDATEPOS;

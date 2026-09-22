@@ -4,23 +4,17 @@
 #include <format>
 #include <string>
 
-#include "ui/layout.h"
-
-using Microsoft::WRL::ComPtr;
-
 namespace agenda {
 namespace {
 
-constexpr float kInputPadDip = 18.0f;
-constexpr float kCaretWidthDip = 1.0f;
-constexpr float kCaretInsetDip = 9.0f;  // leaves an 18 DIP caret inside the 36 DIP capsule
+// Card metrics at the size the design system is written at; the layout scale stretches them.
 constexpr float kCardTextLeft = 14.0f;
 constexpr float kCardTimeWidth = 40.0f;
 constexpr float kCardTitleLeft = 62.0f;
 constexpr float kCardRightPad = 12.0f;
 constexpr float kCounterWidth = 30.0f;
-constexpr float kDayCenterY = 15.0f;  // from the top of the cell
-constexpr float kDotCenterY = 30.0f;  // three DIP under its own circle, seven above the next
+constexpr float kCaretHeight = 18.0f;
+constexpr float kCaretWidth = 1.0f;
 
 std::wstring FormatTime(int minutes) {
   return std::format(L"{:02}:{:02}", minutes / 60, minutes % 60);
@@ -30,7 +24,7 @@ std::wstring FormatTime(int minutes) {
 // The drawing and the hit testing both build one of these, so a click lands on the glyph it
 // looks like it lands on even when the text is scrolled.
 struct InputLayout {
-  ComPtr<IDWriteTextLayout> layout;
+  Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
   std::wstring display;
   UINT32 caretIndex = 0;
   float caretX = 0.0f;
@@ -38,10 +32,11 @@ struct InputLayout {
   D2D1_RECT_F inner{};
 };
 
-bool BuildInputLayout(const Fonts& fonts, const PopupModel& model, InputLayout& out) {
-  const D2D1_RECT_F rect = InputRect();
-  out.inner =
-      D2D1_RECT_F{rect.left + kInputPadDip, rect.top, rect.right - kInputPadDip, rect.bottom};
+bool BuildInputLayout(const Fonts& fonts, const PanelLayout& panel, const PopupModel& model,
+                      InputLayout& out) {
+  const D2D1_RECT_F rect = panel.input();
+  out.inner = D2D1_RECT_F{rect.left + panel.inputPad, rect.top, rect.right - panel.inputPad,
+                          rect.bottom};
   if (!fonts.ok()) return false;
 
   const std::wstring& text = model.input.text();
@@ -70,28 +65,29 @@ bool BuildInputLayout(const Fonts& fonts, const PopupModel& model, InputLayout& 
   DWRITE_HIT_TEST_METRICS metrics{};
   out.layout->HitTestTextPosition(out.caretIndex, FALSE, &out.caretX, &y, &metrics);
   const float width = out.inner.right - out.inner.left;
-  out.scroll = (std::max)(0.0f, out.caretX - width + kCaretWidthDip);
+  out.scroll = (std::max)(0.0f, out.caretX - width + kCaretWidth * panel.type);
   return true;
 }
 
 }  // namespace
 
 void DrawMonthGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
-                   ID2D1SolidColorBrush* brush, Month month, Date today, Date selected,
-                   const float* hover, float offsetX) {
-  const float radius = kDayCircleDip / 2.0f;
+                   const PanelLayout& layout, ID2D1SolidColorBrush* brush, Month month,
+                   Date today, Date selected, const float* hover, float offsetX) {
+  const float radius = layout.dayCircle / 2.0f;
+  const float ring = 1.5f * layout.type;
 
-  for (int cell = 0; cell < kGridCells; ++cell) {
-    const Date date = CellDate(month, cell);
-    const D2D1_RECT_F base = CellRect(cell);
+  for (int index = 0; index < kGridCells; ++index) {
+    const Date date = CellDate(month, index);
+    const D2D1_RECT_F base = layout.cell(index);
     const D2D1_RECT_F rect{base.left + offsetX, base.top, base.right + offsetX, base.bottom};
-    const D2D1_POINT_2F center{(rect.left + rect.right) / 2.0f, rect.top + kDayCenterY};
+    const D2D1_POINT_2F center{(rect.left + rect.right) / 2.0f, rect.top + layout.dayCenterY};
 
     const bool inMonth = date.year() == month.year() && date.month() == month.month();
     const bool isToday = date == today;
     const bool isSelected = date == selected;
 
-    const float fade = hover != nullptr ? hover[cell] : 0.0f;
+    const float fade = hover != nullptr ? hover[index] : 0.0f;
     if (fade > 0.0f) {
       brush->SetColor(Fade(theme.hover, fade));
       FillCircle(target, center, radius, brush);
@@ -103,7 +99,8 @@ void DrawMonthGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
     } else if (isSelected) {
       // A ring rather than a fill, so the selected day never competes with today.
       brush->SetColor(theme.accent);
-      target->DrawEllipse(D2D1_ELLIPSE{center, radius - 0.75f, radius - 0.75f}, brush, 1.5f);
+      target->DrawEllipse(D2D1_ELLIPSE{center, radius - ring / 2.0f, radius - ring / 2.0f}, brush,
+                          ring);
     }
 
     brush->SetColor(isToday ? theme.onAccent : (inMonth ? theme.textPrimary : theme.textMuted));
@@ -113,62 +110,65 @@ void DrawMonthGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
 
     if (const std::optional<std::uint32_t> color = SampleDayColor(date)) {
       brush->SetColor(Rgb(*color, inMonth ? 1.0f : 0.40f));
-      FillCircle(target, D2D1_POINT_2F{center.x, rect.top + kDotCenterY}, kEventDotDip / 2.0f,
-                 brush);
+      FillCircle(target, D2D1_POINT_2F{center.x, rect.top + layout.dotCenterY},
+                 layout.eventDot / 2.0f, brush);
     }
   }
 }
 
 void DrawEventCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
-                   ID2D1SolidColorBrush* brush, const D2D1_RECT_F& rect,
-                   const SampleEvent& event, int more) {
-  brush->SetColor(theme.surface);
-  FillRound(target, rect, kRadiusCard, brush);
+                   const PanelLayout& layout, ID2D1SolidColorBrush* brush,
+                   const D2D1_RECT_F& rect, const SampleEvent& event, int more) {
+  const float type = layout.type;
 
-  // The colour bar inherits the rounded corners: clip to its three DIP and fill the whole
-  // rounded rectangle again, this time in the calendar colour.
+  brush->SetColor(theme.surface);
+  FillRound(target, rect, layout.cardRadius, brush);
+
+  // The colour bar inherits the rounded corners: clip to its width and fill the whole rounded
+  // rectangle again, this time in the calendar colour.
   target->PushAxisAlignedClip(
-      D2D1_RECT_F{rect.left, rect.top, rect.left + kEventBarDip, rect.bottom},
+      D2D1_RECT_F{rect.left, rect.top, rect.left + layout.barWidth, rect.bottom},
       D2D1_ANTIALIAS_MODE_ALIASED);
   brush->SetColor(Rgb(event.color));
-  FillRound(target, rect, kRadiusCard, brush);
+  FillRound(target, rect, layout.cardRadius, brush);
   target->PopAxisAlignedClip();
 
-  float right = rect.right - kCardRightPad;
+  float right = rect.right - kCardRightPad * type;
   if (more > 0) {
     brush->SetColor(theme.textSecondary);
     DrawTextIn(target, fonts.event.Get(), std::format(L"+{}", more),
-               D2D1_RECT_F{right - kCounterWidth, rect.top, right, rect.bottom}, brush,
+               D2D1_RECT_F{right - kCounterWidth * type, rect.top, right, rect.bottom}, brush,
                Align::Right);
-    right -= kCounterWidth + kGapDip * 2.0f;
+    right -= (kCounterWidth + 2.0f * kGapDip) * type;
   }
 
   brush->SetColor(theme.textSecondary);
   DrawTextIn(target, fonts.event.Get(), FormatTime(event.startMin),
-             D2D1_RECT_F{rect.left + kCardTextLeft, rect.top,
-                         rect.left + kCardTextLeft + kCardTimeWidth, rect.bottom},
+             D2D1_RECT_F{rect.left + kCardTextLeft * type, rect.top,
+                         rect.left + (kCardTextLeft + kCardTimeWidth) * type, rect.bottom},
              brush);
 
   brush->SetColor(theme.textPrimary);
   DrawTextIn(target, fonts.event.Get(), event.title,
-             D2D1_RECT_F{rect.left + kCardTitleLeft, rect.top, right, rect.bottom}, brush);
+             D2D1_RECT_F{rect.left + kCardTitleLeft * type, rect.top, right, rect.bottom}, brush);
 }
 
 void DrawTextInput(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
-                   ID2D1SolidColorBrush* brush, const PopupModel& model) {
-  const D2D1_RECT_F rect = InputRect();
+                   const PanelLayout& layout, ID2D1SolidColorBrush* brush,
+                   const PopupModel& model) {
+  const D2D1_RECT_F rect = layout.input();
 
   brush->SetColor(theme.surface);
-  FillRound(target, rect, kInputRadius, brush);
+  FillRound(target, rect, layout.inputRadius, brush);
   brush->SetColor(theme.border);
-  StrokeRound(target, rect, kInputRadius, brush, 1.0f);
+  StrokeRound(target, rect, layout.inputRadius, brush, 1.0f);
   if (model.focus > 0.0f) {
     brush->SetColor(Fade(theme.accent, model.focus));
-    StrokeRound(target, rect, kInputRadius, brush, 1.5f);
+    StrokeRound(target, rect, layout.inputRadius, brush, 1.5f * layout.type);
   }
 
   InputLayout input;
-  if (!BuildInputLayout(fonts, model, input)) return;
+  if (!BuildInputLayout(fonts, layout, model, input)) return;
 
   target->PushAxisAlignedClip(input.inner, D2D1_ANTIALIAS_MODE_ALIASED);
 
@@ -199,25 +199,28 @@ void DrawTextInput(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
 
   if (model.caretOn) {
     const float x = input.inner.left + input.caretX - input.scroll;
+    const float inset = (layout.inputHeight - kCaretHeight * layout.type) / 2.0f;
     brush->SetColor(theme.textPrimary);
-    target->FillRectangle(D2D1_RECT_F{x, rect.top + kCaretInsetDip, x + kCaretWidthDip,
-                                      rect.bottom - kCaretInsetDip},
+    target->FillRectangle(D2D1_RECT_F{x, rect.top + inset, x + kCaretWidth * layout.type,
+                                      rect.bottom - inset},
                           brush);
   }
 
   target->PopAxisAlignedClip();
 }
 
-size_t InputIndexAt(const Fonts& fonts, const PopupModel& model, float x) {
+size_t InputIndexAt(const Fonts& fonts, const PanelLayout& layout, const PopupModel& model,
+                    float x) {
   InputLayout input;
-  if (!BuildInputLayout(fonts, model, input) || !input.layout) return model.input.text().size();
+  if (!BuildInputLayout(fonts, layout, model, input) || !input.layout) {
+    return model.input.text().size();
+  }
 
-  const D2D1_RECT_F rect = InputRect();
   BOOL trailing = FALSE;
   BOOL inside = FALSE;
   DWRITE_HIT_TEST_METRICS metrics{};
   if (FAILED(input.layout->HitTestPoint(x - input.inner.left + input.scroll,
-                                        (rect.bottom - rect.top) / 2.0f, &trailing, &inside,
+                                        layout.inputHeight / 2.0f, &trailing, &inside,
                                         &metrics))) {
     return model.input.text().size();
   }
@@ -225,10 +228,12 @@ size_t InputIndexAt(const Fonts& fonts, const PopupModel& model, float x) {
   return (std::min)(index, model.input.text().size());
 }
 
-D2D1_POINT_2F InputCaretPoint(const Fonts& fonts, const PopupModel& model) {
+D2D1_POINT_2F InputCaretPoint(const Fonts& fonts, const PanelLayout& layout,
+                              const PopupModel& model) {
   InputLayout input;
-  BuildInputLayout(fonts, model, input);
-  return D2D1_POINT_2F{input.inner.left + input.caretX - input.scroll, InputRect().bottom};
+  BuildInputLayout(fonts, layout, model, input);
+  return D2D1_POINT_2F{input.inner.left + input.caretX - input.scroll,
+                       layout.inputTop + layout.inputHeight};
 }
 
 }  // namespace agenda

@@ -49,6 +49,6 @@ inline PopupModel MakeModel(Date today) {
 // backdrop is unavailable (Windows 10), so the panel is painted opaque instead of letting the
 // desktop through.
 void DrawPopup(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
-               const PopupModel& model, D2D1_SIZE_F sizeDip, bool acrylic);
+               const PanelLayout& layout, const PopupModel& model, bool acrylic);
 
 }  // namespace agenda

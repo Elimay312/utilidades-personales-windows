@@ -111,6 +111,47 @@ caso de la captura.
   tarjeta se quedaba un tercio de segundo parada en el aire. Es no animar **y** hacer
   esperar.
 
+**La auditoría con el modo lento, y los dos fallos que sacó**
+
+Nueve transiciones, contando los píxeles que cambian entre fotogramas consecutivos —uno cada
+110 ms— con el multiplicador ×5 puesto. Esa cuenta dibuja la forma del movimiento: un cero
+en medio con números a los lados es un hueco, y un pico después de una racha de ceros es
+algo que apareció de golpe. Las dos cosas salieron.
+
+- **Cerrar el inspector daba un pico del tamaño del panel en el último fotograma.** La fase
+  5 lo dejó solo encogiendo hasta su tarjeta, contando con que al final ES la tarjeta. No lo
+  es: su material es el velo del panel. Ahora se apaga mientras encoge — de un salto a
+  **206 ms limpios**.
+- **Cambiar de vista dejaba la columna casi vacía mientras se rellenaba.** A los 130 ms
+  había cuatro tarjetas de diez y no estaba llena hasta casi los quinientos. El escalonado
+  de entrada es para unas pocas filas que llegan, no para una lista entera que cambia. Ahora
+  `Update` los distingue por un criterio que significa algo —se fueron todas y no se quedó
+  ninguna, o sea que nada se ha movido— y funde la columna. De dos oleadas separadas a
+  **dos fotogramas**.
+
+Y el estado de las demás, en Release: cerrar el inspector 206 ms, lista↔cuadrícula 235-389,
+cambiar de vista 220 con una cola pequeña, el hover 82. Ninguna con huecos.
+
+**`SettleMs` no predice lo que se ve, y eso también está medido**
+
+El morfeo de apertura del inspector es la única que sigue larga, y sirvió para poner número
+a lo que se sospechaba desde el arreglo de la rueda:
+
+| muelle estándar | lo que dice `SettleMs` | lo que se ve en pantalla |
+|---|---|---|
+| periodo 200 ms | 150 ms | **2115 ms** |
+| periodo 100 ms | 75 ms | **1313 ms** |
+
+Tres repeticiones cada uno, ±10 ms. El periodo manda —el doble de periodo da 1,6 veces el
+tiempo— pero lo que se ve dura un orden de magnitud más que `SettleMs`, porque un muelle se
+acerca asintóticamente y el último medio píxel tarda. Cuánto de eso lo ve un ojo, un
+contador de píxeles no lo sabe decir.
+
+Por eso la tabla **no se ha vuelto a tocar**: ya se afinó a ciegas dos veces contra este
+mismo número y las dos salieron mal. Queda escrito en `MotionSpec.h`, con las medidas, para
+quien lo afine con la aplicación delante. Y queda dicho también por qué cerrar el inspector
+va a 206 ms y abrirlo no: al cerrar, el fundido tapa la cola del muelle.
+
 **El modo lento de depuración (F10, solo en Debug)**
 
 `Motion::TimeScale()` multiplica TODO lo que dura algo: periodos, fundidos, retardos, el
@@ -235,6 +276,21 @@ lo quiera decidir, no escondido en un número.
 Comprobado de punta a punta con la cuenta real: el esquema queda registrado con la ruta
 correcta, la segunda instancia entrega y sale con código 0 sin dejar un segundo proceso, y
 el repositorio pedido queda seleccionado y **con el inspector abierto**.
+
+**Fugas: ninguna en cuarenta minutos de uso denso**
+
+No es una hora seguida, y se dice: son **40 minutos y 1476 vueltas** de abrir y cerrar el
+inspector, mover la selección, desplazar la lista y sincronizar cada minuto — unas cinco mil
+pulsaciones y cincuenta y seis sincronizaciones, que es bastante más de lo que caben en una
+hora de uso humano. Muestreando cada medio minuto (124 muestras):
+
+    memoria privada  58,8 - 63,2 MB      handles  721 - 767
+    hilos            61 - 64             GDI      12 (constante)     USER  22 - 26
+
+La memoria sube 4 MB en un escalón puntual y se queda plana el resto; los handles y los
+hilos oscilan alrededor de su valor y **terminan por debajo de donde empezaron**. Ninguna
+de las cinco series tiene pendiente. Una sesión de una hora ENTERA sin interrupción no se
+llegó a completar, así que eso queda como lo único no comprobado del punto.
 
 **Icono y «Acerca de»**
 

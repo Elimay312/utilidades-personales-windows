@@ -115,6 +115,22 @@ constexpr Spring SpringFor(Kind kind) {
 // que tira la tarjeta de la revisión, que si disparan antes dejan el elemento a medio
 // viaje. Y para que una prueba avise si alguien sube un periodo a ojo y se le va a dos
 // segundos sin darse cuenta.
+//
+// **Y NO PREDICE LO QUE SE VE. Esto está medido y hay que saberlo antes de tocar la
+// tabla.** Cronometrando el morfeo del inspector contra la pantalla —fotogramas cada 110 ms
+// y contando píxeles que cambian— con el muelle estándar sale esto:
+//
+//     periodo 200 ms  (SettleMs dice 150)   ->  2115 ms de cambio en pantalla
+//     periodo 100 ms  (SettleMs dice  75)   ->  1313 ms
+//
+// Tres repeticiones, ±10 ms. El periodo manda —el doble de periodo es 1,6 veces el tiempo—
+// pero lo que se ve dura un orden de magnitud más que este número, porque un muelle se
+// acerca a su destino asintóticamente y el último medio píxel tarda. Parte de esos
+// milisegundos no los ve un ojo; cuáles, no lo sabe decir un contador de píxeles.
+//
+// Consecuencia práctica: **afinar la tabla mirando aquí lleva a equivocarse**, que es lo
+// que pasó en las fases 1 y 6. Se afina con el periodo y se juzga con la aplicación
+// delante.
 float SettleMs(Spring spring);
 
 }  // namespace Motion

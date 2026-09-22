@@ -93,6 +93,19 @@ void List::Reextend() {
     m_scroller.SetExtent(ContentDip(), Frame().height);
 }
 
+// Una sola animación de opacidad sobre el contenedor del contenido, en vez de una por
+// celda. Se usa cuando lo que cambia es la PANTALLA —la forma de la rejilla, o una lista
+// entera por otra— y no dónde está cada tarjeta.
+void List::FadeInContent() {
+    if (!Attached() || !m_content) return;
+    Motion::Animator& animator = HostRef().Animator();
+    // El cero se escribe a mano porque el fundido retoma desde donde esté: sin esto, dos
+    // cambios seguidos no tendrían nada que animar el segundo.
+    m_content.StopAnimation(L"Opacity");
+    m_content.Opacity(0.0f);
+    animator.Opacity(m_content, 1.0f, animator.FadeMs(Motion::Kind::Standard));
+}
+
 void List::SetRowHeight(float heightDip) { SetLayout(1, heightDip, 0.0f, false); }
 
 void List::SetLayout(int columns, float cellHeightDip, float gapDip, bool animate) {
@@ -132,14 +145,7 @@ void List::SetLayout(int columns, float cellHeightDip, float gapDip, bool animat
     }
     Recycle(false);
 
-    if (animate && m_content) {
-        Motion::Animator& animator = HostRef().Animator();
-        // Se escribe el cero a mano porque el fundido retoma desde donde esté: sin esto, la
-        // segunda vez seguida no habría nada que animar.
-        m_content.StopAnimation(L"Opacity");
-        m_content.Opacity(0.0f);
-        animator.Opacity(m_content, 1.0f, animator.FadeMs(Motion::Kind::Standard));
-    }
+    if (animate) FadeInContent();
 }
 
 void List::SetPadding(float horizontalDip, float verticalDip) {
@@ -193,6 +199,8 @@ void List::Update(std::vector<std::uint64_t> keys, bool animate) {
     const int firstItem = slice.first * m_columns;
     const int lastItem = std::min((slice.first + slice.count) * m_columns, m_count) - 1;
 
+    int quedan = 0;
+    int soltadas = 0;
     for (Row& row : m_rows) {
         if (row.index < 0) continue;
         const std::uint64_t key = row.index < static_cast<int>(previous.size())
@@ -204,13 +212,35 @@ void List::Update(std::vector<std::uint64_t> keys, bool animate) {
         // superficie retenida mientras dura.
         if (next < 0 || next < firstItem || next > lastItem) {
             Release(row, animate);
+            ++soltadas;
             continue;
         }
         PlaceRow(row, next, animate);
         PaintRow(row);
+        ++quedan;
     }
 
-    Recycle(animate);
+    // **Si no sobrevivió NI UNA fila, esto no es gente llegando: es otra pantalla.**
+    //
+    // Y eso cambia cómo tiene que aparecer. El escalonado existe para que unas pocas filas
+    // que llegan se lean como una secuencia; con la lista entera cambiando, lo que hace es
+    // dejar la columna casi vacía mientras se rellena — medido en el modo lento de esta
+    // fase: al pulsar «Dormidos», a los 130 ms había CUATRO tarjetas de diez y la columna no
+    // estaba llena hasta pasados casi quinientos. Se ve como que la vista se ha quedado a
+    // medias, que es justo lo que la fase 8 tenía que quitar.
+    //
+    // El criterio no es un número inventado sino lo que de verdad distingue los dos casos:
+    // **se fueron TODAS las que había y no se quedó ninguna**. Entonces nada se ha movido,
+    // no hay nada que seguir con la vista, y lo que toca es un cambio de plano — igual que
+    // entre lista y cuadrícula.
+    //
+    // Y las dos mitades hacen falta. Sin «se fueron todas», una lista que todavía no tiene
+    // ninguna fila viva —el primer arranque, o volver de una vista vacía— contaría como
+    // cambio de pantalla y se fundiría por encima de su propia entrada.
+    const bool pantallaNueva = quedan == 0 && soltadas > 0 && m_count > 0;
+    Recycle(animate && !pantallaNueva);
+    if (animate && pantallaNueva) FadeInContent();
+
     if (selectionMoved && m_selectionChanged) m_selectionChanged(m_selected);
 }
 

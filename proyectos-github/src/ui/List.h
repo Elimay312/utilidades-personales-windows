@@ -185,6 +185,10 @@ private:
     };
 
     void OnScroll(float position);
+    // Recolocar de golpe y hacer aparecer la columna entera con UNA opacidad. Es lo que se
+    // hace cuando lo que cambia es la pantalla y no dónde está cada tarjeta: ver SetLayout
+    // y Update.
+    void FadeInContent();
     void Recycle(bool animateEntry);
     void PaintRow(Row& row);
     void PlaceRow(Row& row, int index, bool slide);

@@ -349,6 +349,34 @@ copias no falla nada el día que se suba una y no la otra: simplemente las propi
 archivo dicen una cosa y la aplicación otra, y nadie se entera hasta que hace falta saber qué
 versión tiene alguien delante.
 
+**La auditoría del modo lento encontró dos fallos, y los dos eran del mismo tipo: algo que
+aparece o desaparece sin transición.** Se miraron nueve transiciones contando los píxeles
+que cambian entre fotogramas consecutivos, que es lo que dibuja la forma del movimiento: un
+cero en medio con números a los lados es un hueco, y un pico después de una racha de ceros
+es algo que apareció de golpe.
+
+- **Al cerrar el inspector, el panel desaparecía de golpe.** La fase 5 lo dejó solo
+  encogiendo hasta la tarjeta, con la idea de que al final ES la tarjeta y esconderlo no se
+  notaría. No es verdad: su material es el velo del panel, no el de una tarjeta, así que
+  cuando el temporizador lo escondía había un pico del tamaño del panel entero justo en ese
+  fotograma. Ahora se apaga mientras encoge, y lo que queda debajo es la tarjeta de verdad.
+- **Al cambiar de vista, la columna se quedaba casi vacía mientras se rellenaba.** El
+  escalonado de entrada es para unas pocas filas que llegan; con la lista entera cambiando,
+  a los 130 ms había CUATRO tarjetas de diez y no estaba llena hasta pasados casi
+  quinientos. Ahora `Ui::List::Update` distingue los dos casos con un criterio que significa
+  algo —**se fueron todas las que había y no se quedó ninguna**, o sea que nada se ha
+  movido— y entonces funde la columna entera como entre lista y cuadrícula. Las dos mitades
+  del criterio hacen falta: sin «se fueron todas», una lista que todavía no tiene filas
+  vivas contaría como cambio de pantalla y se fundiría por encima de su propia entrada.
+
+**Lo que queda medido y sin decidir: el morfeo de apertura del inspector.** Es la única
+transición que sigue siendo larga —2,1 s de cambio medible, con el panel visiblemente a
+medias todavía a los 530 ms— y es también la que enseña el problema de `SettleMs` en
+crudo. Cerrarlo tarda 240 ms porque el fundido tapa la cola del muelle; abrirlo no la tapa,
+así que se ve entera. Bajar `kStandard` a la mitad lo deja en 1,3 s, así que el mando
+funciona; cuál es el número bueno es algo que hay que sentir con la aplicación delante, y
+por eso no se ha tocado a ciegas por tercera vez.
+
 **Falta comprobar cuatro cosas**, las cuatro heredadas y ninguna nueva: la nitidez a otras
 escalas —`WM_DPICHANGED` sigue sin poder dispararse: una sola pantalla al 100 %—, el IME de
 verdad, el panel táctil de precisión y los tres cuadros de archivo. Y el texto «un toque

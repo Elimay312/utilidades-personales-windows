@@ -418,10 +418,17 @@ void Main::CloseInspector() {
     LayoutColumns();
 
     const Rect back = SelectedCardRect();
-    m_inspector->SetContentOpacity(0.0f, HostRef().Animator().FadeMs(Motion::Kind::Standard));
-    if (back.Empty()) {
-        m_inspector->SetOpacity(0.0f, HostRef().Animator().FadeMs(Motion::Kind::Standard));
-    } else {
+    const float fade = HostRef().Animator().FadeMs(Motion::Kind::Standard);
+    m_inspector->SetContentOpacity(0.0f, fade);
+    // **El panel se apaga SIEMPRE, también cuando vuelve a su tarjeta.** La fase 5 lo dejó
+    // solo encogiendo, con la idea de que al final ES la tarjeta y esconderlo no se notaría.
+    // No es verdad: su material es el velo del panel y no el de una tarjeta, así que cuando
+    // el temporizador lo escondía, desaparecía de golpe. Medido en el modo lento de esta
+    // fase — la transición baja suave y de pronto da un pico del tamaño del panel entero,
+    // justo en el fotograma del temporizador. Apagándolo mientras encoge, lo que hay debajo
+    // es la tarjeta de verdad y el relevo no se ve.
+    m_inspector->SetOpacity(0.0f, fade);
+    if (!back.Empty()) {
         m_inspector->MorphTo(back, Metrics::RadiusOf(Metrics::Radius::Card),
                              Motion::Kind::Standard);
     }

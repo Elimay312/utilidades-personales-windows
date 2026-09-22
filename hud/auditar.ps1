@@ -128,6 +128,21 @@ if ($brillo) {
     Write-Output ("  {0,-34} {1}" -f 'alcance: solo volumen', 'si, nada de brillo ni WMI')
 }
 
+# El centinela que va con el aviso de cambio de dispositivo (SEGURIDAD.md s.3.2). El HUD
+# sabe QUE ha cambiado el predeterminado, nunca CUAL: al aviso no se le pregunta el id, se
+# vuelve a pedir el predeterminado por GetDefaultAudioEndpoint. En cuanto aparezca un
+# EnumAudioEndpoints o un GetId hay un inventario de dispositivos de audio, que es lo mismo
+# que la regla 15 le prohibe a las ventanas. IPolicyConfig entra aqui aparte: es la API no
+# documentada que CAMBIA el predeterminado, y el HUD se entera de los cambios, no los hace.
+$inventario = $codigo | Where-Object { $_.Texto -match 'EnumAudioEndpoints|GetId\(|IPolicyConfig|GetDevice\(' }
+if ($inventario) {
+    $fallos++
+    Write-Output ("  {0,-34} INCUMPLE (s.3.2)" -f 'sin inventario de dispositivos')
+    $inventario | ForEach-Object { Write-Output ("      {0}:{1}  {2}" -f $_.Fichero, $_.Linea, $_.Texto.Trim()) }
+} else {
+    Write-Output ("  {0,-34} {1}" -f 'sin inventario de dispositivos', 'si, no se lee ningun id')
+}
+
 if (Test-Path 'NativeMethods.txt') {
     $pinvokes = (Get-Content NativeMethods.txt | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('//') }).Count
     $lista = "$pinvokes entradas en NativeMethods.txt"

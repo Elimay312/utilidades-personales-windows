@@ -144,6 +144,42 @@ A diferencia de la isla, aquí sí se **escribe**. Se sostiene porque siempre vi
 que acabas de pulsar: no hay ningún camino que llame a `SetMasterVolumeLevelScalar` desde un
 temporizador, y así debe seguir.
 
+**Y que COM avise, en vez de preguntar.** Hay dos registros, y son dos porque cambian dos cosas
+distintas: `IAudioEndpointVolumeCallback` sobre el endpoint, para el nivel, y
+`IMMDeviceEnumerator::RegisterEndpointNotificationCallback` sobre el enumerador, para cuándo
+cambia el dispositivo de salida predeterminado. El segundo es una enmienda del **22 de
+septiembre de 2026** y esto es lo que abre y lo que no.
+
+**Lo que hacía falta arreglar.** El HUD se quedaba pegado al dispositivo con el que arrancó:
+cambiabas a los altavoces del monitor y seguía enseñando —y moviendo con las teclas— el volumen
+de los anteriores. El código de entonces contaba con que cambiar de dispositivo haría fallar al
+endpoint viejo, y sobre esa suposición estaba montada toda la recuperación. **Es falsa, y
+medirla es lo que obligó a esta enmienda:** una sonda dejó un `IAudioEndpointVolume` abierto y
+cambió el predeterminado. 47 muestras con otro dispositivo puesto, **cero excepciones**, y el
+endpoint viejo contestando `38 %` cuando el real era `100 %`. No se cae: se queda mintiendo.
+
+**Por qué un aviso y no un sondeo.** La otra salida era preguntar cada dos segundos cuál es el
+predeterminado. Medido en la misma sonda, con el enumerador ya montado: mediana de 3,57 ms pero
+**50,8 ms en el peor caso**, y eso cae en el hilo de UI. El aviso cuesta cero y llegó ~130 ms
+antes de que el sondeo notara nada.
+
+**Lo que abre, acotado.** De los cinco métodos de `IMMNotificationClient`, **solo
+`OnDefaultDeviceChanged` hace algo**, y solo si el cambio es de `eRender` con rol `eMultimedia`
+—que es exactamente el endpoint que el HUD abre y ninguno más—. Los otros cuatro
+(`OnDeviceAdded`, `OnDeviceRemoved`, `OnDeviceStateChanged`, `OnPropertyValueChanged`) están
+vacíos a propósito.
+
+**Lo que no abre, y es la parte que importa.** **El id del dispositivo no se lee nunca.** Al
+aviso no se le pregunta *cuál* es el nuevo predeterminado, solo *que* hay uno; a partir de ahí
+se vuelve a pedir por el mismo `GetDefaultAudioEndpoint` de siempre. No se enumera la lista de
+dispositivos, no se guarda ningún nombre ni ningún id, y no hay ninguna estructura que diga qué
+dispositivos de audio tiene esta máquina. **Es la misma propiedad que la regla 15 le exige a las
+ventanas**, aplicada a los dispositivos de audio, y `auditar.ps1` la comprueba igual: con un
+centinela sobre `EnumAudioEndpoints` y `GetId`, que es por donde empezaría un inventario.
+
+`IPolicyConfig` —la API no documentada que *cambia* el dispositivo predeterminado— queda fuera
+y en el centinela: el HUD se entera de los cambios, no los hace.
+
 ### 3.3 Dibujar
 
 `Windows.UI.Composition` del sistema sobre un `DesktopWindowTarget` de **nuestro propio HWND**,

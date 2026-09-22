@@ -106,6 +106,35 @@ if ($audio) {
 }
 Write-Output ("  {0,-34} {1}" -f '11 medidor de pico', $dir)
 
+# El centinela del nombre del dispositivo (SEGURIDAD.md s.3.3, enmienda del 22-09-2026).
+# La isla puede preguntarle su nombre al endpoint que YA tiene abierto, que es el
+# predeterminado. Lo que no puede es construir una lista: en cuanto aparezca un
+# EnumAudioEndpoints o un GetDevice hay inventario de dispositivos, que es justo lo que la
+# regla 15 le prohibe a las ventanas. IPolicyConfig va aparte: es la API no documentada que
+# CAMBIA el predeterminado, y la isla se entera de los cambios, no los hace.
+$inventario = $codigo | Where-Object { $_.Texto -match 'EnumAudioEndpoints|IPolicyConfig|\bGetDevice\(' }
+if ($inventario) {
+    $fallos++
+    Write-Output ("  {0,-34} INCUMPLE (s.3.3)" -f 'sin inventario de dispositivos')
+    $inventario | ForEach-Object { Write-Output ("      {0}:{1}  {2}" -f $_.Fichero, $_.Linea, $_.Texto.Trim()) }
+} else {
+    Write-Output ("  {0,-34} {1}" -f 'sin inventario de dispositivos', 'si, solo el predeterminado')
+}
+
+# La cara positiva de la enmienda: si se lee el property store, que sea UNA propiedad y
+# que sea la del nombre. Cualquier otra clave tendria que justificarse en s.3.3.
+$props = $codigo | Where-Object { $_.Texto -match 'PKEY_' }
+$otras = $props | Where-Object { $_.Texto -notmatch 'PKEY_Device_FriendlyName' }
+if ($otras) {
+    $fallos++
+    Write-Output ("  {0,-34} INCUMPLE (s.3.3)" -f 'solo el nombre del dispositivo')
+    $otras | ForEach-Object { Write-Output ("      {0}:{1}  {2}" -f $_.Fichero, $_.Linea, $_.Texto.Trim()) }
+} elseif ($props) {
+    Write-Output ("  {0,-34} {1}" -f 'solo el nombre del dispositivo', 'si, solo PKEY_Device_FriendlyName')
+} else {
+    Write-Output ("  {0,-34} {1}" -f 'solo el nombre del dispositivo', 'no se lee ninguna propiedad')
+}
+
 if (Test-Path 'NativeMethods.txt') {
     $pinvokes = (Get-Content NativeMethods.txt | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('//') }).Count
     $lista = "$pinvokes entradas en NativeMethods.txt"

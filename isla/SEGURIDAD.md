@@ -125,17 +125,57 @@ Un límite que pone la propia API y conviene tener escrito: `GetPlaybackInfo().C
 qué admite cada sesión. **Un botón que la sesión no admite no se dibuja**, en vez de dibujarlo
 y que no haga nada.
 
-### 3.3 Leer el medidor de pico de la salida
+### 3.3 Leer la salida de audio: el pico, el nivel y de qué dispositivo son
 
-`IMMDeviceEnumerator::GetDefaultAudioEndpoint(eRender, eMultimedia)` →
-`IMMDevice::Activate(IAudioMeterInformation)` → `GetPeakValue()`.
+`IMMDeviceEnumerator::GetDefaultAudioEndpoint(eRender, eMultimedia)` y, sobre ese endpoint y
+solo sobre ese, tres cosas:
 
-Ya está justificado en §1 y es la parte de este documento que más merece leerse dos veces:
-**un pico es un número, no es audio.** Se lee a 20 Hz, solo mientras hay reproducción activa,
-y alimenta una animación. No se guarda, no se acumula, no se promedia en el tiempo.
+| Qué | Cómo | Para qué |
+|---|---|---|
+| El pico | `Activate(IAudioMeterInformation)` → `GetPeakValue()` | La onda que late con lo que suena |
+| El nivel | `Activate(IAudioEndpointVolume)` → `GetMasterVolumeLevelScalar()` | El `45 %` del aviso. **Solo se lee**: la isla no cambia el volumen de nadie |
+| El nombre | `OpenPropertyStore(STGM_READ)` → `PKEY_Device_FriendlyName` | Decir **por dónde** está saliendo el sonido |
+
+Lo del pico ya está justificado en §1 y es la parte de este documento que más merece leerse dos
+veces: **un pico es un número, no es audio.** Se lee a 20 Hz, solo mientras hay reproducción
+activa, y alimenta una animación. No se guarda, no se acumula, no se promedia en el tiempo.
 
 El dispositivo es el **de salida** (`eRender`). El micrófono (`eCapture`) no se abre nunca, y
 `auditar.ps1` lo comprueba.
+
+#### El nombre del dispositivo — enmienda del 22 de septiembre de 2026
+
+Es lo único de esta sección que no estaba, y se abre porque la isla decía *«Volumen 45 %»* sin
+decir **de qué**. Con tres salidas enchufadas —altavoces, monitor y auriculares— ese aviso no
+informa: te dice que algo cambió, no dónde.
+
+**Lo que se abre.** `IMMDevice::OpenPropertyStore` en modo lectura y **una sola propiedad**,
+`PKEY_Device_FriendlyName`, sobre el endpoint predeterminado que la isla ya tenía abierto.
+
+**Los cortes, que son los que sostienen la enmienda:**
+
+- **No se enumera nada.** No hay `EnumAudioEndpoints` ni `GetDevice`: no existe ni puede
+  existir una lista de qué tarjetas de sonido tiene esta máquina. Es la misma propiedad que
+  la regla 15 le exige a las ventanas y el §5 a las apps, aplicada al audio.
+- **Una propiedad, no el almacén.** El *property store* de un endpoint tiene decenas de
+  claves. Se lee una, la que sale en el propio control de volumen de Windows.
+- **No se escribe a disco.** Regla 12 y el corolario de §5: `isla.json` guarda ajustes, nunca
+  lo que la isla lee. El nombre vive en memoria mientras dura el aviso y se va con él.
+- **`IPolicyConfig` queda fuera**, y en el centinela. Es la API no documentada que *cambia*
+  el dispositivo predeterminado: la isla se entera de los cambios, no los hace. Ni siquiera
+  el HUD, que sí escribe el volumen, lo toca.
+
+**Y que COM avise, en vez de preguntar.** Con la misma enmienda entran
+`IAudioEndpointVolumeCallback` —sobre el endpoint— e `IMMNotificationClient` —sobre el
+enumerador—. No abren nada nuevo: **cierran** un sondeo. De los cinco métodos de
+`IMMNotificationClient` solo `OnDefaultDeviceChanged` hace algo, y solo para `eRender` con rol
+`eMultimedia`.
+
+Esto sale de una medición del HUD, y está contada entera en su `SEGURIDAD.md` §3.2: **cambiar
+de dispositivo NO invalida el endpoint abierto.** No falla, se queda contestando del anterior
+—47 muestras, cero excepciones, 38 % contra el 100 % real—. La isla tenía exactamente el mismo
+fallo latente en `Audio.cs`, en el medidor de pico y en el nivel, y por el mismo motivo: los
+dos se tiraban solo cuando algo lanzaba, y no lanzaba nunca.
 
 ### 3.4 Un atajo de teclado
 
@@ -194,8 +234,10 @@ Cosas que el código hace de una forma concreta **porque este documento existe**
   anterior solo mientras dura una animación.
 - **Nada de lo que la isla lee se escribe a disco.** `isla.json` guarda tus ajustes: qué
   monitor, qué atajo, qué avisos quieres. Nunca contenido.
-- **El único P/Invoke que toca audio devuelve un `float`**, y va solo en su grupo dentro de
-  `NativeMethods.txt` con el porqué encima. Es el sitio donde mira un auditor.
+- **Lo que la isla saca del audio son dos números y un nombre**: el pico, el nivel y de qué
+  dispositivo son. Van en su propio grupo dentro de `NativeMethods.txt` con el porqué encima,
+  que es el sitio donde mira un auditor. Nunca una muestra, nunca un buffer, nunca una lista
+  de dispositivos.
 - **La isla no se registra como AppBar.** Flota y no reserva hueco. No es una regla de
   seguridad, pero sale del mismo criterio: no cambiar nada del escritorio de nadie si se
   puede evitar.

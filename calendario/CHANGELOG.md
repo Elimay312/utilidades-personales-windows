@@ -9,6 +9,40 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- Fase 2: sistema de diseño en `src/ui/theme.{h,cpp}` con los tokens de CLAUDE.md (colores,
+  tipografía, radios y rejilla de 4 DIP) y un tema claro derivado. La app sigue el tema del
+  sistema leyendo `AppsUseLightTheme` del registro, solo lectura, y lo relee cada vez que se
+  abre el popup.
+- Fase 2: el popup ya no está vacío. Título del mes en 15 semibold, fila `L M X J V S D`
+  empezando en lunes, rejilla fija de seis semanas con el día de hoy en círculo de acento, el
+  seleccionado en anillo y un punto de 4 DIP bajo los días con eventos, lista de eventos del
+  día seleccionado y campo de texto en cápsula con el marcador `mañana 5pm dentista…`.
+- Fase 2: componentes de dibujo reutilizables. `src/ui/paint.{h,cpp}` trae los formatos de
+  DirectWrite (Segoe UI Variable Text con respaldo a Segoe UI), texto con elipsis, rectángulos
+  redondeados y círculos; `src/ui/components.{h,cpp}` trae la rejilla del mes, la tarjeta de
+  evento y el campo de texto.
+- Fase 2: campo de texto editable en `src/ui/text_input.{h,cpp}`, sin Direct2D ni Win32, con
+  cursor, selección, movimiento por código de punto (un emoji no se parte por la mitad) y
+  filtrado de caracteres de control. La ventana le conecta `WM_CHAR`, el portapapeles
+  (`Ctrl+C`, `Ctrl+X`, `Ctrl+V` y `Ctrl+A`) y el IME (`WM_IME_*`), que dibuja la composición
+  subrayada en el cursor y coloca ahí la ventana de candidatos.
+- Fase 2: estados de hover y foco con transición de 100 ms, y deslizamiento de 160 ms al
+  cambiar de mes con las flechas `‹ ›`. Los mueve un temporizador de 16 ms que solo corre
+  mientras algo está en movimiento, y respetan la opción de reducir animaciones de Windows.
+- Fase 2: navegación con teclado. Con el campo vacío las cuatro flechas mueven el día; con
+  texto, `←` y `→` mueven el cursor (con `Shift` seleccionan) y `↑` y `↓` siguen moviendo el
+  día una semana. El día seleccionado viaja con el mes, así que la lista siempre muestra un
+  día que está en pantalla.
+- Fase 2: `--theme=dark|light` para ver cualquiera de los dos temas sin tocar la configuración
+  de Windows, tanto en la app como en `--render-snapshot`. Las capturas fijan el 22 de
+  septiembre de 2026 como «hoy» para que el PNG solo cambie cuando cambie el diseño.
+- Fase 2: datos de ejemplo en memoria (`src/ui/sample_data.h`), indexados por día del mes para
+  que cualquier mes se vea poblado. **No se toca SQLite todavía.**
+- Fase 2: `src/core/dates.h` con la aritmética del calendario sobre `<chrono>`: rejilla que
+  empieza en lunes, seis semanas fijas, meses recortados al último día que existe (31 de enero
+  más un mes es 28 de febrero) y nombres de mes en español independientes del locale.
+- Fase 2: pruebas de Catch2 para las fechas, el campo de texto y la geometría del panel, que es
+  la que comparten el dibujo y la detección de clics.
 - Fase 1: atajo global con `RegisterHotKey`, configurable con la clave `hotkey` de
   `config.json` y `Alt+Shift+C` por defecto. Si ya está ocupado, se registra el error, aparece
   un globo de aviso en la bandeja y la app sigue viva para poder abrirla desde el icono.

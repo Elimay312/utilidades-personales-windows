@@ -9,11 +9,16 @@ Las decisiones de producto, el stack y el sistema de diseño están en [CLAUDE.m
 
 ## Estado
 
-**En desarrollo, fase 1.** Agenda ya se queda residente en la bandeja y el atajo abre y cierra
-un popup de 340×420 con fondo acrylic en la esquina inferior derecha del monitor de trabajo.
-El popup todavía está vacío: solo fondo, borde y esquinas redondeadas.
+**En desarrollo, fase 2.** Agenda se queda residente en la bandeja, el atajo abre un popup de
+340×420 con fondo acrylic en la esquina inferior derecha del monitor de trabajo, y el popup ya
+muestra el mes, los eventos del día y el campo de texto. Los eventos son **datos de ejemplo en
+memoria**: todavía no hay SQLite, ni parser, ni sincronización, y pulsar Enter no hace nada.
 
-![El popup de Agenda](docs/img/popup.png)
+| Tema oscuro | Tema claro |
+|---|---|
+| ![El popup de Agenda en tema oscuro](docs/img/popup.png) | ![El popup de Agenda en tema claro](docs/img/popup-claro.png) |
+
+Agenda sigue el tema de las aplicaciones de Windows, que lee del registro al abrir el popup.
 
 ## Requisitos
 
@@ -46,18 +51,38 @@ Lo mismo con `release`. Los binarios quedan en `build\debug\Agenda.exe` y
 build\debug\Agenda.exe --monitor=3
 ```
 
-Al arrancar no se ve nada: Agenda deja el icono en la bandeja y espera el atajo.
+Al arrancar no se ve nada: Agenda deja el icono en la bandeja y espera el atajo. Con el
+clic izquierdo en el icono se abre el popup; con el derecho aparece un menú con **Abrir** y
+**Salir**. Si otra aplicación ya usa el atajo, Agenda lo registra en el log, avisa con un
+globo en la bandeja y sigue funcionando: se abre desde el icono.
+
+### Cómo se usa el popup
 
 - **Alt+Shift+C** abre y cierra el popup. También se cierra con Esc o al hacer clic fuera.
-- Clic en el icono de la bandeja para abrirlo; con el botón derecho aparece un menú con
-  **Abrir** y **Salir**.
-- Si otra aplicación ya usa el atajo, Agenda lo registra en el log, avisa con un globo en la
-  bandeja y sigue funcionando: se abre desde el icono.
+- Abre siempre en el día de hoy, con el campo de texto enfocado y el cursor esperando.
+- **Ratón:** clic en un día para seleccionarlo, clic en `‹` y `›` para cambiar de mes, clic en
+  el campo para poner el cursor donde se pinchó. Los días y las flechas se iluminan al pasar
+  por encima.
+- **Teclado:** con el campo vacío, las cuatro flechas mueven el día seleccionado, `←` y `→` de
+  uno en uno y `↑` y `↓` de semana en semana. Con texto escrito, `←` y `→` mueven el cursor
+  (con `Shift` seleccionan) e `Inicio` y `Fin` van a los extremos de la línea, mientras `↑` y
+  `↓` siguen moviendo el día. `Ctrl+A`, `Ctrl+C`, `Ctrl+X` y `Ctrl+V` hacen lo de siempre.
+- Al cambiar de mes, el día seleccionado se mueve con él, así que la lista de abajo siempre
+  muestra un día que está en pantalla. Si el día no existe en el mes nuevo, se recorta al
+  último que sí (31 de enero más un mes es 28 de febrero).
+- La lista muestra hasta dos eventos del día; si hay más, el segundo lleva un `+N` a la
+  derecha. Un día sin eventos dice «Sin eventos».
+- **Enter todavía no hace nada.** El parser de lenguaje natural llega en la fase 3.
+
+### Opciones de línea de comandos
+
 - `--monitor=N` fija el monitor por su número de Windows, es decir el dispositivo
   `\\.\DISPLAYN`. El orden de enumeración **no** es ese número.
 - `AGENDA_DEV_MONITOR=N` hace lo mismo, y `--monitor` tiene prioridad.
 - En builds Debug el valor por defecto es 3, que es el monitor de desarrollo. En Release, sin
   argumento ni variable, se usa el monitor primario.
+- `--theme=dark` o `--theme=light` fuerza un tema sin tocar la configuración de Windows. Sin
+  el argumento, Agenda sigue al sistema.
 - Si el monitor indicado no está conectado, se registra el error y el proceso termina con
   código **2**. No hay fallback silencioso a otro monitor. Si ya hay otra instancia
   ejecutándose, termina con código **1**.
@@ -65,14 +90,19 @@ Al arrancar no se ve nada: Agenda deja el icono en la bandeja y espera el atajo.
 ### Capturas de las vistas
 
 ```
-build\debug\Agenda.exe --render-snapshot=popup --out=docs\img\popup.png
+build\debug\Agenda.exe --render-snapshot=popup --theme=dark  --out=docs\img\popup.png
+build\debug\Agenda.exe --render-snapshot=popup --theme=light --out=docs\img\popup-claro.png
 ```
 
 Renderiza la vista fuera de pantalla con Direct2D sobre un bitmap WIC, guarda el PNG y sale.
 Así se revisa el diseño: **no con capturas del escritorio**. No necesita monitor ni que la
 instancia esté libre, así que funciona con la app abierta. Si falta `--out`, escribe
-`shot.png`. Como el acrylic no existe fuera de pantalla, el PNG lleva un gris neutro detrás
-del panel que hace su papel.
+`shot.png`. Como el acrylic no existe fuera de pantalla, el PNG lleva detrás un gris neutro
+que hace su papel, más claro u oscuro según el tema. La captura fija el 22 de septiembre de
+2026 como «hoy», para que el PNG solo cambie cuando cambie el diseño.
+
+Es un ejecutable de subsistema Windows, así que no devuelve el control a la consola: en
+PowerShell conviene lanzarlo con `Start-Process ... -Wait` si hace falta esperar al archivo.
 
 ### Datos en disco
 
@@ -119,7 +149,7 @@ docs/       capturas y decisiones de arquitectura
 |---|---|---|
 | 0 | Esqueleto que compila, documentación, logging, configuración y regla de monitores | Hecha |
 | 1 | Ventana popup con fondo acrylic, atajo global e icono en la bandeja | Hecha |
-| 2 | Sistema de diseño y vista de mes compacta con datos de ejemplo | Pendiente |
+| 2 | Sistema de diseño y vista de mes compacta con datos de ejemplo | Hecha |
 | 3 | Parser de lenguaje natural con vista previa en vivo | Pendiente |
 | 4 | Almacenamiento en SQLite: eventos, tareas y caché local | Pendiente |
 | 5 | Sincronización con Google Calendar y Google Tasks (OAuth) | Pendiente |

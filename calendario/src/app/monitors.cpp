@@ -62,6 +62,12 @@ Options ParseOptions(int argc, const wchar_t* const* argv, std::wstring_view env
         return options;
       }
       options.snapshotView = value;
+    } else if (Flag(arg, L"--theme=", value)) {
+      if (value != L"dark" && value != L"light") {
+        options.error = std::format(L"--theme expects dark or light, got '{}'", value);
+        return options;
+      }
+      options.theme = value;
     } else if (Flag(arg, L"--out=", value)) {
       if (value.empty()) {
         options.error = L"--out expects a file path";

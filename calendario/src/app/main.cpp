@@ -118,7 +118,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   // The snapshot draws offscreen, so it needs neither a monitor nor the instance lock: it has
   // to work while the app is running.
   if (!options.snapshotView.empty()) {
-    const bool written = RenderSnapshot(options.snapshotView, options.snapshotOut);
+    const bool written = RenderSnapshot(options.snapshotView, options.theme, options.snapshotOut);
     CoUninitialize();
     return written ? 0 : 2;
   }
@@ -185,7 +185,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
   ShowWindow(hwnd, SW_SHOWNA);
 
-  if (!app.popup.Create(instance, monitor, timing)) return 2;
+  if (!app.popup.Create(instance, monitor, timing, options.theme)) return 2;
   app.tray.Add(instance, hwnd);
 
   std::optional<Hotkey> hotkey = ParseHotkey(shortcut);

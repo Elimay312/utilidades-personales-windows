@@ -6,10 +6,13 @@
 
 #include <system_error>
 
+#include "core/dates.h"
 #include "core/hr.h"
 #include "core/log.h"
 #include "ui/layout.h"
+#include "ui/paint.h"
 #include "ui/popup_view.h"
+#include "ui/theme.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -18,17 +21,35 @@ namespace {
 
 // Offscreen there is no desktop to blur, so a flat neutral grey stands in for the acrylic.
 // Without it the translucent panel would be judged against whatever an image viewer puts
-// behind transparency, which is usually white and lies about the design.
-constexpr D2D1_COLOR_F kBackdrop{0.27f, 0.27f, 0.30f, 1.0f};
+// behind transparency, which is usually white and lies about the design. The light theme gets
+// a lighter one, because a pale panel at 85% over a dark grey is not what the user will see.
+constexpr D2D1_COLOR_F kDarkBackdrop{0.27f, 0.27f, 0.30f, 1.0f};
+constexpr D2D1_COLOR_F kLightBackdrop{0.80f, 0.80f, 0.84f, 1.0f};
 constexpr int kMarginDip = 24;  // grey visible around the panel, so the corners can be judged
+
+// A fixed day, so docs/img only changes when the design does and not when the calendar turns.
+constexpr Date kSnapshotToday{std::chrono::year{2026}, std::chrono::September,
+                              std::chrono::day{22}};
 
 }  // namespace
 
-bool RenderSnapshot(std::wstring_view view, const std::filesystem::path& out) {
+bool RenderSnapshot(std::wstring_view view, std::wstring_view theme,
+                    const std::filesystem::path& out) {
   if (view != L"popup") {
     LogError(L"--render-snapshot only knows 'popup', got '{}'", view);
     return false;
   }
+
+  const Theme palette =
+      theme == L"light" ? LightTheme() : (theme == L"dark" ? DarkTheme() : SystemTheme());
+
+  Fonts fonts;
+  if (!fonts.Create()) return false;
+
+  // How the popup looks the instant it opens: the input focused and waiting, nothing typed.
+  PopupModel model = MakeModel(kSnapshotToday);
+  model.focus = 1.0f;
+  model.caretOn = true;
 
   const UINT width = static_cast<UINT>(kPopupWidthDip + 2 * kMarginDip);
   const UINT height = static_cast<UINT>(kPopupHeightDip + 2 * kMarginDip);
@@ -64,10 +85,10 @@ bool RenderSnapshot(std::wstring_view view, const std::filesystem::path& out) {
   }
 
   target->BeginDraw();
-  target->Clear(kBackdrop);
+  target->Clear(palette.light ? kLightBackdrop : kDarkBackdrop);
   target->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(kMarginDip),
                                                      static_cast<float>(kMarginDip)));
-  DrawPopup(target.Get(),
+  DrawPopup(target.Get(), fonts, palette, model,
             D2D1_SIZE_F{static_cast<float>(kPopupWidthDip), static_cast<float>(kPopupHeightDip)},
             /*acrylic=*/true);
   if (Failed(target->EndDraw(), L"ID2D1RenderTarget::EndDraw")) return false;

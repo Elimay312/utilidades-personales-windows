@@ -3,11 +3,10 @@
 #include "app/hotkey.h"
 #include "ui/layout.h"
 
-using agenda::ParseHotkey;
-using agenda::PopupRect;
+using namespace agenda;
 
 TEST_CASE("the default shortcut parses") {
-  const auto hotkey = ParseHotkey(agenda::kDefaultHotkey);
+  const auto hotkey = ParseHotkey(kDefaultHotkey);
   REQUIRE(hotkey);
   CHECK(hotkey->vk == 'C');
   CHECK((hotkey->mods & MOD_ALT) != 0);
@@ -53,4 +52,33 @@ TEST_CASE("the popup scales with the monitor DPI") {
   CHECK(rect.right == -18);              // the 12 dip margin, scaled
   CHECK(rect.right - rect.left == 510);  // 340 dip
   CHECK(rect.bottom - rect.top == 630);  // 420 dip
+}
+
+TEST_CASE("the month grid fills the panel width in seven exact columns") {
+  CHECK(kCellWidth == 44.0f);
+  CHECK(kContentWidth == kCellWidth * kGridCols);
+  CHECK(kContentRight == kPopupWidthDip - kPaddingDip);
+  CHECK(GridRect().bottom == kGridTop + kGridHeight);
+}
+
+TEST_CASE("a point in a cell hits the day drawn in it") {
+  const D2D1_RECT_F first = CellRect(0);
+  CHECK(Inside(first, first.left + 1.0f, first.top + 1.0f));
+  CHECK_FALSE(Inside(first, first.right, first.top + 1.0f));
+
+  // Cell 8 is the second column of the second row, and nothing else claims its centre.
+  const D2D1_RECT_F eighth = CellRect(8);
+  CHECK(eighth.left == kContentLeft + kCellWidth);
+  CHECK(eighth.top == kGridTop + kCellHeight);
+  CHECK_FALSE(Inside(CellRect(0), eighth.left + 1.0f, eighth.top + 1.0f));
+}
+
+TEST_CASE("the panel regions never overlap") {
+  CHECK(PrevArrowRect().right < NextArrowRect().left);
+  CHECK(NextArrowRect().right == kContentRight);
+  CHECK(GridRect().bottom < ListRect().top);
+  CHECK(ListRect().bottom < InputRect().top);
+  CHECK(InputRect().bottom == kPopupHeightDip - kPaddingDip);
+  // Two cards and the air between them are exactly the list.
+  CHECK(kCardHeight * kVisibleCards + kGapDip == kListHeight);
 }

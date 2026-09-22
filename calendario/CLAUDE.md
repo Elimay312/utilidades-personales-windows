@@ -35,7 +35,7 @@ Un calendario nativo para Windows escrito en C++ que se abre con un atajo global
 | Ventanas | Win32 puro (`RegisterClassExW` y `CreateWindowExW`) |
 | Render | Direct2D 1.1, DirectWrite y DirectComposition |
 | Fondo | Acrylic o Mica mediante `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE)`, esquinas con `DWMWA_WINDOW_CORNER_PREFERENCE`; fallback a color sólido en Windows 10 |
-| Animación | Transiciones simples (abrir, cerrar, fundidos) con animaciones de DirectComposition (`IDCompositionAnimation`, tramos cúbicos que interpola la GPU). El motor propio de springs sobre temporizador vsync llega en la fase 6, que es la que lo necesita para la expansión popup→app |
+| Animación | Transiciones simples (abrir, cerrar, fundidos) con animaciones de DirectComposition (`IDCompositionAnimation`, tramos cúbicos que interpola la GPU). El motor propio de springs sobre temporizador vsync llega en la fase 6, que es la que lo necesita para la expansión popup→app. Los estados de hover y foco y el deslizamiento del mes viven dentro del contenido Direct2D, que DirectComposition no puede animar por sí solo, así que los interpola un temporizador de 16 ms que solo corre mientras algo se mueve |
 | HTTP | WinHTTP (nativo, sin dependencias) |
 | JSON | nlohmann-json (vcpkg) |
 | Almacenamiento | SQLite3 (vcpkg), en `%LOCALAPPDATA%\Agenda\agenda.db` |
@@ -56,6 +56,7 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - Acento y hoy: `#4A8BF5`.
   - Evento alternativo: `#F5A623`.
   - Punto de evento en el día: 4 px con el color del calendario.
+- **Colores (tema claro, derivado del oscuro):** panel `#F4F4F7` al 85 %, superficie `#FFFFFF`, texto primario `#1B1C21`, secundario `#6C6D75`, borde negro al 10 %. El acento baja a `#2F6FE0`, porque el número del día va en blanco sobre el círculo y `#4A8BF5` no da contraste suficiente sobre un panel claro. La app sigue el tema del sistema (`AppsUseLightTheme`, solo lectura).
 - **Formas:** radio de 14 px en el panel, 8 px en las tarjetas de evento, cápsula completa en el input y círculo en el día de hoy.
 - **Espaciado:** rejilla de 4 px. El panel mide 340×420 DIP y tiene 16 px de padding interno.
 - **Tarjeta de evento:** barra de color de 3 px a la izquierda, hora en texto secundario y título en primario.

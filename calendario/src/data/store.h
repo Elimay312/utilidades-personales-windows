@@ -54,6 +54,9 @@ class Store {
   // that was created is allowed to vanish.
   std::vector<DayItem> ItemsForDay(Date day, bool includeUndated);
   std::vector<DayDot> DotsForRange(Date from, Date to);
+  // The tasks with no date at all, for the tray in the expanded view's sidebar. The ones still
+  // to do first; done ones stay, struck, until somebody unticks or forgets them.
+  std::vector<DayItem> UndatedTasks();
   // How much is waiting to go up to Google. Nobody empties this queue until phase 5, so for
   // now it is what proves a row and its operation were written together.
   int PendingOpCount();
@@ -82,6 +85,12 @@ class Store {
   std::vector<CalendarInfo> Calendars(bool tasklists);
   // Moves the flag. Queued, because it is a write, and the menu is already closed by then.
   void SetDefaultCalendar(const std::string& id, bool isTask);
+
+  // Every calendar and task list Google still lists, hidden ones included, for the sidebar's
+  // switches. Calendars first, then the lists.
+  std::vector<CalendarInfo> AllCalendars();
+  // The sidebar's switch. Local only: it never goes up to Google, and a pull never touches it.
+  void SetCalendarHidden(const std::string& id, bool hidden);
 
   struct Failure {
     std::wstring uid;

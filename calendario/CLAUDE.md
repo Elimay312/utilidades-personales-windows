@@ -46,7 +46,7 @@ Un calendario nativo para Windows escrito en C++ que se abre con un atajo global
 | Ventanas | Win32 puro (`RegisterClassExW` y `CreateWindowExW`) |
 | Render | Direct2D 1.1, DirectWrite y DirectComposition |
 | Fondo | Acrylic o Mica mediante `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE)`, esquinas con `DWMWA_WINDOW_CORNER_PREFERENCE`; fallback a color sólido en Windows 10 |
-| Animación | 160 ms y ease-out para todo lo que entra: el panel al abrirse, el mes al deslizarse, la tarjeta nueva al subir a la lista y la línea que tacha una tarea terminada. Un solo vocabulario de movimiento, no uno por cosa que se mueve. Transiciones simples (abrir, cerrar, fundidos) con animaciones de DirectComposition (`IDCompositionAnimation`, tramos cúbicos que interpola la GPU). El motor propio de springs sobre temporizador vsync llega en la fase 6, que es la que lo necesita para la expansión popup→app. Los estados de hover y foco y el deslizamiento del mes viven dentro del contenido Direct2D, que DirectComposition no puede animar por sí solo, así que los interpola un temporizador de 16 ms que solo corre mientras algo se mueve |
+| Animación | 160 ms y ease-out para todo lo que entra: el panel al abrirse, el mes al deslizarse, la tarjeta nueva al subir a la lista y la línea que tacha una tarea terminada. Un solo vocabulario de movimiento, no uno por cosa que se mueve. Transiciones simples (abrir, cerrar, fundidos) con animaciones de DirectComposition (`IDCompositionAnimation`, tramos cúbicos que interpola la GPU). El motor de springs está en `src/ui/spring.h` (Euler semi-implícito, cuatro subpasos por fotograma) y corre sobre `FrameClock` (`src/ui/vsync.h`), un hilo que espera a `DwmFlush` y avisa una vez por fotograma compuesto. Solo lo usa la expansión popup↔app. Los estados de hover y foco y el deslizamiento del mes viven dentro del contenido Direct2D, que DirectComposition no puede animar por sí solo, así que los interpola un temporizador de 16 ms que solo corre mientras algo se mueve |
 | HTTP | WinHTTP (nativo, sin dependencias) |
 | JSON | nlohmann-json (vcpkg) |
 | Almacenamiento | SQLite3 (vcpkg; donde no hay vcpkg, la amalgamación por FetchContent con su hash fijado), en `%LOCALAPPDATA%\Agenda\agenda.db`, en modo WAL |
@@ -75,7 +75,16 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
 - **Movimiento:**
   - Apertura: fade de 0 a 1 y desplazamiento de 8 px hacia arriba en 160 ms (ease-out).
   - Cierre: 120 ms.
-  - Expansión del popup a la app: spring (rigidez ~300, amortiguación ~30) que anima tamaño, posición y radio a la vez.
+  - Expansión del popup a la app: spring (rigidez ~300, amortiguación ~30) que anima tamaño, posición y radio a la vez. Medido a 125 %: llega al tamaño final en ~320 ms y se asienta en ~520 ms.
+- **La app expandida (fase 6):**
+  - Ocupa el 80 % del área de trabajo, centrada. Tamaño de diseño: 1536×826 DIP.
+  - **La barra lateral mide lo mismo que el popup y empieza en su esquina**, así que la cabecera, las iniciales y la rejilla del popup son el mini mes de la app: no se mueven durante la expansión. Debajo, en el hueco de la lista del día, van los calendarios y la bandeja de tareas sin fecha.
+  - Todo escala con el `type` del popup: las letras de la app son las del popup (11/12/13/15).
+  - Radio de la ventana: 8 DIP (`kRadiusApp`), el de cualquier ventana de Windows 11. Bloques de la línea de tiempo y fichas de día entero: 8 DIP, como las tarjetas, recortado a la mitad de su alto.
+  - Línea de tiempo: 48 DIP por hora, margen de horas de 56, ajuste a 15 min.
+  - Línea de ahora: `#FF5A5F` en oscuro, `#E0393E` en claro (token `now`). Fuerte en la columna de hoy y al 35 % en las demás.
+  - Bloques: el color del calendario mezclado con la superficie (26 % en oscuro, 16 % en claro) y la barra de 3 px a la izquierda.
+  - La cápsula viaja primero a la derecha y luego arriba (en línea recta cruzaría la rejilla). La lista del día se va en el primer 30 % del camino y la app entra entre el 30 y el 85 %.
   - Respeta la preferencia de "reducir animaciones" de Windows (`SPI_GETCLIENTAREAANIMATION`).
 - **Semana:** empieza en lunes. Iniciales en español: L M X J V S D. El locale por defecto es es-CO.
 - Cada vista nueva debe verificarse con `--render-snapshot` antes de darla por terminada. El PNG se renderiza siempre a 96 ppp y al tamaño base, así que **no puede pillar errores de DPI ni de escalado**: eso hay que mirarlo con la app delante en un monitor escalado. `--panel=WxH` fuerza un tamaño de panel para poder juzgarlo en cualquier pantalla.
@@ -87,7 +96,7 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
 - **Las horas se guardan como reloj de pared local**, o sea un día (`YYYY-MM-DD`) y un minuto de ese día, nunca como instante UTC. Es lo que ya lleva el código (`nlp::DateTime`), es la única pregunta que hace la interfaz —«¿qué hay el día D?»— y es lo que guarda Google Calendar, que manda `dateTime` con su `timeZone`. Guardar además el UTC serían dos conversiones por consulta y dos ideas de qué día es hoy dentro de la misma caché. `updated_at` sí es un instante UTC, porque es metadato de conflicto y no una hora de la agenda.
 - **La lista del día se lee como la forma del día:** primero lo de día entero, después todo lo que tiene hora, y al final las tareas sin hora. El final es lo que importa: el popup enseña dos tarjetas, y con las tareas sin hora delante, tres pendientes echarían del panel la reunión de hoy.
 - **Una tarea sin fecha aparece en el día de hoy.** No se le inventa una fecha —se guarda con `due_day` nulo— pero se enseña ahí, porque algo que se crea y no se ve en ninguna parte es peor que no haberlo creado.
-- **Una regla de repetición se guarda y no se despliega** hasta que haya vistas de semana y mes que lo justifiquen. El evento sale en su primer día y su tarjeta dice que se repite.
+- **Una regla de repetición se despliega** (fase 6) con `OccursOn` en `src/core/recurrence.h`: FREQ DAILY/WEEKLY/MONTHLY/YEARLY con INTERVAL, BYDAY de días sueltos, COUNT y UNTIL. Lo que no entiende (BYDAY=1TU, BYMONTHDAY...) se queda en su primer día. Sin EXDATE ni instancias movidas: eso llega cuando se pueda editar una sola ocurrencia.
 - Reglas del parser:
   - Si el texto trae una hora, se crea un **evento** de 60 min por defecto.
   - Si no trae hora, se crea una **tarea**.
@@ -96,6 +105,8 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
 - **`calendars.is_primary` significa «aquí cae lo que se crea»**, no «es el primary de Google». Se siembra con el primary en la primera conexión y a partir de ahí la mueve el submenú de la bandeja. Es la desviación que evitó inventar un almacén de ajustes para una elección que se hace una vez.
 - **La sincronización corre en su propio hilo, no en la cola del `Store`**, aunque `store.h` diera eso por hecho en la fase 4. Esa cola lleva también las escrituras del popup, y una petición de veinte segundos por delante dejaría una creación sin escribir veinte segundos. Lo que sí pasa por el `Store` es cada escritura en SQLite, con `Store::Run`: una conexión y un escritor. Dos conexiones habrían sido peor, porque en SQLite las transacciones son de la conexión y no del hilo.
 - **El esquema se quedó en v1 en la fase 5.** Todo lo que hacía falta ya estaba reservado; el token es lo único que no cabía en una tabla y va a un archivo cifrado con DPAPI.
+- **El esquema pasó a v2 en la fase 6**, con permiso del usuario y solo añadiendo columnas: `calendars.hidden` (el interruptor de la barra lateral; `visible` significa «Google todavía lo lista» y cada pasada lo reescribe), `events.location` y `events.moved_from` (el calendario de origen de un evento que se cambió de calendario, para el `POST .../move` de Google).
+- **La app expandida no se cierra al perder el foco**, a diferencia del popup: deja de estar siempre encima y se queda detrás como cualquier ventana. Sigue siendo `WS_EX_TOOLWINDOW`, sin botón en la barra de tareas; la trae al frente la bandeja, y el atajo la cierra.
 
 ## Parser de lenguaje natural
 
@@ -175,4 +186,8 @@ build\debug\Agenda.exe --monitor=3
 build\debug\Agenda.exe --render-snapshot=popup --out=docs\img\popup.png
 build\debug\Agenda.exe --render-snapshot=popup-creado --out=docs\img\popup-creado.png
 build\debug\Agenda.exe --render-snapshot=popup-sin-conexion --out=docs\img\popup-sin-conexion.png
+build\debug\Agenda.exe --render-snapshot=app-dia --theme=dark --out=docs\img\app-dia.png
+build\debug\Agenda.exe --render-snapshot=app-semana --theme=light --out=docs\img\app-semana-claro.png
+build\debug\Agenda.exe --render-snapshot=app-mes --out=docs\img\app-mes.png
+build\debug\Agenda.exe --render-snapshot=app-transicion --out=docs\img\app-transicion.png
 ```

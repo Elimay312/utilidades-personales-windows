@@ -40,6 +40,21 @@ constexpr D2D1_RECT_F Inset(const D2D1_RECT_F& rect, float by) {
   return D2D1_RECT_F{rect.left + by, rect.top + by, rect.right - by, rect.bottom - by};
 }
 
+// Walks a nought to one fade towards its target and says whether it still has ground to cover.
+// Every hover and focus state in the popup and the app moves this way.
+inline bool Settle(float& value, bool on, float step) {
+  const float target = on ? 1.0f : 0.0f;
+  if (value == target) return false;
+  if (step <= 0.0f) return true;  // a tick too short to measure; the next one will move it
+  if (step >= 1.0f) {
+    value = target;
+    return false;
+  }
+  value = value < target ? (value + step < target ? value + step : target)
+                         : (value - step > target ? value - step : target);
+  return value != target;
+}
+
 // The same curve DirectComposition runs for the popup's open and close, so the content and
 // the window move with one motion language.
 constexpr float EaseOutCubic(float t) {

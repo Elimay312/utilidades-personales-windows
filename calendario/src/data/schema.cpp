@@ -106,6 +106,23 @@ INSERT INTO calendars (id, kind, title, color, is_primary) VALUES
 INSERT INTO sync_state (id) VALUES ('local'), ('local-tasks');
 )SQL";
 
+// --- v2 -----------------------------------------------------------------------------------
+//
+// Phase 6. Only columns added, nothing renamed or dropped, so a v1 cache migrates by itself.
+//
+// `hidden` is the user's switch in the sidebar and is NOT `visible`: `visible` means "Google
+// still lists this calendar", and every pull writes it back to 1. A switch stored there would
+// last until the next sync.
+//
+// `moved_from` is the calendar an event lived in on Google before it was moved to another one.
+// Google does not move an event with a PATCH -- it wants POST .../move on the calendar it is in
+// now -- and by the time the queue sends it, the row already says where it is going.
+constexpr const char* kV2 = R"SQL(
+ALTER TABLE calendars ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE events ADD COLUMN location TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ADD COLUMN moved_from TEXT;
+)SQL";
+
 struct Migration {
   int version;
   const char* sql;
@@ -113,6 +130,7 @@ struct Migration {
 
 constexpr Migration kMigrations[] = {
     {1, kV1},
+    {2, kV2},
 };
 
 }  // namespace

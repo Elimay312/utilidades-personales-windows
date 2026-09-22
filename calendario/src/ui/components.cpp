@@ -147,7 +147,45 @@ void ApplySpans(const InputLayout& input, const PopupModel& model, ID2D1Brush* a
   }
 }
 
+// Chevron metrics at the size the design system is written at.
+constexpr float kChevronHalfWidth = 3.5f;
+constexpr float kChevronHalfHeight = 6.0f;
+constexpr float kChevronStroke = 1.5f;
+
 }  // namespace
+
+Microsoft::WRL::ComPtr<ID2D1StrokeStyle> RoundedStroke(ID2D1RenderTarget* target) {
+  Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+  target->GetFactory(&factory);
+  Microsoft::WRL::ComPtr<ID2D1StrokeStyle> rounded;
+  factory->CreateStrokeStyle(
+      D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND,
+                                  D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND),
+      nullptr, 0, &rounded);
+  return rounded;
+}
+
+void DrawChevron(ID2D1RenderTarget* target, const Theme& theme, const PanelLayout& layout,
+                 ID2D1SolidColorBrush* brush, const D2D1_RECT_F& rect, bool pointsLeft,
+                 float hover, ID2D1StrokeStyle* style) {
+  if (hover > 0.0f) {
+    brush->SetColor(Fade(theme.hover, hover));
+    FillCircle(target, Center(rect), layout.arrowSize / 2.0f, brush);
+  }
+
+  // Two strokes instead of a glyph: at this size a drawn chevron lands on the pixel grid the
+  // same way every time, whatever font the machine ended up with.
+  const float type = layout.type;
+  const D2D1_POINT_2F center = Center(rect);
+  const float side = (pointsLeft ? kChevronHalfWidth : -kChevronHalfWidth) * type;
+  const float reach = kChevronHalfHeight * type;
+  brush->SetColor(Lerp(theme.textSecondary, theme.textPrimary, hover));
+  target->DrawLine(D2D1_POINT_2F{center.x + side, center.y - reach},
+                   D2D1_POINT_2F{center.x - side, center.y}, brush, kChevronStroke * type, style);
+  target->DrawLine(D2D1_POINT_2F{center.x - side, center.y},
+                   D2D1_POINT_2F{center.x + side, center.y + reach}, brush, kChevronStroke * type,
+                   style);
+}
 
 void DrawMonthGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush, Month month,

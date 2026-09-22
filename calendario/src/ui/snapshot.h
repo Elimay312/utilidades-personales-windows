@@ -14,6 +14,10 @@ inline constexpr std::wstring_view kSnapshotViews[] = {
     L"popup",         // the panel as it opens
     L"popup-creado",  // and a moment after Enter, with the notice up and the card still rising
     L"popup-sin-conexion",  // and with the dot up, which is the only thing being offline shows
+    L"app-dia",             // the expanded app, on the day view
+    L"app-semana",          // on the week
+    L"app-mes",             // on the month
+    L"app-transicion",      // halfway through the expansion, over a whole work area
 };
 
 inline bool KnowsSnapshotView(std::wstring_view view) {

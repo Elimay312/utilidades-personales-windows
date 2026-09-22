@@ -78,6 +78,19 @@ inline RECT PopupRect(const RECT& work, UINT dpi) {
   return PlaceRect(work, PanelSize(work, dpi), dpi);
 }
 
+// The expanded app: this share of the work area, centred on it.
+inline constexpr float kAppShare = 0.80f;
+
+inline RECT ExpandedRect(const RECT& work) {
+  const int workWidth = work.right - work.left;
+  const int workHeight = work.bottom - work.top;
+  const int width = static_cast<int>(std::lround(static_cast<float>(workWidth) * kAppShare));
+  const int height = static_cast<int>(std::lround(static_cast<float>(workHeight) * kAppShare));
+  const int left = work.left + (workWidth - width) / 2;
+  const int top = work.top + (workHeight - height) / 2;
+  return RECT{left, top, left + width, top + height};
+}
+
 // Every rectangle inside the panel, worked out once from its size. The drawing and the hit
 // testing both read this one, so a click always lands where the pixel is.
 struct PanelLayout {
@@ -113,6 +126,13 @@ struct PanelLayout {
   int visibleCards = 2;
 
   float inputTop = 0.0f;
+  // The capsule's own left and right. In the popup they are the content edges; the expansion
+  // moves the capsule to the top of the app, and this is what lets it travel.
+  float inputLeft = 0.0f;
+  float inputRight = 0.0f;
+  // The preview and the notice sit above the capsule in the popup. In the app the capsule is
+  // at the top, so they hang below it instead.
+  bool previewBelow = false;
   float inputHeight = 0.0f;
   float inputRadius = 0.0f;
   float inputPad = 0.0f;
@@ -154,15 +174,19 @@ struct PanelLayout {
   }
 
   D2D1_RECT_F input() const {
-    return D2D1_RECT_F{contentLeft, inputTop, contentRight, inputTop + inputHeight};
+    return D2D1_RECT_F{inputLeft, inputTop, inputRight, inputTop + inputHeight};
   }
 
   // The live preview sits on top of the capsule, over the tail of the list. It is not given
   // room of its own: reserving a row would shrink the month grid for good, and the grid must
   // not move the moment someone starts typing.
   D2D1_RECT_F preview() const {
+    if (previewBelow) {
+      const float top = inputTop + inputHeight + gap;
+      return D2D1_RECT_F{inputLeft, top, inputRight, top + previewHeight};
+    }
     const float bottom = inputTop - gap;
-    return D2D1_RECT_F{contentLeft, bottom - previewHeight, contentRight, bottom};
+    return D2D1_RECT_F{inputLeft, bottom - previewHeight, inputRight, bottom};
   }
 };
 
@@ -254,6 +278,8 @@ inline PanelLayout MakeLayout(D2D1_SIZE_F size) {
   out.inputRadius = out.inputHeight / 2.0f;
   out.inputPad = at(18.0f);
   out.inputTop = out.height - out.padding - out.inputHeight;
+  out.inputLeft = out.contentLeft;
+  out.inputRight = out.contentRight;
   out.previewHeight = at(30.0f);
 
   const float breath = at(8.0f);

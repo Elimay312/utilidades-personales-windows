@@ -96,4 +96,15 @@ inline D2D1_RECT_F DayListRect(const PanelLayout& layout, const PopupModel& mode
 void DrawPopup(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                const PanelLayout& layout, const PopupModel& model, bool acrylic);
 
+// The three layers DrawPopup is made of, apart so the expansion can put the app between them:
+// the rounded panel at any size and radius, the month and the day list (the list at
+// `listAlpha`, fading out as the app arrives), and the capsule with its preview and notice on
+// top of everything, wherever `layout.input()` says it is now.
+void DrawPanel(ID2D1RenderTarget* target, const Theme& theme, D2D1_SIZE_F size, float radius,
+               bool acrylic);
+void DrawPopupBody(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                   const PanelLayout& layout, const PopupModel& model, float listAlpha);
+void DrawPopupInput(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                    const PanelLayout& layout, const PopupModel& model);
+
 }  // namespace agenda

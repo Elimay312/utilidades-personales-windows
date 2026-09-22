@@ -9,7 +9,8 @@ Las decisiones de producto, el stack y el sistema de diseño están en [CLAUDE.m
 
 ## Estado
 
-**Fase 5 terminada; la siguiente es la 6.** Agenda se queda residente en la bandeja, el atajo
+**Fase 6a terminada: el popup se expande a la app completa.** Queda la 6b, que trae arrastrar
+eventos por la línea de tiempo y el panel de detalle. Agenda se queda residente en la bandeja, el atajo
 abre un popup con fondo acrylic en la esquina inferior derecha del monitor de trabajo, y el
 popup muestra el mes, lo que hay ese día y el campo de texto. El panel se adapta al monitor:
 su alto es el 42 % del área de trabajo, entre 380 y 560 DIP, y todo lo de dentro escala con
@@ -26,6 +27,13 @@ están en [docs/google-setup.md](docs/google-setup.md).
 | Tema oscuro | Tema claro |
 |---|---|
 | ![El popup de Agenda en tema oscuro](docs/img/popup.png) | ![El popup de Agenda en tema claro](docs/img/popup-claro.png) |
+
+Un clic en el mes, o **Ctrl+Enter**, hace crecer **esa misma ventana** hasta la app completa,
+con un muelle: no es un corte a otra ventana. El mes se queda donde estaba y pasa a ser la
+barra lateral, la lista del día se desvanece, el campo de texto sube a la barra de arriba y la
+línea de tiempo aparece alrededor. **Esc** o el botón de contraer hacen el camino inverso.
+
+![La app expandida en la vista de semana](docs/img/app-semana.png)
 
 Agenda sigue el tema de las aplicaciones de Windows, que lee del registro al abrir el popup.
 
@@ -90,9 +98,10 @@ pensada para abrirse; el icono hace falta para el menú.
 
 - **Alt+Shift+C** abre y cierra el popup. También se cierra con Esc o al hacer clic fuera.
 - Abre siempre en el día de hoy, con el campo de texto enfocado y el cursor esperando.
-- **Ratón:** clic en un día para seleccionarlo, clic en `‹` y `›` para cambiar de mes, clic en
-  el campo para poner el cursor donde se pinchó. Los días y las flechas se iluminan al pasar
-  por encima.
+- **Ratón:** clic en un día para **abrir la app en ese día** (ver abajo), clic en `‹` y `›`
+  para cambiar de mes, clic en el campo para poner el cursor donde se pinchó. Los días y las
+  flechas se iluminan al pasar por encima.
+- **Ctrl+Enter** abre la app en el día seleccionado sin tocar el ratón.
 - **Teclado:** con el campo vacío, las cuatro flechas mueven el día seleccionado, `←` y `→` de
   uno en uno y `↑` y `↓` de semana en semana. Con texto escrito, `←` y `→` mueven el cursor
   (con `Shift` seleccionan) e `Inicio` y `Fin` van a los extremos de la línea, mientras `↑` y
@@ -120,6 +129,38 @@ pensada para abrirse; el icono hace falta para el menú.
 - Los puntos del mes salen de lo que hay guardado de verdad. Un evento de varios días pone
   punto en todos ellos.
 
+### La app expandida
+
+La ventana crece hasta el 80 % del área de trabajo, centrada, y tiene tres partes:
+
+- **Barra lateral:** el mes del popup —el mismo, sin moverse—, la lista de calendarios con un
+  interruptor para ocultar cada uno, y la bandeja de **tareas sin fecha**, que se marcan con
+  su casilla como en el popup. Ocultar un calendario es solo local: no toca nada en Google, y
+  lo nuevo no cae en un calendario oculto.
+- **Vista principal:** pestañas **Día**, **Semana** y **Mes**. Día y semana son una línea de
+  tiempo por horas con una **línea roja de ahora** que se mueve al cambiar cada minuto, los
+  eventos que se solapan uno al lado del otro y lo de día entero en una franja arriba. La rueda
+  del ratón desplaza las horas. Al abrir, la hora actual queda a un tercio de la altura, o las
+  ocho de la mañana si el día no es hoy. Mes es la rejilla de seis semanas con lo de cada día y
+  un «+N más» cuando no cabe.
+- **Barra de arriba:** las flechas y el periodo, el mismo campo de lenguaje natural del popup
+  y el botón de contraer.
+
+Los eventos que se repiten salen **en todos los días en que caen**, en el popup y en la app.
+
+| Tecla | Qué hace |
+|---|---|
+| `D`, `S`, `M` | Vista de día, semana o mes |
+| `T` | Ir a hoy |
+| `←` `→` | Periodo anterior o siguiente |
+| `↑` `↓` | Una hora arriba o abajo (en Mes, una semana) |
+| `Ctrl+K` | Escribir en el campo; Enter crea, como en el popup |
+| `Esc` | Soltar el campo; si ya estaba suelto, contraer al popup |
+
+Un clic en la cabecera de un día de la semana abre ese día. A diferencia del popup, la app no
+se cierra al hacer clic en otra ventana: se queda detrás, como cualquier aplicación. El icono
+de la bandeja la vuelve a traer al frente, y el atajo la cierra; la siguiente vez abre el popup.
+
 ### Escribir en lenguaje natural
 
 Se escribe la frase entera de corrido, en español o en inglés, sin importar el orden ni los
@@ -141,8 +182,8 @@ lo que queda sin pintar es el título. Encima aparece una tarjeta con lo que se 
 | `t: pagar luz el lunes` | ☑ Tarea · Lunes · Pagar luz |
 | `gym cada lunes 7am` | 📅 Lunes · 07:00–08:00 · Cada semana · Gym |
 
-De momento, una frase que se repite **guarda su regla pero no se despliega**: el evento sale
-solo en su primer día. Desplegar las repeticiones llega con las vistas de semana y mes.
+Una frase que se repite guarda su regla y el evento sale **en cada día en que cae**: `gym cada
+lunes 7am` aparece todos los lunes desde el primero.
 
 La fecha se escribe como «Hoy», «Mañana», «Pasado mañana» o el día de la semana si cae dentro
 de los próximos siete días, y como `25 Oct` si queda más lejos.
@@ -202,9 +243,24 @@ build\debug\Agenda.exe --render-snapshot=popup --theme=dark  --out=docs\img\popu
 build\debug\Agenda.exe --render-snapshot=popup --theme=light --out=docs\img\popup-claro.png
 build\debug\Agenda.exe --render-snapshot=popup "--text=mañana 5pm dentista" --out=docs\img\popup-preview.png
 build\debug\Agenda.exe --render-snapshot=popup-creado --out=docs\img\popup-creado.png
+build\debug\Agenda.exe --render-snapshot=app-semana --theme=dark  --out=docs\img\app-semana.png
+build\debug\Agenda.exe --render-snapshot=app-mes    --theme=light --out=docs\img\app-mes-claro.png
+build\debug\Agenda.exe --render-snapshot=app-transicion --out=docs\img\app-transicion.png
 ```
 
-Hay tres vistas: `popup` es el panel tal como se abre, `popup-creado` es el instante siguiente
+La app tiene cuatro vistas más: `app-dia`, `app-semana` y `app-mes`, a su tamaño de diseño de
+1536×826 DIP (el 80 % de un área de trabajo de 1920×1032), y `app-transicion`, que pinta la
+ventana a mitad de la expansión sobre esa área de trabajo entera para poder juzgar cómo se
+reorganiza. Llevan una semana de ejemplo propia, con solapes, días enteros y una repetición.
+
+| | Tema oscuro | Tema claro |
+|---|---|---|
+| Día | ![Vista de día](docs/img/app-dia.png) | ![Vista de día, tema claro](docs/img/app-dia-claro.png) |
+| Mes | ![Vista de mes](docs/img/app-mes.png) | ![Vista de mes, tema claro](docs/img/app-mes-claro.png) |
+
+![La expansión a medio camino](docs/img/app-transicion.png)
+
+Las vistas del popup son tres: `popup` es el panel tal como se abre, `popup-creado` es el instante siguiente
 a pulsar Enter —con el aviso puesto y la tarjeta nueva a medio subir— y `popup-sin-conexion`
 es el mismo panel con el punto de sin conexión encendido. La segunda existe porque ese momento
 dura ciento sesenta milisegundos y no hay otra forma de mirarlo con calma; la tercera, porque
@@ -311,15 +367,17 @@ Dos límites que conviene saber:
 
 - **Google Tasks no guarda la hora de una tarea.** Solo el día. Agenda conserva la hora en
   local mientras el día no cambie, pero en el móvil esa tarea no tendrá hora.
-- **Una repetición se guarda y no se despliega** todavía, aquí ni allí: la regla viaja, pero
-  Agenda solo enseña el evento en su primer día hasta que existan las vistas de semana y mes.
+- **Las repeticiones se despliegan** en los días en que caen: diarias, semanales (con sus
+  días), mensuales y anuales, con intervalo, número de veces o fecha final. Lo que Agenda no
+  sabe leer —«el primer martes de cada mes»— se queda en su primer día, y las excepciones que
+  se hagan en Google a una sola repetición todavía no se reflejan aquí.
 
 ## Estructura del proyecto
 
 ```
 src/
   app/      entrada (wWinMain), atajo global, bandeja, monitores y argumentos
-  ui/       ventana popup, render D2D, composición, animación y capturas
+  ui/       ventana popup y app expandida, render D2D, composición, muelle y capturas
   nlp/      parser de lenguaje natural (biblioteca estática, sin nada de interfaz dentro)
   data/     SQLite, esquema, modelos y repositorios (biblioteca estática, por lo mismo)
   sync/     OAuth y clientes de Google Calendar y Tasks
@@ -339,7 +397,7 @@ docs/       capturas y decisiones de arquitectura
 | 3 | Parser de lenguaje natural con vista previa en vivo | Hecha |
 | 4 | Almacenamiento en SQLite: eventos, tareas y caché local | Hecha |
 | 5 | Sincronización con Google Calendar y Google Tasks (OAuth) | Hecha |
-| 6 | Expansión animada a la app completa con vistas de día, semana y mes | Pendiente |
+| 6 | Expansión animada a la app completa con vistas de día, semana y mes | 6a hecha (expansión y vistas); 6b pendiente (arrastrar, detalle, borrar) |
 | 7 | Pulido, rendimiento, empaquetado y arranque con Windows | Pendiente |
 
 El detalle de cada fase vive en el plan de fases del proyecto; las fases 3 a 7 pueden ajustarse

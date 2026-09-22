@@ -20,6 +20,9 @@ inline constexpr float kFontTitle = 15.0f;   // month title, semibold
 // system is written at.
 inline constexpr float kRadiusPanel = 14.0f;
 inline constexpr float kRadiusCard = 8.0f;
+// The expanded app is a window like any other on Windows 11, so it lands on the radius those
+// have. The spring walks the panel's 14 down to this while it grows.
+inline constexpr float kRadiusApp = 8.0f;
 inline constexpr float kEventDotDip = 4.0f;
 inline constexpr float kEventBarDip = 3.0f;
 
@@ -56,6 +59,7 @@ struct Theme {
   D2D1_COLOR_F border;        // hairlines
   D2D1_COLOR_F hover;         // the wash under a hovered day or arrow
   D2D1_COLOR_F selection;     // selected text in the input
+  D2D1_COLOR_F now;           // the line across the timeline that says what time it is
 };
 
 Theme DarkTheme();

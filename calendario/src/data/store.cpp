@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "core/log.h"
+#include "core/recurrence.h"
 #include "data/schema.h"
 
 namespace agenda {
@@ -187,7 +188,7 @@ std::vector<DayItem> Store::ItemsForDay(Date day, bool includeUndated) {
   if (std::optional<Stmt> stmt = db_.Prepare(
           "SELECT e.uid, e.title, e.start_day, e.start_min, e.end_min, e.recurrence, c.color "
           "FROM events e JOIN calendars c ON c.id = e.calendar_id "
-          "WHERE e.deleted_at IS NULL AND c.visible = 1 "
+          "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
           "  AND e.start_day <= ?1 AND e.end_day >= ?1")) {
     stmt->Bind(1, key);
     while (stmt->Step()) {
@@ -203,10 +204,35 @@ std::vector<DayItem> Store::ItemsForDay(Date day, bool includeUndated) {
     }
   }
 
+  // The repetitions: series that began on an earlier day and ended it that same day, asked one
+  // by one whether their rule lands here. The ones that span days are left to the query above,
+  // which already finds them on every day they cover.
+  // ponytail: every series older than the day is read and tested, fine for a personal agenda;
+  // an index on recurrence != '' if thousands of them ever show up.
+  if (std::optional<Stmt> stmt = db_.Prepare(
+          "SELECT e.uid, e.title, e.start_day, e.start_min, e.end_min, e.recurrence, c.color "
+          "FROM events e JOIN calendars c ON c.id = e.calendar_id "
+          "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
+          "  AND e.recurrence != '' AND e.start_day < ?1 AND e.end_day < ?1")) {
+    stmt->Bind(1, key);
+    while (stmt->Step()) {
+      const std::optional<Date> start = ParseDayKey(stmt->Text(2));
+      if (!start || !OccursOn(stmt->Text(5), *start, day)) continue;
+      DayItem item;
+      item.uid = stmt->Wide(0);
+      item.title = stmt->Wide(1);
+      item.startMin = stmt->OptInt(3);
+      item.endMin = stmt->OptInt(4);
+      item.repeats = true;
+      item.color = static_cast<std::uint32_t>(stmt->Int(6));
+      items.push_back(std::move(item));
+    }
+  }
+
   if (std::optional<Stmt> stmt = db_.Prepare(
           "SELECT t.uid, t.title, t.due_min, t.done_at, c.color "
           "FROM tasks t JOIN calendars c ON c.id = t.list_id "
-          "WHERE t.deleted_at IS NULL AND c.visible = 1 "
+          "WHERE t.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
           "  AND (t.due_day = ?1 OR (?2 AND t.due_day IS NULL))")) {
     stmt->Bind(1, key);
     stmt->Bind(2, includeUndated ? 1 : 0);
@@ -233,10 +259,10 @@ std::vector<DayDot> Store::DotsForRange(Date from, Date to) {
   const std::string last = DayKey(to);
 
   if (std::optional<Stmt> stmt = db_.Prepare(
-          "SELECT e.start_day, e.end_day, c.color "
+          "SELECT e.start_day, e.end_day, c.color, e.recurrence "
           "FROM events e JOIN calendars c ON c.id = e.calendar_id "
-          "WHERE e.deleted_at IS NULL AND c.visible = 1 "
-          "  AND e.start_day <= ?2 AND e.end_day >= ?1 "
+          "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
+          "  AND e.start_day <= ?2 AND (e.end_day >= ?1 OR e.recurrence != '') "
           "ORDER BY e.start_day, e.start_min")) {
     stmt->Bind(1, first);
     stmt->Bind(2, last);
@@ -248,13 +274,20 @@ std::vector<DayDot> Store::DotsForRange(Date from, Date to) {
       for (Date date = *start; date <= *end; date = AddDays(date, 1)) {
         if (date >= from && date <= to) AddDot(dots, date, color);
       }
+      // A repetition puts a dot wherever its rule lands, the same days ItemsForDay finds it on.
+      if (const std::string rule = stmt->Text(3); !rule.empty() && *end == *start) {
+        for (Date date = (std::max)(from, AddDays(*start, 1)); date <= to;
+             date = AddDays(date, 1)) {
+          if (OccursOn(rule, *start, date)) AddDot(dots, date, color);
+        }
+      }
     }
   }
 
   if (std::optional<Stmt> stmt = db_.Prepare(
           "SELECT t.due_day, c.color "
           "FROM tasks t JOIN calendars c ON c.id = t.list_id "
-          "WHERE t.deleted_at IS NULL AND c.visible = 1 "
+          "WHERE t.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
           "  AND t.due_day IS NOT NULL AND t.due_day BETWEEN ?1 AND ?2 "
           "ORDER BY t.due_day, t.due_min")) {
     stmt->Bind(1, first);
@@ -267,6 +300,28 @@ std::vector<DayDot> Store::DotsForRange(Date from, Date to) {
   }
 
   return dots;
+}
+
+std::vector<DayItem> Store::UndatedTasks() {
+  std::vector<DayItem> items;
+  if (!db_.IsOpen()) return items;
+  if (std::optional<Stmt> stmt = db_.Prepare(
+          "SELECT t.uid, t.title, t.done_at, c.color "
+          "FROM tasks t JOIN calendars c ON c.id = t.list_id "
+          "WHERE t.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
+          "  AND t.due_day IS NULL "
+          "ORDER BY t.done_at IS NOT NULL, t.position, t.title")) {
+    while (stmt->Step()) {
+      DayItem item;
+      item.isTask = true;
+      item.uid = stmt->Wide(0);
+      item.title = stmt->Wide(1);
+      item.done = !stmt->IsNull(2);
+      item.color = static_cast<std::uint32_t>(stmt->Int(3));
+      items.push_back(std::move(item));
+    }
+  }
+  return items;
 }
 
 int Store::PendingOpCount() {
@@ -294,13 +349,14 @@ bool Store::QueueOp(const char* entity, const std::wstring& uid, const char* op)
 std::string Store::DefaultCalendar(bool isTask) {
   const char* kind = isTask ? "tasklist" : "calendar";
   if (std::optional<Stmt> stmt = db_.Prepare(
-          "SELECT id FROM calendars WHERE kind = ? AND is_primary = 1 AND visible = 1 "
-          "ORDER BY sort, id LIMIT 1")) {
+          "SELECT id FROM calendars WHERE kind = ? AND visible = 1 AND hidden = 0 "
+          "ORDER BY is_primary DESC, sort, id LIMIT 1")) {
     stmt->Bind(1, kind);
     if (stmt->Step()) return stmt->Text(0);
   }
-  // Nothing flagged means no account yet, or a calendar that has been hidden since it was
-  // chosen. Either way what is created has to land somewhere it can be seen.
+  // The flagged one when it can be seen; with it switched off in the sidebar, the next one that
+  // can, because something created into a hidden calendar is something created and not seen.
+  // Nothing at all means every calendar is hidden, and then the local one is the last resort.
   return isTask ? kLocalTaskListId : kLocalCalendarId;
 }
 
@@ -309,7 +365,7 @@ std::vector<CalendarInfo> Store::Calendars(bool tasklists) {
   if (!db_.IsOpen()) return out;
   if (std::optional<Stmt> stmt = db_.Prepare(
           "SELECT id, title, is_primary FROM calendars "
-          "WHERE kind = ? AND visible = 1 ORDER BY sort, title")) {
+          "WHERE kind = ? AND visible = 1 AND hidden = 0 ORDER BY sort, title")) {
     stmt->Bind(1, tasklists ? "tasklist" : "calendar");
     while (stmt->Step()) {
       CalendarInfo info;
@@ -346,6 +402,43 @@ void Store::SetDefaultCalendar(const std::string& id, bool isTask) {
       return;
     }
     LogInfo(L"store: lo nuevo va ahora a {}", ToWide(id));
+    Notify();
+  });
+}
+
+std::vector<CalendarInfo> Store::AllCalendars() {
+  std::vector<CalendarInfo> out;
+  if (!db_.IsOpen()) return out;
+  if (std::optional<Stmt> stmt = db_.Prepare(
+          "SELECT id, title, is_primary, kind, color, hidden FROM calendars "
+          "WHERE visible = 1 ORDER BY kind = 'tasklist', sort, title")) {
+    while (stmt->Step()) {
+      CalendarInfo info;
+      info.id = stmt->Text(0);
+      info.title = stmt->Wide(1);
+      info.isDefault = stmt->Int(2) != 0;
+      info.isTaskList = stmt->Text(3) == "tasklist";
+      info.color = static_cast<std::uint32_t>(stmt->Int(4));
+      info.hidden = stmt->Int(5) != 0;
+      out.push_back(std::move(info));
+    }
+  }
+  return out;
+}
+
+void Store::SetCalendarHidden(const std::string& id, bool hidden) {
+  Enqueue([this, id, hidden] {
+    bool ok = false;
+    if (std::optional<Stmt> stmt = db_.Prepare("UPDATE calendars SET hidden = ? WHERE id = ?")) {
+      stmt->Bind(1, hidden ? 1 : 0);
+      stmt->Bind(2, id);
+      stmt->Step(&ok);
+    }
+    if (!ok) {
+      LogError(L"store: no se pudo {} el calendario {}", hidden ? L"ocultar" : L"mostrar",
+               ToWide(id));
+      return;
+    }
     Notify();
   });
 }

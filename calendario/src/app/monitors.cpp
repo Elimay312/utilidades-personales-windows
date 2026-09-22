@@ -81,9 +81,13 @@ Options ParseOptions(int argc, const wchar_t* const* argv, std::wstring_view env
       fromCommandLine = true;
     } else if (Flag(arg, L"--render-snapshot=", value)) {
       if (!KnowsSnapshotView(value)) {
+        std::wstring known;
+        for (const std::wstring_view name : kSnapshotViews) {
+          known += known.empty() ? L"" : L", ";
+          known += name;
+        }
         options.error =
-            std::format(L"--render-snapshot only knows 'popup' and 'popup-creado', got '{}'",
-                        value);
+            std::format(L"--render-snapshot only knows {}, got '{}'", known, value);
         return options;
       }
       options.snapshotView = value;

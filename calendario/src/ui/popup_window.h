@@ -15,9 +15,13 @@
 #include <chrono>
 
 #include "data/store.h"
+#include "ui/app_layout.h"
+#include "ui/app_view.h"
 #include "ui/paint.h"
 #include "ui/popup_view.h"
+#include "ui/spring.h"
 #include "ui/theme.h"
+#include "ui/vsync.h"
 
 namespace agenda {
 
@@ -25,10 +29,18 @@ namespace sync {
 class GoogleSync;
 }
 
+// One frame of the expansion, posted by the FrameClock once per composed frame.
+inline constexpr UINT kFrameMessage = WM_APP + 4;
+
 // The popup window: WS_POPUP with no redirection bitmap, its content composed by
 // DirectComposition over a premultiplied swap chain so the acrylic DWM paints behind it shows
 // through. It is created hidden when the app starts and reused for the life of the process,
 // so reacting to the hotkey is a SetWindowPos plus an animation, never device creation.
+//
+// It is also the expanded app. A click on the month grows this same window into it on a spring
+// -- phase 6 -- and the code for that half lives in popup_window_app.cpp, as more members of
+// this class: two windows would be a cut between them, which is the one thing the expansion
+// must not look like.
 class PopupWindow {
  public:
   struct Timing {
@@ -53,6 +65,11 @@ class PopupWindow {
   void Toggle();
   void Show();
   void Hide();
+
+  // The expansion, and back. Both can be called halfway through the other: the spring simply
+  // turns round from wherever it is.
+  void Expand(Date day);
+  void Contract();
 
   HWND hwnd() const { return hwnd_; }
 
@@ -90,6 +107,28 @@ class PopupWindow {
   void StartTicking();
   void RestartCaret();
 
+  // --- The expanded app (popup_window_app.cpp) -------------------------------------------
+  enum class Mode { Popup, Morphing, App };
+  bool InApp() const { return mode_ != Mode::Popup; }
+  // The popup's layout with the capsule wherever the expansion has it now: what the input's
+  // drawing and hit testing read, in both modes.
+  PanelLayout ActiveLayout() const;
+  D2D1_SIZE_F SizeDip() const;
+  void StepMorph();
+  void ApplyMorph();
+  void FinishMorph();
+  void ReloadApp();
+  void Relayout();
+  void SetView(AppView view);
+  void MovePeriod(int direction);
+  void AddToApp(const DayItem& item, std::optional<Date> day);
+  void ScheduleNowTick();
+  bool OnAppKeyDown(WPARAM key);
+  bool OnAppLeftDown(float x, float y);
+  bool OnAppMouseMove(float x, float y);
+  void OnWheel(int delta);
+  bool TickApp(float step);
+
   D2D1_POINT_2F ToDip(LPARAM lparam) const;
   int HitDay(float x, float y) const;
   void OnMouseMove(float x, float y);
@@ -103,13 +142,17 @@ class PopupWindow {
   void CopySelection(bool cut);
   void Paste();
 
+  // Moves the red line on the turn of every minute while the app is open.
+  static constexpr UINT_PTR kNowTimer = 5;
+
   HWND hwnd_ = nullptr;
   HMONITOR monitor_ = nullptr;
   Timing timing_{};
   std::wstring themeOverride_;
   D2D1_SIZE_F panelOverride_{};
   UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
-  SIZE size_{};
+  SIZE size_{};    // the window, which is what everything is laid out in
+  SIZE buffer_{};  // the swap chain: big enough for the app, so growing never resizes it
   bool visible_ = false;
   bool acrylic_ = false;
 
@@ -142,6 +185,23 @@ class PopupWindow {
   sync::GoogleSync* sync_ = nullptr;
   ULONGLONG lastTick_ = 0;
   std::wstring parsed_;  // the text the preview in the model was built from
+
+  // The expansion. `spring_.x` is how far it has got, 0 the popup and 1 the app; `goal_` is
+  // where it is going. The two rectangles are in physical pixels on this monitor.
+  Mode mode_ = Mode::Popup;
+  Spring spring_;
+  float goal_ = 0.0f;
+  RECT popupRect_{};
+  RECT appRect_{};
+  LARGE_INTEGER lastFrame_{};
+  FrameClock clock_;
+  AppModel app_;
+  AppLayout appLayout_;
+  int hoverTab_ = -1;
+  int hoverCalendar_ = -1;
+  bool hoverCollapse_ = false;
+  bool hoverPeriodPrev_ = false;
+  bool hoverPeriodNext_ = false;
 
   ComPtr<ID3D11Device> d3d_;
   ComPtr<IDXGISwapChain1> swapChain_;

@@ -35,19 +35,6 @@ Theme ResolveTheme(std::wstring_view override) {
   return SystemTheme();
 }
 
-// Walks a nought to one fade towards its target and says whether it still has ground to cover.
-bool Settle(float& value, bool on, float step) {
-  const float target = on ? 1.0f : 0.0f;
-  if (value == target) return false;
-  if (step <= 0.0f) return true;  // a tick too short to measure; the next one will move it
-  if (step >= 1.0f) {
-    value = target;
-    return false;
-  }
-  value = value < target ? (std::min)(target, value + step) : (std::max)(target, value - step);
-  return value != target;
-}
-
 // Ease-out cubic as a single DirectComposition segment. f(u) = 3u - 3u^2 + u^3 with
 // u = t / seconds is a cubic polynomial, so AddCubic expresses it exactly and the compositor
 // interpolates it on the GPU: no timer, no thread, no dropped frames.
@@ -152,8 +139,8 @@ bool PopupWindow::CreateDevices() {
   }
 
   DXGI_SWAP_CHAIN_DESC1 description{};
-  description.Width = static_cast<UINT>(size_.cx);
-  description.Height = static_cast<UINT>(size_.cy);
+  description.Width = static_cast<UINT>(buffer_.cx);
+  description.Height = static_cast<UINT>(buffer_.cy);
   description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
   description.SampleDesc.Count = 1;
   description.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -218,6 +205,7 @@ void PopupWindow::Place(const RECT& work) {
 
   D2D1_SIZE_F panel = panelFor(dpi_);
   RECT rect = PlaceRect(work, panel, dpi_);
+  appRect_ = ExpandedRect(work);
   SetWindowPos(hwnd_, HWND_TOPMOST, rect.left, rect.top, rect.right - rect.left,
                rect.bottom - rect.top, SWP_NOACTIVATE);
 
@@ -239,17 +227,25 @@ void PopupWindow::Place(const RECT& work) {
     LogError(L"popup: DirectWrite is unavailable, the panel will open without text");
   }
 
+  popupRect_ = rect;
   Resize(SIZE{rect.right - rect.left, rect.bottom - rect.top});
 }
 
 void PopupWindow::Resize(SIZE size) {
-  if (size.cx == size_.cx && size.cy == size_.cy) return;
   size_ = size;
+  // The buffer is the size of the app from the start, and a little over: the spring overshoots
+  // by well under one percent. Growing the window every frame is then a SetWindowPos and never
+  // a ResizeBuffers, which is what would make it flicker.
+  const auto grown = [](LONG side) { return side + side / 50 + 1; };
+  const SIZE want{(std::max)(size.cx, grown(appRect_.right - appRect_.left)),
+                  (std::max)(size.cy, grown(appRect_.bottom - appRect_.top))};
+  if (want.cx == buffer_.cx && want.cy == buffer_.cy) return;
+  buffer_ = want;
   if (!swapChain_) return;  // still creating the devices, which will pick up the new size
 
   dc_->SetTarget(nullptr);
-  if (Failed(swapChain_->ResizeBuffers(0, static_cast<UINT>(size.cx), static_cast<UINT>(size.cy),
-                                       DXGI_FORMAT_UNKNOWN, 0),
+  if (Failed(swapChain_->ResizeBuffers(0, static_cast<UINT>(buffer_.cx),
+                                       static_cast<UINT>(buffer_.cy), DXGI_FORMAT_UNKNOWN, 0),
              L"IDXGISwapChain1::ResizeBuffers")) {
     return;
   }
@@ -281,7 +277,11 @@ void PopupWindow::Render() {
   dc_->SetDpi(static_cast<float>(dpi_), static_cast<float>(dpi_));
   dc_->BeginDraw();
   dc_->Clear(D2D1_COLOR_F{0.0f, 0.0f, 0.0f, 0.0f});
-  DrawPopup(dc_.Get(), fonts_, theme_, layout_, model_, acrylic_);
+  if (InApp()) {
+    DrawApp(dc_.Get(), fonts_, theme_, layout_, appLayout_, model_, app_, spring_.x, acrylic_);
+  } else {
+    DrawPopup(dc_.Get(), fonts_, theme_, layout_, model_, acrylic_);
+  }
   if (Failed(dc_->EndDraw(), L"ID2D1DeviceContext::EndDraw")) return;
   dc_->SetTarget(nullptr);
 
@@ -332,7 +332,12 @@ void PopupWindow::Animate(bool opening) {
 }
 
 void PopupWindow::Show() {
-  if (hwnd_ == nullptr || visible_) return;
+  if (hwnd_ == nullptr) return;
+  if (visible_) {
+    // The app is a window like any other and can end up behind one; the tray brings it back.
+    if (InApp()) SetForegroundWindow(hwnd_);
+    return;
+  }
   const auto started = std::chrono::steady_clock::now();
   KillTimer(hwnd_, kHideTimer);
 
@@ -342,6 +347,12 @@ void PopupWindow::Show() {
     LogError(L"popup: GetMonitorInfoW failed with error {}", GetLastError());
     return;
   }
+  // Whatever it was when it was hidden, it opens as the popup.
+  mode_ = Mode::Popup;
+  clock_.Pause();
+  spring_.Snap(0.0f);
+  goal_ = 0.0f;
+  KillTimer(hwnd_, kNowTimer);
   Place(info.rcWork);
 
   // The popup always opens on today with an empty line waiting, and picks up a theme the user
@@ -384,8 +395,10 @@ void PopupWindow::Show() {
 void PopupWindow::Hide() {
   if (hwnd_ == nullptr || !visible_) return;
   visible_ = false;
+  clock_.Pause();
   KillTimer(hwnd_, kAnimTimer);
   KillTimer(hwnd_, kCaretTimer);
+  KillTimer(hwnd_, kNowTimer);
   ticking_ = false;
   Animate(/*opening=*/false);
 
@@ -432,6 +445,11 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       hoverDay_ = -1;
       hoverPrev_ = false;
       hoverNext_ = false;
+      hoverTab_ = -1;
+      hoverCalendar_ = -1;
+      hoverCollapse_ = false;
+      hoverPeriodPrev_ = false;
+      hoverPeriodNext_ = false;
       StartTicking();
       return 0;
 
@@ -446,7 +464,8 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       if (GetCursorPos(&cursor) && ScreenToClient(hwnd_, &cursor)) {
         const float scale =
             static_cast<float>(USER_DEFAULT_SCREEN_DPI) / static_cast<float>(dpi_);
-        const bool overInput = Inside(layout_.input(), static_cast<float>(cursor.x) * scale,
+        const bool overInput = Inside(ActiveLayout().input(),
+                                      static_cast<float>(cursor.x) * scale,
                                       static_cast<float>(cursor.y) * scale);
         SetCursor(LoadCursorW(nullptr, overInput ? IDC_IBEAM : IDC_ARROW));
         return TRUE;
@@ -463,6 +482,8 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       // is no reason to let them look like something was typed.
       const wchar_t typed = static_cast<wchar_t>(wparam);
       if (typed < 0x20 || typed == 0x7F) return 0;
+      // In the app a letter is a shortcut until Ctrl+K or a click puts the capsule in charge.
+      if (InApp() && !inputFocused_) return 0;
       FocusInput(true);
       model_.input.Insert(std::wstring_view(&typed, 1));
       RestartCaret();
@@ -505,11 +526,23 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
     }
 
     case WM_ACTIVATE:
-      if (LOWORD(wparam) == WA_INACTIVE) {
+      // The popup goes when something else is clicked; the app stays, like any window does.
+      if (LOWORD(wparam) == WA_INACTIVE && !InApp()) {
         Hide();
         return 0;
       }
       break;
+
+    case WM_MOUSEWHEEL:
+      if (InApp()) {
+        OnWheel(GET_WHEEL_DELTA_WPARAM(wparam));
+        return 0;
+      }
+      break;
+
+    case kFrameMessage:
+      StepMorph();
+      return 0;
 
     case WM_TIMER:
       if (wparam == kHideTimer) {
@@ -532,6 +565,11 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       if (wparam == kToastTimer) {
         KillTimer(hwnd_, kToastTimer);
         HideToast();
+        return 0;
+      }
+      if (wparam == kNowTimer) {
+        ScheduleNowTick();
+        Invalidate();
         return 0;
       }
       if (wparam == kCaretTimer) {
@@ -563,19 +601,21 @@ void PopupWindow::Reload() {
   // The dot is read here and not watched for, because Reload is what both doors lead to: the
   // popup opening, and the worker saying something changed.
   model_.offline = sync_ != nullptr && sync_->Offline();
-  if (store_ == nullptr || !store_->IsOpen()) return;
-  // Today's list is also where the tasks with no date at all land, so nothing that was created
-  // is left with nowhere to be seen.
-  model_.day = store_->ItemsForDay(model_.selected, model_.selected == model_.today);
+  if (store_ != nullptr && store_->IsOpen()) {
+    // Today's list is also where the tasks with no date at all land, so nothing that was
+    // created is left with nowhere to be seen.
+    model_.day = store_->ItemsForDay(model_.selected, model_.selected == model_.today);
 
-  // Mid-slide two months are on screen, so the dots have to cover both grids.
-  Month from = model_.month;
-  Month to = model_.month;
-  if (model_.slideDir != 0) {
-    from = (std::min)(from, model_.slideFrom);
-    to = (std::max)(to, model_.slideFrom);
+    // Mid-slide two months are on screen, so the dots have to cover both grids.
+    Month from = model_.month;
+    Month to = model_.month;
+    if (model_.slideDir != 0) {
+      from = (std::min)(from, model_.slideFrom);
+      to = (std::max)(to, model_.slideFrom);
+    }
+    model_.dots = store_->DotsForRange(GridStart(from), AddDays(GridStart(to), kGridCells - 1));
   }
-  model_.dots = store_->DotsForRange(GridStart(from), AddDays(GridStart(to), kGridCells - 1));
+  if (InApp()) ReloadApp();
 }
 
 bool PopupWindow::CreateFromInput() {
@@ -624,6 +664,8 @@ bool PopupWindow::CreateFromInput() {
     for (const DayDot& dot : model_.dots) already = already || dot.date == *draft.day;
     if (!already) model_.dots.push_back(DayDot{*draft.day, created.color});
   }
+
+  if (InApp()) AddToApp(created, draft.day);
 
   model_.enterUid = created.uid;
   model_.enterT = 0.0f;
@@ -769,6 +811,7 @@ bool PopupWindow::Tick(float ms) {
   } else if (!toastOn_) {
     model_.toast.clear();
   }
+  if (InApp() && TickApp(step)) moving = true;
   return moving;
 }
 
@@ -804,6 +847,7 @@ void PopupWindow::OnMouseMove(float x, float y) {
     TrackMouseEvent(&track);
     tracking_ = true;
   }
+  if (InApp() && OnAppMouseMove(x, y)) StartTicking();
 
   // Mid-slide the cell under the pointer belongs to a month that is still moving, so nothing
   // lights up until it lands.
@@ -819,6 +863,7 @@ void PopupWindow::OnMouseMove(float x, float y) {
 }
 
 void PopupWindow::OnLeftDown(float x, float y) {
+  if (InApp() && OnAppLeftDown(x, y)) return;
   if (Inside(layout_.prevArrow(), x, y)) {
     ChangeMonth(-1);
     return;
@@ -827,21 +872,30 @@ void PopupWindow::OnLeftDown(float x, float y) {
     ChangeMonth(1);
     return;
   }
-  if (Inside(layout_.input(), x, y)) {
+  if (Inside(ActiveLayout().input(), x, y)) {
     FocusInput(true);
-    model_.input.MoveTo(InputIndexAt(fonts_, layout_, model_, x), GetKeyState(VK_SHIFT) < 0);
+    model_.input.MoveTo(InputIndexAt(fonts_, ActiveLayout(), model_, x),
+                        GetKeyState(VK_SHIFT) < 0);
     RestartCaret();
     Invalidate();
     return;
   }
 
-  if (ToggleCardAt(x, y)) return;
+  if (!InApp() && ToggleCardAt(x, y)) return;
 
   const int cell = HitDay(x, y);
   if (cell >= 0) {
     FocusInput(false);
-    SelectDay(CellDate(model_.month, cell));
+    // In the popup a day is the door to the app; in the app it is the day the main view shows.
+    if (InApp()) {
+      SelectDay(CellDate(model_.month, cell));
+    } else {
+      Expand(CellDate(model_.month, cell));
+    }
+    return;
   }
+  // A click on nothing in particular gives the keyboard back to the shortcuts.
+  if (InApp()) FocusInput(false);
 }
 
 bool PopupWindow::OnKeyDown(WPARAM key) {
@@ -850,6 +904,24 @@ bool PopupWindow::OnKeyDown(WPARAM key) {
   // the shortcuts only fire when Alt is up.
   const bool control = GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0;
   TextInput& input = model_.input;
+
+  if (InApp()) {
+    if (control && key == 0x4B) {  // Ctrl+K: the capsule, from anywhere in the app
+      FocusInput(true);
+      RestartCaret();
+      Invalidate();
+      return true;
+    }
+    // With the capsule idle the keys are the app's; with it busy only Esc is, to let go of it.
+    // What the app does not take and comes with Ctrl -- undo, paste -- is still the capsule's.
+    if (!inputFocused_ || key == VK_ESCAPE) {
+      if (OnAppKeyDown(key)) return true;
+      if (!control) return false;
+    }
+  } else if (control && key == VK_RETURN) {
+    Expand(model_.selected);
+    return true;
+  }
 
   if (control) {
     switch (key) {
@@ -1049,7 +1121,7 @@ void PopupWindow::PlaceCandidateWindow() {
   if (context == nullptr) return;
 
   // The candidate list belongs under the caret, not in the corner Windows would pick.
-  const D2D1_POINT_2F caret = InputCaretPoint(fonts_, layout_, model_);
+  const D2D1_POINT_2F caret = InputCaretPoint(fonts_, ActiveLayout(), model_);
   const float scale = static_cast<float>(dpi_) / static_cast<float>(USER_DEFAULT_SCREEN_DPI);
   CANDIDATEFORM form{};
   form.dwStyle = CFS_CANDIDATEPOS;

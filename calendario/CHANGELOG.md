@@ -9,6 +9,44 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- Fase 6a: **el popup se expande a la app completa.** Un clic en el mes o **Ctrl+Enter** hace
+  crecer la misma ventana hasta el 80 % del área de trabajo, centrada, con un muelle de
+  rigidez 300 y amortiguación 30 que anima a la vez posición, tamaño y radio (de 14 a 8 DIP).
+  **Esc** o el botón de contraer hacen el camino inverso, también a mitad de la expansión: el
+  muelle da la vuelta desde donde esté, con la velocidad que llevaba. Con «reducir animaciones»
+  de Windows es un salto directo.
+- Fase 6a: **no es un corte a otra ventana, el contenido se reorganiza.** La barra lateral mide
+  exactamente lo que el popup y empieza en su misma esquina, así que el mes del popup *es* el
+  mini mes de la app y no se mueve ni un píxel mientras la ventana crece. La lista del día se
+  desvanece en el primer 30 % del camino, la cápsula de texto viaja primero a la derecha y
+  luego arriba —en línea recta cruzaría la rejilla— y el resto de la app entra con el fundido
+  y los 8 DIP de subida de siempre.
+- Fase 6a: **sin parpadeo al crecer.** El swap chain tiene desde el principio el tamaño de la
+  app (y un 2 % más, para el rebote del muelle), así que cada fotograma es un `SetWindowPos` y
+  nunca un `ResizeBuffers`. El reloj es un hilo que espera a `DwmFlush` y avisa una vez por
+  fotograma compuesto, sin acumular fotogramas si la interfaz va lenta. Comprobado a 125 %:
+  llega al tamaño final en unos 320 ms y se asienta hacia los 520 ms.
+- Fase 6a: **vistas de día, semana y mes.** Línea de tiempo por horas con los solapes uno al
+  lado del otro, franja de día entero, una **línea roja de ahora** que se mueve en el cambio de
+  cada minuto, y rueda del ratón para desplazar las horas. La barra lateral añade la lista de
+  calendarios con su interruptor y la bandeja de tareas sin fecha. Atajos `D`, `S`, `M`, `T`,
+  flechas y `Ctrl+K`.
+- Fase 6a: **las repeticiones se despliegan**, en el popup y en la app, como CLAUDE.md dejó
+  dicho para cuando hubiera vistas de semana y mes: FREQ diaria, semanal, mensual y anual con
+  INTERVAL, BYDAY, COUNT y UNTIL. Lo que no se sabe leer se queda en su primer día, como antes.
+- Fase 6a: capturas `app-dia`, `app-semana`, `app-mes` y `app-transicion`, en los dos temas.
+
+### Cambiado
+
+- **Esquema v2**, solo con columnas nuevas: `calendars.hidden` (el interruptor de la barra
+  lateral; no puede ser `visible`, que cada pasada de sincronización vuelve a poner a 1),
+  `events.location` y `events.moved_from` (las dos para la fase 6b). Una caché v1 se migra
+  sola al abrir.
+- **Un clic en un día del popup abre la app en ese día**, en vez de solo seleccionarlo. Las
+  flechas siguen moviendo el día sin abrir nada.
+- Lo nuevo **ya no cae en un calendario oculto**: si el calendario por defecto está apagado en
+  la barra lateral, va al siguiente que se vea.
+
 - Fase 5: **sincronización bidireccional con Google Calendar y Google Tasks.** Lo creado en el
   popup aparece en la web, lo creado en la web aparece en el popup en la siguiente pasada, y la
   interfaz no espera a la red en ningún momento: todo ocurre en un hilo propio y el popup sigue

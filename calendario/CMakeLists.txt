@@ -104,6 +104,7 @@ target_compile_definitions(agenda_nlp PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LE
 # JSON de Google y estas columnas, no tiene red ni handles, y es lo unico de la fase 5 que se
 # puede probar sin cuenta y sin internet. Por eso agenda_data enlaza nlohmann.
 add_library(agenda_data STATIC
+  src/core/recurrence.cpp
   src/data/db.cpp
   src/data/schema.cpp
   src/data/store.cpp
@@ -122,13 +123,16 @@ add_executable(Agenda WIN32
   src/sync/google.cpp
   src/sync/http.cpp
   src/sync/oauth.cpp
+  src/ui/app_view.cpp
   src/ui/components.cpp
   src/ui/paint.cpp
   src/ui/popup_view.cpp
   src/ui/popup_window.cpp
+  src/ui/popup_window_app.cpp
   src/ui/snapshot.cpp
   src/ui/text_input.cpp
   src/ui/theme.cpp
+  src/ui/vsync.cpp
   assets/agenda.rc)
 target_include_directories(Agenda PRIVATE src)
 target_compile_options(Agenda PRIVATE ${AGENDA_WARNINGS})
@@ -147,10 +151,12 @@ target_link_options(Agenda PRIVATE /MANIFEST:NO)
 
 enable_testing()
 add_executable(agenda_tests
+  tests/test_app.cpp
   tests/test_args.cpp
   tests/test_dates.cpp
   tests/test_nlp.cpp
   tests/test_popup.cpp
+  tests/test_recurrence.cpp
   tests/test_store.cpp
   tests/test_sync.cpp
   tests/test_text_input.cpp

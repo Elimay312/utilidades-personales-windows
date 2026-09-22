@@ -19,6 +19,7 @@ Theme DarkTheme() {
   theme.border = Rgb(0xFFFFFF, 0.08f);
   theme.hover = Rgb(0xFFFFFF, 0.06f);
   theme.selection = Rgb(0x4A8BF5, 0.35f);
+  theme.now = Rgb(0xFF5A5F);
   return theme;
 }
 
@@ -39,6 +40,9 @@ Theme LightTheme() {
   theme.border = Rgb(0x000000, 0.10f);
   theme.hover = Rgb(0x000000, 0.05f);
   theme.selection = Rgb(0x2F6FE0, 0.28f);
+  // A shade darker for the same reason the accent is: a thin red line has to hold its own
+  // against a pale panel.
+  theme.now = Rgb(0xE0393E);
   return theme;
 }
 

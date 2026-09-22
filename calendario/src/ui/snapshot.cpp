@@ -10,6 +10,8 @@
 #include "core/dates.h"
 #include "core/hr.h"
 #include "core/log.h"
+#include "ui/app_layout.h"
+#include "ui/app_view.h"
 #include "ui/layout.h"
 #include "ui/paint.h"
 #include "ui/popup_view.h"
@@ -34,6 +36,15 @@ constexpr Date kSnapshotToday{std::chrono::year{2026}, std::chrono::September,
                               std::chrono::day{22}};
 constexpr int kSnapshotMinute = 10 * 60;  // and a fixed hour, for the same reason
 
+// The work area the transition is drawn over: the one the app's design size is 80 % of.
+constexpr RECT kSnapshotWork{0, 0, 1920, 1032};
+
+AppView ViewFor(std::wstring_view view) {
+  if (view == L"app-semana") return AppView::Week;
+  if (view == L"app-mes") return AppView::Month;
+  return AppView::Day;
+}
+
 }  // namespace
 
 bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F panel,
@@ -42,6 +53,8 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
   // hundred and sixty milliseconds is the only way to judge it without filming the screen.
   const bool justCreated = view == L"popup-creado";
   const bool offline = view == L"popup-sin-conexion";
+  const bool app = view.starts_with(L"app-");
+  const bool transition = view == L"app-transicion";
   if (!KnowsSnapshotView(view)) {
     LogError(L"--render-snapshot does not know the view '{}'", view);
     return false;
@@ -87,8 +100,45 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
     model.preview = nlp::ParseInput(text, nlp::Now{kSnapshotToday, kSnapshotMinute});
   }
 
-  const UINT width = static_cast<UINT>(layout.width) + 2 * kMarginDip;
-  const UINT height = static_cast<UINT>(layout.height) + 2 * kMarginDip;
+  // The app: the popup's layout is still the sidebar, and the app is laid out at its design
+  // size -- or, for the transition, at the size the window has halfway between the two, placed
+  // where it would be on a real work area.
+  AppModel appModel;
+  appModel.view = ViewFor(view);
+  appModel.nowMinute = kSnapshotMinute;
+  float progress = 1.0f;
+  RECT window{0, 0, static_cast<LONG>(kAppBaseWidthDip), static_cast<LONG>(kAppBaseHeightDip)};
+  if (app) {
+    // In the app the capsule waits unfocused, so D, S and M are views and not letters.
+    model.focus = text.empty() ? 0.0f : 1.0f;
+    model.caretOn = !text.empty();
+    FillSampleApp(model, appModel);
+    if (transition) {
+      progress = 0.5f;
+      window = LerpRect(PlaceRect(kSnapshotWork, layout.size(), USER_DEFAULT_SCREEN_DPI),
+                        ExpandedRect(kSnapshotWork), progress);
+    }
+  }
+  const D2D1_SIZE_F appSize{static_cast<float>(window.right - window.left),
+                            static_cast<float>(window.bottom - window.top)};
+  const AppLayout appLayout =
+      MakeAppLayout(appSize, layout, appModel.view, AllDayRows(appModel));
+  if (app) {
+    const Date first = appModel.first;
+    const bool showsToday = first <= kSnapshotToday &&
+                            kSnapshotToday < AddDays(first, ShownDays(appModel.view));
+    appModel.scroll = InitialScroll(appLayout, showsToday, kSnapshotMinute);
+  }
+
+  UINT width = static_cast<UINT>(layout.width) + 2 * kMarginDip;
+  UINT height = static_cast<UINT>(layout.height) + 2 * kMarginDip;
+  if (transition) {
+    width = static_cast<UINT>(kSnapshotWork.right - kSnapshotWork.left);
+    height = static_cast<UINT>(kSnapshotWork.bottom - kSnapshotWork.top);
+  } else if (app) {
+    width = static_cast<UINT>(appSize.width) + 2 * kMarginDip;
+    height = static_cast<UINT>(appSize.height) + 2 * kMarginDip;
+  }
 
   ComPtr<IWICImagingFactory> wic;
   if (Failed(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
@@ -122,9 +172,16 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
 
   target->BeginDraw();
   target->Clear(palette.light ? kLightBackdrop : kDarkBackdrop);
-  target->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(kMarginDip),
-                                                     static_cast<float>(kMarginDip)));
-  DrawPopup(target.Get(), fonts, palette, layout, model, /*acrylic=*/true);
+  const float margin = static_cast<float>(kMarginDip);
+  const float originX = transition ? static_cast<float>(window.left) : margin;
+  const float originY = transition ? static_cast<float>(window.top) : margin;
+  target->SetTransform(D2D1::Matrix3x2F::Translation(originX, originY));
+  if (app) {
+    DrawApp(target.Get(), fonts, palette, layout, appLayout, model, appModel, progress,
+            /*acrylic=*/true);
+  } else {
+    DrawPopup(target.Get(), fonts, palette, layout, model, /*acrylic=*/true);
+  }
   if (Failed(target->EndDraw(), L"ID2D1RenderTarget::EndDraw")) return false;
 
   std::error_code ec;

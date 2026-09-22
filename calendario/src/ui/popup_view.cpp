@@ -15,33 +15,6 @@ using Microsoft::WRL::ComPtr;
 namespace agenda {
 namespace {
 
-// Chevron metrics at the size the design system is written at.
-constexpr float kChevronHalfWidth = 3.5f;
-constexpr float kChevronHalfHeight = 6.0f;
-constexpr float kChevronStroke = 1.5f;
-
-void DrawChevron(ID2D1RenderTarget* target, const Theme& theme, const PanelLayout& layout,
-                 ID2D1SolidColorBrush* brush, const D2D1_RECT_F& rect, bool pointsLeft,
-                 float hover, ID2D1StrokeStyle* style) {
-  if (hover > 0.0f) {
-    brush->SetColor(Fade(theme.hover, hover));
-    FillCircle(target, Center(rect), layout.arrowSize / 2.0f, brush);
-  }
-
-  // Two strokes instead of a glyph: at this size a drawn chevron lands on the pixel grid the
-  // same way every time, whatever font the machine ended up with.
-  const float type = layout.type;
-  const D2D1_POINT_2F center = Center(rect);
-  const float side = (pointsLeft ? kChevronHalfWidth : -kChevronHalfWidth) * type;
-  const float reach = kChevronHalfHeight * type;
-  brush->SetColor(Lerp(theme.textSecondary, theme.textPrimary, hover));
-  target->DrawLine(D2D1_POINT_2F{center.x + side, center.y - reach},
-                   D2D1_POINT_2F{center.x - side, center.y}, brush, kChevronStroke * type, style);
-  target->DrawLine(D2D1_POINT_2F{center.x - side, center.y},
-                   D2D1_POINT_2F{center.x + side, center.y + reach}, brush, kChevronStroke * type,
-                   style);
-}
-
 void DrawHeader(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                 const PanelLayout& layout, ID2D1SolidColorBrush* brush, const PopupModel& model,
                 ID2D1StrokeStyle* style) {
@@ -168,47 +141,69 @@ void DrawEventList(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
 
 }  // namespace
 
-void DrawPopup(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
-               const PanelLayout& layout, const PopupModel& model, bool acrylic) {
+void DrawPanel(ID2D1RenderTarget* target, const Theme& theme, D2D1_SIZE_F size, float radius,
+               bool acrylic) {
   ComPtr<ID2D1SolidColorBrush> brush;
-  if (FAILED(target->CreateSolidColorBrush(theme.panel, &brush))) return;
+  if (FAILED(target->CreateSolidColorBrush(acrylic ? theme.panel : theme.panelOpaque, &brush))) {
+    return;
+  }
+  // ClearType needs opaque pixels under the glyphs, and this panel is translucent over the
+  // acrylic, so both the window and the snapshot antialias text in greyscale.
+  target->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
 
+  const D2D1_RECT_F panel{0.0f, 0.0f, size.width, size.height};
+  FillRound(target, panel, radius, brush.Get());
+  brush->SetColor(theme.border);
+  StrokeRound(target, panel, radius, brush.Get(), 1.0f);
+}
+
+void DrawPopupBody(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                   const PanelLayout& layout, const PopupModel& model, float listAlpha) {
+  if (!fonts.ok()) return;  // no text formats means an empty panel, not a crash
+  ComPtr<ID2D1SolidColorBrush> brush;
+  if (FAILED(target->CreateSolidColorBrush(theme.textPrimary, &brush))) return;
+  ComPtr<ID2D1StrokeStyle> rounded = RoundedStroke(target);
+
+  DrawHeader(target, fonts, theme, layout, brush.Get(), model, rounded.Get());
+  DrawWeekdays(target, fonts, theme, layout, brush.Get());
+  DrawGrid(target, fonts, theme, layout, brush.Get(), model);
+  if (listAlpha <= 0.0f) return;
+
+  // While there is something written, the list gives way to the preview: the grid stays put
+  // and only the cards nobody is looking at move out of the way.
+  const D2D1_RECT_F list = DayListRect(layout, model);
+  ComPtr<ID2D1Layer> layer;
+  const bool faded = listAlpha < 1.0f && SUCCEEDED(target->CreateLayer(nullptr, &layer));
+  if (faded) {
+    target->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr,
+                                            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                            D2D1::IdentityMatrix(), listAlpha),
+                      layer.Get());
+  }
+  DrawEventList(target, fonts, theme, layout, brush.Get(), model, list);
+  if (faded) target->PopLayer();
+}
+
+void DrawPopupInput(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                    const PanelLayout& layout, const PopupModel& model) {
+  if (!fonts.ok()) return;
+  ComPtr<ID2D1SolidColorBrush> brush;
+  if (FAILED(target->CreateSolidColorBrush(theme.textPrimary, &brush))) return;
   // A brush of its own, because the input hands it to DirectWrite as a drawing effect and it
   // has to still be the accent colour by the time the layout is drawn.
   ComPtr<ID2D1SolidColorBrush> accent;
   if (FAILED(target->CreateSolidColorBrush(theme.accent, &accent))) return;
 
-  // ClearType needs opaque pixels under the glyphs, and this panel is translucent over the
-  // acrylic, so both the window and the snapshot antialias text in greyscale.
-  target->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-
-  const D2D1_RECT_F panel = layout.panel();
-  brush->SetColor(acrylic ? theme.panel : theme.panelOpaque);
-  FillRound(target, panel, layout.panelRadius, brush.Get());
-  brush->SetColor(theme.border);
-  StrokeRound(target, panel, layout.panelRadius, brush.Get(), 1.0f);
-
-  if (!fonts.ok()) return;  // no text formats means an empty panel, not a crash
-
-  ComPtr<ID2D1Factory> factory;
-  target->GetFactory(&factory);
-  ComPtr<ID2D1StrokeStyle> rounded;
-  factory->CreateStrokeStyle(
-      D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND,
-                                  D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND),
-      nullptr, 0, &rounded);
-
-  DrawHeader(target, fonts, theme, layout, brush.Get(), model, rounded.Get());
-  DrawWeekdays(target, fonts, theme, layout, brush.Get());
-  DrawGrid(target, fonts, theme, layout, brush.Get(), model);
-  // While there is something written, the list gives way to the preview: the grid stays put
-  // and only the cards nobody is looking at move out of the way.
-  const D2D1_RECT_F list = DayListRect(layout, model);
-
-  DrawEventList(target, fonts, theme, layout, brush.Get(), model, list);
   if (ShowingPreview(model)) DrawPreviewCard(target, fonts, theme, layout, brush.Get(), model);
   if (ShowingToast(model)) DrawToast(target, fonts, theme, layout, brush.Get(), model);
   DrawTextInput(target, fonts, theme, layout, brush.Get(), accent.Get(), model);
+}
+
+void DrawPopup(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+               const PanelLayout& layout, const PopupModel& model, bool acrylic) {
+  DrawPanel(target, theme, layout.size(), layout.panelRadius, acrylic);
+  DrawPopupBody(target, fonts, theme, layout, model, 1.0f);
+  DrawPopupInput(target, fonts, theme, layout, model);
 }
 
 }  // namespace agenda

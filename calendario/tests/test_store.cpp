@@ -240,7 +240,7 @@ TEST_CASE("creating queues one operation and undoing takes both away") {
   CHECK(store->TakeFailures().empty());
 }
 
-TEST_CASE("the recurrence is kept but the event only shows on the day it starts") {
+TEST_CASE("a repeating event shows on every day its rule lands on, and puts dots there") {
   Open store;
   Draft draft = EventAt(L"Gym", Day(2026, 9, 28), 7 * 60, 8 * 60);
   draft.recurrence = L"RRULE:FREQ=WEEKLY;BYDAY=MO";
@@ -251,8 +251,116 @@ TEST_CASE("the recurrence is kept but the event only shows on the day it starts"
   REQUIRE(items.size() == 1);
   CHECK(items[0].repeats);
 
-  // Phase 4 does not expand occurrences: the following Monday is still empty.
-  CHECK(store->ItemsForDay(Day(2026, 10, 5), false).empty());
+  // Phase 6 unfolds it: the following Monday has it, with its clock, and the Tuesday does not.
+  const std::vector<DayItem> next = store->ItemsForDay(Day(2026, 10, 5), false);
+  REQUIRE(next.size() == 1);
+  CHECK(next[0].uid == items[0].uid);
+  CHECK(next[0].startMin == 7 * 60);
+  CHECK(next[0].endMin == 8 * 60);
+  CHECK(store->ItemsForDay(Day(2026, 10, 6), false).empty());
+  // And nothing before the series begins.
+  CHECK(store->ItemsForDay(Day(2026, 9, 21), false).empty());
+
+  const std::vector<DayDot> dots = store->DotsForRange(Day(2026, 9, 28), Day(2026, 10, 18));
+  CHECK(dots.size() == 3);
+}
+
+TEST_CASE("v1 caches migrate to v2 and keep what they had") {
+  const std::filesystem::path file = ScratchFile();
+  Erase(file);
+  std::wstring uid;
+  {
+    Store store;
+    REQUIRE(store.Open(file));
+    uid = store.Create(EventAt(L"Dentista", Day(2026, 9, 23), 17 * 60, 18 * 60)).uid;
+    store.Drain();
+  }
+  {
+    // Put the file back the way a phase 5 build left it: the v2 columns gone, the stamp at 1.
+    Db db;
+    REQUIRE(db.Open(file));
+    REQUIRE(db.Exec("ALTER TABLE events DROP COLUMN location; "
+                    "ALTER TABLE events DROP COLUMN moved_from; "
+                    "ALTER TABLE calendars DROP COLUMN hidden;"));
+    REQUIRE(db.SetUserVersion(1));
+  }
+  {
+    Store store;
+    REQUIRE(store.Open(file));
+    CHECK(store.db().UserVersion() == kSchemaVersion);
+    const std::vector<DayItem> items = store.ItemsForDay(Day(2026, 9, 23), false);
+    REQUIRE(items.size() == 1);
+    CHECK(items[0].uid == uid);
+    CHECK(CountRows(store.db(), "SELECT COUNT(*) FROM events WHERE location = ''") == 1);
+    CHECK(CountRows(store.db(), "SELECT COUNT(*) FROM calendars WHERE hidden = 0") == 2);
+  }
+  Erase(file);
+}
+
+TEST_CASE("switching a calendar off hides its days without touching what Google lists") {
+  Open store;
+  const Date day = Day(2026, 9, 23);
+  const DayItem shown = store->Create(EventAt(L"Dentista", day, 17 * 60, 18 * 60));
+  store.settle();
+
+  store->SetCalendarHidden(kLocalCalendarId, true);
+  store.settle();
+  CHECK(store->ItemsForDay(day, false).empty());
+  CHECK(store->DotsForRange(Day(2026, 9, 1), Day(2026, 9, 30)).empty());
+
+  // Still listed, with its switch off, so the sidebar can offer to turn it back on.
+  bool found = false;
+  for (const CalendarInfo& calendar : store->AllCalendars()) {
+    if (calendar.id != kLocalCalendarId) continue;
+    found = true;
+    CHECK(calendar.hidden);
+    CHECK_FALSE(calendar.isTaskList);
+    CHECK(calendar.color == 0x4A8BF5);
+  }
+  CHECK(found);
+
+  // What the pull writes on every pass is `visible`, and that is not the switch.
+  REQUIRE(store->db().RunOnce("UPDATE calendars SET visible = 1"));
+  CHECK(store->ItemsForDay(day, false).empty());
+
+  store->SetCalendarHidden(kLocalCalendarId, false);
+  store.settle();
+  REQUIRE(store->ItemsForDay(day, false).size() == 1);
+  CHECK(store->ItemsForDay(day, false)[0].uid == shown.uid);
+}
+
+TEST_CASE("with the default calendar switched off, new things go to one that can be seen") {
+  Open store;
+  REQUIRE(store->db().RunOnce(
+      "INSERT INTO calendars (id, kind, title, color, is_primary) "
+      "VALUES ('trabajo', 'calendar', 'Trabajo', 0x7CB342, 0)"));
+  CHECK(store->DefaultCalendar(false) == kLocalCalendarId);
+  store->SetCalendarHidden(kLocalCalendarId, true);
+  store.settle();
+  CHECK(store->DefaultCalendar(false) == "trabajo");
+}
+
+TEST_CASE("the tray of undated tasks holds only those, the ones to do first") {
+  Open store;
+  Draft chore;
+  chore.isTask = true;
+  chore.title = L"Comprar leche";
+  const DayItem milk = store->Create(chore);
+  chore.title = L"Arreglar la bici";
+  store->Create(chore);
+  chore.title = L"Con fecha";
+  chore.day = Day(2026, 9, 23);
+  store->Create(chore);
+  store.settle();
+  store->SetDone(milk.uid, true);
+  store.settle();
+
+  const std::vector<DayItem> tray = store->UndatedTasks();
+  REQUIRE(tray.size() == 2);
+  CHECK(tray[0].title == L"Arreglar la bici");
+  CHECK_FALSE(tray[0].done);
+  CHECK(tray[1].title == L"Comprar leche");
+  CHECK(tray[1].done);
 }
 
 TEST_CASE("what was created is still there after the app is closed and opened again") {

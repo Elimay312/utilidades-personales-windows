@@ -5,6 +5,8 @@
 
 #include <vector>
 
+#include <wrl/client.h>
+
 #include "data/model.h"
 #include "ui/layout.h"
 #include "ui/paint.h"
@@ -50,6 +52,14 @@ void DrawTextInput(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
 void DrawPreviewCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                      const PanelLayout& layout, ID2D1SolidColorBrush* brush,
                      const PopupModel& model);
+
+// The round-capped stroke the chevrons and the other drawn icons use.
+Microsoft::WRL::ComPtr<ID2D1StrokeStyle> RoundedStroke(ID2D1RenderTarget* target);
+
+// A month arrow: a chevron of two strokes, with a round hover wash behind it at `hover`.
+void DrawChevron(ID2D1RenderTarget* target, const Theme& theme, const PanelLayout& layout,
+                 ID2D1SolidColorBrush* brush, const D2D1_RECT_F& rect, bool pointsLeft,
+                 float hover, ID2D1StrokeStyle* style);
 
 // Where in the text a click at panel coordinate `x` lands, so the mouse can place the caret.
 size_t InputIndexAt(const Fonts& fonts, const PanelLayout& layout, const PopupModel& model,

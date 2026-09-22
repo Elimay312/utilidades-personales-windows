@@ -94,12 +94,16 @@ struct DayDot {
   std::uint32_t color = 0;
 };
 
-// A calendar, as the tray menu has to show it. Not the whole row: the menu needs a name to
-// draw, an id to send back and a tick to put next to one of them.
+// A calendar, as the tray menu and the sidebar have to show it. Not the whole row: a name to
+// draw, an id to send back, a tick next to the default, and -- for the sidebar -- its colour and
+// whether the user switched it off.
 struct CalendarInfo {
   std::string id;
   std::wstring title;
   bool isDefault = false;
+  bool isTaskList = false;
+  std::uint32_t color = 0;
+  bool hidden = false;
 };
 
 }  // namespace agenda

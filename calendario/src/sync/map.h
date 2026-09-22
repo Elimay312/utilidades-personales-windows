@@ -22,9 +22,11 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <initializer_list>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "core/dates.h"
 #include "data/model.h"
@@ -133,6 +135,16 @@ nlohmann::json WriteTask(const TaskRow& row);
 // difference is the reason a task can be duplicated by a badly timed retry and an event cannot.
 std::string EventIdFor(std::wstring_view uid);
 bool IsUsableEventId(std::string_view id);
+
+// --- The wire -----------------------------------------------------------------------------
+
+// Percent-encoding for anything that goes into a query string or a form. Unreserved characters
+// through, everything else as %XX. It is here and not in http.cpp so the tests can reach it:
+// the characters that matter are the '+' and '=' of a syncToken and the ':' of a calendar id,
+// and those are exactly the ones that go wrong silently rather than loudly.
+std::string UrlEscape(std::string_view text);
+std::string FormEncode(
+    std::initializer_list<std::pair<std::string_view, std::string_view>> fields);
 
 // --- Retrying -----------------------------------------------------------------------------
 

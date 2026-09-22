@@ -119,6 +119,7 @@ add_executable(Agenda WIN32
   src/app/tray.cpp
   src/core/config.cpp
   src/core/log.cpp
+  src/sync/http.cpp
   src/ui/components.cpp
   src/ui/paint.cpp
   src/ui/popup_view.cpp
@@ -131,9 +132,10 @@ target_include_directories(Agenda PRIVATE src)
 target_compile_options(Agenda PRIVATE ${AGENDA_WARNINGS})
 target_compile_definitions(Agenda PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 # user32, shell32, ole32 y uuid ya vienen en CMAKE_C_STANDARD_LIBRARIES de MSVC. dwrite entra
-# con el texto de la fase 2 e imm32 con el IME del campo de entrada.
+# con el texto de la fase 2 e imm32 con el IME del campo de entrada. winhttp entra con la
+# fase 5.
 target_link_libraries(Agenda PRIVATE agenda_nlp agenda_data nlohmann_json::nlohmann_json
-  d2d1 d3d11 dxgi dcomp dwmapi dwrite imm32 windowscodecs)
+  d2d1 d3d11 dxgi dcomp dwmapi dwrite imm32 windowscodecs winhttp)
 # El manifiesto (DPI Per-Monitor v2) entra por agenda.rc, no por el generado por el linker.
 target_link_options(Agenda PRIVATE /MANIFEST:NO)
 

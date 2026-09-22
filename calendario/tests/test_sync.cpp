@@ -272,6 +272,25 @@ TEST_CASE("our uid is an identifier Google will take") {
   REQUIRE_FALSE(IsUsableEventId("abc"));  // under five characters
 }
 
+TEST_CASE("what goes into a query string comes out escaped") {
+  REQUIRE(UrlEscape("hola") == "hola");
+  REQUIRE(UrlEscape("a-b_c.d~e") == "a-b_c.d~e");  // the unreserved four go through
+  // A syncToken is base64 and carries these three. Left alone, '+' becomes a space at the far
+  // end and the next incremental pass silently turns into a full one.
+  REQUIRE(UrlEscape("CPjq/8rk+/YCEPjq") == "CPjq%2F8rk%2B%2FYCEPjq");
+  REQUIRE(UrlEscape("eli@gmail.com") == "eli%40gmail.com");
+  REQUIRE(UrlEscape("es-CO#1") == "es-CO%231");
+}
+
+TEST_CASE("a form leaves out what it has nothing to say about") {
+  REQUIRE(FormEncode({{"grant_type", "refresh_token"}, {"refresh_token", "1//abc"}}) ==
+          "grant_type=refresh_token&refresh_token=1%2F%2Fabc");
+  // An empty secret is left out rather than sent empty: Google answers `client_secret=` with
+  // invalid_client, which is a worse thing to read than nothing.
+  REQUIRE(FormEncode({{"a", "1"}, {"b", ""}, {"c", "3"}}) == "a=1&c=3");
+  REQUIRE(FormEncode({}).empty());
+}
+
 TEST_CASE("the wait after a 429 grows, has a ceiling, and listens to the server") {
   REQUIRE(BackoffMs(1, 0) == 500);
   REQUIRE(BackoffMs(2, 0) == 1000);

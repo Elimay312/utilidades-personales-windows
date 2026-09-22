@@ -381,6 +381,40 @@ bool IsUsableEventId(std::string_view id) {
   return true;
 }
 
+// --- The wire -----------------------------------------------------------------------------
+
+std::string UrlEscape(std::string_view text) {
+  std::string out;
+  out.reserve(text.size());
+  for (const char letter : text) {
+    const bool unreserved = (letter >= 'A' && letter <= 'Z') ||
+                            (letter >= 'a' && letter <= 'z') ||
+                            (letter >= '0' && letter <= '9') || letter == '-' ||
+                            letter == '_' || letter == '.' || letter == '~';
+    if (unreserved) {
+      out.push_back(letter);
+    } else {
+      out += std::format("%{:02X}", static_cast<unsigned>(static_cast<unsigned char>(letter)));
+    }
+  }
+  return out;
+}
+
+std::string FormEncode(
+    std::initializer_list<std::pair<std::string_view, std::string_view>> fields) {
+  std::string out;
+  for (const auto& [name, value] : fields) {
+    // An empty field is left out rather than sent empty: the token endpoint answers a
+    // `client_secret=` with invalid_client, which is a worse thing to read than nothing.
+    if (value.empty()) continue;
+    if (!out.empty()) out.push_back('&');
+    out += UrlEscape(name);
+    out.push_back('=');
+    out += UrlEscape(value);
+  }
+  return out;
+}
+
 // --- Retrying -----------------------------------------------------------------------------
 
 int BackoffMs(int attempt, int retryAfterSeconds) {

@@ -242,7 +242,7 @@ de sus botones, la isla le devuelve **por esa misma conexión** cuál fue, y la 
 **Los cortes, que son los que sostienen la enmienda:**
 
 - **Solo texto y botones.** Un aviso es un título (80 caracteres como mucho), una línea (120),
-  un color `#RRGGBB` y hasta 4 botones con un id corto (`[a-z0-9]`, 16) y su etiqueta (16).
+  un color `#RRGGBB`, una insignia opcional de 2 letras o dígitos (ver abajo) y hasta 4 botones con un id corto (`[a-z0-9]`, 16) y su etiqueta (16).
   Ni rutas, ni URLs, ni imágenes, ni nada que se abra, se cargue o se ejecute. Lo que no encaja
   se recorta o se rechaza.
 - **4 KB por aviso y 3 esperando a la vez.** Una línea más larga corta la conexión; un cuarto
@@ -264,6 +264,15 @@ lado de esa tubería** (`GetNamedPipeClientProcessId`, leído al conectarse). No
 la isla no pone a nadie delante ni toca ninguna ventana, solo le deja a esa app hacerlo **una
 vez**, y Windows retira el permiso con la siguiente entrada. Nunca `ASFW_ANY`, que se lo daría
 a cualquiera.
+
+**La insignia de la burbuja — enmienda del 22 de septiembre de 2026.** Mientras un aviso espera,
+la burbuja junto a la isla es un círculo como el de Xiaomi, y lo que lleva dentro lo pone la app:
+un campo más, `insignia`, de **1 o 2 letras o dígitos** (Agenda manda el día del evento, `15`).
+Opcional; sin él, la burbuja lleva un punto de su color. Cualquier otro carácter la anula entera,
+en vez de recortarla: dos caracteres no dan para esconder nada, y así tampoco se cuela un símbolo
+que parezca de otra app. No cambia nada más: sigue siendo texto, se pinta con la misma fuente que
+el resto, y **la región de la ventana crece solo lo que mide la burbuja** (28 × 32 px lógicos)
+mientras hay un aviso esperando, para no quitarle al navegador ni un clic más.
 
 ---
 

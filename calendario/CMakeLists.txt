@@ -9,7 +9,7 @@ endif()
 
 # C ademas de CXX: la amalgamacion de SQLite es C, y sin declararlo CMake no sabe con que
 # enlazar ese objetivo.
-project(Agenda VERSION 0.1.0 LANGUAGES C CXX)
+project(Agenda VERSION 0.6.0 LANGUAGES C CXX)
 
 if(NOT MSVC)
   message(FATAL_ERROR "Agenda solo se compila con MSVC x64 (Visual Studio 2022).")

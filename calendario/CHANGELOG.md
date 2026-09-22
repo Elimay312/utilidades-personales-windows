@@ -7,6 +7,8 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-22
+
 ### Añadido
 
 - Fase 6a: **el popup se expande a la app completa.** Un clic en el mes o **Ctrl+Enter** hace

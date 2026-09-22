@@ -1,3 +1,4 @@
+using System.Drawing;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Dwm;
@@ -6,8 +7,8 @@ using Windows.Win32.UI.WindowsAndMessaging;
 namespace Dock;
 
 /// <summary>
-/// Las tres únicas cosas que el dock le hace a una ventana ajena: mirar si está al
-/// frente, traerla al frente, y minimizarla.
+/// Las únicas cosas que el dock le hace a una ventana ajena: mirar si está al frente
+/// o a la vista, traerla al frente, y minimizarla.
 ///
 /// Todas están sujetas a la enmienda 1 de SEGURIDAD.md: solo se llaman como respuesta
 /// directa a un clic del usuario sobre un icono del dock, nunca desde un temporizador
@@ -21,6 +22,36 @@ internal static unsafe class WindowActions
 
     public static bool IsMinimized(HWND window)
         => !window.IsNull && PInvoke.IsIconic(window);
+
+    /// <summary>
+    /// ¿Está la ventana <b>a la vista</b>, o solo abierta? Para el usuario, minimizada y
+    /// tapada por otra son el mismo caso: no la ve. A la vista es lo otro.
+    ///
+    /// Se pregunta por el punto central porque la respuesta ya la tiene el sistema:
+    /// <c>WindowFromPoint</c> devuelve la ventana que está más arriba en ese píxel, así
+    /// que si la de más arriba es la nuestra, ahí se ve. Recorrer el orden Z a mano da lo
+    /// mismo con veinte líneas más y con el mismo margen de error.
+    ///
+    /// Los dos sesgos conocidos caen del lado seguro — decir «no se ve» y sacarla, antes
+    /// que tragarse algo que el usuario estaba mirando:
+    /// <list type="bullet">
+    /// <item>Si el centro cae debajo del propio dock, contesta el dock: WindowFromPoint
+    /// dice quién está encima, no quién recoge el clic, y por eso ignora HTTRANSPARENT.</item>
+    /// <item>Una ventana tapada justo por el centro cuenta como tapada aunque se le vea
+    /// un borde.</item>
+    /// </list>
+    /// </summary>
+    public static bool IsOnScreen(HWND window)
+    {
+        if (window.IsNull || PInvoke.IsIconic(window)) return false;
+        if (!PInvoke.GetWindowRect(window, out RECT rect)) return false;
+
+        Point center = new((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
+        HWND top = PInvoke.WindowFromPoint(center);
+
+        // GA_ROOT porque en ese píxel lo que hay es un control hijo, no la ventana.
+        return !top.IsNull && PInvoke.GetAncestor(top, GET_ANCESTOR_FLAGS.GA_ROOT) == window;
+    }
 
     /// <summary>
     /// Trae la ventana al frente, restaurándola si estaba minimizada.

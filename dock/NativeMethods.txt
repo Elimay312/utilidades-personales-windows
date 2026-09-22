@@ -129,6 +129,12 @@ EnumWindows
 GetShellWindow
 GetCurrentProcessId
 
+// Si la ventana se VE o solo esta abierta: quien esta encima de su punto central. Es
+// lectura pura de la geometria que ya mantiene el sistema, sin hooks y sin recorrer
+// procesos. GetAncestor porque en ese pixel lo que contesta es un control hijo.
+WindowFromPoint
+GetAncestor
+
 // Que app abre un protocolo. Solo LECTURA de asociaciones del shell: sirve para
 // ponerle al icono de una URL la cara del navegador que la va a abrir.
 AssocQueryStringW

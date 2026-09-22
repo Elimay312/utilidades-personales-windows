@@ -24,14 +24,17 @@ Lo que hay ahora en `main`. Se está probando en varios equipos antes de darlo p
 
 ### Cambiado
 
-- **El clic solo esconde la ventana que tienes delante**, la del primer plano. Cualquier
-  otra la muestra saliendo del icono con el genio: minimizada, tapada por otra o en la
-  pantalla que no estás mirando, da igual. Antes escondía cualquier ventana no minimizada,
-  y eso obligaba a dar dos clics para ver una ventana que ya estaba tapada: el primero la
-  minimizaba —escondía algo que no se veía— y el segundo la traía. Para sacar una ventana
-  que el dock no minimizó no hay fotograma guardado, así que se captura en ese momento con
-  `PrintWindow`, que le pide a la app que se dibuje en vez de leer la pantalla y por eso la
-  saca entera aunque esté detrás de otras.
+- **El clic esconde la ventana que estás viendo, tenga el foco o no.** Con varias
+  pantallas el foco no dice lo que se ve: la del monitor 1 sigue delante de tus ojos
+  mientras escribes en la del 2, y el clic sobre su icono le hacía la animación de entrada
+  a algo que no se había ido. Lo que se ve se distingue de lo que solo está abierto
+  preguntando quién está encima del centro de la ventana: sobre una ventana tapada del todo
+  eso da «no se ve», donde la medida anterior —no minimizada— daba «se ve». Minimizada o
+  tapada sigue saliendo del icono con el genio; y como para esas no hay fotograma guardado
+  se captura en ese momento con `PrintWindow`, que le pide a la app que se dibuje en vez de
+  leer la pantalla y por eso la saca entera aunque esté detrás de otras. Lo que cuesta:
+  darle el foco desde el dock a una ventana que se ve pasa a ser de dos clics, porque el
+  primero se la traga.
 
 - **La memoria privada baja de 80 a 36 MB, y los hilos de 70 a 24.** El device de D3D se
   pide sobre WARP y no sobre la GPU: solo sube píxeles a superficies de composición y no

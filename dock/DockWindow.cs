@@ -2721,21 +2721,22 @@ internal sealed unsafe class DockWindow : IDisposable
                 $"minimizada={WindowActions.IsMinimized(state.MainWindow)}");
         }
 
-        // Solo esconde la ventana que tienes DELANTE, la del primer plano. Cualquier
-        // otra el clic la muestra: minimizada, tapada por otras o en la pantalla que no
-        // estás mirando, da igual.
+        // Solo esconde lo que ESTÁS VIENDO, tenga el foco o no. Con varias pantallas el
+        // foco no dice lo que se ve: la ventana del monitor 1 sigue delante de tus ojos
+        // mientras escribes en la del 2, y sacarla del icono era hacerle una animación
+        // de entrada a algo que nunca se había ido.
         //
-        // Hubo una versión intermedia que escondía cualquier ventana no minimizada.
-        // Estaba pensada para el caso "la veo y quiero quitarla de en medio", pero el
-        // caso de verdad frecuente es el contrario: la ventana está abierta y no la ves
-        // porque hay otra encima, y aquel clic la minimizaba, así que hacían falta dos
-        // clics para verla — el primero para esconder algo que ya estaba escondido.
+        // Hubo una versión intermedia que escondía cualquier ventana NO MINIMIZADA y se
+        // revirtió, porque el caso frecuente es el contrario: la ventana está abierta y
+        // no la ves porque hay otra encima, y aquel clic la minimizaba — hacían falta
+        // dos clics para ver algo que ya estaba escondido. Lo que fallaba no era la
+        // regla, era la medida: "no minimizada" no es "a la vista". Eso es lo que
+        // contesta IsOnScreen, y con él la regla se sostiene.
         //
-        // La pega conocida de este reparto: como el dock nunca roba el foco, sobre una
-        // ventana visible pero sin foco el clic solo se lo da y el cambio se nota poco.
-        // Es un clic flojo de vez en cuando, a cambio de no esconder nunca lo que
-        // querías ver.
-        if (state.HasWindow && WindowActions.IsForeground(state.MainWindow))
+        // Lo que se paga, sabiéndolo: darle el foco desde el dock a una ventana que se
+        // ve ya no se puede de un clic. El primero se la traga y el segundo la devuelve.
+        if (state.HasWindow
+            && (WindowActions.IsForeground(state.MainWindow) || WindowActions.IsOnScreen(state.MainWindow)))
         {
             // El genio se monta ANTES de minimizar, porque para capturarla tiene que
             // estar todavía ahí. Si la captura falla, se minimiza a secas: degradar es

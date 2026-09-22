@@ -16,9 +16,15 @@
   // Cuanto dura el pomodoro de Ctrl+Alt+T.
   "pomodoroMinutos": 25,
 
-  // Si un cambio de volumen hace asomar la isla.
-  // Windows ya ensena el suyo arriba a la izquierda y no se puede quitar, asi que
-  // ponlo en false si te sobra verlo dos veces.
+  // Si un cambio de volumen -- o de dispositivo de salida -- hace asomar la isla.
+  //
+  // El aviso dice el numero Y por donde sale, que es lo que le faltaba:
+  //   Volumen 48 % - LG ULTRAWIDE (NVI...
+  // Y cambiar de altavoces tiene su propio aviso: el volumen que vas a oir a partir
+  // de ahora es OTRO. El nombre se recorta si no cabe en la pildora.
+  //
+  // Windows ya ensena el suyo arriba a la izquierda y no se puede quitar (el HUD si
+  // lo suprime, capturando las teclas). Ponlo en false si te sobra verlo dos veces.
   "volumenAsoma": true,
 
   // Autoarranque con la sesion. Escribe en HKCU\...\Run, que sale en la pestana

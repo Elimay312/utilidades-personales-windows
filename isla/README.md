@@ -56,6 +56,8 @@ cruzar el borde de camino al botón de cerrar no la despierta.
 | Arrastrar la barra de progreso | Salta a esa posición al soltar |
 | `Ctrl+Alt+I` | Rota brasa → asomada → abierta |
 | `Ctrl+Alt+T` | Arranca un pomodoro. Otra vez lo cancela |
+| Llevar el ratón a otra pantalla | La isla se muda ahí (~375 ms) **en el estado en que estaba**: no vuelve a presentarse |
+| Cambiar el volumen, o de altavoces | Asoma con el número y por dónde sale: `Volumen 48 % · LG ULTRAWIDE (NVI…` |
 
 Un botón que la sesión no admite **no se dibuja**: con Brave solo sale play/pausa, porque
 declara `IsPreviousEnabled` e `IsNextEnabled` a `false`.
@@ -151,6 +153,11 @@ defecto. Es un adorno del escritorio; negarse a arrancar por una coma de más se
 Cambiar cualquier cosa **rehace la ventana entera**. Es bruto, pero es una sola ventana y
 así mudarse a una pantalla con otro DPI sale gratis en vez de ser un caso especial.
 
+Ese mismo camino es el que usa la mudanza al seguir al ratón, y por eso se midió: **17–29 ms,
+mediana 21**, reconstruyendo ventana, árbol de Composition, región y superficies de texto.
+Lo que **sobrevive** a rehacerse está elegido a mano: el pomodoro en marcha y el título que
+ya se anunció. Todo lo demás se reconstruye.
+
 ---
 
 ## 4. Cómo está hecho
@@ -202,9 +209,14 @@ nadie.
 | CPU con el panel abierto | ~0,8 % |
 
 Solo hay **un temporizador permanente**, el de 120 ms que mira si el cursor está en la
-franja. De él cuelgan también el latido de la brasa, las caducidades de los avisos y, una
-vez por segundo, la comprobación de pantalla completa. Los otros dos —el reloj de 1 s y
-la onda de 50 ms— solo corren con el panel desplegado.
+franja. De él cuelgan también el latido de la brasa, las caducidades de los avisos, la
+comprobación de pantalla completa una vez por segundo y —de la misma lectura del cursor que
+ya se hacía, sin llamadas de más— en qué pantalla estás trabajando. Los otros dos —el reloj
+de 1 s y la onda de 50 ms— solo corren con el panel desplegado.
+
+**El volumen ya no se sondea.** Se leía a 2 Hz porque `GetMasterVolumeLevelScalar` cruza al
+servicio de audio y a 8 Hz subía la CPU en reposo de 0,42 % a 2,29 % —más que todo lo demás
+junto—. Ahora avisa COM, que no cuesta nada y no llega medio segundo tarde.
 
 ---
 
@@ -228,6 +240,19 @@ la onda de 50 ms— solo corren con el panel desplegado.
 ## 6. Cosas que se midieron y no son obvias
 
 Están comentadas en el código donde tocan, pero conviene tenerlas a mano.
+
+**Cambiar el dispositivo de salida NO invalida el endpoint de audio que tienes abierto.**
+No falla: se queda contestando del dispositivo anterior. Lo midió el HUD con una sonda que
+dejaba uno abierto y cambiaba el predeterminado —**47 muestras, cero excepciones, y el
+endpoint viejo diciendo 38 % cuando el real era 100 %**—. `Audio.cs` daba por hecho lo
+contrario desde el primer día, en el medidor de pico y en el nivel, así que la onda seguía
+latiendo con el audio del dispositivo que ya no sonaba. De eso avisa ahora
+`IMMNotificationClient`, y la alternativa —sondear el id del predeterminado— se descartó
+con la misma sonda: mediana de 3,57 ms pero **50,8 ms en el peor caso**, en el hilo de UI.
+
+**Rehacer la ventana entera cuesta 17–29 ms**, mediana 21, y reescala sola: 520×260 al
+100 %, 650×325 al 125 %, 910×455 al 175 %. Por eso mudarse de pantalla puede permitirse ser
+bruto en vez de mover la ventana y recalcular medidas a mano.
 
 **`CreateHostBackdropBrush` no muestrea nada en una app Win32 sin empaquetar.** Se crea
 sin lanzar excepción y se pinta **negro**. Con un azul (0,90,220) detrás, el panel daba
@@ -273,6 +298,14 @@ aprender a respetarla.
 **Destruir la ventana para rehacerla mataba el proceso.** `WM_DESTROY` llamaba a
 `PostQuitMessage`, y eso cierra el bucle de mensajes: la ventana nueva nacía bien y el
 proceso se cerraba detrás de ella. El dock tuvo el mismo fallo con sus tres ventanas.
+
+**Y rehacerse se llevaba por delante el estado de instancia**, que es la misma trampa un
+paso más allá. Daba igual mientras solo pasara al enchufar un monitor; en cuanto la isla se
+muda con el ratón, pasa a diario y se nota: un pomodoro moría por cada paseo, y `_sonando`
+—el título ya anunciado— renacía en `null`, así que `OnMedios` creía que la canción era
+nueva y te saltaba encima la ficha entera en cada cruce de pantalla. **Si una ventana se
+reconstruye, cada campo de instancia es una decisión: o sobrevive o se pierde, y hay que
+tomarla a propósito.**
 
 ---
 

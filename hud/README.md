@@ -21,6 +21,12 @@ no llega a verlas. Eso ocupa la §1 de `SEGURIDAD.md` y vale la pena leerlo.
 también — en menos de 150 ms — cuando el volumen lo cambia otra cosa, y funciona en las tres
 pantallas, que van a 125%, 100% y 175%. `hud.json` se recarga al guardarlo.
 
+**Sigue al dispositivo de salida predeterminado.** Cambias de altavoces y las teclas mueven
+el volumen de los nuevos, no el de los viejos. No es gratis: el endpoint de audio que tienes
+abierto **no falla** al cambiar de dispositivo, se queda contestando del anterior —medido:
+47 muestras, cero excepciones, 38 % contra el 100 % real—, así que hace falta que COM avise.
+Está en `SEGURIDAD.md` §3.2 y contado en el `CHANGELOG`.
+
 ```
 Hud.exe             # lo normal
 Hud.exe --demo      # niveles falsos en bucle, sin tocar el volumen ni las teclas
@@ -50,6 +56,11 @@ en primer plano en vez del cursor arreglaría ese caso, pero obligaría a abrir 
 **Se recoloca al aparecer, no mientras está puesto.** Si cambias el volumen, mueves el ratón a
 otra pantalla y vuelves a cambiarlo antes de que se cierre (1,6 s), se queda donde estaba en
 vez de teletransportarse a media animación.
+
+La [isla](../isla/README.md) sigue al cursor con la misma idea y una regla distinta, porque
+vive permanentemente en el borde: ella **sí** se muda mientras está puesta, con una
+histéresis de ~375 ms para no mudarse al rozar un borde de paso. Un aviso que dura 1,6 s
+puede permitirse decidir una vez; una que está siempre, no.
 
 ## Los dos hitos que murieron midiendo
 

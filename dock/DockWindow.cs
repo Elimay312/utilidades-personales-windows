@@ -996,9 +996,13 @@ internal sealed unsafe class DockWindow : IDisposable
 
                 Instances.Remove((nint)hwnd.Value);
 
-                // Solo el último apaga la luz. Con un dock daba igual; con uno por
-                // pantalla, cualquier DestroyWindow inesperado se llevaba los tres.
-                if (Instances.Count == 0) PInvoke.PostQuitMessage(0);
+                // Solo el último apaga la luz, y solo si NO lo estábamos tirando
+                // nosotros. Enchufar un monitor pasa por aquí: Program tira los tres
+                // docks y vuelve a crearlos, y sin la salvedad el último WM_DESTROY
+                // dejaba puesto el WM_QUIT. Medido mandando WM_DISPLAYCHANGE desde
+                // fuera: se reconstruían los tres y acto seguido "salida limpia", sin
+                // estrellarse y sin dejar nada en el visor de eventos.
+                if (Instances.Count == 0 && !_teardown) PInvoke.PostQuitMessage(0);
                 return new LRESULT(0);
         }
 
@@ -2808,6 +2812,13 @@ internal sealed unsafe class DockWindow : IDisposable
 
     private static bool _displaysPending;
 
+    /// <summary>
+    /// Mientras somos nosotros los que tiramos un dock. Lo mira <c>WM_DESTROY</c>
+    /// para no confundir un desmontaje nuestro con que alguien nos haya cerrado la
+    /// ventana por sorpresa (ver el comentario de ahí).
+    /// </summary>
+    private static bool _teardown;
+
     public static void RunMessageLoop()
     {
         MSG msg;
@@ -2844,7 +2855,13 @@ internal sealed unsafe class DockWindow : IDisposable
         _appBar = null;
 
         _visuals?.Dispose();
-        PInvoke.DestroyWindow(_hwnd);
+
+        // DestroyWindow despacha WM_DESTROY aquí mismo, antes de volver.
+        bool anterior = _teardown;
+        _teardown = true;
+        try { PInvoke.DestroyWindow(_hwnd); }
+        finally { _teardown = anterior; }
+
         _hwnd = default;
     }
 }

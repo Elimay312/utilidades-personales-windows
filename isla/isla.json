@@ -1,8 +1,15 @@
 // Configuracion de la isla. Vive en %LOCALAPPDATA%\Isla\isla.json.
 // Admite comentarios y comas finales. Se recarga sola al guardarlo.
 {
-  // Nombre de dispositivo de la pantalla donde vive la isla. Vacio = la principal.
-  // Al arrancar, la isla imprime en la consola las que hay: \\.\DISPLAY1, etc.
+  // Nombre de dispositivo de la pantalla donde vive la isla.
+  //
+  // VACIO = la isla SIGUE AL RATON: se muda a la pantalla en la que estes trabajando.
+  // Con varios monitores es lo que quieres casi siempre; si no, la isla avisaria en
+  // una pantalla que no estas mirando. Tarda ~375 ms en decidirse, para no mudarse al
+  // rozar un borde de paso.
+  //
+  // Con un nombre puesto se queda clavada ahi y no se mueve. Al arrancar, la isla
+  // imprime en la consola las que hay: \\.\DISPLAY1, etc.
   // Ojo con las barras: en JSON hay que doblarlas -> "\\\\.\\DISPLAY2"
   "pantalla": "",
 

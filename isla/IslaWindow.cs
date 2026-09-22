@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Numerics;
 using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
@@ -130,6 +131,19 @@ internal sealed unsafe class IslaWindow : IDisposable
     private Estado _actual = Estado.Brasa;
     private bool _hover;
     private int _seguidos;
+
+    /// <summary>
+    /// Tics seguidos con el raton en otra pantalla. Cruzar de monitor pasa por el
+    /// borde, asi que sin contar tics la isla se mudaria de ida y de vuelta en el mismo
+    /// gesto.
+    /// </summary>
+    private int _ticsFuera;
+
+    /// <summary>
+    /// Si la isla sigue al raton. Sale de <c>isla.json</c>: si has fijado una pantalla,
+    /// mandas tu y no se mueve.
+    /// </summary>
+    private readonly bool _seguirCursor;
     private bool _atajo;
     private bool _visible;
     private string? _sonando;
@@ -168,9 +182,13 @@ internal sealed unsafe class IslaWindow : IDisposable
     private IslaWindow(IslaConfig config)
     {
         _config = config;
+        _seguirCursor = string.IsNullOrWhiteSpace(config.Pantalla);
 
         // Una isla sola, no una por pantalla: la muesca de un portatil tampoco se
-        // repite en cada monitor.
+        // repite en cada monitor. Lo que si hace es MUDARSE a la pantalla donde estas
+        // trabajando, que es lo que resuelve el problema de verdad -- avisar en un
+        // monitor que no estas mirando -- sin triplicar la ventana, el arbol de
+        // Composition, la region y los botones de reproduccion.
         _monitor = Elegir(config.Pantalla);
         PInvoke.GetDpiForMonitor(_monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out uint dpiX, out _);
         _dpi = dpiX;
@@ -259,10 +277,46 @@ internal sealed unsafe class IslaWindow : IDisposable
                 if (NombreDe(m) == pantalla) return m;
             }
 
-            Console.Error.WriteLine($"[isla] no encuentro la pantalla {pantalla}; se usa la principal.");
+            Console.Error.WriteLine($"[isla] no encuentro la pantalla {pantalla}; se usa la del raton.");
         }
 
-        return PInvoke.MonitorFromPoint(default, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY);
+        // Vacio = donde esta el raton, que es donde estas trabajando. Antes era siempre
+        // la principal: con tres monitores eso queria decir que la isla avisaba en una
+        // pantalla que no estabas mirando.
+        PInvoke.GetCursorPos(out System.Drawing.Point donde);
+        return PInvoke.MonitorFromPoint(donde, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
+    }
+
+    /// <summary>
+    /// Cuantos tics seguidos tiene que estar el raton en otra pantalla para que la isla
+    /// se mude. A 8 Hz, tres tics son ~375 ms: lo suficiente para no mudarse al rozar un
+    /// borde de camino a otro sitio, y poco para que se sienta inmediato.
+    /// </summary>
+    private const int TicsParaMudarse = 3;
+
+    /// <summary>
+    /// La isla se muda a la pantalla del raton. La llama el tic, que ya tiene la
+    /// posicion del cursor leida, asi que esto no cuesta ni una llamada de mas.
+    ///
+    /// <para>
+    /// No se muda si la estas apuntando: mover la ventana debajo del cursor cancelaria
+    /// el hover a mitad de gesto.
+    /// </para>
+    /// </summary>
+    private void SeguirAlCursor(System.Drawing.Point p)
+    {
+        HMONITOR bajo = PInvoke.MonitorFromPoint(p, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
+
+        if (bajo == _monitor || _hover)
+        {
+            _ticsFuera = 0;
+            return;
+        }
+
+        if (++_ticsFuera < TicsParaMudarse) return;
+
+        _ticsFuera = 0;
+        PedirRehacer();
     }
 
     private static HMONITOR[] Monitores()
@@ -451,6 +505,15 @@ internal sealed unsafe class IslaWindow : IDisposable
 
     private static void Rehacer()
     {
+        // Lo que tiene que sobrevivir a la mudanza. Rehacerse destruye la ventana ENTERA
+        // y con ella se iba un pomodoro en marcha; daba igual mientras rehacerse fuera
+        // cosa de enchufar un monitor, pero ahora pasa cada vez que cruzas de pantalla
+        // con el raton, y un pomodoro que se muere por pasear el raton no sirve de nada.
+        bool pomodoro = _instancia?._hayPomodoro ?? false;
+        DateTime finPomodoro = _instancia?._finPomodoro ?? default;
+
+        Stopwatch reloj = Stopwatch.StartNew();
+
         _rehaciendo = true;
         _instancia?.Dispose();
         _instancia = null;
@@ -458,7 +521,28 @@ internal sealed unsafe class IslaWindow : IDisposable
 
         IslaConfig config = Config.Cargar();
         Config.AplicarAutoArranque(config.AutoArranque);
-        if (Create(config) is null) Console.Error.WriteLine("[isla] no se pudo rehacer la ventana.");
+        if (Create(config) is null)
+        {
+            Console.Error.WriteLine("[isla] no se pudo rehacer la ventana.");
+            return;
+        }
+
+        if (pomodoro && finPomodoro > DateTime.UtcNow) _instancia!.RetomarPomodoro(finPomodoro);
+
+        Console.WriteLine($"[isla] rehecha en {reloj.ElapsedMilliseconds} ms");
+    }
+
+    /// <summary>
+    /// Vuelve a colgar un pomodoro que ya estaba corriendo antes de la mudanza. No
+    /// reinicia nada: se conserva la hora de fin, que es lo unico que lo define.
+    /// </summary>
+    private void RetomarPomodoro(DateTime fin)
+    {
+        _hayPomodoro = true;
+        _finPomodoro = fin;
+        _segundoPomodoro = -1;
+        Ensenar(true);
+        Asomar();
     }
 
     // --- estado --------------------------------------------------------------------
@@ -476,6 +560,10 @@ internal sealed unsafe class IslaWindow : IDisposable
         if (_arrastrando) return;
 
         PInvoke.GetCursorPos(out System.Drawing.Point p);
+
+        // La misma lectura del cursor sirve para las dos cosas: saber si te estas
+        // acercando, y saber en que pantalla estas trabajando.
+        if (_seguirCursor) SeguirAlCursor(p);
 
         // El latido de la brasa se cuelga de este mismo tic en vez de traerse un
         // temporizador propio: son 8 lecturas por segundo, y para una tira de 5 px de

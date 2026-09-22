@@ -35,7 +35,8 @@ Las reglas que lo garantizan están en [SEGURIDAD.md](SEGURIDAD.md) y se comprue
 
 ## 1. Qué hace
 
-La isla tiene cuatro estados y solo enseña uno a la vez.
+La isla tiene cuatro estados y solo enseña uno a la vez. Con un aviso de otra app esperando
+hay además **una segunda isla**, la del aviso, que se cuenta [más abajo](#avisos-de-otras-apps-el-buzón).
 
 | Estado | Cuándo | Tamaño | Clics |
 |---|---|---|---|
@@ -60,7 +61,7 @@ cruzar el borde de camino al botón de cerrar no la despierta.
 | Cambiar el volumen, o de altavoces | Asoma con el número y por dónde sale: `Volumen 48 % · LG ULTRAWIDE (NVI…` |
 | Un recordatorio de [Agenda](../calendario/README.md) | Sale de detrás del borde, junto a la isla, asoma 8 s con el título y la hora, y se recoge en **su burbuja**: un círculo negro con el día del evento, escondida como la brasa, de la que solo asoma el aro de su color |
 | Ratón sobre la burbuja | Baja entera; si te quedas, crece desde ella la tarjeta del aviso con sus botones |
-| `Ctrl+Alt+I` con un aviso esperando | Abierta enseña la tarjeta del aviso |
+| `Ctrl+Alt+I` con un aviso esperando | En vez de abrir la principal, abre la tarjeta del aviso; otra vez la recoge |
 
 Un botón que la sesión no admite **no se dibuja**: con Brave solo sale play/pausa, porque
 declara `IsPreviousEnabled` e `IsNextEnabled` a `false`.
@@ -68,9 +69,11 @@ declara `IsPreviousEnabled` e `IsNextEnabled` a `false`.
 ### Avisos de otras apps: el buzón
 
 La isla principal es lo que está pasando ahora; la burbuja de al lado es lo que te está
-esperando. **Son dos espacios, y cada cosa vuelve al suyo**: lo que abre la burbuja nace en
-ella, lleva el color de la app que avisó y al cerrarse se recoge en ella; lo que suena nace y
-se recoge en el centro, con el color de su carátula. Hoy solo lo usa Agenda: sus
+esperando. **Son dos islas, y cada una vuelve a lo suyo**: la del aviso es otra pastilla
+entera, con su muelle, su borde y el aura del color de la app que avisó, que en reposo es la
+burbuja; asoma desde ella y se recoge en ella. La principal no se entera: su línea sigue en el
+centro con lo que suena. Desplegadas ocuparían el mismo sitio, así que solo se despliega una a
+la vez, y al abrirse la del aviso la principal se queda en su línea. Hoy solo lo usa Agenda: sus
 recordatorios llegan aquí en vez de como toast, y la tarjeta ofrece **Terminado**, **5 min**,
 **10 min** y **Abrir**. Qué significa cada botón es cosa de la app que avisó; la isla solo le
 dice cuál se pulsó.
@@ -252,8 +255,8 @@ junto—. Ahora avisa COM, que no cuesta nada y no llega medio segundo tarde.
 | Fichero | Qué es |
 |---|---|
 | `Program.cs` | Punto de entrada, instancia única, y el vigilante de `isla.json`. |
-| `IslaWindow.cs` | La ventana, su `WndProc`, los estados y los avisos. El fichero grande. |
-| `IslaVisuals.cs` | El árbol de composición: la caja, el titular, la ficha, la onda. |
+| `IslaWindow.cs` | La ventana, su `WndProc`, los estados de las dos islas y la región. El fichero grande. |
+| `IslaVisuals.cs` | El árbol de composición: la caja, el titular, la ficha, la onda, y la isla del aviso con su burbuja y su tarjeta. |
 | `Medios.cs` | El puente con el canal de medios de Windows. |
 | `Audio.cs` | El pico, el nivel y el nombre del dispositivo de salida. Solo lectura, y por evento. |
 | `Avisos.cs` | El buzón: la tubería, su ACL, y la validación de cada aviso que entra. |

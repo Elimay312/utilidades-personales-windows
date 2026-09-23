@@ -27,8 +27,9 @@ inline constexpr UINT kAudioChangedMessage = WM_APP + 10;  // level or mute, fro
 inline constexpr UINT kAudioDeviceMessage = WM_APP + 11;   // the default output is another one
 
 // Every write the panel makes carries this, so its own change coming back as a notification is
-// recognised and dropped instead of redrawing a value the slider already shows. Other programs
-// can read it too (phase 8: the HUD could stay quiet while the panel's slider moves).
+// recognised and dropped instead of redrawing a value the slider already shows. The HUD and the
+// island read it too and stay quiet while the slider moves: changing it here means changing
+// `ContextoPanel` in hud/Volumen.cs and isla/Audio.cs.
 // {5B0D7C34-8A41-4C2E-9F3A-612D7E94B01C}
 inline constexpr GUID kPanelVolumeContext = {
     0x5b0d7c34, 0x8a41, 0x4c2e, {0x9f, 0x3a, 0x61, 0x2d, 0x7e, 0x94, 0xb0, 0x1c}};

@@ -34,6 +34,12 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
     - instalar;
     - actualizar con el Panel instalado abierto: se cerró con código 0 y el log dice `exit`;
     - desinstalar con el Panel abierto: se cerró, y se borraron la carpeta y el acceso.
+  - **El HUD y la isla ya no saltan con el deslizador:** leen la firma `kPanelVolumeContext`
+    en el aviso de COM, y guardan el nivel sin sacar la cápsula ni asomar. Cada uno tiene su
+    commit y su CHANGELOG. Se midió con la firma y sin ella: sin firma, la cápsula sale y la
+    isla cambia 1806 píxeles; con firma, nada, porque 69 píxeles es el ruido de reposo (113).
+  - **`actualizar.ps1`** instala el Panel igual que Agenda: `empaquetar.ps1` y después
+    `Instalar-Panel.exe --silent`.
   - **Medido con la Release:**
     - escondido: 1,7–4,6 MB de memoria de trabajo y 0–16 ms de CPU cada 10 s;
     - abierto y quieto: 13,9 MB y 0 ms de CPU;

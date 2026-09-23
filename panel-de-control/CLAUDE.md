@@ -388,9 +388,10 @@ assets/          manifiestos del Panel y del instalador, y .rc
 - **Cerrar el Panel desde fuera:** `WM_CLOSE` a `PanelDeControlHost`. Sirve también para las
   pruebas, en vez de matar el proceso.
 
-- **Pendiente para la fase 8:** si el HUD está en marcha, arrastrar el deslizador del panel
-  saca también su cápsula. La solución es que el HUD ignore `kPanelVolumeContext`, y toca
-  otro proyecto.
+- **El HUD y la isla reconocen `kPanelVolumeContext`** en el `guidEventContext` de su aviso de
+  COM (commits propios en cada proyecto). Con esa firma guardan el nivel sin enseñarlo. **Si
+  cambia el GUID aquí, hay que cambiarlo en `hud/Volumen.cs` y en `isla/Audio.cs`
+  (`ContextoPanel`).**
 
 ## Convenciones
 
@@ -424,8 +425,7 @@ assets/          manifiestos del Panel y del instalador, y .rc
   - borrar archivos;
   - añadir dependencias;
   - escribir en el registro fuera de lo que permite `SEGURIDAD.md`;
-  - tocar otro proyecto de la carpeta. Por ejemplo, que el HUD ignore los cambios de volumen
-    del panel: eso va en la fase 8, y solo con permiso;
+  - tocar otro proyecto de la carpeta;
   - hacer cualquier cosa fuera de la carpeta del repo.
 - **Durante el desarrollo, la luz nocturna y las radios se prueban de verdad.** Déjalas como
   estaban al terminar y dilo en el resumen.
@@ -504,13 +504,13 @@ assets/          manifiestos del Panel y del instalador, y .rc
 - [x] **7. Utilidades:**
   - detectar, arrancar y cerrar con Restart Manager;
   - comprobar que cada app se cierra de verdad.
-- [ ] **8. Pulido y entrega:**
+- [x] **8. Pulido y entrega:**
   - [x] medir;
   - [x] autoarranque;
   - [x] instalador;
-  - [ ] `actualizar.ps1` (está en la raíz: se pregunta antes);
-  - [ ] el README raíz (cuando el usuario acabe con él);
-  - [ ] que el HUD y la isla ignoren el volumen del panel, preguntando antes.
+  - [x] `actualizar.ps1`, con permiso;
+  - [x] el README raíz;
+  - [x] que el HUD y la isla ignoren el volumen del panel, con permiso.
 
 ## Comandos
 

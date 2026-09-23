@@ -95,7 +95,16 @@ Prohibido '1.1 Sin red' '\b(WinHttp\w*|InternetOpen\w*|InternetConnect\w*|URLDow
 Prohibido '1.1 Sin telemetria' '(?i)\b(telemetry|telemetria|analytics|analitica|appinsights|sentry|crashpad|amplitude|mixpanel)\b'
 
 # 1.2 Nada que pida la ubicacion. El SSID sale de GetConnectedSsid, no de WlanAPI.
-Prohibido '1.2 Sin pedir la ubicacion' '\bWlan(QueryInterface|GetAvailableNetworkList|GetNetworkBssList|Scan)\b|(?i)geolocat'
+#     Enmienda 5b-2: buscar redes (WlanScan, WlanGetAvailableNetworkList) solo en system/wifi.cpp.
+#     WlanQueryInterface, los BSSID y Geolocation siguen prohibidos en todas partes, y los avisos
+#     solo con la fuente ACM.
+$fuera = Buscar '\bWlan(Scan|GetAvailableNetworkList)\b' '' '^src\\system\\wifi\.cpp$'
+$nunca = Buscar '\bWlan(QueryInterface|GetNetworkBssList)\b|(?i)geolocat'
+$fuentes = @(Sentencias '\bWlanRegisterNotification\s*\(' | Where-Object { $_ -notmatch 'WLAN_NOTIFICATION_SOURCE_(ACM|NONE)\b' -or $_ -match 'WLAN_NOTIFICATION_SOURCE_(MSM|ALL|ONEX|SECURITY)' })
+if ($nunca) { Regla '1.2 Ubicacion solo al buscar redes' 'FALLA' $nunca[0] }
+elseif ($fuera) { Regla '1.2 Ubicacion solo al buscar redes' 'FALLA' "fuera de wifi.cpp: $($fuera[0])" }
+elseif ($fuentes) { Regla '1.2 Ubicacion solo al buscar redes' 'FALLA' "aviso que no es ACM: $($fuentes[0])" }
+else { Regla '1.2 Ubicacion solo al buscar redes' 'bien' }
 
 # 1.3 Sin administrador.
 if ($null -eq $manifiesto) {
@@ -115,7 +124,7 @@ Prohibido '1.5 Sin matar procesos' '\bTerminateProcess\s*\(|\bRmForceShutdown\b|
 # 1.6 Sin ejecutar texto; ShellExecute solo con ms-settings: o el propio panel.json, y
 #     CreateProcess solo en system/apps.cpp.
 $hits = Buscar '\b(system|_wsystem|popen|_wpopen|WinExec)\s*\('
-$shell = @(Sentencias '\bShellExecute\w*\s*\(' | Where-Object { $_ -notmatch 'L"ms-settings:|ConfigPath\s*\(' })
+$shell = @(Sentencias '\bShellExecute\w*\s*\(' | Where-Object { $_ -notmatch 'L"ms-settings:|L"ms-availablenetworks:"|ConfigPath\s*\(' })
 $crear = Buscar '\bCreateProcess\w*\s*\(' '' '^src\\system\\apps\.cpp$'
 if ($hits) { Regla '1.6 Sin ejecutar texto' 'FALLA' $hits[0] }
 elseif ($shell) { Regla '1.6 Sin ejecutar texto' 'FALLA' "ShellExecute sin ms-settings: ni ConfigPath: $($shell[0])" }
@@ -181,7 +190,15 @@ else { Regla '2.5 Luz nocturna con cuidado' 'bien' }
 # 2.6 Radios: sin emparejar, conectar ni desconectar.
 #     WlanConnect y WlanConnect2 son las funciones que conectan; WlanConnectionProfileDetails,
 #     de WinRT, solo lee el nombre de la red y no cuenta.
-Prohibido '2.6 Radios: solo encender y apagar' '\b(PairAsync|UnpairAsync|BluetoothAuthenticate\w*|BluetoothRemoveDevice|BluetoothSetServiceState|WlanConnect2?|WlanDisconnect)\b'
+#     Enmienda 5b-2: WlanConnect solo en system/wifi.cpp y solo con un perfil guardado; ningun
+#     perfil se crea, cambia ni borra.
+$radios = Buscar '\b(PairAsync|UnpairAsync|BluetoothAuthenticate\w*|BluetoothRemoveDevice|BluetoothSetServiceState|WlanDisconnect|WlanSetProfile\w*|WlanDeleteProfile|WlanSaveTemporaryProfile)\b'
+$conectarFuera = Buscar '\bWlanConnect2?\s*\(' '' '^src\\system\\wifi\.cpp$'
+$modos = Buscar '\bwlan_connection_mode_(?!profile\b)\w+'
+if ($radios) { Regla '2.6 Radios: encender, apagar, redes guardadas' 'FALLA' $radios[0] }
+elseif ($conectarFuera) { Regla '2.6 Radios: encender, apagar, redes guardadas' 'FALLA' "WlanConnect fuera de wifi.cpp: $($conectarFuera[0])" }
+elseif ($modos) { Regla '2.6 Radios: encender, apagar, redes guardadas' 'FALLA' "conexion sin perfil guardado: $($modos[0])" }
+else { Regla '2.6 Radios: encender, apagar, redes guardadas' 'bien' }
 
 # --- Salida ------------------------------------------------------------------------
 

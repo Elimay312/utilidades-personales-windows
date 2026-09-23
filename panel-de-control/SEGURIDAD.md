@@ -49,6 +49,23 @@ Un panel que se abre veinte veces al día no puede aparecer ahí. Por eso:
 - **Si algún día hace falta la lista de redes:** eso es la ubicación, y va con su propia
   enmienda.
 
+*Enmienda de la fase 5b-2, a petición del usuario:* la tarjeta de Wi-Fi lista las redes de
+alrededor. El usuario lo eligió sabiendo el precio: Windows pide el permiso de ubicación la
+primera vez, y mientras se busca el panel sale en el icono de «ubicación en uso». Se abre con
+estos cortes:
+
+- **Solo `system/wifi.cpp`** llama a `WlanScan` y a `WlanGetAvailableNetworkList`, y solo con
+  la tarjeta de Wi-Fi abierta: la búsqueda empieza al desplegarla y no se repite al cerrarla.
+  Con el panel escondido, o con la tarjeta plegada, el panel no busca nunca.
+- **Siguen prohibidos en todas partes** `WlanQueryInterface`, porque el SSID sigue saliendo
+  de `NetworkInformation`, y `WlanGetNetworkBssList`, porque los BSSID son la ubicación exacta
+  y la lista no los necesita. También sigue prohibida `Windows.Devices.Geolocation`.
+- **Los avisos de búsqueda terminada** llegan por `WlanRegisterNotification` con la fuente
+  `WLAN_NOTIFICATION_SOURCE_ACM` y ninguna otra. La fuente MSM pide la capacidad `wiFiControl`
+  y cuenta más de lo que hace falta.
+- **Si el usuario dice que no** al permiso, la tarjeta lo dice en una línea y no insiste. El
+  pie sigue llevando a la lista de Windows.
+
 ### 1.3 Pedir administrador
 
 El manifiesto pide `asInvoker`. Nada de lo que hace el panel necesita elevarse, y si algún
@@ -74,7 +91,9 @@ cierre forzado se lleva lo que la app no haya guardado, y deja un icono muerto e
 Sin `system`, `_wsystem`, `popen`, `WinExec` ni intérpretes.
 
 - **`ShellExecuteW`** se usa solo con URIs `ms-settings:` escritas en el código o con el propio
-  `panel.json`. Nunca con una cadena que venga de la configuración.
+  `panel.json`. Nunca con una cadena que venga de la configuración. *Enmienda de la fase 5b-2:*
+  también con `ms-availablenetworks:`, escrita entera: es la lista de redes de Windows, y se
+  abre para lo que el panel deja a Windows, como las redes nuevas que piden contraseña.
 - **`CreateProcessW`** se usa solo en `system/apps.cpp`, y solo con una ruta de `utilidades[]`
   que exista, sea absoluta y termine en `.exe`. Se pasa como `lpApplicationName`, sin línea
   de comandos compuesta.
@@ -259,6 +278,14 @@ cambios. Es la API documentada, la misma que usa el panel de Windows.
 
 - **Solo encender y apagar** la radio de ese tipo.
 - **Sin emparejar, sin conectar y sin desconectar dispositivos.**
+- *Enmienda de la fase 5b-2:* **conectar a una red Wi-Fi guardada.**
+  - Solo `system/wifi.cpp`, solo con `WlanConnect` en `wlan_connection_mode_profile`, solo con
+    un perfil que Windows ya tiene, y solo por un clic en la fila de esa red.
+  - El panel **no crea, no cambia y no borra perfiles**: nada de `WlanSetProfile` ni
+    `WlanDeleteProfile`, y ninguna contraseña pasa por él. Una red nueva se abre en la lista de
+    Windows, que es quien pide la contraseña.
+  - Desconectar no hace falta: conectar a otra red ya desconecta de la anterior, y apagar el
+    Wi-Fi es el interruptor de la tarjeta.
 - **Los `DeviceWatcher` solo leen el estado** de conexión de lo que ya está emparejado.
 
 ### 2.7 Arrancar y cerrar utilidades

@@ -34,6 +34,10 @@ struct Target {
   bool empty() const { return part == Part::None; }
 };
 
+// A card unfolds only when it has more than one thing to choose from: one screen, or one
+// output, is already what the closed card shows.
+inline bool CanUnfold(size_t items) { return items > 1; }
+
 inline bool IsSlider(Part part) {
   return part == Part::BrightnessSlider || part == Part::DisplaySlider ||
          part == Part::VolumeSlider;
@@ -137,7 +141,8 @@ inline Target HitTest(const PanelLayout& layout, const PanelState& state, float 
 inline std::vector<Target> FocusOrder(const PanelLayout& layout, const PanelState& state) {
   std::vector<Target> order;
   for (size_t i = 0; i < layout.tiles.size(); ++i) order.push_back({Part::Tile, i});
-  order.push_back({Part::BrightnessHeader});
+  // A header is a stop only when it unfolds something; otherwise Tab would land on a title.
+  if (CanUnfold(state.displays.size())) order.push_back({Part::BrightnessHeader});
   if (!layout.displayRows.empty()) {
     for (size_t i = 0; i < layout.displayRows.size(); ++i) {
       if (Reachable(state, i) && Shown(layout.displayRows[i].slider, layout.brightnessCard)) {
@@ -147,7 +152,7 @@ inline std::vector<Target> FocusOrder(const PanelLayout& layout, const PanelStat
   } else if (HereReachable(state)) {
     order.push_back({Part::BrightnessSlider});
   }
-  order.push_back({Part::AudioHeader});
+  if (CanUnfold(state.audio.outputs.size())) order.push_back({Part::AudioHeader});
   if (state.audio.available) order.push_back({Part::VolumeSlider});
   for (size_t i = 0; i < layout.outputRows.size(); ++i) {
     if (Shown(layout.outputRows[i], layout.audioCard)) order.push_back({Part::Output, i});

@@ -14,6 +14,8 @@
 
 #include "model/state.h"
 #include "system/audio.h"
+#include "system/brightness.h"
+#include "system/worker.h"
 #include "ui/controls.h"
 #include "ui/layout.h"
 #include "ui/paint.h"
@@ -82,6 +84,8 @@ class PanelWindow {
   void KeepFocusValid();
   void UpdateHot();
   void ReadAudio();
+  void TakeBrightness();
+  void BrightnessFromWindows(float level);
 
   // Animation: everything that moves inside the panel steps on one clock, once per composed
   // frame, and the clock stops when nothing is moving.
@@ -107,6 +111,13 @@ class PanelWindow {
   ViewState view_;
   PanelLayout layout_;
   Audio audio_;
+  Worker worker_;
+  Brightness brightness_;
+  HPOWERNOTIFY brightnessNotify_ = nullptr;
+  // When the panel last wrote the brightness. Windows' notice of each write arrives a moment
+  // later, and during a drag an old one would pull the slider back; for a short while after a
+  // write, the slider is what counts.
+  std::chrono::steady_clock::time_point brightnessWritten_{};
 
   Target hover_;     // under the mouse
   Target pressed_;   // the button went down on it and has not come up

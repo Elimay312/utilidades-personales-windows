@@ -6,14 +6,14 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
 
 ![El panel](docs/img/panel.png)
 
-> **Estado: fase 3b de 8.** El panel se usa entero con el ratón y con el teclado, y **el
-> volumen es el de verdad**:
-> - el nivel, el silencio y el nombre de la salida, que sigue a la salida si cambias de
->   dispositivo;
-> - la tarjeta se despliega con la lista real de salidas, y un clic elige otra.
+> **Estado: fase 4a de 8.** El panel se usa entero con el ratón y con el teclado. Ya es de
+> verdad:
+> - **el volumen:** nivel, silencio, el nombre de la salida (y la sigue si cambias de
+>   dispositivo) y la lista de salidas para elegir otra;
+> - **el brillo de la pantalla del portátil,** que también sigue las teclas Fn.
 >
-> Lo demás todavía son datos de ejemplo: brillo, Wi-Fi, Bluetooth, luz nocturna y utilidades.
-> El plan está en
+> Todavía son datos de ejemplo: los monitores externos (llegan en la 4b), Wi-Fi, Bluetooth, luz
+> nocturna y utilidades. El plan está en
 > [`docs/superpowers/plans/2026-09-23-panel-de-control.md`](docs/superpowers/plans/2026-09-23-panel-de-control.md).
 
 | Brillo desplegado | Volumen desplegado | Tema claro |

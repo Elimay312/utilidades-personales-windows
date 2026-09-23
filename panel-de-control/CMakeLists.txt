@@ -54,6 +54,8 @@ add_executable(Panel WIN32
   src/core/options.cpp
   src/model/sample.cpp
   src/system/audio.cpp
+  src/system/brightness.cpp
+  src/system/worker.cpp
   src/ui/paint.cpp
   src/ui/panel_view.cpp
   src/ui/panel_window.cpp
@@ -65,7 +67,7 @@ target_include_directories(Panel PRIVATE src)
 target_compile_options(Panel PRIVATE ${PANEL_WARNINGS})
 target_compile_definitions(Panel PRIVATE ${PANEL_DEFINES})
 target_link_libraries(Panel PRIVATE nlohmann_json::nlohmann_json
-  d2d1 d3d11 dxgi dcomp dwmapi dwrite windowscodecs shcore)
+  d2d1 d3d11 dxgi dcomp dwmapi dwrite windowscodecs shcore wbemuuid)
 # The manifest (PerMonitorV2, asInvoker) comes in through panel.rc.
 target_link_options(Panel PRIVATE /MANIFEST:NO)
 
@@ -77,8 +79,10 @@ add_executable(panel_tests
   tests/test_hotkey.cpp
   tests/test_layout.cpp
   tests/test_options.cpp
+  tests/test_worker.cpp
   src/core/log.cpp
-  src/core/options.cpp)
+  src/core/options.cpp
+  src/system/worker.cpp)
 target_include_directories(panel_tests PRIVATE src)
 target_compile_options(panel_tests PRIVATE ${PANEL_WARNINGS})
 target_compile_definitions(panel_tests PRIVATE ${PANEL_DEFINES})

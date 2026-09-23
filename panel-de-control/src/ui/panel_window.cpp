@@ -23,6 +23,8 @@ constexpr UINT_PTR kAudioRetryTimer = 2;
 // After a real Core Audio failure: the HUD's two seconds, soon enough to come back by itself
 // and rare enough to cost nothing while the audio service restarts.
 constexpr UINT kAudioRetryMs = 2000;
+// How long after the panel writes the brightness Windows' notices are taken as its echo.
+constexpr auto kBrightnessEcho = std::chrono::milliseconds(400);
 constexpr UINT kFrameMessage = WM_APP + 1;
 // Agenda's timings: one vocabulary of movement for the two popups in the same corner.
 constexpr UINT kOpenMs = 160;
@@ -49,6 +51,13 @@ void EaseOutCubic(IDCompositionAnimation* animation, double seconds, float from,
                       static_cast<float>(-3.0 * delta / (seconds * seconds)),
                       static_cast<float>(delta / (seconds * seconds * seconds)));
   animation->End(seconds, to);
+}
+
+// Hands the pages back to Windows until they are wanted: most are the graphics driver's and
+// WMI's, shared with other programs, and they come back from the standby list in the few
+// milliseconds an opening can spare.
+void Trim() {
+  SetProcessWorkingSetSizeEx(GetCurrentProcess(), static_cast<SIZE_T>(-1), static_cast<SIZE_T>(-1), 0);
 }
 
 bool WorkArea(HMONITOR monitor, RECT& work) {
@@ -80,8 +89,10 @@ bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view
   themeChoice_ = theme;
   theme_ = ResolveTheme(themeChoice_);
   // Made-up data until each later phase replaces one part of it with the real thing. The volume
-  // and its outputs are real since phase 3.
+  // and its outputs are real since phase 3, the laptop's brightness since 4a; the screens start
+  // empty until the worker has looked.
   state_ = SampleState();
+  state_.displays.clear();
   if (!fonts_.Create()) LogError(L"panel: DirectWrite is unavailable, opening without text");
 
   WNDCLASSEXW windowClass{};
@@ -108,12 +119,19 @@ bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view
   ApplyDwmAttributes();
   if (!audio_.Start(hwnd_)) LogError(L"panel: Core Audio is unavailable, the volume will not work");
   ReadAudio();
+  worker_.Start();
+  brightness_.Start(hwnd_, worker_);
+  brightnessNotify_ = RegisterBrightnessNotification(hwnd_);
+  if (brightnessNotify_ == nullptr) LogError(L"panel: no brightness notifications, Fn keys will not show");
   Place(work);
   if (!CreateDevices()) return false;
   Rest();
   Render();
   composition_->Commit();
   LogInfo(L"panel: ready, {}x{} px at {} dpi", size_.cx, size_.cy, dpi_);
+  // Built and hidden: until the first opening it would otherwise hold everything creating the
+  // devices touched (measured: 46 MB at rest before this, against ~2 MB after a first hide).
+  Trim();
   return true;
 }
 
@@ -384,7 +402,41 @@ void PanelWindow::SetNotice(std::wstring notice) {
 
 void PanelWindow::Shutdown() {
   KillTimer(hwnd_, kAudioRetryTimer);
+  if (brightnessNotify_ != nullptr) UnregisterPowerSettingNotification(brightnessNotify_);
+  brightnessNotify_ = nullptr;
+  // The connection is let go on the worker's thread, then the worker ends.
+  brightness_.Stop();
+  worker_.Stop();
   audio_.Stop();
+}
+
+void PanelWindow::TakeBrightness() {
+  const Brightness::Internal internal = brightness_.Current();
+  if (!internal.known) return;
+  state_.displays.clear();
+  if (internal.present) {
+    DisplayState display;
+    display.name = std::wstring(T(L"Portátil", L"Laptop"));
+    display.id = internal.instance;
+    display.level = internal.level;
+    display.internal = true;
+    display.reachable = true;
+    // 4a: the only screen with a slider is the laptop's, so it is the one the card talks about.
+    // 4b decides this by the monitor the panel opened on.
+    display.here = true;
+    state_.displays.push_back(std::move(display));
+  }
+  if (!CanUnfold(state_.displays.size()) && brightnessGoal_) ToggleCard(brightnessGoal_);
+  KeepFocusValid();
+}
+
+void PanelWindow::BrightnessFromWindows(float level) {
+  // The keys, Windows' own slider, or the echo of a write of ours.
+  if (dragging_.part == Part::BrightnessSlider || dragging_.part == Part::DisplaySlider) return;
+  if (std::chrono::steady_clock::now() - brightnessWritten_ < kBrightnessEcho) return;
+  for (DisplayState& display : state_.displays) {
+    if (display.internal) display.level = level;
+  }
 }
 
 void PanelWindow::ReadAudio() {
@@ -395,7 +447,7 @@ void PanelWindow::ReadAudio() {
   }
   audio_.ReadOutputs(state_.audio);
   // A list that emptied under an open card folds it; the keyboard goes back to its header.
-  if (state_.audio.outputs.empty() && audioGoal_) ToggleCard(audioGoal_);
+  if (!CanUnfold(state_.audio.outputs.size()) && audioGoal_) ToggleCard(audioGoal_);
   KeepFocusValid();
 }
 
@@ -408,16 +460,13 @@ void PanelWindow::Toggle() {
 }
 
 void PanelWindow::Shelve() {
-  // Back to rest for the next opening, and the pages back to Windows until they are wanted:
-  // most are the graphics driver's, shared with every other program drawing with Direct3D, and
-  // they come back from the standby list in the few milliseconds the next opening can spare.
+  // Back to rest for the next opening, and the memory back to Windows (Trim).
   Rest();
   composition_->Commit();
   // A notice is about the time it was said in; the next opening starts without it. Cleared
   // here, hidden, so the panel never changes height in the middle of its fade.
   state_.notice.clear();
-  SetProcessWorkingSetSizeEx(GetCurrentProcess(), static_cast<SIZE_T>(-1),
-                             static_cast<SIZE_T>(-1), 0);
+  Trim();
 }
 
 void PanelWindow::FollowTheme() {
@@ -600,10 +649,10 @@ void PanelWindow::Activate(Target target) {
       // Index 3, settings: not wired to anything yet. The press shows; nothing happens.
       break;
     case Part::BrightnessHeader:
-      if (!state_.displays.empty()) ToggleCard(brightnessGoal_);
+      if (CanUnfold(state_.displays.size()) || brightnessGoal_) ToggleCard(brightnessGoal_);
       break;
     case Part::AudioHeader:
-      if (!state_.audio.outputs.empty()) ToggleCard(audioGoal_);
+      if (CanUnfold(state_.audio.outputs.size()) || audioGoal_) ToggleCard(audioGoal_);
       break;
     case Part::Mute:
       if (state_.audio.available && audio_.SetMuted(!state_.audio.muted)) {
@@ -666,16 +715,23 @@ float PanelWindow::SliderLevel(Target target) const {
 void PanelWindow::SetSliderLevel(Target target, float level) {
   level = Quantize(level);
   switch (target.part) {
-    case Part::BrightnessSlider: {
+    case Part::BrightnessSlider:
+    case Part::DisplaySlider: {
       const DisplayState* here = HereDisplay(state_);
-      if (here == nullptr) return;
-      state_.displays[static_cast<size_t>(here - state_.displays.data())].level = level;
+      const size_t index = target.part == Part::DisplaySlider
+                               ? target.index
+                               : (here == nullptr ? state_.displays.size()
+                                                  : static_cast<size_t>(here - state_.displays.data()));
+      if (index >= state_.displays.size()) return;
+      DisplayState& display = state_.displays[index];
+      if (display.level == level) return;
+      display.level = level;
+      if (display.internal) {
+        brightness_.Set(level);
+        brightnessWritten_ = std::chrono::steady_clock::now();
+      }
       break;
     }
-    case Part::DisplaySlider:
-      if (target.index >= state_.displays.size()) return;
-      state_.displays[target.index].level = level;
-      break;
     case Part::VolumeSlider: {
       if (!state_.audio.available) return;
       // Turning it up is wanting to hear it, like the HUD does with the keys.
@@ -863,6 +919,26 @@ LRESULT PanelWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
     case kFrameMessage:
       OnFrame();
       return 0;
+
+    case kBrightnessMessage:
+      TakeBrightness();
+      if (visible_) {
+        Relayout();
+        UpdateHot();
+        Render();
+      } else {
+        // The worker's first read loads WMI into the process, after Create already trimmed.
+        Trim();
+      }
+      return 0;
+
+    case WM_POWERBROADCAST: {
+      const float level = BrightnessFromPowerBroadcast(wparam, lparam);
+      if (level < 0.0f) break;
+      BrightnessFromWindows(level);
+      if (visible_) Render();
+      return TRUE;
+    }
 
     case kAudioChangedMessage:
     case kAudioDeviceMessage:

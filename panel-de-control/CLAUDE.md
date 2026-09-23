@@ -125,8 +125,9 @@ src/
                  del foco, valor de un deslizador; puro), spring, vsync (de Agenda), theme,
                  paint, glyphs, snapshot
   system/        audio (Core Audio y la lista de salidas), policy_config (la única API no
-                 documentada, en un solo archivo); llegarán brightness, display_ids, radios,
-                 nightlight_blob, nightlight, apps y worker
+                 documentada, en un solo archivo), worker (el hilo para lo que bloquea),
+                 brightness (WMI del portátil y el aviso de Windows); llegarán display_ids,
+                 radios, nightlight_blob, nightlight y apps
 tests/           doctest: hotkey, options, layout, controls
 assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
 ```
@@ -233,6 +234,30 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
 - **`PKEY_AudioEndpoint_FormFactor` está escrito a mano** en `audio.cpp`. El SDK solo lo declara,
   y definirlo son dos líneas frente a meter `INITGUID` en todo el archivo.
 
+### Decisiones de la fase 4a
+
+- **Las teclas Fn se siguen con `GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS`** (`WM_POWERBROADCAST`),
+  no con `WmiMonitorBrightnessEvent`. Así no hay `unsecapp.exe` ni un hilo sondeando
+  (`SEGURIDAD.md` §2.3). Windows manda el valor actual también al registrarse.
+- **`Worker` es genérico:** trabajos en orden, uno a uno. Si llega uno con la misma clave
+  mientras otro espera, lo sustituye. DDC/CI (4b) y las radios (5) irán por él.
+- **Los objetos COM que se crean en el hilo de trabajo se sueltan en él:** `Brightness::Stop()`
+  encola la liberación y después `Worker::Stop()` ejecuta lo pendiente y termina. En
+  `Shutdown()`, ese orden importa.
+- **Eco:** 400 ms después de escribir se ignoran los avisos, y lo mismo durante un arrastre.
+  Si la pantalla tuviera menos niveles que 101 y redondeara, la barra enseñaría el valor
+  pedido hasta el siguiente aviso.
+- **El nombre de la pantalla interna es «Portátil»,** y en la 4a es siempre la de `here`. La 4b
+  decide cuál es por el monitor donde se abre el panel.
+- **`CanUnfold`:** con una sola cosa que elegir, la tarjeta no tiene chevron, no se despliega y
+  su cabecera no es parada del Tab.
+- **`Trim()`** recorta la memoria al terminar `Create`, en `Shelve` y cuando llega la primera
+  lectura de WMI con el panel escondido.
+- **Probar el brillo:** la sonda lee y escribe con `Get-CimInstance`/`Invoke-CimMethod` sobre
+  `root/WMI`, guarda el valor del principio y lo repone en un `finally`. Las teclas Fn en sí no
+  se pueden pulsar desde una sonda. Lo que se prueba es el aviso, con un cambio hecho desde
+  fuera por WMI, que llega por el mismo camino.
+
 - **Pendiente para la fase 8:** si el HUD está en marcha, arrastrar el deslizador del panel
   saca también su cápsula. La solución es que el HUD ignore `kPanelVolumeContext`, y toca
   otro proyecto.
@@ -306,7 +331,7 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
 - [x] **3a. Volumen:** Core Audio, el nombre del dispositivo, el silencio y el arreglo del
   endpoint caducado.
 - [x] **3b. Elegir la salida de audio:** `EnumAudioEndpoints` e `IPolicyConfig`.
-- [ ] **4a. Brillo del portátil:** WMI y su evento de cambio.
+- [x] **4a. Brillo del portátil:** WMI y su evento de cambio.
 - [ ] **4b. Monitores externos:**
   - DDC/CI;
   - emparejar cada monitor con su ID;

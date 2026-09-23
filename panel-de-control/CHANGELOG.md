@@ -6,6 +6,33 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
 
 ### Añadido
 
+- **Fase 4a: el brillo del portátil.**
+  - **La barra del brillo mueve la pantalla del portátil** por WMI (`ROOT\WMI`,
+    `WmiMonitorBrightness` y `WmiSetBrightness`). Toda la conversación con WMI va en el hilo de
+    trabajo nuevo (`system/worker`, COM en modo MTA), que es el dueño de la única conexión: la
+    interfaz no espera nunca a WMI.
+  - **Escritura:** mientras arrastras, solo se escribe el último valor pendiente (`Worker::Post`
+    con clave).
+  - **Sigue las teclas Fn** con `RegisterPowerSettingNotification` y
+    `GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS`: el aviso llega como `WM_POWERBROADCAST` y no hace
+    falta ningún evento de WMI. Una suscripción a WMI habría lanzado `unsecapp.exe` o dejado un
+    hilo sondeando. Cambia `SEGURIDAD.md` §2.3 en su propio commit, y cierra más de lo que abre.
+  - **El eco de nuestras escrituras:** durante 400 ms después de escribir, los avisos de Windows
+    se toman como eco y no mueven la barra. Así un aviso atrasado no la hace saltar hacia
+    atrás.
+  - **Sin pantalla interna** (un sobremesa), la tarjeta dice «Sin control de brillo».
+  - **Una tarjeta solo se despliega si hay más de una cosa que elegir** (`CanUnfold`). Con una
+    sola pantalla o una sola salida no hay chevron, y su cabecera no es parada del Tab.
+  - **Memoria:** el panel recorta su memoria al arrancar y después de la primera lectura de WMI,
+    no solo al esconderse. Sin abrirlo nunca bajó de 46,1 MB a 0,4 MB. La primera apertura
+    tarda 21 ms y las siguientes 10.
+  - **Pruebas:** 2 casos nuevos para el hilo de trabajo (el orden y que los trabajos con clave
+    se sustituyen), 27 en total.
+  - **Probado con la pantalla del portátil** (AUO, 101 niveles):
+    - lee el 100 % y el arrastre la deja al 40 %;
+    - un cambio desde fuera al 70 % llega al panel por el aviso de Windows;
+    - quedó en el 100 % del principio.
+
 - **Fase 3b: elegir la salida de audio.**
   - La tarjeta del volumen se despliega con las salidas activas de verdad
     (`EnumAudioEndpoints`). Cada una lleva el icono de auriculares o de altavoz según su forma,

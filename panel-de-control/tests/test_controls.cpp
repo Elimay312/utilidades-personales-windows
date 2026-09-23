@@ -90,6 +90,14 @@ TEST_CASE("Tab walks everything in reading order and wraps") {
   CHECK(std::count(openOrder.begin(), openOrder.end(), Target{Part::DisplaySlider, 2}) == 0);
   CHECK(std::count(openOrder.begin(), openOrder.end(), Target{Part::BrightnessSlider}) == 0);
   CHECK(openOrder.size() == expected.size() - 1 + 2 + 3);
+
+  // One screen and one output: nothing to unfold, so their headers are not stops.
+  PanelState single = Sample();
+  single.displays.resize(1);
+  single.audio.outputs.resize(1);
+  const std::vector<Target> singleOrder = FocusOrder(MakeLayout(Expanded{}, single), single);
+  CHECK(std::count(singleOrder.begin(), singleOrder.end(), Target{Part::BrightnessHeader}) == 0);
+  CHECK(std::count(singleOrder.begin(), singleOrder.end(), Target{Part::AudioHeader}) == 0);
 }
 
 TEST_CASE("the spring reaches its target, stops there, and can be turned around mid-way") {

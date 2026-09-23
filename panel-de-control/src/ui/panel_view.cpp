@@ -182,12 +182,13 @@ struct Painter {
 
   // A screen whose brightness cannot be reached keeps its row, with the reason where the
   // slider would be: a row that vanished would look like a monitor that was not detected.
-  void Unreachable(const D2D1_RECT_F& rect) const {
+  void Unreachable(const D2D1_RECT_F& rect, bool external = true) const {
     const float radius = (rect.bottom - rect.top) / 2.0f;
     StrokeRound(target, rect, radius, With(theme.border));
     DrawTextIn(target, fonts.caption.Get(),
-               T(L"Sin control de brillo (DDC/CI)", L"No brightness control (DDC/CI)"), rect,
-               With(theme.textSecondary), Align::Center);
+               external ? T(L"Sin control de brillo (DDC/CI)", L"No brightness control (DDC/CI)")
+                        : T(L"Sin control de brillo", L"No brightness control"),
+               rect, With(theme.textSecondary), Align::Center);
   }
 };
 
@@ -206,7 +207,7 @@ void DrawBrightness(Painter& p, const PanelLayout& layout, const PanelState& sta
     percent = Percent(here->level);
   }
   p.Header(Target{Part::BrightnessHeader}, layout.brightnessHeader, title, open, percent,
-           !state.displays.empty());
+           CanUnfold(state.displays.size()));
 
   // Everything under the header is clipped to the card while it grows, and the two contents
   // cross. The one slider does not just fade where it is -- it would sit on the first row's
@@ -227,7 +228,8 @@ void DrawBrightness(Painter& p, const PanelLayout& layout, const PanelState& sta
     // Gone by halfway: the two never show at full strength in the same frame.
     p.alpha = Unit(1.0f - 2.0f * rows);
     if (here == nullptr || !here->reachable) {
-      p.Unreachable(at);
+      // No screen at all is not a DDC/CI problem; one that does not answer is.
+      p.Unreachable(at, here != nullptr);
     } else {
       p.Slider(at, here->level, glyph::kBrightness, false);
     }
@@ -273,7 +275,7 @@ void DrawAudio(Painter& p, const PanelLayout& layout, const PanelState& state) {
     percent = audio.muted ? std::wstring(T(L"Silencio", L"Muted")) : Percent(audio.level);
   }
   p.Header(Target{Part::AudioHeader}, layout.audioHeader, title, view.open.audio, percent,
-           !audio.outputs.empty());
+           CanUnfold(audio.outputs.size()));
   p.Slider(layout.audioSlider, audio.level, audio.muted ? glyph::kMute : glyph::kVolume,
            audio.muted, view.Hover(Target{Part::Mute}));
 

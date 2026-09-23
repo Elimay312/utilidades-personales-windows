@@ -309,8 +309,9 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   perfil es una llamada. El precio de la ubicación es el mismo por las dos vías.
 - **`wanted_` corta toda lectura** con la tarjeta plegada o el panel escondido, aunque llegue
   un aviso de una búsqueda que haya hecho otro programa.
-- **Cómo se comprueba la ubicación:** `HKCU\...\CapabilityAccessManager\ConsentStore\location  NonPackaged\<ruta del exe>` guarda `LastUsedTimeStart`/`Stop`. Solo debe moverse al desplegar
-  la tarjeta de Wi-Fi.
+- **Cómo se comprueba la ubicación:** la clave
+  `HKCU\...\CapabilityAccessManager\ConsentStore\location\NonPackaged\<ruta del exe>` guarda
+  `LastUsedTimeStart`/`Stop`. Solo debe moverse al desplegar la tarjeta de Wi-Fi.
 - **Las filas se ordenan** poniendo primero la conectada, luego las guardadas, luego por señal y
   luego por nombre. Así lo que se puede pulsar sin contraseña queda arriba.
 

@@ -402,6 +402,11 @@ lo que queda sin pintar es el título. Encima aparece una tarjeta con lo que se 
 | `comprar leche` | ☑ Tarea sin fecha · Comprar leche |
 | `t: pagar luz el lunes` | ☑ Tarea · Lunes · Pagar luz |
 | `gym cada lunes 7am` | 📅 Lunes · 07:00–08:00 · Cada semana · Gym |
+| `cena el 25 de octubre a las 8pm` | 📅 25 Oct · 20:00–21:00 · Cena |
+| `renovar el pasaporte 15/11` | ☑ Tarea · 15 Nov · Renovar el pasaporte |
+| `reunión 3-5pm` | 📅 Hoy · 15:00–17:00 · Reunión |
+| `dentista en 2 semanas` | ☑ Tarea · 6 Oct · Dentista |
+| `a las 3 llamada por una hora y media` | 📅 Hoy · 15:00–16:30 · Llamada |
 
 Una frase que se repite guarda su regla y el evento sale **en cada día en que cae**: `gym cada
 lunes 7am` aparece todos los lunes desde el primero.
@@ -412,11 +417,17 @@ de los próximos siete días, y como `25 Oct` si queda más lejos.
 Lo que entiende:
 
 - **Fechas:** `hoy`, `mañana`, `pasado mañana`, `lunes`…`domingo`, `próximo lunes`, `el 25`,
-  `en 3 días`. En inglés: `today`, `tomorrow`, `day after tomorrow`, `monday`…`sunday`,
-  `next monday`, `on the 25th`, `in 3 days`.
-- **Horas:** `5pm`, `5 pm`, `17:00`, `17h`, `a las 5`, `5 de la tarde`, `mediodía`,
+  `25 de octubre`, `el 25 de oct de 2027`, `25/10`, `25/10/2027`, `en 3 días`, `en 2
+  semanas`, `dentro de un mes`, `fin de mes`, `este fin de semana`. En inglés: `today`,
+  `tomorrow`, `day after tomorrow`, `monday`…`sunday`, `next monday`, `on the 25th`,
+  `October 25`, `Oct 25th, 2027`, `the 3rd of November`, `in 3 days`, `in a week`,
+  `end of the month`, `this weekend`.
+- **Horas:** `5pm`, `5 pm`, `17:00`, `17h`, `17h30`, `a las 5`, `5 de la tarde`, `mediodía`,
   `medianoche`. En inglés: `at 5`, `noon`, `midnight`.
-- **Duración:** `por 2h`, `30 min`, `de 3 a 5`. En inglés: `for 2h`, `from 3 to 5`.
+- **Duración:** `por 2h`, `30 min`, `por 1h30`, `por 1.5h`, `por media hora`, `por una hora y
+  media`. En inglés: `for 2h`, `for an hour and a half`.
+- **De una hora a otra:** `de 3 a 5`, `3-5pm`, `10:00-11:30`, `a las 3 hasta las 5`, `entre
+  las 3 y las 5`, `de 3 a 5 de la tarde`. En inglés: `from 3 to 5`, `3-5pm`, `at 3 until 5`.
 - **Repetición:** `cada lunes`, `todos los días` (`every monday`, `every day`), que se guardan
   como una regla RRULE.
 - **Prefijos:** `t:` o `!` al principio obligan a que sea una tarea; `e:` obliga a que sea un
@@ -438,6 +449,12 @@ Las reglas cuando la frase no lo dice todo:
   se respeta: `hoy 17:00` sigue siendo hoy aunque sean las once de la noche.
 - `el 25` es el próximo 25 que haya: el de este mes si no ha pasado, y si no el del siguiente,
   saltando de año en diciembre y saltando los meses que no tienen ese día.
+- `25 de octubre` y `25/10` sin año son la próxima vez que llegue esa fecha: dicho en
+  noviembre, el año que viene. Una fecha numérica es **día y mes**, como se escribe aquí.
+- En un rango, la mitad del día que se dijo en un extremo vale para el otro: `3-5pm` es de tres
+  a cinco de la tarde, salvo que así empezara después de acabar (`11-1pm` empieza a las once de
+  la mañana). Dos números sueltos sin nada delante no son una hora: `comprar 3 a 5 manzanas` es
+  una tarea con ese título.
 - Un día de la semana suelto puede ser hoy (`martes` un martes es hoy); `próximo martes` es
   siempre la semana que viene.
 - Lo que no se entiende no se pierde: se queda en el título. `25:00 reunión` es una tarea

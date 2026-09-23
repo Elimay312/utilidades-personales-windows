@@ -9,6 +9,12 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **El lenguaje natural entiende más.** Fechas con su mes (`25 de octubre`, `el 25 de oct de
+  2027`, `October 25`, `the 3rd of November`) y numéricas, día y mes (`25/10`, `25/10/2027`);
+  sin año son la próxima vez que llegue esa fecha. Fechas relativas: `en 2 semanas`, `dentro de
+  un mes`, `in a week`, `fin de mes`, `este fin de semana`. Rangos: `3-5pm`, `10:00-11:30`,
+  `a las 3 hasta las 5`, `entre las 3 y las 5`, `de 3 a 5 de la tarde`. Duraciones: `por
+  1h30`, `por 1.5h`, `por media hora`, `por una hora y media`. Y `17h30`.
 - **Solo este o toda la serie.** Arrastrar, editar o borrar un evento que se repite pregunta
   cuál, en la cápsula de abajo, con **Solo este** y **Toda la serie** (flechas, `Enter`, `Esc`
   o el ratón). *Solo este* aparta esa repetición de la serie igual que Google —en su día nuevo,

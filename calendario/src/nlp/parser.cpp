@@ -98,6 +98,33 @@ int WeekdayOf(std::wstring_view word) {
   return -1;
 }
 
+constexpr std::wstring_view kMonthEs[12] = {L"enero",   L"febrero",    L"marzo",   L"abril",
+                                             L"mayo",    L"junio",      L"julio",   L"agosto",
+                                             L"septiembre", L"octubre", L"noviembre", L"diciembre"};
+constexpr std::wstring_view kMonthEn[12] = {L"january", L"february", L"march",     L"april",
+                                             L"may",     L"june",     L"july",      L"august",
+                                             L"september", L"october", L"november", L"december"};
+
+// 1 to 12, or 0. A month is its name in either language, "setiembre", or any beginning of the
+// name at least three letters long: "oct", "sept", "dic". Only ever asked right next to a day
+// number, so "mar" and "may" being words as well does not matter.
+int MonthOf(std::wstring_view word) {
+  if (word == L"setiembre") return 9;
+  if (word.size() < 3) return 0;
+  for (int i = 0; i < 12; ++i) {
+    if (kMonthEs[i].starts_with(word) || kMonthEn[i].starts_with(word)) return i + 1;
+  }
+  return 0;
+}
+
+// What sits between two tokens in the text itself: the "/" of "25/10", the "-" of "3-5pm".
+std::wstring_view Between(std::wstring_view folded, const Token& a, const Token& b) {
+  std::wstring_view gap = folded.substr(a.offset + a.length, b.offset - (a.offset + a.length));
+  while (!gap.empty() && gap.front() == L' ') gap.remove_prefix(1);
+  while (!gap.empty() && gap.back() == L' ') gap.remove_suffix(1);
+  return gap;
+}
+
 bool IsDateWord(std::wstring_view word) {
   return WeekdayOf(word) >= 0 || word == L"hoy" || word == L"today" || word == L"manana" ||
          word == L"tomorrow" || word == L"pasado";
@@ -123,6 +150,35 @@ Date DayOfMonth(Date today, int day) {
     month += std::chrono::months{1};
   }
   return today;
+}
+
+// A day and a month, and the year if it was written. Without one it is the next time that date
+// comes round, so "25 de octubre" said in November is next year's.
+std::optional<Date> DayAndMonth(Date today, int day, int month, std::optional<int> year) {
+  const auto make = [&](int y) {
+    return Date{std::chrono::year{y}, std::chrono::month{static_cast<unsigned>(month)},
+                std::chrono::day{static_cast<unsigned>(day)}};
+  };
+  if (year) {
+    const Date date = make(*year);
+    return date.ok() ? std::optional<Date>(date) : std::nullopt;
+  }
+  // A 29 February waits for the next year that has one.
+  for (int y = static_cast<int>(today.year()); y < static_cast<int>(today.year()) + 8; ++y) {
+    const Date date = make(y);
+    if (date.ok() && !Before(date, today)) return date;
+  }
+  return std::nullopt;
+}
+
+// A month later lands on the same day, or on the last one when that month is shorter.
+Date AddMonths(Date date, int months) {
+  const std::chrono::year_month month =
+      std::chrono::year_month{date.year(), date.month()} + std::chrono::months{months};
+  const Date same{month.year(), month.month(), date.day()};
+  if (same.ok()) return same;
+  return Date{std::chrono::year_month_day_last{month.year(),
+                                               std::chrono::month_day_last{month.month()}}};
 }
 
 struct Clock {
@@ -159,6 +215,15 @@ std::optional<Clock> ReadClock(std::wstring_view word) {
     const std::wstring_view hours = word.substr(0, word.size() - 1);
     if (!AllDigits(hours) || Number(hours) > 23) return std::nullopt;
     return Clock{Number(hours) * 60, true, false};
+  }
+
+  // "17h30", the way it is written on a poster.
+  if (const size_t h = word.find(L'h'); h != std::wstring_view::npos && h > 0) {
+    const std::wstring_view hours = word.substr(0, h);
+    const std::wstring_view minutes = word.substr(h + 1);
+    if (!AllDigits(hours) || !AllDigits(minutes) || minutes.size() != 2) return std::nullopt;
+    if (Number(hours) > 23 || Number(minutes) > 59) return std::nullopt;
+    return Clock{Number(hours) * 60 + Number(minutes), true, false};
   }
 
   if (AllDigits(word)) {
@@ -253,45 +318,170 @@ struct DurationHit {
   size_t to = 0;
 };
 
-// "de 3 a 5" and "from 3 to 5": one pattern that produces a time and a length at once. It
-// matches whole or not at all, so a half match never eats the "de" of "de la tarde".
-std::optional<DurationHit> ReadRange(const std::vector<Token>& t, const std::vector<bool>& used,
-                                     size_t i) {
-  if (!AtAny(t, i, {L"de", L"from"}) || i + 3 >= t.size()) return std::nullopt;
-  const std::optional<Clock> first = ReadClock(t[i + 1].text);
-  if (!first || !AtAny(t, i + 2, {L"a", L"to"})) return std::nullopt;
-  const std::optional<Clock> second = ReadClock(t[i + 3].text);
-  if (!second) return std::nullopt;
-
-  const int start = first->exact ? first->minute : Daylight(first->minute);
-  const int end = second->exact ? second->minute : Daylight(second->minute);
-  if (end <= start || !RangeFree(used, i, i + 4)) return std::nullopt;
-  return DurationHit{end - start, start, i, i + 4};
+// "pm", "am" or "de la tarde" right after a clock: which half of the day it said, and how many
+// tokens that took. Nothing said is nullopt.
+std::optional<bool> ReadHalf(const std::vector<Token>& t, size_t& at) {
+  if (AtAny(t, at, {L"am", L"pm"})) {
+    return t[at++].text == L"pm";
+  }
+  if (At(t, at, L"de") && At(t, at + 1, L"la") &&
+      AtAny(t, at + 2, {L"tarde", L"noche", L"manana", L"madrugada"})) {
+    const bool afternoon = t[at + 2].text == L"tarde" || t[at + 2].text == L"noche";
+    at += 3;
+    return afternoon;
+  }
+  return std::nullopt;
 }
 
-// "por 2h", "for 30 min", "durante 90 minutos", and a bare "30 min". A bare "2h" is not a
-// length: "17h reunion" is a time, and seventeen hours long would be absurd.
+// A clock in the half of the day that was said. Nullopt when that makes no sense ("15 pm").
+std::optional<int> InHalf(int minute, bool pm) {
+  const int hour = minute / 60;
+  if (hour < 1 || hour > 12) return std::nullopt;
+  return ((hour % 12) + (pm ? 12 : 0)) * 60 + minute % 60;
+}
+
+// A time with its end: "de 3 a 5", "from 3 to 5", "3-5pm", "a las 3 hasta las 5", "entre las 3
+// y las 5", "10:00-11:30", "de 3 a 5 de la tarde". One pattern that produces a start and a length
+// at once, and matches whole or not at all, so a half match never eats the "de" of "de la
+// tarde".
+//
+// A half of the day said at one end goes for the other as well -- "3-5pm" is three to five in
+// the afternoon -- unless that would put the start after the end: "11-1pm" starts at eleven in
+// the morning. Two naked numbers with nothing in front ("comprar 3 a 5 manzanas") are not a
+// time at all.
+std::optional<DurationHit> ReadRange(const std::vector<Token>& t, const std::vector<bool>& used,
+                                     std::wstring_view folded, size_t i) {
+  size_t j = i;
+  bool marked = false;
+  if (AtAny(t, j, {L"de", L"desde", L"from", L"entre", L"between"})) {
+    marked = true;
+    ++j;
+    if (AtAny(t, j, {L"las", L"la"})) ++j;
+  } else if (At(t, j, L"a") && AtAny(t, j + 1, {L"las", L"la"})) {
+    marked = true;
+    j += 2;
+  } else if (At(t, j, L"at")) {
+    marked = true;
+    ++j;
+  }
+  if (j >= t.size()) return std::nullopt;
+  const std::optional<Clock> first = ReadClock(t[j].text);
+  if (!first) return std::nullopt;
+  size_t k = j + 1;
+  const std::optional<bool> firstHalf = first->exact ? std::nullopt : ReadHalf(t, k);
+
+  if (AtAny(t, k, {L"a", L"to", L"hasta", L"until", L"till", L"y", L"and"})) {
+    ++k;
+    if (AtAny(t, k, {L"las", L"la"})) ++k;
+  } else if (k >= t.size() || (Between(folded, t[k - 1], t[k]) != L"-" &&
+                               Between(folded, t[k - 1], t[k]) != L"–")) {
+    return std::nullopt;
+  }
+  if (k >= t.size()) return std::nullopt;
+  const std::optional<Clock> second = ReadClock(t[k].text);
+  if (!second) return std::nullopt;
+  ++k;
+  const std::optional<bool> secondHalf = second->exact ? std::nullopt : ReadHalf(t, k);
+
+  const bool saidNothing = first->bare && second->bare && !firstHalf && !secondHalf;
+  if (!marked && saidNothing) return std::nullopt;
+
+  const std::optional<bool> firstSays = firstHalf ? firstHalf : secondHalf;
+  const std::optional<bool> secondSays = secondHalf ? secondHalf : firstHalf;
+  int start = first->minute;
+  bool startGuessed = false;
+  if (!first->exact) {
+    if (firstSays) {
+      const std::optional<int> in = InHalf(first->minute, *firstSays);
+      if (!in) return std::nullopt;
+      start = *in;
+    } else {
+      start = Daylight(first->minute);
+      startGuessed = true;
+    }
+  }
+  int end = second->minute;
+  if (!second->exact) {
+    if (secondSays) {
+      const std::optional<int> in = InHalf(second->minute, *secondSays);
+      if (!in) return std::nullopt;
+      end = *in;
+    } else {
+      end = Daylight(second->minute);
+    }
+  }
+  // "11-1pm": the half that was borrowed does not fit the start, the other one does.
+  if (end <= start && !firstHalf && secondHalf && start >= 12 * 60) start -= 12 * 60;
+  // "de 7 a 9": the guess moved seven to the evening past nine; the morning reads it whole.
+  if (end <= start && startGuessed && first->minute < end) start = first->minute;
+  if (end <= start || !RangeFree(used, i, k)) return std::nullopt;
+  return DurationHit{end - start, start, i, k};
+}
+
+// "un", "una", "a" and "an" count as one: "en una semana", "in a week", "por una hora".
+std::optional<int> CountOf(std::wstring_view word) {
+  if (AllDigits(word)) return Number(word);
+  if (word == L"un" || word == L"una" || word == L"a" || word == L"an") return 1;
+  return std::nullopt;
+}
+
+bool IsHourWord(const std::vector<Token>& t, size_t i) {
+  return AtAny(t, i, {L"h", L"hora", L"horas", L"hour", L"hours"});
+}
+
+// "por 2h", "for 30 min", "durante 90 minutos", "por 1h30", "por 1.5h", "por media hora",
+// "por una hora y media", and a bare "30 min". A bare "2h" is not a length: "17h reunion" is a
+// time, and seventeen hours long would be absurd.
 std::optional<DurationHit> ReadLength(const std::vector<Token>& t, const std::vector<bool>& used,
-                                      size_t i) {
+                                      std::wstring_view folded, size_t i) {
   size_t j = i;
   const bool keyword = AtAny(t, j, {L"por", L"for", L"durante"});
   if (keyword) ++j;
   if (j >= t.size()) return std::nullopt;
 
   const std::wstring_view word = t[j].text;
+  const size_t h = word.find(L'h');
   int minutes = 0;
   size_t end = 0;
   if (keyword && word.size() > 1 && word.back() == L'h' &&
       AllDigits(word.substr(0, word.size() - 1))) {
     minutes = Number(word.substr(0, word.size() - 1)) * 60;
     end = j + 1;
+  } else if (keyword && h != std::wstring_view::npos && h > 0 &&
+             AllDigits(word.substr(0, h)) && AllDigits(word.substr(h + 1))) {
+    // "1h30": an hour and thirty minutes.
+    minutes = Number(word.substr(0, h)) * 60 + Number(word.substr(h + 1));
+    end = j + 1;
+  } else if (keyword && AllDigits(word) && j + 1 < t.size() &&
+             (Between(folded, t[j], t[j + 1]) == L"." || Between(folded, t[j], t[j + 1]) == L",")) {
+    // "1.5h" and "1,5 horas": the decimal point splits the token.
+    const std::wstring_view next = t[j + 1].text;
+    const bool glued = next.size() > 1 && next.back() == L'h';
+    const std::wstring_view fraction = glued ? next.substr(0, next.size() - 1) : next;
+    if (!AllDigits(fraction) || fraction.size() > 2 || (!glued && !IsHourWord(t, j + 2))) {
+      return std::nullopt;
+    }
+    const int scale = fraction.size() == 1 ? 10 : 100;
+    minutes = Number(word) * 60 + Number(fraction) * 60 / scale;
+    end = glued ? j + 2 : j + 3;
+  } else if (keyword && At(t, j, L"media") && AtAny(t, j + 1, {L"hora"})) {
+    minutes = 30;
+    end = j + 2;
   } else if (AllDigits(word) && AtAny(t, j + 1, {L"min", L"mins", L"minutos", L"minutes"})) {
     minutes = Number(word);
     end = j + 2;
-  } else if (keyword && AllDigits(word) &&
-             AtAny(t, j + 1, {L"h", L"hora", L"horas", L"hour", L"hours"})) {
-    minutes = Number(word) * 60;
+  } else if (const std::optional<int> count = CountOf(word);
+             keyword && count && IsHourWord(t, j + 1)) {
+    minutes = *count * 60;
     end = j + 2;
+    // "una hora y media", "an hour and a half".
+    if (At(t, end, L"y") && At(t, end + 1, L"media")) {
+      minutes += 30;
+      end += 2;
+    } else if (At(t, end, L"and") && At(t, end + 1, L"a") && At(t, end + 2, L"half")) {
+      minutes += 30;
+      end += 3;
+    }
   } else {
     return std::nullopt;
   }
@@ -353,8 +543,80 @@ std::optional<int> ReadDayNumber(std::wstring_view word) {
   return day;
 }
 
+std::optional<int> ReadYear(std::wstring_view word, bool shortToo) {
+  if (!AllDigits(word)) return std::nullopt;
+  if (word.size() == 4 && Number(word) >= 2000 && Number(word) < 2100) return Number(word);
+  if (shortToo && word.size() == 2) return 2000 + Number(word);
+  return std::nullopt;
+}
+
+// A date that starts with its day: "25 de octubre", "25 octubre de 2027", "25th of October",
+// "25/10", "25/10/2027". Day first, as it is written in Colombia. Returns where it ends.
+std::optional<DateHit> ReadDayFirst(const std::vector<Token>& t, std::wstring_view folded,
+                                    Now now, size_t from, size_t j) {
+  if (j >= t.size()) return std::nullopt;
+  const std::optional<int> day = ReadDayNumber(t[j].text);
+  if (!day) return std::nullopt;
+
+  int month = 0;
+  std::optional<int> year;
+  size_t k = j + 1;
+  if (k < t.size() && Between(folded, t[j], t[k]) == L"/" && AllDigits(t[k].text)) {
+    month = Number(t[k].text);
+    ++k;
+    if (k < t.size() && Between(folded, t[k - 1], t[k]) == L"/") {
+      year = ReadYear(t[k].text, /*shortToo=*/true);
+      if (!year) return std::nullopt;
+      ++k;
+    }
+  } else {
+    if (AtAny(t, k, {L"de", L"of"})) ++k;
+    month = k < t.size() ? MonthOf(t[k].text) : 0;
+    if (month == 0) return std::nullopt;
+    ++k;
+    if (At(t, k, L"de") && k + 1 < t.size() && ReadYear(t[k + 1].text, false)) {
+      year = ReadYear(t[k + 1].text, false);
+      k += 2;
+    } else if (k < t.size() && ReadYear(t[k].text, false)) {
+      year = ReadYear(t[k].text, false);
+      ++k;
+    }
+  }
+  if (month < 1 || month > 12) return std::nullopt;
+  const std::optional<Date> date = DayAndMonth(now.date, *day, month, year);
+  if (!date) return std::nullopt;
+  return DateHit{*date, from, k};
+}
+
+// And the one that starts with its month: "October 25", "Oct 25th, 2027", "octubre 25".
+std::optional<DateHit> ReadMonthFirst(const std::vector<Token>& t, Now now, size_t from,
+                                      size_t j) {
+  if (j + 1 >= t.size()) return std::nullopt;
+  const int month = MonthOf(t[j].text);
+  const std::optional<int> day = ReadDayNumber(t[j + 1].text);
+  if (month == 0 || !day) return std::nullopt;
+  size_t k = j + 2;
+  std::optional<int> year;
+  if (k < t.size() && ReadYear(t[k].text, false)) year = ReadYear(t[k++].text, false);
+  const std::optional<Date> date = DayAndMonth(now.date, *day, month, year);
+  if (!date) return std::nullopt;
+  return DateHit{*date, from, k};
+}
+
+// "fin de semana", "weekend", "the weekend": the Saturday coming, or today if it is one.
+size_t WeekendEnd(const std::vector<Token>& t, size_t j) {
+  if (AtAny(t, j, {L"fin", L"finde"}) && At(t, j + 1, L"de") && At(t, j + 2, L"semana")) {
+    return j + 3;
+  }
+  if (At(t, j, L"finde") || At(t, j, L"weekend")) return j + 1;
+  return 0;
+}
+
 std::optional<DateHit> ReadDateAt(const std::vector<Token>& t, const std::vector<bool>& used,
-                                  Now now, size_t i) {
+                                  std::wstring_view folded, Now now, size_t i) {
+  const auto free = [&](const std::optional<DateHit>& hit) {
+    return hit && RangeFree(used, hit->from, hit->to) ? hit : std::nullopt;
+  };
   if (AtAny(t, i, {L"hoy", L"today"})) return DateHit{now.date, i, i + 1};
   if (AtAny(t, i, {L"manana", L"tomorrow"})) return DateHit{AddDays(now.date, 1), i, i + 1};
   if (At(t, i, L"pasado") && At(t, i + 1, L"manana") && RangeFree(used, i, i + 2)) {
@@ -376,6 +638,12 @@ std::optional<DateHit> ReadDateAt(const std::vector<Token>& t, const std::vector
   if (AtAny(t, i, {L"el", L"on", L"the"})) {
     size_t j = i + 1;
     if (At(t, i, L"on") && At(t, j, L"the")) ++j;
+    // "el 25 de octubre" before "el 25": the month, when there is one, is part of the date.
+    if (const auto hit = free(ReadDayFirst(t, folded, now, i, j))) return hit;
+    if (const auto hit = free(ReadMonthFirst(t, now, i, j))) return hit;
+    if (const size_t end = WeekendEnd(t, j); end != 0 && RangeFree(used, i, end)) {
+      return DateHit{NextWeekday(now.date, 5, false), i, end};
+    }
     if (j < t.size() && RangeFree(used, i, j + 1)) {
       const int weekday = WeekdayOf(t[j].text);
       if (weekday >= 0) return DateHit{NextWeekday(now.date, weekday, false), i, j + 1};
@@ -383,10 +651,52 @@ std::optional<DateHit> ReadDateAt(const std::vector<Token>& t, const std::vector
       if (day) return DateHit{DayOfMonth(now.date, *day), i, j + 1};
     }
   }
+  if (const auto hit = free(ReadDayFirst(t, folded, now, i, i))) return hit;
+  if (const auto hit = free(ReadMonthFirst(t, now, i, i))) return hit;
 
-  if (AtAny(t, i, {L"en", L"in"}) && i + 2 < t.size() && AllDigits(t[i + 1].text) &&
-      AtAny(t, i + 2, {L"dias", L"dia", L"days", L"day"}) && RangeFree(used, i, i + 3)) {
-    return DateHit{AddDays(now.date, Number(t[i + 1].text)), i, i + 3};
+  // "en 3 días", "en 2 semanas", "dentro de un mes", "in a week".
+  const bool within = At(t, i, L"dentro") && At(t, i + 1, L"de");
+  if (within || AtAny(t, i, {L"en", L"in"})) {
+    const size_t j = within ? i + 2 : i + 1;
+    const std::optional<int> count = j < t.size() ? CountOf(t[j].text) : std::nullopt;
+    if (count && RangeFree(used, i, j + 2)) {
+      if (AtAny(t, j + 1, {L"dias", L"dia", L"days", L"day"})) {
+        return DateHit{AddDays(now.date, *count), i, j + 2};
+      }
+      if (AtAny(t, j + 1, {L"semana", L"semanas", L"week", L"weeks"})) {
+        return DateHit{AddDays(now.date, 7 * *count), i, j + 2};
+      }
+      if (AtAny(t, j + 1, {L"mes", L"meses", L"month", L"months"})) {
+        return DateHit{AddMonths(now.date, *count), i, j + 2};
+      }
+    }
+  }
+
+  // "fin de mes", "a fin de mes", "end of the month": the last day of this one.
+  {
+    size_t j = i;
+    if (At(t, j, L"a") && AtAny(t, j + 1, {L"fin", L"final", L"finales"})) ++j;
+    size_t end = 0;
+    if (AtAny(t, j, {L"fin", L"final", L"finales"}) && AtAny(t, j + 1, {L"de", L"del"}) &&
+        At(t, j + 2, L"mes")) {
+      end = j + 3;
+    } else if (At(t, j, L"end") && At(t, j + 1, L"of")) {
+      const size_t m = At(t, j + 2, L"the") ? j + 3 : j + 2;
+      if (At(t, m, L"month")) end = m + 1;
+    }
+    if (end != 0 && RangeFree(used, i, end)) {
+      const Date last{std::chrono::year_month_day_last{
+          now.date.year(), std::chrono::month_day_last{now.date.month()}}};
+      return DateHit{last, i, end};
+    }
+  }
+
+  // "este fin de semana", "this weekend", "fin de semana".
+  {
+    const size_t j = AtAny(t, i, {L"este", L"this"}) ? i + 1 : i;
+    if (const size_t end = WeekendEnd(t, j); end != 0 && RangeFree(used, i, end)) {
+      return DateHit{NextWeekday(now.date, 5, false), i, end};
+    }
   }
 
   const int weekday = WeekdayOf(t[i].text);
@@ -506,10 +816,10 @@ ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes) {
   // Length before time, so "de 3 a 5" gets to set both and "por 2h" is never read as a clock.
   std::optional<DurationHit> duration;
   for (size_t i = 0; i < tokens.size() && !duration; ++i) {
-    if (!used[i]) duration = ReadRange(tokens, used, i);
+    if (!used[i]) duration = ReadRange(tokens, used, folded, i);
   }
   for (size_t i = 0; i < tokens.size() && !duration; ++i) {
-    if (!used[i]) duration = ReadLength(tokens, used, i);
+    if (!used[i]) duration = ReadLength(tokens, used, folded, i);
   }
   const size_t durationSpan = out.spans.size();
   if (duration) {
@@ -523,7 +833,7 @@ ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes) {
 
   std::optional<DateHit> date;
   for (size_t i = 0; i < tokens.size() && !date; ++i) {
-    if (!used[i]) date = ReadDateAt(tokens, used, now, i);
+    if (!used[i]) date = ReadDateAt(tokens, used, folded, now, i);
   }
   if (date) take(date->from, date->to, SpanKind::Date);
 

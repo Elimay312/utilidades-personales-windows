@@ -354,6 +354,151 @@ TEST_CASE("a date without an hour does not rescue a length either") {
   CHECK(out.title == L"reunion por 2h");
 }
 
+// --- phase 9: more ways of writing a range and a length ----------------------------------------
+
+TEST_CASE("a range with a dash takes its half of the day from the end that says it") {
+  nlp::ParsedInput out = nlp::ParseInput(L"reunion 3-5pm", kTue);
+  CHECK(out.kind == nlp::Kind::Event);
+  CHECK(Clock(out.start) == L"15:00");
+  CHECK(Clock(out.end) == L"17:00");
+  CHECK(out.title == L"reunion");
+  // Unless that would start after it ends: eleven in the morning to one.
+  out = nlp::ParseInput(L"11-1pm turno", kTue);
+  CHECK(Clock(out.start) == L"11:00");
+  CHECK(Clock(out.end) == L"13:00");
+  out = nlp::ParseInput(L"10:00-11:30 standup", kTue);
+  CHECK(Clock(out.start) == L"10:00");
+  CHECK(Clock(out.end) == L"11:30");
+  CHECK(out.title == L"standup");
+}
+
+TEST_CASE("a range said in words, with the half of the day at the end") {
+  nlp::ParsedInput out = nlp::ParseInput(L"de 3 a 5 de la tarde clase", kTue);
+  CHECK(Clock(out.start) == L"15:00");
+  CHECK(Clock(out.end) == L"17:00");
+  CHECK(out.title == L"clase");
+  out = nlp::ParseInput(L"taller a las 3 hasta las 5", kTue);
+  CHECK(Clock(out.start) == L"15:00");
+  CHECK(Clock(out.end) == L"17:00");
+  CHECK(out.title == L"taller");
+  out = nlp::ParseInput(L"visita entre las 3 y las 5", kTue);
+  CHECK(Clock(out.start) == L"15:00");
+  CHECK(out.durationMin == 120);
+  CHECK(out.title == L"visita");
+  // Seven to nine is the morning: seven in the evening would end before it starts.
+  out = nlp::ParseInput(L"de 7 a 9 desayuno", kTue);
+  CHECK(Clock(out.start) == L"07:00");
+  CHECK(Clock(out.end) == L"09:00");
+}
+
+TEST_CASE("two naked numbers with nothing in front are not a time") {
+  nlp::ParsedInput out = nlp::ParseInput(L"comprar 3 a 5 manzanas", kTue);
+  CHECK(out.kind == nlp::Kind::Task);
+  CHECK(out.title == L"comprar 3 a 5 manzanas");
+  out = nlp::ParseInput(L"precio 3-5", kTue);
+  CHECK(out.kind == nlp::Kind::Task);
+  CHECK(out.title == L"precio 3-5");
+}
+
+TEST_CASE("an hour and a half, written five ways") {
+  for (const wchar_t* text :
+       {L"a las 3 reunion por 1h30", L"a las 3 reunion por 1.5h", L"a las 3 reunion por 1,5 horas",
+        L"a las 3 reunion por una hora y media", L"at 3pm reunion for an hour and a half"}) {
+    const nlp::ParsedInput out = nlp::ParseInput(text, kTue);
+    CHECK(out.durationMin == 90);
+    CHECK(Clock(out.end) == L"16:30");
+    CHECK(out.title == L"reunion");
+  }
+  const nlp::ParsedInput half = nlp::ParseInput(L"a las 3 llamada por media hora", kTue);
+  CHECK(half.durationMin == 30);
+  CHECK(half.title == L"llamada");
+}
+
+TEST_CASE("seventeen h thirty is half past five in the afternoon") {
+  const nlp::ParsedInput out = nlp::ParseInput(L"cine 17h30", kTue);
+  CHECK(Clock(out.start) == L"17:30");
+  CHECK(out.otherMinute == nlp::kNoTime);
+  CHECK(out.title == L"cine");
+}
+
+// --- phase 9: dates with their month, numeric, relative -----------------------------------------
+
+TEST_CASE("a day with its month, in Spanish and in English") {
+  nlp::ParsedInput out = nlp::ParseInput(L"almuerzo 25 de octubre", kTue);
+  CHECK(out.kind == nlp::Kind::Task);
+  CHECK(When(out.start) == L"2026-10-25");
+  CHECK(out.title == L"almuerzo");
+  out = nlp::ParseInput(L"cena el 25 de oct a la 1pm", kTue);
+  CHECK(When(out.start) == L"2026-10-25");
+  CHECK(Clock(out.start) == L"13:00");
+  CHECK(out.title == L"cena");
+  out = nlp::ParseInput(L"dinner October 25", kTue);
+  CHECK(When(out.start) == L"2026-10-25");
+  CHECK(out.title == L"dinner");
+  out = nlp::ParseInput(L"party on Oct 25th at 7pm", kTue);
+  CHECK(When(out.start) == L"2026-10-25");
+  CHECK(Clock(out.start) == L"19:00");
+  CHECK(out.title == L"party");
+  out = nlp::ParseInput(L"the 3rd of November meeting", kTue);
+  CHECK(When(out.start) == L"2026-11-03");
+  CHECK(out.title == L"meeting");
+}
+
+TEST_CASE("a date that has gone by this year is next year's, unless the year is written") {
+  nlp::ParsedInput out = nlp::ParseInput(L"viaje 5 de septiembre", kTue);
+  CHECK(When(out.start) == L"2027-09-05");
+  out = nlp::ParseInput(L"cumple 25 de octubre de 2027", kTue);
+  CHECK(When(out.start) == L"2027-10-25");
+  CHECK(out.title == L"cumple");
+  out = nlp::ParseInput(L"boda 29 de febrero", kTue);
+  CHECK(When(out.start) == L"2028-02-29");
+}
+
+TEST_CASE("a numeric date is day then month, as it is written here") {
+  nlp::ParsedInput out = nlp::ParseInput(L"pagar 25/10", kTue);
+  CHECK(When(out.start) == L"2026-10-25");
+  CHECK(out.title == L"pagar");
+  out = nlp::ParseInput(L"renovar 25/10/2027 a las 9", kTue);
+  CHECK(When(out.start) == L"2027-10-25");
+  CHECK(Clock(out.start) == L"09:00");
+  out = nlp::ParseInput(L"renovar 1/2/27", kTue);
+  CHECK(When(out.start) == L"2027-02-01");
+  // A day that does not exist is not a date, and stays in the title.
+  out = nlp::ParseInput(L"31/02 nada", kTue);
+  CHECK(When(out.start) == L"sin fecha");
+  CHECK(out.title == L"31/02 nada");
+}
+
+TEST_CASE("weeks and months from now, and within") {
+  nlp::ParsedInput out = nlp::ParseInput(L"dentista en 2 semanas", kTue);
+  CHECK(When(out.start) == L"2026-10-06");
+  CHECK(out.title == L"dentista");
+  out = nlp::ParseInput(L"llamar dentro de 3 días", kTue);
+  CHECK(When(out.start) == L"2026-09-25");
+  CHECK(out.title == L"llamar");
+  out = nlp::ParseInput(L"call in a week", kTue);
+  CHECK(When(out.start) == L"2026-09-29");
+  out = nlp::ParseInput(L"revisión en un mes", kTue);
+  CHECK(When(out.start) == L"2026-10-22");
+  // A month after the 31st of January is the last day of February.
+  out = nlp::ParseInput(L"x en 1 mes", nlp::Now{Ymd(2027, 1, 31), 9 * 60});
+  CHECK(When(out.start) == L"2027-02-28");
+}
+
+TEST_CASE("the end of the month and the weekend") {
+  nlp::ParsedInput out = nlp::ParseInput(L"informe fin de mes", kTue);
+  CHECK(When(out.start) == L"2026-09-30");
+  CHECK(out.title == L"informe");
+  out = nlp::ParseInput(L"report end of the month", kTue);
+  CHECK(When(out.start) == L"2026-09-30");
+  out = nlp::ParseInput(L"paseo este fin de semana", kTue);
+  CHECK(When(out.start) == L"2026-09-26");
+  CHECK(out.title == L"paseo");
+  out = nlp::ParseInput(L"hike this weekend", kTue);
+  CHECK(When(out.start) == L"2026-09-26");
+  CHECK(out.title == L"hike");
+}
+
 // --- recurrence ---------------------------------------------------------------------------------
 
 TEST_CASE("every monday in English") {

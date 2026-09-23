@@ -115,6 +115,7 @@ internal sealed unsafe class IslaWindow : IDisposable
     private const uint WM_LBUTTONDOWN = 0x0201;
     private const uint WM_LBUTTONUP = 0x0202;
     private const uint WM_RBUTTONUP = 0x0205;
+    private const uint WM_MOUSEWHEEL = 0x020A;
     private const uint WM_NULL = 0x0000;
     private const uint WM_HOTKEY = 0x0312;
     private const uint WM_POWERBROADCAST = 0x0218;
@@ -225,6 +226,9 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// pueden redondear al mismo entero.
     /// </summary>
     private int _porcentajeAnterior = -1;
+
+    // Mientras gira la rueda, la linea de la app dice el volumen; a esta hora vuelve.
+    private DateTime _finVolumenPanel;
     private int _tic;
     private bool _atajoPomodoro;
     private bool _arrastrando;
@@ -526,6 +530,10 @@ internal sealed unsafe class IslaWindow : IDisposable
                 isla?.OnMenu();
                 return new LRESULT(0);
 
+            case WM_MOUSEWHEEL:
+                isla?.OnRueda((short)((wParam.Value >> 16) & 0xFFFF));
+                return new LRESULT(0);
+
             case WM_HOTKEY:
                 if (wParam.Value == AtajoPomodoro) isla?.OnPomodoro();
                 else isla?.OnHotkey();
@@ -825,7 +833,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         // CPU en reposo para redibujar exactamente los mismos pixeles. La posicion no
         // entra en la firma: de eso se encarga Progreso, que es una sola animacion.
         string firma = string.Join('|', c.Titulo, c.Artista, c.App, c.Sonando,
-            c.PuedeAnterior, c.PuedeSiguiente, c.PuedePlayPausa, c.Duracion.Ticks, c.Tinte);
+            c.PuedeAnterior, c.PuedeSiguiente, c.PuedePlayPausa, c.Duracion.Ticks, c.Tinte, c.Arte is null);
         if (firma != _firma)
         {
             _firma = firma;
@@ -1045,12 +1053,24 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// </summary>
     private void OnVolumen()
     {
-        if (!_config.VolumenAsoma) return;
-
         float v = Audio.Volumen();
         if (v < 0f) return;
 
         int porcentaje = (int)Math.Round(v * 100);
+
+        // Con el panel abierto el titular no se ve, asi que el numero sale en la linea de
+        // la app. Aunque volumenAsoma este apagado: si giras la rueda quieres verlo. Y sin
+        // Avisar: asomar bajaria el panel a pastilla a mitad de giro -- medido, la segunda
+        // muesca ya no llegaba.
+        if (_actual == Estado.Abierta)
+        {
+            _porcentajeAnterior = porcentaje;
+            _visuals.LineaApp($"Volumen   {porcentaje} %");
+            _finVolumenPanel = DateTime.UtcNow.AddMilliseconds(MsAvisoAudio);
+            return;
+        }
+
+        if (!_config.VolumenAsoma) return;
         if (porcentaje == _porcentajeAnterior) return;
         _porcentajeAnterior = porcentaje;
 
@@ -1148,6 +1168,12 @@ internal sealed unsafe class IslaWindow : IDisposable
             _transitorio = null;
             RefrescarTitular();
             if (!HayPrincipal() && _enTarjeta is null) Ensenar(false);
+        }
+
+        if (_finVolumenPanel != default && ahora > _finVolumenPanel)
+        {
+            _finVolumenPanel = default;
+            if (Medios.Ultima is { } c) _visuals.LineaApp(c.App);
         }
 
         if (_hayPomodoro)
@@ -1517,6 +1543,17 @@ internal sealed unsafe class IslaWindow : IDisposable
         {
             PInvoke.DestroyMenu(menu);
         }
+    }
+
+    /// <summary>
+    /// La rueda, SOLO con el panel abierto (SEGURIDAD.md s.3.3). Cada muesca es un 2 %.
+    /// Sin tocar nada mas: el numero lo ensena OnVolumen, que avisa COM.
+    /// </summary>
+    private void OnRueda(short delta)
+    {
+        if (_actual != Estado.Abierta) return;
+        int pasos = delta / 120;
+        if (pasos != 0) Audio.Ajustar(pasos);
     }
 
     private void OnArrastrar(LPARAM lParam)

@@ -1055,7 +1055,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
     {
         Rotular(_rotTitulo, c.Titulo, TituloPx, true, 1f);
         Rotular(_rotArtista, Cabe(c.Artista, S(TituloAncho), S(ArtistaPx), grueso: false), ArtistaPx, false, 0.62f);
-        Rotular(_rotApp, Cabe(c.App, S(AppAncho), S(AppPx), grueso: false), AppPx, false, 0.38f);
+        LineaApp(c.App);
         Marquesina(_rotTitulo, _cajaTitulo.Size.X);
 
         CompositionBrush? arteVieja = _caratula.Brush;
@@ -1076,6 +1076,13 @@ internal sealed unsafe class IslaVisuals : IDisposable
         Icono(_botPlay, c.PuedePlayPausa ? (c.Sonando ? GlifoPausa : GlifoPlay) : null, PlayPx, BotonCx[1]);
         Icono(_botSiguiente, c.PuedeSiguiente ? GlifoSiguiente : null, BotonPx, BotonCx[2]);
     }
+
+    /// <summary>
+    /// La linea pequena bajo el artista: el nombre de la app, o el volumen mientras gira
+    /// la rueda.
+    /// </summary>
+    public void LineaApp(string s)
+        => Rotular(_rotApp, Cabe(s, S(AppAncho), S(AppPx), grueso: false), AppPx, false, 0.38f);
 
     /// <summary>Los dos relojes de los extremos de la barra. Solo al cambiar de cancion.</summary>
     public void Tiempos(TimeSpan pasado, TimeSpan total)

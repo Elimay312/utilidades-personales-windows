@@ -120,9 +120,10 @@ EDataFlow
 ERole
 CLSCTX
 
-// --- Bateria y volumen, solo lectura ---
+// --- Bateria y volumen ---
 // GetSystemPowerStatus no sondea: se llama al recibir WM_POWERBROADCAST.
-// IAudioEndpointVolume se usa SOLO para leer el nivel; la isla no toca el volumen.
+// IAudioEndpointVolume lee el nivel, y lo escribe SOLO con la rueda sobre el panel
+// abierto, a pasos del 2 % (SEGURIDAD.md 3.3, enmienda del 23-09-2026).
 GetSystemPowerStatus
 SYSTEM_POWER_STATUS
 IAudioEndpointVolume

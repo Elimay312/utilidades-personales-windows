@@ -26,7 +26,8 @@ namespace Isla;
 /// </para>
 ///
 /// <para>
-/// El volumen solo se LEE. Quien lo escribe es el HUD, que es quien tiene las teclas.
+/// El volumen se LEE, y solo se escribe con la rueda sobre el panel abierto (SEGURIDAD.md
+/// s.3.3, enmienda del 23-09-2026). Las teclas siguen siendo del HUD.
 /// </para>
 /// </summary>
 internal static unsafe class Audio
@@ -179,8 +180,7 @@ internal static unsafe class Audio
     }
 
     /// <summary>
-    /// El volumen maestro de la salida, de 0 a 1, o -1 si no se pudo leer. Solo se LEE:
-    /// la isla no toca el volumen de nadie, solo lo ensena cuando cambia.
+    /// El volumen maestro de la salida, de 0 a 1, o -1 si no se pudo leer.
     /// </summary>
     public static float Volumen()
     {
@@ -193,6 +193,25 @@ internal static unsafe class Audio
         {
             Caido();
             return -1f;
+        }
+    }
+
+    /// <summary>
+    /// La rueda sobre el panel abierto: <paramref name="pasos"/> del 2 % arriba o abajo,
+    /// acotado a [0, 1]. Se lee, se suma y se escribe; no hay nivel guardado que reponer.
+    /// En el hilo de UI, como Volumen(): el endpoint se abrio aqui y es una llamada corta.
+    /// </summary>
+    public static void Ajustar(int pasos)
+    {
+        try
+        {
+            IAudioEndpointVolume v = AbrirVolumen();
+            v.GetMasterVolumeLevelScalar(out float nivel);
+            v.SetMasterVolumeLevelScalar(Math.Clamp(nivel + pasos * 0.02f, 0f, 1f), null);
+        }
+        catch
+        {
+            Caido();
         }
     }
 

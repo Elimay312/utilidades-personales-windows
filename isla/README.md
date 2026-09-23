@@ -61,6 +61,7 @@ cruzar el borde de camino al botón de cerrar no la despierta.
 | Acaba un pomodoro | Sale una tarjeta que espera: **Descanso 5 min**, **Otro** o **Listo** |
 | Rueda sobre el panel abierto | Sube o baja el volumen un 2 % por muesca, y el número sale en la línea de la app |
 | Clic en `‹ App ›` | Con más de una sesión de medios (Spotify y Brave a la vez), pasa a la siguiente |
+| Clic en la onda (las cuatro barras) | El panel se transforma en el **mezclador**: una fila por app con audio, con su nivel. Clic o arrastre en el carril, o la rueda sobre la fila, cambian el volumen de esa app. `‹ Volumen por app` vuelve a la ficha |
 | Clic derecho | Menú con **Abrir isla.json** y **Salir** |
 | Llevar el ratón a otra pantalla | La isla se muda ahí (~375 ms) **en el estado en que estaba**: no vuelve a presentarse |
 | Cambiar el volumen, o de altavoces | Asoma con el número y por dónde sale: `Volumen 48 % · LG ULTRAWIDE (NVI…` |
@@ -393,6 +394,9 @@ lee `GetCursorPos` entre muestras antes de culpar al código.
 - **La sombra solo existe con el panel abierto.** Su máscara es la pastilla de 380×180
   hecha a mano; un nine-grid que sirviera para cualquier tamaño no pinta nada como máscara
   de `DropShadow`. Brasa y asomada no llevan sombra.
+- **El mezclador enseña cinco apps como mucho.** Es lo que cabe en la ventana; con más, las
+  que no suenan se quedan fuera. El techo es un scroll. Los nombres son los del ejecutable
+  (`Brave`, `Wallpaper64`), sin icono: leer iconos de procesos ajenos es otra puerta.
 - **La carátula de la canción anterior.** Si el navegador cambia el título antes que la
   miniatura, la primera lectura puede traer la carátula vieja, y como ya hay una se da por
   buena. El reintento solo cubre el caso de que no llegue ninguna.

@@ -13,6 +13,17 @@ está en el mensaje de su commit.
 
 Todo lo que hay. Falta probarlo en otros equipos y con otras aplicaciones de música.
 
+### Añadido: el mezclador por app, y la app se llama Spotify
+
+- **Clic en la onda → mezclador.** El panel crece con sus muelles y la ficha se funde con una
+  fila por app que tiene audio: nombre, carril y porcentaje. Clic, arrastre o rueda sobre una
+  fila cambian el volumen de esa app. Probado sobre una sesión muda propia, leyendo de vuelta
+  lo que dice Windows: clic al 50 % → 0,50; una muesca de rueda → 0,52. Es la enmienda más
+  grande de `SEGURIDAD.md` (§3.3): la lista solo existe con el mezclador abierto, del proceso
+  solo se lee el nombre del exe, y solo se escribe detrás de un gesto.
+- **`Spotify`, no `SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify`.** El nombre sale de lo que
+  va tras el `!` del AUMID, sin buscar nada.
+
 ### Añadido: menú, sesiones, rueda, pomodoro entero y sombra
 
 Tres de estas cosas abrían puertas que `SEGURIDAD.md` tenía cerradas, y se enmendó antes de

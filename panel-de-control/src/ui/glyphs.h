@@ -33,5 +33,6 @@ inline constexpr wchar_t kIsla = 0xE8D6;       // music note: what is playing
 inline constexpr wchar_t kHud = 0xE995;        // volume with bars
 inline constexpr wchar_t kQuickLook = 0xE890;  // eye
 inline constexpr wchar_t kLauncher = 0xE721;   // search
+inline constexpr wchar_t kAgenda = 0xE787;     // calendar
 
 }  // namespace panel::glyph

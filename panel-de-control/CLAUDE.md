@@ -80,7 +80,7 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
 | Dispositivos Bluetooth (5b-3) | Dos `DeviceWatcher` de emparejados, uno clásico y otro LE, con `IsConnected` y la clase; una fila por dirección |
 | Conectar o desconectar audio Bluetooth (5b-3) | `KSPROPERTY_ONESHOT_RECONNECT`/`DISCONNECT` por `IOCTL_KS_PROPERTY`, solo en `system/bt_audio.cpp` |
 | Luz nocturna | Blob CloudStore del registro, formato Bond CompactBinary (sin API pública) |
-| Utilidades | Toolhelp para saber cuáles corren, `CreateProcessW` para arrancar y Restart Manager para cerrar |
+| Utilidades | Toolhelp para saber cuáles corren, `CreateProcessW` para arrancar y `WM_CLOSE` a la clase de su ventana para cerrar (fase 7: el Restart Manager no sirve con estas apps) |
 
 ## Sistema de diseño
 
@@ -132,7 +132,8 @@ src/
                  Bluetooth, SSID; el único archivo con C++/WinRT), wifi (las redes de
                  alrededor y conectar a una guardada; el único con WlanAPI), bt_audio
                  (conectar y desconectar audio Bluetooth; el único con IOCTL), nightlight_blob
-                 (el códec Bond, puro) y nightlight (el registro); llegarán display_ids y apps
+                 (el códec Bond, puro), nightlight (el registro) y apps (la fila de
+                 utilidades); llegará display_ids
 tests/           doctest: hotkey, options, layout, controls
 assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
 ```
@@ -353,6 +354,23 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   escribió es lo mismo que hace el interruptor. Lo que la captura no ve es el color de la
   pantalla, porque el filtro no sale en `CopyFromScreen`. Eso lo confirma el usuario.
 
+### Decisiones de la fase 7
+
+- **`WM_CLOSE`, no `RmShutdown`:** lo midió un agente leyendo las seis apps. Ninguna atiende
+  `WM_QUERYENDSESSION` ni `WM_ENDSESSION`, y todas cierran limpio con `WM_CLOSE` a su ventana
+  principal, que es lo que ya hace el instalador de Agenda.
+- **Las clases por defecto** (`DefaultUtilities`): `DockWindowClass` (una por pantalla, todas),
+  `IslaDinamica`, `HudVolumen`, `QuickLookHostClass`, `LanzadorVentana` y `AgendaApp`. Las
+  ventanas se buscan en cada cierre: el Dock y la Isla las rehacen, y un identificador guardado
+  caduca.
+- **Brújula, Rayo y Renombrar no van en la fila por defecto:** son apps con ventana, cerrarlas
+  desde aquí podría perder trabajo, y el Lanzador ya las abre. Quien las quiera las añade a
+  `panel.json`, y si no pone `ventana`, solo se arrancan.
+- **Probar con la utilidad que esté parada** y dejarla como estaba. Cerrar una que el usuario
+  está usando (el Dock, el Lanzador) se lo quita de delante.
+- **Juzgar una captura por sus píxeles:** `GetPixel` en el punto exacto, no el ojo sobre la
+  imagen reducida.
+
 - **Pendiente para la fase 8:** si el HUD está en marcha, arrastrar el deslizador del panel
   saca también su cápsula. La solución es que el HUD ignore `kPanelVolumeContext`, y toca
   otro proyecto.
@@ -466,7 +484,7 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   - la copia de seguridad;
   - la comprobación de ida y vuelta;
   - las claves `…perdevice`.
-- [ ] **7. Utilidades:**
+- [x] **7. Utilidades:**
   - detectar, arrancar y cerrar con Restart Manager;
   - comprobar que cada app se cierra de verdad.
 - [ ] **8. Pulido y entrega:**

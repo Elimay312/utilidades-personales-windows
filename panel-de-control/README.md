@@ -49,8 +49,9 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
   - los monitores externos, por DDC/CI.
 - **Volumen.** Controla la salida actual, que aparece por su nombre. El chevron despliega las
   salidas para elegir otra.
-- **Utilidades.** Dock, Isla, HUD, QuickLook y Lanzador: un punto verde marca las que están
-  en marcha, y un clic las arranca o las cierra.
+- **Utilidades.** Dock, Isla, HUD, QuickLook, Lanzador y Agenda: un punto verde marca las que
+  están en marcha, y un clic las arranca o les pide que se cierren (nunca las fuerza). La fila
+  sale de `utilidades` en `panel.json`, así que una utilidad nueva se añade sin recompilar.
 
 ## Atajos
 
@@ -93,6 +94,7 @@ Tiene la misma forma que [`panel.example.json`](panel.example.json):
 | `hotkey` | `"Ctrl+Alt+A"` | El atajo. Modificadores `Ctrl`, `Alt`, `Shift` y `Win`, más una letra, un número, `F1`-`F24` o `Space` |
 | `language` | `"es"` | `"es"` o `"en"` |
 | `theme` | `""` | `""` sigue a Windows; también `"dark"` o `"light"`. Si el alto contraste está activado, manda sobre esto |
+| `utilidades` | las seis de arriba | La fila de utilidades, en orden. Cada una: `nombre`, `exe` (ruta absoluta; admite `%LOCALAPPDATA%`), `icono` (el código de Segoe Fluent Icons, como `"E8A9"`) y `ventana` (la clase de la ventana que la cierra con `WM_CLOSE`; sin ella, el panel solo la arranca) |
 
 Los cambios se aplican al volver a abrir el Panel (clic derecho → Salir, y abrirlo otra vez).
 

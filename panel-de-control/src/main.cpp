@@ -12,6 +12,7 @@
 #include "core/log.h"
 #include "core/options.h"
 #include "core/paths.h"
+#include "system/apps.h"
 #include "ui/panel_window.h"
 #include "ui/snapshot.h"
 
@@ -54,7 +55,8 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   }
 
   // Read before anything is drawn, the snapshot included: the language is part of the design.
-  const Preferences prefs = ReadPreferences(LoadConfig());
+  const nlohmann::json config = LoadConfig();
+  const Preferences prefs = ReadPreferences(config);
   CurrentLang() = prefs.lang;
   const std::wstring theme = options.theme.empty() ? prefs.theme : options.theme;
 
@@ -85,7 +87,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   }
 
   PanelWindow window;
-  if (!window.Create(instance, monitor, theme)) return 2;
+  if (!window.Create(instance, monitor, theme, ReadUtilities(config, &ExpandVariables))) return 2;
 
   // A window with no size and no taskbar button, so the hotkey has somewhere to arrive that is
   // not the panel itself.

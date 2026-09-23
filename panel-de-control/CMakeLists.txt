@@ -55,6 +55,7 @@ add_executable(Panel WIN32
   src/core/log.cpp
   src/core/options.cpp
   src/model/sample.cpp
+  src/system/apps.cpp
   src/system/audio.cpp
   src/system/brightness.cpp
   src/system/nightlight.cpp
@@ -87,6 +88,7 @@ target_link_options(Panel PRIVATE /MANIFEST:NO)
 enable_testing()
 add_executable(panel_tests
   tests/main.cpp
+  tests/test_apps.cpp
   tests/test_audio.cpp
   tests/test_bt_audio.cpp
   tests/test_controls.cpp
@@ -99,10 +101,11 @@ add_executable(panel_tests
   tests/test_worker.cpp
   src/core/log.cpp
   src/core/options.cpp
+  src/system/apps.cpp
   src/system/nightlight_blob.cpp
   src/system/worker.cpp)
 target_include_directories(panel_tests PRIVATE src)
 target_compile_options(panel_tests PRIVATE ${PANEL_WARNINGS})
 target_compile_definitions(panel_tests PRIVATE ${PANEL_DEFINES})
-target_link_libraries(panel_tests PRIVATE doctest::doctest shcore)
+target_link_libraries(panel_tests PRIVATE doctest::doctest nlohmann_json::nlohmann_json shcore)
 add_test(NAME unit COMMAND panel_tests)

@@ -94,7 +94,8 @@ bool Walk(float& value, float goal, float seconds, float duration) {
 
 }  // namespace
 
-bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view theme) {
+bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view theme,
+                         std::vector<Utility> utilities) {
   monitor_ = monitor;
   themeChoice_ = theme;
   theme_ = ResolveTheme(themeChoice_);
@@ -140,6 +141,9 @@ bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view
   radios_.Start(hwnd_, worker_);
   wifi_.Start(hwnd_, worker_);
   night_.Start(hwnd_, worker_);
+  // The row of utilities is real since phase 7: panel.json's, or the defaults.
+  apps_.Start(hwnd_, worker_, std::move(utilities));
+  state_.apps = apps_.Current().apps;
   brightnessNotify_ = RegisterBrightnessNotification(hwnd_);
   if (brightnessNotify_ == nullptr) LogError(L"panel: no brightness notifications, Fn keys will not show");
   Place(work);
@@ -380,6 +384,8 @@ void PanelWindow::Show() {
   const bool flipped = theme.light != theme_.light;
   theme_ = theme;
   if (flipped) ApplyDwmAttributes();
+  // Which utilities are running: one look per opening, never polled (SEGURIDAD.md 2.7).
+  apps_.Refresh();
   // Hidden, the panel ignores the audio's notifications; it reads once here instead. A change
   // of device while it was hidden is already flagged, and this read acts on it.
   ReadAudio();
@@ -481,6 +487,12 @@ void PanelWindow::TakeWifi() {
   state_.wifi.networks = std::move(snapshot.networks);
   state_.wifi.scanning = snapshot.scanning;
   state_.wifi.locationDenied = snapshot.denied;
+  if (!snapshot.problem.empty()) SetNotice(std::move(snapshot.problem));
+}
+
+void PanelWindow::TakeApps() {
+  Apps::Snapshot snapshot = apps_.Current();
+  state_.apps = std::move(snapshot.apps);
   if (!snapshot.problem.empty()) SetNotice(std::move(snapshot.problem));
 }
 
@@ -847,7 +859,11 @@ void PanelWindow::Activate(Target target) {
       break;
     }
     case Part::App:
-      if (target.index < state_.apps.size()) state_.apps[target.index].running = !state_.apps[target.index].running;
+      if (target.index < state_.apps.size()) {
+        // Running: ask it to close. Stopped: start it. What it is afterwards is looked at again.
+        if (state_.apps[target.index].running) apps_.Close(target.index);
+        else apps_.Launch(target.index);
+      }
       break;
     default:
       break;
@@ -1125,6 +1141,11 @@ LRESULT PanelWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
 
     case kFrameMessage:
       OnFrame();
+      return 0;
+
+    case kAppsMessage:
+      TakeApps();
+      if (visible_) Render();
       return 0;
 
     case kNightMessage:

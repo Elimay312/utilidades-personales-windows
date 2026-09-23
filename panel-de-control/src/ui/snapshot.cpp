@@ -82,7 +82,8 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme,
     // Caught halfway through opening, where the clip and the crossfade show; the mouse on the
     // settings tile, pressed; and the keyboard on the volume slider.
     viewState.open.brightness = 0.5f;
-    viewState.inks = {Ink{Target{Part::Tile, 3}, 1.0f, 1.0f}, Ink{Target{Part::Mute}, 1.0f, 0.0f}};
+    viewState.inks = {Ink{Target{Part::Tile, 3}, 1.0f, 1.0f}, Ink{Target{Part::Mute}, 1.0f, 0.0f},
+                      Ink{Target{Part::App, 3}, 1.0f, 0.0f}};
     viewState.focus = Target{Part::VolumeSlider};
     viewState.focusVisible = true;
   } else if (view == L"panel-wifi") {

@@ -13,6 +13,7 @@
 #include <string_view>
 
 #include "model/state.h"
+#include "system/apps.h"
 #include "system/audio.h"
 #include "system/brightness.h"
 #include "system/nightlight.h"
@@ -41,7 +42,8 @@ class PanelWindow {
 
   // `monitor` pins every opening to that monitor; nullptr follows the mouse. `theme` is
   // --theme or the config's, empty to follow Windows.
-  bool Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view theme);
+  bool Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view theme,
+              std::vector<Utility> utilities);
   void Show();
   void Hide();
   void Toggle();
@@ -95,6 +97,7 @@ class PanelWindow {
   void TakeRadios();
   void TakeWifi();
   void TakeNight();
+  void TakeApps();
   void OpenWindowsNetworks();
   void OpenWindowsAddDevice();
   bool OpenSettingsFor(Target target);
@@ -129,6 +132,7 @@ class PanelWindow {
   Radios radios_;
   Wifi wifi_;
   NightLight night_;
+  Apps apps_;
   HPOWERNOTIFY brightnessNotify_ = nullptr;
   // When the panel last wrote the brightness. Windows' notice of each write arrives a moment
   // later, and during a drag an old one would pull the slider back; for a short while after a

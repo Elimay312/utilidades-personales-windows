@@ -6,6 +6,32 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
 
 ### Añadido
 
+- **Fase 7: las utilidades de verdad.**
+  - **La fila** enseña las utilidades que viven en segundo plano: Dock, Isla, HUD, QuickLook,
+    Lanzador y ahora también Agenda. Salen de `utilidades` en `panel.json` (nombre, exe, icono y
+    clase de ventana), con esas seis por defecto. Una utilidad nueva es una línea de JSON.
+  - **Qué está en marcha:** una instantánea de Toolhelp en cada apertura, en el hilo de trabajo.
+    Solo cuenta un proceso cuya ruta completa es la configurada; otro programa con el mismo nombre
+    de archivo no.
+  - **Arrancar:** `CreateProcessW` con la ruta como nombre de aplicación y sin línea de comandos,
+    solo si es absoluta, existe y termina en `.exe`.
+  - **Cerrar:** `WM_CLOSE` a las ventanas de nivel superior de su clase y de ese proceso. En el
+    Dock, las de todas las pantallas. En Agenda, su ventana de aplicación y no el popup. En
+    QuickLook, la anfitriona y no el panel de vista previa. Después espera hasta 3 s; si sigue
+    abierta, lo dice y no la fuerza.
+  - **Por qué no el Restart Manager del plan:** ninguna utilidad atiende los mensajes de fin de
+    sesión, así que `RmShutdown` sin forzar no cerraría ninguna. La enmienda a `SEGURIDAD.md`
+    §1.5 y §2.7 va en su propio commit, antes que el código, con la regla de auditoría «solo
+    `apps.cpp` manda `WM_CLOSE` a otra ventana».
+  - **Auditoría:** el detalle de la regla nueva señalaba el archivo equivocado, por cómo pasa
+    PowerShell un array por la tubería. Encontrado con la sonda de violaciones y arreglado.
+  - **Pruebas:** 4 casos nuevos para rutas, iconos y la configuración. 47 en total.
+  - **Probado con QuickLook**, que estaba parado: arrancado y cerrado desde el panel, varias
+    veces, y quedó parado. Las demás utilidades, que el usuario estaba usando, no se tocaron.
+  - **Una falsa alarma que queda anotada:** en una captura parecía faltar el punto verde de la
+    utilidad con el ratón encima. Los píxeles decían que el verde estaba. A ojo, la imagen
+    reducida engaña; hay que medir.
+
 - **Fase 6: la luz nocturna de verdad.**
   - **`system/nightlight_blob.cpp`:** un lector y escritor Bond CompactBinary v1, puro, que
     conserva byte a byte cada campo que no entiende. Lee el sobre de CloudStore y dentro el

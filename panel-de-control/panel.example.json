@@ -1,5 +1,13 @@
 {
   "hotkey": "Ctrl+Alt+A",
   "language": "es",
-  "theme": ""
+  "theme": "",
+  "utilidades": [
+    { "nombre": "Dock", "exe": "%LOCALAPPDATA%\\Dock\\app\\Dock.exe", "icono": "E8A9", "ventana": "DockWindowClass" },
+    { "nombre": "Isla", "exe": "%LOCALAPPDATA%\\Isla\\app\\Isla.exe", "icono": "E8D6", "ventana": "IslaDinamica" },
+    { "nombre": "HUD", "exe": "%LOCALAPPDATA%\\Hud\\app\\Hud.exe", "icono": "E995", "ventana": "HudVolumen" },
+    { "nombre": "QuickLook", "exe": "%LOCALAPPDATA%\\QuickLook\\app\\QuickLook.exe", "icono": "E890", "ventana": "QuickLookHostClass" },
+    { "nombre": "Lanzador", "exe": "%LOCALAPPDATA%\\Lanzador\\app\\Lanzador.exe", "icono": "E721", "ventana": "LanzadorVentana" },
+    { "nombre": "Agenda", "exe": "%LOCALAPPDATA%\\Programs\\Agenda\\Agenda.exe", "icono": "E787", "ventana": "AgendaApp" }
+  ]
 }

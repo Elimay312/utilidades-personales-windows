@@ -124,7 +124,7 @@ Prohibido '1.5 Sin matar procesos' '\bTerminateProcess\s*\(|\bRmForceShutdown\b|
 # 1.6 Sin ejecutar texto; ShellExecute solo con ms-settings: o el propio panel.json, y
 #     CreateProcess solo en system/apps.cpp.
 $hits = Buscar '\b(system|_wsystem|popen|_wpopen|WinExec)\s*\('
-$shell = @(Sentencias '\bShellExecute\w*\s*\(' | Where-Object { $_ -notmatch 'L"ms-settings:|L"ms-availablenetworks:"|ConfigPath\s*\(' })
+$shell = @(Sentencias '\bShellExecute\w*\s*\(' | Where-Object { $_ -notmatch 'L"ms-settings:|L"ms-availablenetworks:"|L"ms-settings-connectabledevices:devicediscovery"|ConfigPath\s*\(' })
 $crear = Buscar '\bCreateProcess\w*\s*\(' '' '^src\\system\\apps\.cpp$'
 if ($hits) { Regla '1.6 Sin ejecutar texto' 'FALLA' $hits[0] }
 elseif ($shell) { Regla '1.6 Sin ejecutar texto' 'FALLA' "ShellExecute sin ms-settings: ni ConfigPath: $($shell[0])" }
@@ -199,6 +199,17 @@ if ($radios) { Regla '2.6 Radios: encender, apagar, redes guardadas' 'FALLA' $ra
 elseif ($conectarFuera) { Regla '2.6 Radios: encender, apagar, redes guardadas' 'FALLA' "WlanConnect fuera de wifi.cpp: $($conectarFuera[0])" }
 elseif ($modos) { Regla '2.6 Radios: encender, apagar, redes guardadas' 'FALLA' "conexion sin perfil guardado: $($modos[0])" }
 else { Regla '2.6 Radios: encender, apagar, redes guardadas' 'bien' }
+
+# 2.6 Enmienda 5b-3: el audio Bluetooth se conecta y desconecta solo en system/bt_audio.cpp, solo
+#     con IOCTL_KS_PROPERTY y solo con las dos propiedades de un solo uso. Ningun otro IOCTL, y
+#     ningun CreateFile de dispositivos fuera de ese archivo.
+$ioFuera = Buscar '\b(DeviceIoControl|CreateFile\w*)\s*\(' '' '^src\\system\\bt_audio\.cpp$'
+$ioctl = @(Buscar '\bIOCTL_\w+' | Where-Object { $_ -notmatch 'IOCTL_KS_PROPERTY$' })
+$propiedades = @(Buscar '\bKSPROPERTY_\w+' | Where-Object { $_ -notmatch 'KSPROPERTY_(ONESHOT_RECONNECT|ONESHOT_DISCONNECT|TYPE_GET)$' })
+if ($ioFuera) { Regla '2.6 Audio Bluetooth: solo conectar' 'FALLA' "fuera de bt_audio.cpp: $($ioFuera[0])" }
+elseif ($ioctl) { Regla '2.6 Audio Bluetooth: solo conectar' 'FALLA' $ioctl[0] }
+elseif ($propiedades) { Regla '2.6 Audio Bluetooth: solo conectar' 'FALLA' $propiedades[0] }
+else { Regla '2.6 Audio Bluetooth: solo conectar' 'bien' }
 
 # --- Salida ------------------------------------------------------------------------
 

@@ -94,6 +94,8 @@ Sin `system`, `_wsystem`, `popen`, `WinExec` ni intérpretes.
   `panel.json`. Nunca con una cadena que venga de la configuración. *Enmienda de la fase 5b-2:*
   también con `ms-availablenetworks:`, escrita entera: es la lista de redes de Windows, y se
   abre para lo que el panel deja a Windows, como las redes nuevas que piden contraseña.
+  *Enmienda de la fase 5b-3:* y con `ms-settings-connectabledevices:devicediscovery`, la
+  pantalla de Windows para añadir un dispositivo Bluetooth, que es quien empareja.
 - **`CreateProcessW`** se usa solo en `system/apps.cpp`, y solo con una ruta de `utilidades[]`
   que exista, sea absoluta y termine en `.exe`. Se pasa como `lpApplicationName`, sin línea
   de comandos compuesta.
@@ -286,6 +288,21 @@ cambios. Es la API documentada, la misma que usa el panel de Windows.
     Windows, que es quien pide la contraseña.
   - Desconectar no hace falta: conectar a otra red ya desconecta de la anterior, y apagar el
     Wi-Fi es el interruptor de la tarjeta.
+- *Enmienda de la fase 5b-3:* **los dispositivos Bluetooth emparejados, y conectar o
+  desconectar los de audio.**
+  - **Listar:** dos `DeviceWatcher`, uno clásico y otro LE, con el filtro de emparejados,
+    piden solo su nombre, si están conectados y su clase (audio, teclado, ratón). Solo leen.
+    Sustituyen a los dos que contaban los conectados, que ahora se cuentan en esta lista.
+  - **Conectar y desconectar**, solo si el dispositivo es de audio, solo por un clic en su fila
+    y solo en `system/bt_audio.cpp`. Se hace con las dos propiedades de un solo uso del driver
+    de audio Bluetooth, `KSPROPERTY_ONESHOT_RECONNECT` y `KSPROPERTY_ONESHOT_DISCONNECT`
+    (`KSPROPSETID_BtAudio`, en `ksmedia.h`). Es lo que hace el botón «Conectar» de la
+    configuración de sonido de Windows. Van por `IOCTL_KS_PROPERTY` y ninguna otra, y solo
+    contra los filtros de audio (`KSCATEGORY_AUDIO`) cuyo identificador lleva la dirección de
+    ese dispositivo.
+  - **Sin emparejar ni desemparejar:** `PairAsync` y `UnpairAsync` siguen prohibidos. «Añadir
+    un dispositivo» abre la pantalla de Windows. Teclados y ratones no se conectan desde el
+    panel: se conectan solos al encenderlos.
 - **Los `DeviceWatcher` solo leen el estado** de conexión de lo que ya está emparejado.
 
 ### 2.7 Arrancar y cerrar utilidades

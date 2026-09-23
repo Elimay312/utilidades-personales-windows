@@ -26,6 +26,8 @@ sigue [SemVer](https://semver.org/lang/es/).
 - **Un evento creado a última hora nunca avisaba.** Con un recordatorio de 30 minutos, algo a
   las 16:05 apuntado a las 16:00 ya había perdido su aviso al nacer. Ahora, si todos sus
   recordatorios pasaron antes de escribirlo, avisa una vez al empezar.
+- **Alt+F4 sobre el popup lo dejaba inservible.** Destruía la ventana y el atajo y la bandeja no
+  tenían nada que enseñar hasta reiniciar Agenda. Ahora lo oculta, como el atajo.
 
 ## [1.0.0] - 2026-09-22
 

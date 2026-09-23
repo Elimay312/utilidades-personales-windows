@@ -642,6 +642,12 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       FollowMonitorDpi();
       break;
 
+    case WM_CLOSE:
+      // Alt+F4 hides, like the hotkey. Letting DefWindowProc destroy the window would leave the
+      // hotkey and the tray with nothing to show until Agenda is restarted.
+      Hide();
+      return 0;
+
     case WM_DESTROY:
       a11y_.Detach();
       break;

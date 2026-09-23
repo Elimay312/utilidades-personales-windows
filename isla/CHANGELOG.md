@@ -13,6 +13,23 @@ está en el mensaje de su commit.
 
 Todo lo que hay. Falta probarlo en otros equipos y con otras aplicaciones de música.
 
+### Cambiado: el deslizador del Panel no hace asomar la isla
+
+- **El [Panel](../panel-de-control/README.md) firma sus cambios de volumen** con su GUID de
+  contexto (`{5B0D7C34-8A41-4C2E-9F3A-612D7E94B01C}`). La isla lo lee en el `guidEventContext`
+  del aviso de COM y no asoma: el deslizador del Panel ya enseña el nivel, y el aviso salía a
+  cada paso del arrastre.
+- **El nivel queda guardado,** así que la siguiente tecla avisa del valor nuevo.
+- **Con la isla abierta, la línea de volumen se sigue poniendo al día,** como antes.
+- Sigue sin haber interfaz entre los dos: es leer lo que el sistema ya manda.
+- **Medido por píxeles de la ventana:**
+
+  | Cambio del 1 % | Píxeles que cambian en la isla |
+  |---|---|
+  | En reposo, como referencia | 113 |
+  | Con la firma del Panel | 69 |
+  | Sin firma, como el de cualquier otra app | 1806, el aviso asomando |
+
 ### Añadido: el mezclador por app, y la app se llama Spotify
 
 - **Clic en la onda → mezclador.** El panel crece con sus muelles y la ficha se funde con una

@@ -35,6 +35,14 @@ internal sealed record AppAudio(uint Pid, string Nombre, float Nivel, bool Activ
 /// </summary>
 internal static unsafe class Audio
 {
+    /// <summary>
+    /// La firma que el Panel (panel-de-control) pone en cada cambio de volumen que hace:
+    /// <c>kPanelVolumeContext</c> en su <c>system/audio.h</c>. Llega en el aviso de COM como
+    /// <c>guidEventContext</c>, asi que reconocerla es leer lo que el sistema ya manda: los
+    /// dos procesos siguen sin hablarse.
+    /// </summary>
+    public static readonly Guid ContextoPanel = new("5B0D7C34-8A41-4C2E-9F3A-612D7E94B01C");
+
     private static IMMDeviceEnumerator? _enumerador;
     private static IAudioMeterInformation? _medidor;
     private static IAudioEndpointVolume? _volumen;
@@ -331,7 +339,9 @@ internal static unsafe class Audio
     {
         public void OnNotify(AUDIO_VOLUME_NOTIFICATION_DATA* datos)
         {
-            PInvoke.PostMessage(ventana, mensaje, default, default);
+            // wParam 1: lo cambio el deslizador del Panel, que ya ensena el nivel.
+            bool delPanel = datos != null && datos->guidEventContext == ContextoPanel;
+            PInvoke.PostMessage(ventana, mensaje, (nuint)(delPanel ? 1 : 0), default);
         }
     }
 

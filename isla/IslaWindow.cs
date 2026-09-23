@@ -515,7 +515,7 @@ internal sealed unsafe class IslaWindow : IDisposable
                 return new LRESULT(0);
 
             case WM_APP_VOLUMEN:
-                isla?.OnVolumen();
+                isla?.OnVolumen(delPanel: wParam.Value == 1);
                 return new LRESULT(0);
 
             case WM_APP_DISPOSITIVO:
@@ -1084,7 +1084,7 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// enchufadas, un «Volumen 45 %» a secas dice que algo cambio, no donde.
     /// </para>
     /// </summary>
-    private void OnVolumen()
+    private void OnVolumen(bool delPanel = false)
     {
         float v = Audio.Volumen();
         if (v < 0f) return;
@@ -1106,6 +1106,10 @@ internal sealed unsafe class IslaWindow : IDisposable
         if (!_config.VolumenAsoma) return;
         if (porcentaje == _porcentajeAnterior) return;
         _porcentajeAnterior = porcentaje;
+
+        // Lo del Panel no asoma: su deslizador ya ensena el nivel, y el aviso saldria a cada
+        // paso del arrastre. Queda guardado, asi que la siguiente tecla avisa del nivel nuevo.
+        if (delPanel) return;
 
         string donde = Audio.Dispositivo();
         Avisar(

@@ -112,6 +112,22 @@ qué controles admite) y `GetTimelineProperties` (posición y duración).
 - Ni la lista de sesiones ni ninguna propiedad se escriben en `isla.json`, en el log, ni en
   ningún fichero.
 
+#### Elegir la sesión — enmienda del 23 de septiembre de 2026
+
+Con Spotify y Brave sonando a la vez manda la sesión que elige Windows, y no había forma de
+cambiarla. Se abre `GetSessions()`, **con estos cortes**:
+
+- **Se pide en dos momentos y se suelta en el acto.** Al engancharse, para **contar** cuántas
+  hay (el `‹ ›` solo se dibuja si hay más de una). Y al hacer clic en el nombre de la app,
+  para tomar **la siguiente** a la que se está enseñando. En ningún caso se guarda la lista:
+  vive lo que dura la llamada.
+- **Lo único que se recuerda es el `SourceAppUserModelId` elegido**, que es el mismo texto que
+  ya se pinta en el panel. Muere con el proceso y no va a `isla.json`.
+- **Solo detrás de un clic tuyo**, como los mandos de §3.2. Nada rota solo.
+
+El corolario de §5 sigue en pie: no hay inventario. Contar no es listar, y lo que se enseña
+sigue siendo una sesión.
+
 ### 3.2 Controlar la reproducción
 
 `TryPlayAsync`, `TryPauseAsync`, `TrySkipNextAsync`, `TrySkipPreviousAsync`,
@@ -133,7 +149,7 @@ solo sobre ese, tres cosas:
 | Qué | Cómo | Para qué |
 |---|---|---|
 | El pico | `Activate(IAudioMeterInformation)` → `GetPeakValue()` | La onda que late con lo que suena |
-| El nivel | `Activate(IAudioEndpointVolume)` → `GetMasterVolumeLevelScalar()` | El `45 %` del aviso. **Solo se lee**: la isla no cambia el volumen de nadie |
+| El nivel | `Activate(IAudioEndpointVolume)` → `GetMasterVolumeLevelScalar()` | El `45 %` del aviso. **Se lee**, y solo se escribe con la rueda sobre el panel abierto (enmienda de abajo) |
 | El nombre | `OpenPropertyStore(STGM_READ)` → `PKEY_Device_FriendlyName` | Decir **por dónde** está saliendo el sonido |
 
 Lo del pico ya está justificado en §1 y es la parte de este documento que más merece leerse dos
@@ -176,6 +192,23 @@ de dispositivo NO invalida el endpoint abierto.** No falla, se queda contestando
 —47 muestras, cero excepciones, 38 % contra el 100 % real—. La isla tenía exactamente el mismo
 fallo latente en `Audio.cs`, en el medidor de pico y en el nivel, y por el mismo motivo: los
 dos se tiraban solo cuando algo lanzaba, y no lanzaba nunca.
+
+#### Cambiar el nivel con la rueda — enmienda del 23 de septiembre de 2026
+
+Hasta aquí la isla solo leía el volumen y quien lo escribía era el HUD, porque es quien tiene
+las teclas. Se abre **una** escritura: `SetMasterVolumeLevelScalar` sobre el mismo endpoint
+predeterminado que ya se lee.
+
+**Los cortes:**
+
+- **Solo la rueda del ratón sobre el panel abierto.** Ni brasa ni asomada: hay que haber
+  desplegado la isla, estar encima y girar. Es lo mismo que la rueda sobre el icono de
+  volumen de la barra de tareas.
+- **Pasos del 2 %**, acotado a [0, 1]. Se lee, se suma y se escribe: no hay ningún nivel
+  guardado que se reponga.
+- **Nunca desde un temporizador**, igual que los mandos de §3.2.
+- **Solo el nivel maestro.** Ni silencio, ni balance, ni volumen por app, ni otro
+  dispositivo. `IPolicyConfig` sigue fuera.
 
 ### 3.4 Un atajo de teclado
 
@@ -275,6 +308,26 @@ el resto, y **la región de la ventana crece solo lo que mide la burbuja** mient
 esperando, para no quitarle al navegador ni un clic más: escondida, como la brasa, asoman 28 × 8
 px lógicos; solo con el ratón encima baja entera y ocupa 28 × 32.
 
+### 3.8 Un menú propio — enmienda del 23 de septiembre de 2026
+
+Para salir había que escribir `Stop-Process`. Clic derecho sobre la isla asomada o abierta saca
+un menú con dos entradas: **Abrir isla.json** y **Salir**.
+
+**Lo que se abre:**
+
+- `CreatePopupMenu`, `AppendMenu`, `TrackPopupMenu` con `TPM_RETURNCMD` y `DestroyMenu`. Es el
+  menú contextual de toda la vida, sobre la ventana propia.
+- `SetForegroundWindow` **sobre la ventana propia y solo sobre ella**. Sin eso Windows no
+  cierra el menú al hacer clic fuera: es el requisito documentado de `TrackPopupMenu`. La
+  regla 15 prohíbe poner delante ventanas **ajenas**, y `auditar.ps1` sigue marcando
+  cualquier llamada que no sea `SetForegroundWindow(_hwnd)`.
+- **Abrir `isla.json` con su programa asociado**: `Process.Start` con `UseShellExecute`
+  sobre `Config.Ruta` y sobre nada más. Es una ruta fija, de la propia isla, que no sale de
+  ningún aviso ni de ninguna app. `auditar.ps1` rechaza cualquier otro `Process.Start`,
+  `ShellExecute`, `CreateProcess` o `WinExec`.
+
+**Salir** es `PostQuitMessage`: la isla se cierra a sí misma y a nadie más (regla 16).
+
 ---
 
 ## 4. Descartado, y por qué
@@ -297,6 +350,8 @@ Cosas que el código hace de una forma concreta **porque este documento existe**
 - **La isla no tiene inventario.** No hay ninguna estructura que guarde qué apps hay, qué
   ventanas hay ni qué se reprodujo antes. Solo existe la sesión actual y la anterior, y la
   anterior solo mientras dura una animación.
+  Para elegir sesión se **cuentan** las que hay y se toma la siguiente, sin guardar la lista
+  (enmienda de §3.1).
 - **Nada de lo que la isla lee se escribe a disco.** `isla.json` guarda tus ajustes: qué
   monitor, qué atajo, qué avisos quieres. Nunca contenido.
 - **Lo que la isla saca del audio son dos números y un nombre**: el pico, el nivel y de qué

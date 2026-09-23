@@ -71,9 +71,16 @@ $reglas = @(
     # Lo que se prohibe es lo que solo tiene sentido sobre ventanas de otros.
     # AllowSetForegroundWindow NO es SetForegroundWindow: no pone a nadie delante, le deja a
     # quien aviso hacerlo una vez (s.3.7). Sin el (?<!Allow) la regla se la confundia.
-    @{ n = '15 tocar ventanas ajenas';       p = 'EnumWindows|EnumChildWindows|PrintWindow|(?<!Allow)SetForegroundWindow|ShowWindowAsync|AttachThreadInput|DWMWA_CLOAK\b' }
+    # SetForegroundWindow(_hwnd) es la ventana PROPIA, que TrackPopupMenu necesita para que el
+    # menu se cierre al clicar fuera (s.3.8). La linea suelta es su entrada en NativeMethods.txt.
+    @{ n = '15 tocar ventanas ajenas';       p = 'EnumWindows|EnumChildWindows|PrintWindow|(?<!Allow)SetForegroundWindow(?!\(_hwnd\)|\s*$)|ShowWindowAsync|AttachThreadInput|DWMWA_CLOAK\b' }
 
     @{ n = '16 matar procesos';              p = 'TerminateProcess|TerminateThread|EndTask|ExitWindowsEx|NtTerminate' }
+
+    # Lanzar algo solo sirve para abrir isla.json con su programa (s.3.8). Cualquier otro
+    # Process.Start, o un ShellExecute a mano, es abrir cosas que no son de la isla.
+    # (?<!Use) deja pasar UseShellExecute, que es la propiedad de ProcessStartInfo.
+    @{ n = '17 lanzar procesos';             p = '(?<!Use)ShellExecute|CreateProcess|WinExec|Process\.Start(?!\(new ProcessStartInfo\(Config\.Ruta\))' }
 )
 
 $fallos = 0

@@ -114,6 +114,15 @@ Core Audio. Es la misma superficie que ya usan el HUD y la isla:
   `PKEY_Device_FriendlyName` («Auriculares (Realtek Audio)») de respaldo si el primero viene
   vacío. *Enmienda de la fase 3a:* el corto es el que cabe en la cabecera de la tarjeta. Las
   dos propiedades se leen del almacén del dispositivo en modo `STGM_READ` y nunca se escriben.
+- *Enmienda de la fase 3b:* para la lista de salidas,
+  - `EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)`, que da las salidas en uso y nada más:
+    ni las desconectadas ni las de grabación;
+  - por cada una, su ID, sus dos nombres y `PKEY_AudioEndpoint_FormFactor`, que dice si son
+    auriculares y elige el icono. Todo en `STGM_READ`. Si dos salidas se llaman igual con el
+    nombre corto, esas dos enseñan el largo;
+  - `OnDeviceAdded`, `OnDeviceRemoved` y `OnDeviceStateChanged` del mismo aviso del
+    enumerador, para que la lista cambie cuando se enchufa o se quita algo. Solo avisan a la
+    ventana, igual que el cambio de salida.
 
 **Cortes:**
 
@@ -143,7 +152,9 @@ Core Audio. Es la misma superficie que ya usan el HUD y la isla:
   del interfaz, su CLSID y su IID. La auditoría busca `IPolicyConfig` y esos GUID en el resto
   del código.
 - **Solo se llama por un clic** en una fila de la lista de salidas, y solo con un ID que acaba
-  de devolver `EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)`.
+  de devolver `EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)`. *Precisado en la fase 3b:*
+  «acaba de» es literal. Justo antes de llamar se vuelve a enumerar, y si el ID de la fila ya
+  no está entre las salidas activas (se desenchufó con el panel abierto), no se llama.
 - **Se llama con los tres roles** (`eConsole`, `eMultimedia`, `eCommunications`), que es lo
   que hace Windows desde su propio panel.
 - **Solo la salida predeterminada.** El interfaz de rutas por aplicación

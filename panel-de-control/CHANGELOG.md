@@ -6,6 +6,42 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
 
 ### Añadido
 
+- **Fase 8: la entrega.**
+  - **`Instalar-Panel.exe`,** el instalador de Agenda adaptado. Es un solo archivo con Panel.exe
+    dentro, instala por usuario en `%LOCALAPPDATA%\Programs\Panel` y se deja a sí mismo como
+    `Desinstalar.exe`, con acceso en el menú Inicio y entrada en Aplicaciones instaladas.
+    `empaquetar.ps1` lo compila. La enmienda §2.8 de `SEGURIDAD.md` va en su propio commit,
+    antes que el código. Estos son los cambios respecto al de Agenda:
+    - **Un Panel abierto** recibe `WM_CLOSE` en su ventana oculta, y solo si es el instalado. Sin
+      el `TerminateProcess` de respaldo del de Agenda: si en 5 s no se ha cerrado, lo dice y no
+      sigue. Un Panel de otra carpeta, como el del build, no se toca.
+    - **Se desinstala sin `cmd.exe`:** una copia del desinstalador en `%TEMP%` espera a que
+      salga el original y borra la carpeta, que calcula ella misma.
+    - **Panel se abre con `CreateProcessW`,** no con `ShellExecute`.
+  - **La ventana oculta del Panel** ahora sale al recibir `WM_CLOSE`: `WM_DESTROY` pone el
+    `PostQuitMessage`. Antes, `DefWindowProc` la destruía y el proceso seguía vivo sin atajo.
+  - **«Iniciar con Windows»** en el menú del clic derecho: el valor `Panel` de `Run`, con el
+    `core/autostart.h` de Agenda. El valor es la única verdad, y el menú lo lee al abrirse.
+  - **Auditoría:**
+    - la 1.6 ahora prohíbe escribir intérpretes (`cmd`, `rmdir`, PowerShell) en el código;
+    - la 1.5 y la 1.6 dejan al instalador su `WM_CLOSE` y su `CreateProcessW`;
+    - cada cambio se probó con código que la incumple.
+
+    El instalador escribe su archivo con `std::ofstream`, porque la 2.6 guarda `CreateFile` para
+    los dispositivos de audio Bluetooth y no hacía falta aflojarla.
+  - **Probado en una carpeta de pruebas** (`LOCALAPPDATA` apuntando a ella y
+    `PANEL_INSTALLER_NO_REGISTRY=1`). Se hicieron tres cosas y todo salió bien:
+    - instalar;
+    - actualizar con el Panel instalado abierto: se cerró con código 0 y el log dice `exit`;
+    - desinstalar con el Panel abierto: se cerró, y se borraron la carpeta y el acceso.
+  - **Medido con la Release:**
+    - escondido: 1,7–4,6 MB de memoria de trabajo y 0–16 ms de CPU cada 10 s;
+    - abierto y quieto: 13,9 MB y 0 ms de CPU;
+    - en aparecer, 17–30 ms.
+
+    La memoria privada comprometida ronda los 55 MB, la mayoría reservas del driver de D3D que
+    no ocupan RAM.
+
 - **Fase 7: las utilidades de verdad.**
   - **La fila** enseña las utilidades que viven en segundo plano: Dock, Isla, HUD, QuickLook,
     Lanzador y ahora también Agenda. Salen de `utilidades` en `panel.json` (nombre, exe, icono y

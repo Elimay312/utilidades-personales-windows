@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "core/autostart.h"
 #include "core/config.h"
 #include "core/hr.h"
 #include "core/i18n.h"
@@ -51,6 +52,7 @@ constexpr float kPageStep = 0.10f;  // Page Up and Page Down
 
 constexpr UINT kMenuOpenConfig = 1;
 constexpr UINT kMenuQuit = 2;
+constexpr UINT kMenuAutostart = 3;
 
 // Ease-out cubic as a single DirectComposition segment. f(u) = 3u - 3u^2 + u^3 with
 // u = t / seconds is a cubic, so AddCubic expresses it exactly and the compositor runs it on
@@ -610,6 +612,8 @@ void PanelWindow::ShowMenu(POINT screen) {
   HMENU menu = CreatePopupMenu();
   if (menu == nullptr) return;
   AppendMenuW(menu, MF_STRING, kMenuOpenConfig, T(L"Abrir panel.json", L"Open panel.json").data());
+  AppendMenuW(menu, MF_STRING | (StartsWithWindows() ? MF_CHECKED : MF_UNCHECKED), kMenuAutostart,
+              T(L"Iniciar con Windows", L"Start with Windows").data());
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, kMenuQuit, T(L"Salir", L"Quit").data());
   const UINT chosen = static_cast<UINT>(TrackPopupMenu(
@@ -625,6 +629,8 @@ void PanelWindow::ShowMenu(POINT screen) {
     if (reinterpret_cast<INT_PTR>(opened) <= 32) {
       LogError(L"panel: could not open panel.json (error {})", reinterpret_cast<INT_PTR>(opened));
     }
+  } else if (chosen == kMenuAutostart) {
+    if (!SetStartWithWindows(!StartsWithWindows())) LogError(L"panel: could not change the Run value");
   } else if (chosen == kMenuQuit) {
     PostQuitMessage(0);
   }

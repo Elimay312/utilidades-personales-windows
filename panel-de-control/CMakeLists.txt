@@ -109,3 +109,21 @@ target_compile_options(panel_tests PRIVATE ${PANEL_WARNINGS})
 target_compile_definitions(panel_tests PRIVATE ${PANEL_DEFINES})
 target_link_libraries(panel_tests PRIVATE doctest::doctest nlohmann_json::nlohmann_json shcore)
 add_test(NAME unit COMMAND panel_tests)
+
+# Instalar-Panel.exe: Agenda's installer (calendario/CMakeLists.txt), one file with Panel.exe
+# inside as RCDATA. Panel.exe lands at the root of the build dir in every configuration, so its
+# path is known at configure time and reaches the .rc through a generated header. It installs per
+# user in %LOCALAPPDATA%\Programs\Panel and leaves itself behind as Desinstalar.exe.
+set(panel_exe "${CMAKE_BINARY_DIR}/Panel.exe")
+set(panel_assets "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+configure_file(src/installer/installer_config.h.in
+  "${CMAKE_BINARY_DIR}/installer/installer_config.h" @ONLY)
+add_executable(panel_installer WIN32 src/installer/installer.cpp src/installer/installer.rc)
+set_target_properties(panel_installer PROPERTIES OUTPUT_NAME "Instalar-Panel")
+add_dependencies(panel_installer Panel)
+target_include_directories(panel_installer PRIVATE "${CMAKE_BINARY_DIR}/installer")
+target_compile_options(panel_installer PRIVATE ${PANEL_WARNINGS})
+target_compile_definitions(panel_installer PRIVATE ${PANEL_DEFINES})
+# comctl32 is the TaskDialog. The manifest (common controls v6) comes in through installer.rc.
+target_link_libraries(panel_installer PRIVATE comctl32)
+target_link_options(panel_installer PRIVATE /MANIFEST:NO)

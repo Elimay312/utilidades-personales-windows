@@ -1,0 +1,39 @@
+#pragma code_page(65001)
+
+#include <windows.h>
+
+#include "installer_config.h"
+
+// CREATEPROCESS_MANIFEST_RESOURCE_ID (1), RT_MANIFEST (24): common controls v6, which is what
+// TaskDialogIndirect needs to exist at all.
+1 24 PANEL_MANIFEST_PATH
+
+// The whole application, carried inside the installer.
+PANEL_EXE_RESOURCE RCDATA PANEL_EXE_PATH
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION PANEL_VERSION_MAJOR, PANEL_VERSION_MINOR, PANEL_VERSION_PATCH, 0
+PRODUCTVERSION PANEL_VERSION_MAJOR, PANEL_VERSION_MINOR, PANEL_VERSION_PATCH, 0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "0c0a04b0"
+    BEGIN
+      VALUE "FileDescription", "Instalador de Panel"
+      VALUE "FileVersion", PANEL_VERSION_STR
+      VALUE "InternalName", "Instalar-Panel"
+      VALUE "OriginalFilename", "Instalar-Panel.exe"
+      VALUE "ProductName", "Panel"
+      VALUE "ProductVersion", PANEL_VERSION_STR
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0c0a, 1200
+  END
+END

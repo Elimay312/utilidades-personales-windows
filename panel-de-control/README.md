@@ -6,22 +6,29 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
 
 ![El panel](docs/img/panel.png)
 
-> **Estado: fase 5 de 8** (la 4b, monitores externos, espera a probarse con las tres
-> pantallas). El panel se usa entero con el ratón y con el teclado. Ya es de verdad:
-> - **el volumen:** nivel, silencio, el nombre de la salida (y la sigue si cambias de
->   dispositivo) y la lista de salidas para elegir otra;
-> - **el brillo de la pantalla del portátil,** que también sigue las teclas Fn;
-> - **Wi-Fi y Bluetooth:** encender y apagar, la red a la que estás conectado y cuántos
->   dispositivos Bluetooth hay conectados. Clic derecho en su tile abre su página de
->   Configuración.
->
-> Todavía son datos de ejemplo: los monitores externos, la luz nocturna y las utilidades. El
-> plan está en
+> **Estado: fase 8 de 8, la entrega.** Todo lo del panel es de verdad: volumen y salidas,
+> brillo del portátil, Wi-Fi y Bluetooth con sus listas, luz nocturna y utilidades. Falta la
+> fase 4b, los monitores externos, que espera a probarse con las tres pantallas. El plan está en
 > [`docs/superpowers/plans/2026-09-23-panel-de-control.md`](docs/superpowers/plans/2026-09-23-panel-de-control.md).
 
 | Wi-Fi desplegado | Bluetooth, a mitad del morph | Brillo desplegado | Tema claro |
 |---|---|---|---|
 | ![](docs/img/panel-wifi.png) | ![](docs/img/panel-morph.png) | ![](docs/img/panel-brillo.png) | ![](docs/img/panel-claro.png) |
+
+## Instalar
+
+`Instalar-Panel.exe` es un solo archivo. Instala solo para tu usuario, en
+`%LOCALAPPDATA%\Programs\Panel`, sin pedir administrador, y pone Panel en el menú Inicio y en
+Aplicaciones instaladas, desde donde se desinstala. La casilla «Iniciar Panel con Windows» viene
+marcada la primera vez; al actualizar se respeta lo que elegiste.
+
+Si el Panel instalado está abierto, el instalador le pide que se cierre, como su «Salir», y
+nunca lo fuerza: si no se cierra en 5 s, lo dice y no sigue. `--silent` instala sin diálogos, y
+`Desinstalar.exe --uninstall --silent` desinstala sin diálogos. Desinstalar deja `panel.json`
+salvo que marques lo contrario, y nunca borra la copia de la luz nocturna.
+
+Pesa 1,1 MB, y Panel.exe dentro, 0,9 MB. Escondido ocupa 2–5 MB de memoria y no gasta CPU. Con
+el panel abierto y quieto, unos 14 MB y tampoco gasta CPU. Tarda 17–30 ms en aparecer.
 
 ## Qué hay
 
@@ -59,7 +66,7 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
 |---|---|
 | `Ctrl+Alt+A` | Abre o cierra el panel. Se cambia con `hotkey` en `panel.json` |
 | `Esc`, `Alt+F4` o clic fuera | Esconde el panel |
-| Clic derecho en el panel | Menú con «Abrir panel.json» y «Salir» |
+| Clic derecho en el panel | Menú con «Abrir panel.json», «Iniciar con Windows» y «Salir» |
 
 Dentro del panel:
 
@@ -106,6 +113,7 @@ nlohmann/json y doctest, se descargan solas en la primera configuración, fijada
 ```
 cmake --preset debug && cmake --build --preset debug
 ctest --preset debug
+powershell -NoProfile -ExecutionPolicy Bypass -File empaquetar.ps1   # build\release\Instalar-Panel.exe
 build\debug\Panel.exe --monitor=1
 build\debug\Panel.exe --render-snapshot=panel --out=docs\img\panel.png
 powershell -NoProfile -ExecutionPolicy Bypass -File auditar.ps1

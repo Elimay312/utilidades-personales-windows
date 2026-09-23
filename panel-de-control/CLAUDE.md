@@ -119,7 +119,7 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
 ```
 src/
   main.cpp       mutex, ventana de mensajes, atajo, bucle
-  core/          config, log, paths, hr, i18n (de calendario/src/core), hotkey.h (de
+  core/          config, log, paths, hr, i18n, autostart (de calendario/src/core), hotkey.h (de
                  calendario/src/app), options (--monitor, --render-snapshot, --theme)
   model/         state.h: PanelState, el esquema único; sample.cpp: los datos de ejemplo
   ui/            panel_window (ventana, composición y entrada), panel_view (el dibujo),
@@ -134,8 +134,9 @@ src/
                  (conectar y desconectar audio Bluetooth; el único con IOCTL), nightlight_blob
                  (el códec Bond, puro), nightlight (el registro) y apps (la fila de
                  utilidades); llegará display_ids
+  installer/     Instalar-Panel.exe, el de Agenda sin TerminateProcess ni cmd (SEGURIDAD §2.8)
 tests/           doctest: hotkey, options, layout, controls
-assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
+assets/          manifiestos del Panel y del instalador, y .rc
 ```
 
 ### Reglas de arquitectura
@@ -371,6 +372,22 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
 - **Juzgar una captura por sus píxeles:** `GetPixel` en el punto exacto, no el ojo sobre la
   imagen reducida.
 
+### Decisiones de la fase 8
+
+- **El instalador es el de Agenda** con tres cambios, que fija `SEGURIDAD.md` §2.8:
+  - sin `TerminateProcess`;
+  - sin `cmd.exe` para borrar la carpeta;
+  - sin `ShellExecute` para abrir Panel.
+- **Sin AppUserModelID en el acceso directo:** Agenda lo necesita para sus notificaciones, y
+  el Panel no tiene.
+- **Sin icono propio:** el instalador y el Panel llevan el de Windows por defecto. Se añade
+  cuando haya un `.ico`.
+- **Probar el instalador en una carpeta de pruebas:** apuntar `LOCALAPPDATA` y `APPDATA` a
+  ella, con `PANEL_INSTALLER_NO_REGISTRY=1`. Así no se toca el registro, y el Panel del build,
+  si está abierto, no se cierra, porque su ruta no es la instalada.
+- **Cerrar el Panel desde fuera:** `WM_CLOSE` a `PanelDeControlHost`. Sirve también para las
+  pruebas, en vez de matar el proceso.
+
 - **Pendiente para la fase 8:** si el HUD está en marcha, arrastrar el deslizador del panel
   saca también su cápsula. La solución es que el HUD ignore `kPanelVolumeContext`, y toca
   otro proyecto.
@@ -488,18 +505,19 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   - detectar, arrancar y cerrar con Restart Manager;
   - comprobar que cada app se cierra de verdad.
 - [ ] **8. Pulido y entrega:**
-  - medir;
-  - autoarranque;
-  - instalador;
-  - `actualizar.ps1`;
-  - el README raíz;
-  - que el HUD y la isla ignoren el volumen del panel, preguntando antes.
+  - [x] medir;
+  - [x] autoarranque;
+  - [x] instalador;
+  - [ ] `actualizar.ps1` (está en la raíz: se pregunta antes);
+  - [ ] el README raíz (cuando el usuario acabe con él);
+  - [ ] que el HUD y la isla ignoren el volumen del panel, preguntando antes.
 
 ## Comandos
 
 ```
 cmake --preset debug && cmake --build --preset debug
 ctest --preset debug
+powershell -NoProfile -ExecutionPolicy Bypass -File empaquetar.ps1
 build\debug\Panel.exe --monitor=3
 build\debug\Panel.exe --render-snapshot=panel --out=docs\img\panel.png
 build\debug\Panel.exe --render-snapshot=panel-brillo --out=docs\img\panel-brillo.png

@@ -32,6 +32,9 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
     if (window != nullptr) window->Toggle();
     return 0;
   }
+  // WM_CLOSE, from the installer (SEGURIDAD.md 2.8), reaches DefWindowProc and destroys this
+  // window: Panel then ends the way "Salir" ends it.
+  if (message == WM_DESTROY) PostQuitMessage(0);
   return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 

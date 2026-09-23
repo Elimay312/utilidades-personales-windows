@@ -320,7 +320,13 @@ letras y formas que el resto de Agenda. Todo se aplica al momento, sin botón de
 - **Calendario por defecto.** Dónde cae lo que se crea; el mismo que el submenú de la bandeja.
 - **Duración por defecto.** Cuánto dura un evento escrito con hora y sin duración: 30 min,
   45 min, 1 h, 1 h 30 o 2 h.
-- **Cuenta de Google.** Conectar (avisa antes de abrir el navegador) o desconectar.
+- **Cuentas de Google.** Puede haber varias. **Conectar…** la primera, **Añadir…** otra y
+  **Reconectar…** la que perdió el permiso (avisa antes de abrir el navegador). Debajo, una
+  tarjeta por cuenta con su dirección, si responde, y **Quitar**, que pregunta antes: sus
+  calendarios y eventos dejan de verse en este equipo, y en Google no se borra nada. Los
+  calendarios de todas se ven juntos; en la barra lateral y en el menú de la bandeja van
+  agrupados por cuenta. Un calendario compartido con dos de tus cuentas sale dos veces, una
+  por cuenta: se puede ocultar una con su interruptor.
 
 Se guarda en `%LOCALAPPDATA%\Agenda\config.local.json`, fusionado con lo que ya hubiera, así
 que las credenciales de Google que viven en ese mismo archivo no se tocan.

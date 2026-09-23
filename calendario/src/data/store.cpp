@@ -624,14 +624,16 @@ std::vector<CalendarInfo> Store::Calendars(bool tasklists) {
   std::vector<CalendarInfo> out;
   if (!db_.IsOpen()) return out;
   if (std::optional<Stmt> stmt = db_.Prepare(
-          "SELECT id, title, is_primary FROM calendars "
-          "WHERE kind = ? AND visible = 1 AND hidden = 0 ORDER BY sort, title")) {
+          "SELECT id, title, is_primary, COALESCE(account_id, 0) FROM calendars "
+          "WHERE kind = ? AND visible = 1 AND hidden = 0 "
+          "ORDER BY COALESCE(account_id, 0), sort, title")) {
     stmt->Bind(1, tasklists ? "tasklist" : "calendar");
     while (stmt->Step()) {
       CalendarInfo info;
       info.id = stmt->Text(0);
       info.title = stmt->Wide(1);
       info.isDefault = stmt->Int(2) != 0;
+      info.accountId = static_cast<int>(stmt->Int(3));
       out.push_back(std::move(info));
     }
   }
@@ -671,7 +673,8 @@ std::vector<CalendarInfo> Store::AllCalendars() {
   if (!db_.IsOpen()) return out;
   if (std::optional<Stmt> stmt = db_.Prepare(
           "SELECT id, title, is_primary, kind, color, hidden, COALESCE(account_id, 0) "
-          "FROM calendars WHERE visible = 1 ORDER BY kind = 'tasklist', sort, title")) {
+          "FROM calendars WHERE visible = 1 "
+          "ORDER BY kind = 'tasklist', COALESCE(account_id, 0), sort, title")) {
     while (stmt->Step()) {
       CalendarInfo info;
       info.id = stmt->Text(0);

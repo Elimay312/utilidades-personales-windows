@@ -33,6 +33,8 @@ struct TrayState {
   bool configured = false;  // there are credentials in config.local.json
   bool connected = false;   // and an account behind them
   std::vector<CalendarInfo> calendars;
+  // With more than one, the calendars are grouped under each account's address (phase 12).
+  std::vector<AccountInfo> accounts;
 };
 
 class Tray {

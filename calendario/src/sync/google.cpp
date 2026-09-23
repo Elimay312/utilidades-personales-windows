@@ -578,6 +578,39 @@ void GoogleSync::Disconnect() {
   store_.Touch();
 }
 
+void GoogleSync::Forget(int accountId) {
+  std::shared_ptr<GoogleAuth> auth;
+  {
+    std::lock_guard<std::mutex> lock(accountsMutex_);
+    for (auto it = accounts_.begin(); it != accounts_.end(); ++it) {
+      if (it->id != accountId) continue;
+      auth = it->auth;
+      accounts_.erase(it);
+      break;
+    }
+  }
+  // A pass holding this account's permission still has it; the token file goes now.
+  if (auth) auth->Disconnect();
+  store_.ForgetAccount(accountId);
+  LogInfo(L"sync: cuenta {} olvidada", accountId);
+  store_.Touch();
+}
+
+std::vector<GoogleSync::AccountState> GoogleSync::Accounts() const {
+  std::vector<AccountState> out;
+  const std::vector<Account> accounts = SnapshotAccounts();
+  for (const AccountInfo& info : store_.Accounts()) {
+    AccountState state;
+    state.id = info.id;
+    state.email = ToWide(info.email);
+    for (const Account& account : accounts) {
+      if (account.id == info.id) state.connected = account.auth->Connected();
+    }
+    out.push_back(std::move(state));
+  }
+  return out;
+}
+
 void GoogleSync::ConnectAccount(int id) {
   std::shared_ptr<GoogleAuth> auth;
   for (const Account& account : SnapshotAccounts()) {

@@ -6,6 +6,7 @@
 
 #include "core/i18n.h"
 #include "core/log.h"
+#include "data/db.h"
 
 namespace agenda {
 namespace {
@@ -98,8 +99,19 @@ UINT Tray::ShowMenu(POINT at, const TrayState& state) const {
     if (!state.calendars.empty()) {
       calendars = CreatePopupMenu();
       if (calendars != nullptr) {
+        int account = -1;
         for (size_t index = 0; index < state.calendars.size(); ++index) {
           const CalendarInfo& calendar = state.calendars[index];
+          // Each account under its address, greyed out: a heading, not something to pick.
+          if (state.accounts.size() > 1 && calendar.accountId != account) {
+            account = calendar.accountId;
+            for (const AccountInfo& info : state.accounts) {
+              if (info.id != account || info.email.empty()) continue;
+              if (index > 0) AppendMenuW(calendars, MF_SEPARATOR, 0, nullptr);
+              const std::wstring email = ToWide(info.email);
+              AppendMenuW(calendars, MF_STRING | MF_GRAYED, 0, email.c_str());
+            }
+          }
           const UINT flags = MF_STRING | (calendar.isDefault ? MF_CHECKED : MF_UNCHECKED);
           AppendMenuW(calendars, flags, kTrayCalendarFirst + static_cast<UINT>(index),
                       calendar.title.c_str());

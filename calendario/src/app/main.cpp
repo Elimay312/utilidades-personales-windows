@@ -206,7 +206,10 @@ LRESULT CALLBACK AppWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
           if (app->sync) {
             state.configured = app->sync->Configured();
             state.connected = app->sync->Connected();
-            if (state.connected) state.calendars = app->store.Calendars(/*tasklists=*/false);
+            if (state.connected) {
+              state.calendars = app->store.Calendars(/*tasklists=*/false);
+              state.accounts = app->store.Accounts();
+            }
           }
 
           const UINT command = app->tray.ShowMenu(at, state);

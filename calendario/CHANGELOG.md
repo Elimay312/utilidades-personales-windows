@@ -9,6 +9,11 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **Varias cuentas de Google** (fase 12.3). La configuración tiene una sección **Cuentas de
+  Google** con **Añadir…** otra cuenta, **Reconectar…** la que perdió el permiso y una tarjeta
+  por cuenta con su dirección y **Quitar**, que pregunta antes y no borra nada en Google. Los
+  calendarios de todas se ven juntos, agrupados por cuenta en la barra lateral y en el menú de
+  la bandeja. Capturas `configuracion` y `configuracion-claro` rehechas.
 - **Elegir el aviso de un evento.** El panel de detalle tiene una fila **Aviso** con *Auto* (los
   del calendario), *Ninguno*, *10 min*, *1 h* y *1 día*, con el ratón, el teclado y Narrador.
   El cambio sube a Google y ya no lo pisa la siguiente sincronización mientras está en la cola.

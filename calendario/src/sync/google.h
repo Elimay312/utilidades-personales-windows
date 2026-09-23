@@ -75,6 +75,16 @@ class GoogleSync {
   void ConnectNew();
   // Every account's permission goes; what came down from them stays in the cache.
   void Disconnect();
+  // One account goes for good: its permission, and everything of it in the cache.
+  void Forget(int accountId);
+
+  // The accounts, for the settings: their address and whether they can be reached.
+  struct AccountState {
+    int id = 0;
+    std::wstring email;
+    bool connected = false;
+  };
+  std::vector<AccountState> Accounts() const;
 
   bool Configured() const { return !config_.clientId.empty() && !config_.clientSecret.empty(); }
   // At least one account can be reached.

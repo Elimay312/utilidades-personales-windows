@@ -4,6 +4,7 @@
 #include <windowsx.h>
 
 #include <algorithm>
+#include <array>
 #include <format>
 
 #include "core/autostart.h"
@@ -33,6 +34,10 @@ constexpr float kInsideDip = 16.0f;  // text and controls from the edge of their
 constexpr float kFooterDip = 36.0f;
 
 enum Control { kHotkey, kLanguage, kTheme, kStartup, kCalendar, kDuration, kGoogle, kControls };
+// Under the Google card, one card per account with its "Quitar": their controls come after the
+// fixed ones, kControls + the account's place.
+constexpr int kMaxAccounts = 6;
+constexpr float kAccountButtonDip = 100.0f;
 constexpr int kSectionOf[kControls] = {0, 0, 0, 0, 1, 1, 2};
 constexpr float kControlWidth[kControls] = {180.0f, 200.0f, 264.0f, 44.0f, 220.0f, 300.0f, 140.0f};
 
@@ -58,11 +63,14 @@ struct SettingsLayout {
   D2D1_RECT_F sections[3]{};
   D2D1_RECT_F cards[kControls]{};
   D2D1_RECT_F controls[kControls]{};
+  int accounts = 0;
+  D2D1_RECT_F accountCards[kMaxAccounts]{};
+  D2D1_RECT_F accountControls[kMaxAccounts]{};
   D2D1_RECT_F footer{};
   float height = 0.0f;
 };
 
-SettingsLayout MakeSettingsLayout() {
+SettingsLayout MakeSettingsLayout(int accounts) {
   SettingsLayout out;
   float y = kPadDip / 2.0f;
   int section = -1;
@@ -80,14 +88,29 @@ SettingsLayout MakeSettingsLayout() {
                                   middle + height / 2.0f};
     y += kRowDip + kRowGapDip;
   }
+  out.accounts = std::clamp(accounts, 0, kMaxAccounts);
+  for (int i = 0; i < out.accounts; ++i) {
+    out.accountCards[i] = D2D1_RECT_F{kPadDip, y, kWidthDip - kPadDip, y + kRowDip};
+    const float middle = y + kRowDip / 2.0f;
+    const float right = out.accountCards[i].right - kInsideDip;
+    out.accountControls[i] = D2D1_RECT_F{right - kAccountButtonDip, middle - kControlDip / 2.0f,
+                                         right, middle + kControlDip / 2.0f};
+    y += kRowDip + kRowGapDip;
+  }
   out.footer = D2D1_RECT_F{kPadDip + 4.0f, y, kWidthDip - kPadDip, y + kFooterDip};
   out.height = y + kFooterDip + kPadDip / 2.0f;
   return out;
 }
 
-const SettingsLayout& Layout() {
-  static const SettingsLayout layout = MakeSettingsLayout();
-  return layout;
+// The fixed controls sit in the same place whatever the number of accounts, which only adds
+// cards below them; asked without one, the answer is the layout with none.
+const SettingsLayout& Layout(int accounts = 0) {
+  static const auto layouts = [] {
+    std::array<SettingsLayout, kMaxAccounts + 1> all;
+    for (int i = 0; i <= kMaxAccounts; ++i) all[static_cast<size_t>(i)] = MakeSettingsLayout(i);
+    return all;
+  }();
+  return layouts[static_cast<size_t>(std::clamp(accounts, 0, kMaxAccounts))];
 }
 
 D2D1_RECT_F OptionRect(const D2D1_RECT_F& control, int count, int index) {
@@ -104,11 +127,14 @@ D2D1_RECT_F ListRect(int index) {
 
 // What the mouse is over: the control, and for the startup switch the whole card, which is what
 // a click on the words next to a switch means everywhere else in Windows.
-int ControlAt(float x, float y) {
-  const SettingsLayout& layout = Layout();
+int ControlAt(float x, float y, int accounts) {
+  const SettingsLayout& layout = Layout(accounts);
   for (int c = 0; c < kControls; ++c) {
     const D2D1_RECT_F& hit = c == kStartup ? layout.cards[c] : layout.controls[c];
     if (Inside(hit, x, y)) return c;
+  }
+  for (int i = 0; i < layout.accounts; ++i) {
+    if (Inside(layout.accountControls[i], x, y)) return kControls + i;
   }
   return -1;
 }
@@ -229,8 +255,10 @@ void SettingsWindow::Show(HMONITOR monitor) {
   dpi_ = GetDpiForWindow(hwnd_);
   Retitle();
   ApplyTheme();
+  Refresh();  // the accounts, which the height depends on
 
-  RECT frame{0, 0, ScaleDip(kWidthDip, dpi_), ScaleDip(Layout().height, dpi_)};
+  RECT frame{0, 0, ScaleDip(kWidthDip, dpi_),
+             ScaleDip(Layout(static_cast<int>(accounts_.size())).height, dpi_)};
   AdjustWindowRectExForDpi(&frame, kStyle, FALSE, 0, dpi_);
   const int width = frame.right - frame.left;
   const int height = frame.bottom - frame.top;
@@ -434,9 +462,37 @@ void SettingsWindow::Resize() {
   InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+int SettingsWindow::Controls() const {
+  return kControls + static_cast<int>((std::min)(accounts_.size(), size_t{kMaxAccounts}));
+}
+
+void SettingsWindow::FitHeight() {
+  if (hwnd_ == nullptr) return;
+  constexpr DWORD kStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+  RECT frame{0, 0, ScaleDip(kWidthDip, dpi_),
+             ScaleDip(Layout(static_cast<int>(accounts_.size())).height, dpi_)};
+  AdjustWindowRectExForDpi(&frame, kStyle, FALSE, 0, dpi_);
+  SetWindowPos(hwnd_, nullptr, 0, 0, frame.right - frame.left, frame.bottom - frame.top,
+               SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 void SettingsWindow::Refresh() {
   const bool configured = sync_ != nullptr && sync_->Configured();
   const bool connected = sync_ != nullptr && sync_->Connected();
+  std::vector<AccountRow> accounts;
+  if (sync_ != nullptr) {
+    for (const sync::GoogleSync::AccountState& state : sync_->Accounts()) {
+      accounts.push_back(AccountRow{state.id, state.email, state.connected});
+    }
+  }
+  if (accounts != accounts_) {
+    const bool resized = accounts.size() != accounts_.size();
+    accounts_ = std::move(accounts);
+    focus_ = (std::min)(focus_, Controls() - 1);
+    if (resized) FitHeight();
+    if (hwnd_ != nullptr) InvalidateRect(hwnd_, nullptr, FALSE);
+    a11y_.Changed();
+  }
   std::vector<CalendarInfo> calendars;
   if (store_ != nullptr && store_->IsOpen()) calendars = store_->Calendars(/*tasklists=*/false);
   const bool startup = StartsWithWindows();
@@ -492,7 +548,7 @@ bool SettingsWindow::Tick(float ms) {
   SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animations, 0);
   const float step = animations ? ms / kStateMs : 1.0f;
   bool moving = false;
-  for (int c = 0; c < kControls; ++c) {
+  for (int c = 0; c < Controls(); ++c) {
     if (Settle(hoverT_[c], hover_ == c, step)) moving = true;
   }
   // The knob travels in the 160 ms everything that arrives takes.
@@ -509,7 +565,9 @@ void SettingsWindow::Render() {
   if (target_->EndDraw() == D2DERR_RECREATE_TARGET) target_.Reset();
 }
 
-D2D1_SIZE_F SettingsWindow::SizeDip() { return D2D1_SIZE_F{kWidthDip, Layout().height}; }
+D2D1_SIZE_F SettingsWindow::SizeDip() {
+  return D2D1_SIZE_F{kWidthDip, Layout(kSnapshotAccounts).height};
+}
 
 bool SettingsWindow::PaintForSnapshot(ID2D1RenderTarget* target, const Theme& theme,
                                       std::vector<CalendarInfo> calendars) {
@@ -520,12 +578,16 @@ bool SettingsWindow::PaintForSnapshot(ID2D1RenderTarget* target, const Theme& th
   connected_ = true;
   startup_ = true;
   toggleT_ = 1.0f;
+  accounts_ = {AccountRow{1, L"ana.garcia@gmail.com", true},
+               AccountRow{2, L"ana@estudio-norte.co", true}};
   Paint(target);
   return true;
 }
 
 void SettingsWindow::Paint(ID2D1RenderTarget* target) {
-  const SettingsLayout& layout = Layout();
+  const SettingsLayout& layout = Layout(static_cast<int>(accounts_.size()));
+  bool anyLost = false;
+  for (const AccountRow& account : accounts_) anyLost = anyLost || !account.connected;
   const Theme& theme = theme_;
   Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
   target->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
@@ -536,7 +598,7 @@ void SettingsWindow::Paint(ID2D1RenderTarget* target) {
   const float radius = kRadiusCard;
 
   const std::wstring_view sections[3] = {T(L"General", L"General"), T(L"Eventos", L"Events"),
-                                         T(L"Cuenta de Google", L"Google account")};
+                                         T(L"Cuentas de Google", L"Google accounts")};
   for (int s = 0; s < 3; ++s) {
     b->SetColor(theme.textPrimary);
     DrawTextIn(target, fonts_.title.Get(), sections[s], layout.sections[s], b);
@@ -583,17 +645,23 @@ void SettingsWindow::Paint(ID2D1RenderTarget* target) {
       case kGoogle:
         detail = !configured_ ? T(L"Faltan las credenciales: mira docs/google-setup.md",
                                   L"Credentials missing: see docs/google-setup.md")
-                 : connected_ ? T(L"Conectada: eventos y tareas se sincronizan",
-                                  L"Connected: events and tasks are in sync")
-                              : T(L"Sin conectar: todo se queda en este equipo",
-                                  L"Not connected: everything stays on this PC");
+                 : accounts_.empty() ? T(L"Sin conectar: todo se queda en este equipo",
+                                         L"Not connected: everything stays on this PC")
+                 : anyLost ? T(L"Una cuenta perdió el permiso: vuelve a conectarla",
+                               L"An account lost its permission: connect it again")
+                           : T(L"Los calendarios de cada cuenta, juntos aquí",
+                               L"Every account's calendars, together here");
+        if (configured_ && anyLost) detailColor = theme.now;
         break;
       default:
         break;
     }
     const float textRight = control.left - kInsideDip;
     b->SetColor(theme.textPrimary);
-    DrawTextIn(target, fonts_.event.Get(), Label(c),
+    const std::wstring_view label =
+        c == kGoogle && !accounts_.empty() ? T(L"Añadir otra cuenta", L"Add another account")
+                                           : Label(c);
+    DrawTextIn(target, fonts_.event.Get(), label,
                D2D1_RECT_F{card.left + kInsideDip, card.top + 10.0f, textRight, card.top + 32.0f}, b);
     b->SetColor(detailColor);
     DrawTextIn(target, fonts_.label.Get(), detail,
@@ -701,8 +769,9 @@ void SettingsWindow::Paint(ID2D1RenderTarget* target) {
         break;
       }
       case kGoogle: {
-        // The one thing to do stands out: connecting is the accent, disconnecting is quiet.
-        const bool primary = configured_ && !connected_;
+        // The one thing to do stands out: the first connection and a lost one are the accent,
+        // adding one more is quiet.
+        const bool primary = configured_ && (accounts_.empty() || anyLost);
         b->SetColor(primary ? theme.accent : theme.panelOpaque);
         FillRound(target, control, radius, b);
         if (!primary) {
@@ -715,13 +784,49 @@ void SettingsWindow::Paint(ID2D1RenderTarget* target) {
         }
         b->SetColor(!configured_ ? theme.textMuted : (primary ? theme.onAccent : theme.textPrimary));
         DrawTextIn(target, fonts_.event.Get(),
-                   connected_ ? T(L"Desconectar", L"Disconnect") : T(L"Conectar…", L"Connect…"),
+                   accounts_.empty() ? T(L"Conectar…", L"Connect…")
+                   : anyLost         ? T(L"Reconectar…", L"Reconnect…")
+                                     : T(L"Añadir…", L"Add…"),
                    control, b, Align::Center);
         break;
       }
       default:
         break;
     }
+  }
+
+  // One card per account: its address, whether it answers, and taking it out of Agenda.
+  for (int i = 0; i < layout.accounts; ++i) {
+    const AccountRow& account = accounts_[static_cast<size_t>(i)];
+    const D2D1_RECT_F& card = layout.accountCards[i];
+    const D2D1_RECT_F& control = layout.accountControls[i];
+    b->SetColor(theme.surface);
+    FillRound(target, card, radius, b);
+    b->SetColor(theme.border);
+    StrokeRound(target, card, radius, b, 1.0f);
+    const float textRight = control.left - kInsideDip;
+    b->SetColor(theme.textPrimary);
+    DrawTextIn(target, fonts_.event.Get(),
+               account.email.empty() ? std::format(L"{} {}", T(L"Cuenta", L"Account"), account.id)
+                                     : account.email,
+               D2D1_RECT_F{card.left + kInsideDip, card.top + 10.0f, textRight, card.top + 32.0f}, b);
+    b->SetColor(account.connected ? theme.textSecondary : theme.now);
+    DrawTextIn(target, fonts_.label.Get(),
+               account.connected ? T(L"Conectada", L"Connected")
+                                 : T(L"Sin permiso: reconéctala arriba",
+                                     L"No permission: reconnect it above"),
+               D2D1_RECT_F{card.left + kInsideDip, card.top + 32.0f, textRight, card.bottom - 10.0f},
+               b);
+    b->SetColor(theme.panelOpaque);
+    FillRound(target, control, radius, b);
+    b->SetColor(theme.border);
+    StrokeRound(target, control, radius, b, 1.0f);
+    if (const float hover = hoverT_[kControls + i]; hover > 0.0f) {
+      b->SetColor(Fade(theme.hover, hover));
+      FillRound(target, control, radius, b);
+    }
+    b->SetColor(theme.textPrimary);
+    DrawTextIn(target, fonts_.event.Get(), T(L"Quitar", L"Remove"), control, b, Align::Center);
   }
 
   b->SetColor(theme.textMuted);
@@ -731,7 +836,11 @@ void SettingsWindow::Paint(ID2D1RenderTarget* target) {
 
   // The keyboard's place, drawn only once the keyboard has been used: a ring around every
   // control a mouse user clicks is noise.
-  if (focusVisible_ && focus_ >= 0 && focus_ < kControls) {
+  if (focusVisible_ && focus_ >= kControls && focus_ < Controls()) {
+    b->SetColor(theme.textPrimary);
+    StrokeRound(target, Inset(layout.accountControls[focus_ - kControls], -3.0f), radius + 3.0f,
+                b, 2.0f);
+  } else if (focusVisible_ && focus_ >= 0 && focus_ < kControls) {
     D2D1_RECT_F ring = layout.controls[focus_];
     const int count = Options(focus_);
     if (count > 0) ring = OptionRect(ring, count, (std::max)(0, Selected(focus_)));
@@ -793,7 +902,7 @@ void SettingsWindow::OnKeyDown(WPARAM key) {
   const bool shift = Down(VK_SHIFT);
   switch (key) {
     case VK_TAB:
-      focus_ = (focus_ + (shift ? kControls - 1 : 1)) % kControls;
+      focus_ = (focus_ + (shift ? Controls() - 1 : 1)) % Controls();
       break;
     case VK_ESCAPE:
       DestroyWindow(hwnd_);
@@ -919,18 +1028,38 @@ void SettingsWindow::Activate(int control) {
       }
       break;
     case kGoogle:
+      // Connecting, reconnecting the account that lost its permission, or adding one more: the
+      // sync knows which (GoogleSync::Connect), and main asks before the browser opens.
       if (!configured_ || sync_ == nullptr) break;
-      if (connected_) {
-        sync_->Disconnect();
-      } else if (hooks_.connectGoogle) {
-        hooks_.connectGoogle(hwnd_);
-      }
+      if (hooks_.connectGoogle) hooks_.connectGoogle(hwnd_);
       Refresh();
       break;
     default:
+      if (control >= kControls && control < Controls()) RemoveAccount(control - kControls);
       break;
   }
   InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void SettingsWindow::RemoveAccount(int index) {
+  if (sync_ == nullptr || index < 0 || index >= static_cast<int>(accounts_.size())) return;
+  const AccountRow account = accounts_[static_cast<size_t>(index)];
+  const std::wstring name =
+      account.email.empty() ? std::format(L"{} {}", T(L"Cuenta", L"Account"), account.id)
+                            : account.email;
+  // Asked first: what hangs from it leaves this PC, and whatever had not gone up yet is lost.
+  const std::wstring question =
+      std::wstring(T(L"¿Quitar ", L"Remove ")) + name +
+      std::wstring(T(L" de Agenda?\n\nSus calendarios y sus eventos dejan de verse aquí y lo que "
+                     L"faltara por subir se pierde. En Google no se borra nada.",
+                     L" from Agenda?\n\nIts calendars and events stop showing here, and "
+                     L"anything not yet sent is lost. Nothing is deleted at Google."));
+  if (MessageBoxW(hwnd_, question.c_str(), T(L"Quitar cuenta", L"Remove account").data(),
+                  MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
+    return;
+  }
+  sync_->Forget(account.id);
+  Refresh();
 }
 
 void SettingsWindow::Step(int control, int direction) {
@@ -999,11 +1128,11 @@ void SettingsWindow::OnLeftDown(float x, float y) {
     InvalidateRect(hwnd_, nullptr, FALSE);
     if (Inside(Layout().controls[kCalendar], x, y)) return;  // a click on it again closes it
   }
-  const int control = ControlAt(x, y);
+  const int control = ControlAt(x, y, static_cast<int>(accounts_.size()));
   if (capturing_ && control != kHotkey) StopCapture();
   if (control < 0) return;
   focus_ = control;
-  const int count = Options(control);
+  const int count = control < kControls ? Options(control) : 0;
   if (count > 0) {
     for (int i = 0; i < count; ++i) {
       if (Inside(OptionRect(Layout().controls[control], count, i), x, y)) Choose(control, i);
@@ -1020,9 +1149,9 @@ void SettingsWindow::OnMouseMove(float x, float y) {
     TrackMouseEvent(&track);
     tracking_ = true;
   }
-  const int control = ControlAt(x, y);
+  const int control = ControlAt(x, y, static_cast<int>(accounts_.size()));
   int option = -1;
-  if (control >= 0 && Options(control) > 0) {
+  if (control >= 0 && control < kControls && Options(control) > 0) {
     for (int i = 0; i < Options(control); ++i) {
       if (Inside(OptionRect(Layout().controls[control], Options(control), i), x, y)) option = i;
     }
@@ -1045,7 +1174,7 @@ void SettingsWindow::OnMouseMove(float x, float y) {
 
 std::vector<A11yNode> SettingsWindow::A11yNodes() {
   std::vector<A11yNode> nodes;
-  const SettingsLayout& layout = Layout();
+  const SettingsLayout& layout = Layout(static_cast<int>(accounts_.size()));
   for (int c = 0; c < kControls; ++c) {
     A11yNode node;
     node.id = c + 1;
@@ -1074,8 +1203,10 @@ std::vector<A11yNode> SettingsWindow::A11yNodes() {
         break;
       case kGoogle:
         node.type = UIA_ButtonControlTypeId;
-        node.name = connected_ ? std::wstring(T(L"Desconectar de Google", L"Disconnect from Google"))
-                               : std::wstring(T(L"Conectar con Google", L"Connect to Google"));
+        node.name = accounts_.empty()
+                        ? std::wstring(T(L"Conectar con Google", L"Connect to Google"))
+                        : std::wstring(T(L"Añadir otra cuenta de Google",
+                                         L"Add another Google account"));
         node.invokable = true;
         node.enabled = configured_;
         break;
@@ -1098,6 +1229,18 @@ std::vector<A11yNode> SettingsWindow::A11yNodes() {
       option.focused = focus_ == c && option.selected == 1 && GetFocus() == hwnd_;
       nodes.push_back(std::move(option));
     }
+  }
+  for (int i = 0; i < layout.accounts; ++i) {
+    const AccountRow& account = accounts_[static_cast<size_t>(i)];
+    A11yNode node;
+    node.id = kControls + i + 1;
+    node.rect = layout.accountControls[i];
+    node.type = UIA_ButtonControlTypeId;
+    node.name = std::wstring(T(L"Quitar la cuenta ", L"Remove the account ")) + account.email;
+    node.invokable = true;
+    node.focusable = true;
+    node.focused = focus_ == kControls + i && GetFocus() == hwnd_;
+    nodes.push_back(std::move(node));
   }
   if (listOpen_) {
     for (int i = 0; i < static_cast<int>(calendars_.size()); ++i) {

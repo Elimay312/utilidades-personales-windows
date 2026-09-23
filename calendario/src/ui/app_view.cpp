@@ -461,6 +461,16 @@ void DrawSidebar(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& the
   for (int i = 0; i < calendars; ++i) {
     const CalendarInfo& calendar = appModel.calendars[static_cast<size_t>(i)];
     const D2D1_RECT_F row = app.calendarRowRect(i);
+    // With more than one Google account the calendars come grouped by account, and a hairline
+    // says where one ends and the next begins.
+    if (i > 0) {
+      const CalendarInfo& previous = appModel.calendars[static_cast<size_t>(i - 1)];
+      if (calendar.accountId != 0 && previous.accountId != 0 &&
+          calendar.accountId != previous.accountId && calendar.isTaskList == previous.isTaskList) {
+        brush->SetColor(theme.border);
+        target->FillRectangle(D2D1_RECT_F{row.left, row.top - 1.0f, row.right, row.top}, brush);
+      }
+    }
     const float hover =
         i < static_cast<int>(appModel.calendarHover.size()) ? appModel.calendarHover[i] : 0.0f;
     if (hover > 0.0f) {

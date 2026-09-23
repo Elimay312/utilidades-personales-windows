@@ -59,10 +59,12 @@ class SettingsWindow final : public A11ySource {
   void Show(HMONITOR monitor);
   HWND hwnd() const { return hwnd_; }
 
-  // The offscreen snapshot: the window's client area as it opens, with an account connected and
-  // `calendars` in the chooser, painted into `target` at the size SizeDip() gives.
+  // The offscreen snapshot: the window's client area as it opens, with kSnapshotAccounts
+  // accounts connected and `calendars` in the chooser, painted into `target` at the size
+  // SizeDip() gives.
   bool PaintForSnapshot(ID2D1RenderTarget* target, const Theme& theme,
                         std::vector<CalendarInfo> calendars);
+  static constexpr int kSnapshotAccounts = 2;
   static D2D1_SIZE_F SizeDip();
 
   // --- A11ySource ---
@@ -93,6 +95,10 @@ class SettingsWindow final : public A11ySource {
   void Step(int control, int direction);
   void Choose(int control, int option);
   void PickCalendar(int index);
+  void RemoveAccount(int index);
+  // The window's height follows the number of accounts, one card each.
+  void FitHeight();
+  int Controls() const;
   void StartCapture();
   void StopCapture();
 
@@ -123,7 +129,7 @@ class SettingsWindow final : public A11ySource {
   bool tracking_ = false;
   bool ticking_ = false;
   ULONGLONG lastTick_ = 0;
-  float hoverT_[8] = {};
+  float hoverT_[16] = {};  // the fixed controls, then one per account
   float toggleT_ = 0.0f;
 
   std::wstring hotkeyError_;
@@ -131,6 +137,14 @@ class SettingsWindow final : public A11ySource {
   bool startup_ = false;
   bool configured_ = false;
   bool connected_ = false;
+  // The Google accounts (phase 12), a card each under "Cuentas de Google".
+  struct AccountRow {
+    int id = 0;
+    std::wstring email;
+    bool connected = false;
+    bool operator==(const AccountRow&) const = default;
+  };
+  std::vector<AccountRow> accounts_;
 };
 
 }  // namespace agenda

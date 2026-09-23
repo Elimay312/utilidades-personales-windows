@@ -248,6 +248,22 @@ Se usa `dxva2`: `GetPhysicalMonitorsFromHMONITOR`, `GetMonitorCapabilities` y
 - **Un monitor que no anuncia `MC_CAPS_BRIGHTNESS`** sale como «no disponible». No se le
   prueba nada.
 - **Todo en el hilo de trabajo.** Cada llamada tarda entre 50 y 200 ms.
+
+*Enmienda de la fase 4b*, medida con las tres pantallas del usuario:
+
+- **La prueba es leer el brillo, no pedir las capacidades.** En el LG ULTRAWIDE,
+  `GetMonitorCapabilities` tardó **4,9 s**, porque lee la cadena entera de capacidades por el
+  cable. `GetMonitorBrightness` tardó 62–67 ms, aunque fuera la primera llamada. Así que no se
+  llama a `GetMonitorCapabilities`. Un monitor cuya lectura de brillo falla sale como «no
+  disponible»; en el ARZOPA falla en 1 ms. **Solo se escribe a un monitor cuya lectura
+  funcionó,** y el valor se ajusta a su mínimo y su máximo. Leer es un «Get VCP» del código
+  0x10, el mismo que manda `SetMonitorBrightness`, así que no le llega nada que no reciba ya.
+- **El intervalo es fijo, de 100 ms,** y no una clave de `panel.json`. Con una clave, alguien
+  podría ponerlo a 0 y escribir en ráfaga, que es justo lo que esta regla evita.
+- **Cuándo se lee:** se enumera al arrancar y con cada `WM_DISPLAYCHANGE`. Con cada apertura del
+  panel se relee el brillo de los monitores DDC/CI, porque sus botones lo cambian sin avisar.
+  Es una lectura por apertura; nunca se sondea.
+- **`dxva2` solo en `system/brightness.cpp`,** como el resto del brillo.
 - **Los manejadores se sueltan** con `DestroyPhysicalMonitors` al volver a enumerar.
 
 ### 2.5 Luz nocturna: el blob de CloudStore

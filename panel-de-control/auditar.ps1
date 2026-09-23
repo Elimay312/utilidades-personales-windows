@@ -184,7 +184,12 @@ elseif ($clases) { Regla '2.3 WMI solo para el brillo' 'FALLA' $clases[0] }
 else { Regla '2.3 WMI solo para el brillo' 'bien' }
 
 # 2.4 DDC/CI: solo el brillo. Nada de VCP a mano ni de otros ajustes del monitor.
-Prohibido '2.4 DDC/CI solo el brillo' '\b(SetVCPFeature|SaveCurrentMonitorSettings|RestoreMonitorFactory\w*|SetMonitor(?!Brightness\b)\w+)\s*\('
+#     Enmienda 4b: sin GetMonitorCapabilities (4,9 s en el LG), y dxva2 solo en brightness.cpp.
+$vcp = Buscar '\b(SetVCPFeature|SaveCurrentMonitorSettings|RestoreMonitorFactory\w*|SetMonitor(?!Brightness\b)\w+|GetMonitorCapabilities|GetCapabilitiesString\w*|GetVCPFeature\w*)\s*\('
+$dxva = Buscar '\b(\w+PhysicalMonitors?\w*|(Get|Set)MonitorBrightness)\s*\(|dxva2' '' '^src\\system\\brightness\.cpp$'
+if ($vcp) { Regla '2.4 DDC/CI solo el brillo' 'FALLA' $vcp[0] }
+elseif ($dxva) { Regla '2.4 DDC/CI solo el brillo' 'FALLA' "fuera de brightness.cpp: $($dxva[0])" }
+else { Regla '2.4 DDC/CI solo el brillo' 'bien' }
 
 # 2.5 Luz nocturna: el blob solo se toca en sus dos archivos, el horario solo se lee, y
 #     antes de escribir hay copia de seguridad.

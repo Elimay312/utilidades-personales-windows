@@ -124,7 +124,7 @@ $matar = Buscar '\bTerminateProcess\s*\(|\bRmForceShutdown\b|\bRmShutdown\s*\([^
 # (La lista se guarda antes de filtrarla: por la tuberia, Sentencias pasaria el array entero como
 # un solo objeto y el detalle senalaria el archivo equivocado.)
 $cierres = Sentencias '\b(PostMessage|SendMessage|SendNotifyMessage|PostThreadMessage)\w*\s*\([^;]*\bWM_(CLOSE|QUIT|DESTROY|ENDSESSION)\b'
-$cerrarFuera = @($cierres | Where-Object { $_ -notmatch '^src\\system\\apps\.cpp:' })
+$cerrarFuera = @($cierres | Where-Object { $_ -notmatch '^src\\(system\\apps\.cpp|installer\\installer\.cpp):' })
 if ($matar) { Regla '1.5 Sin matar procesos' 'FALLA' $matar[0] }
 elseif ($cerrarFuera) { Regla '1.5 Sin matar procesos' 'FALLA' "WM_CLOSE fuera de apps.cpp: $($cerrarFuera[0])" }
 else { Regla '1.5 Sin matar procesos' 'bien' }
@@ -133,10 +133,13 @@ else { Regla '1.5 Sin matar procesos' 'bien' }
 #     CreateProcess solo en system/apps.cpp.
 $hits = Buscar '\b(system|_wsystem|popen|_wpopen|WinExec)\s*\('
 $shell = @(Sentencias '\bShellExecute\w*\s*\(' | Where-Object { $_ -notmatch 'L"ms-settings:|L"ms-availablenetworks:"|L"ms-settings-connectabledevices:devicediscovery"|ConfigPath\s*\(' })
-$crear = Buscar '\bCreateProcess\w*\s*\(' '' '^src\\system\\apps\.cpp$'
+# Enmienda 8: el instalador se relanza a si mismo desde %TEMP% para borrar su carpeta.
+$crear = Buscar '\bCreateProcess\w*\s*\(' '' '^src\\(system\\apps\.cpp|installer\\installer\.cpp)$'
+$cmdLinea = Buscar '(?i)"(cmd|powershell|pwsh)(\.exe)?\b|\brmdir\b' '^src\\'
 if ($hits) { Regla '1.6 Sin ejecutar texto' 'FALLA' $hits[0] }
 elseif ($shell) { Regla '1.6 Sin ejecutar texto' 'FALLA' "ShellExecute sin ms-settings: ni ConfigPath: $($shell[0])" }
 elseif ($crear) { Regla '1.6 Sin ejecutar texto' 'FALLA' "CreateProcess fuera de apps.cpp: $($crear[0])" }
+elseif ($cmdLinea) { Regla '1.6 Sin ejecutar texto' 'FALLA' "un interprete en el codigo: $($cmdLinea[0])" }
 else { Regla '1.6 Sin ejecutar texto' 'bien' }
 
 # 1.7 El registro solo se escribe desde el autoarranque, la luz nocturna y el instalador,

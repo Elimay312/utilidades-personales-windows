@@ -94,6 +94,9 @@ que la app no haya guardado, y deja un icono muerto en la bandeja.
   destruye, `WM_DESTROY` pone `PostQuitMessage`, y la app sale por el mismo camino que su
   «Salir», guardando lo que guarda. Es lo que ya hace el instalador de Agenda para cerrarla.
 
+*Enmienda de la fase 8:* el instalador también se lo pide así al propio Panel, sin el
+`TerminateProcess` de respaldo que tiene el de Agenda (§2.8).
+
 ### 1.6 Ejecutar texto
 
 Sin `system`, `_wsystem`, `popen`, `WinExec` ni intérpretes.
@@ -106,7 +109,9 @@ Sin `system`, `_wsystem`, `popen`, `WinExec` ni intérpretes.
   pantalla de Windows para añadir un dispositivo Bluetooth, que es quien empareja.
 - **`CreateProcessW`** se usa solo en `system/apps.cpp`, y solo con una ruta de `utilidades[]`
   que exista, sea absoluta y termine en `.exe`. Se pasa como `lpApplicationName`, sin línea
-  de comandos compuesta.
+  de comandos compuesta. *Enmienda de la fase 8:* y en `installer/installer.cpp`, para que el
+  desinstalador relance su copia de `%TEMP%` (§2.8).
+- **Ningún intérprete:** ni `cmd.exe`, ni `rmdir`, ni PowerShell, escritos en el código.
 
 ### 1.7 Tocar el registro fuera de dos sitios
 
@@ -345,7 +350,27 @@ cambios. Es la API documentada, la misma que usa el panel de Windows.
     aún ofrece «Deshacer» en su popup abierto.
   - **Solo `system/apps.cpp` manda `WM_CLOSE`** a otra ventana.
 
-### 2.8 Dibujar
+### 2.8 El instalador (*enmienda de la fase 8*)
+
+`Instalar-Panel.exe` lleva `Panel.exe` dentro. Instala solo para el usuario, en
+`%LOCALAPPDATA%\Programs\Panel`, sin administrador, y se deja a sí mismo como
+`Desinstalar.exe`. Es el de Agenda (`calendario/src/installer`), con estos cambios para que
+cumpla estas reglas, que las de Agenda no tenían:
+
+- **Si el Panel está abierto,** se le pide que se cierre con `WM_CLOSE` a su ventana
+  `PanelDeControlHost`, y solo si su ruta es la de la instalación. **Sin `TerminateProcess`**:
+  si en 5 s no se ha cerrado, el instalador lo dice y no sigue.
+- **El registro:** solo el valor `Panel` de `Run`, si se marca «Iniciar con Windows», y su
+  propia clave `Uninstall\Panel` (§1.7).
+- **Desinstalar sin `cmd.exe`:** Agenda borra su carpeta con un `rmdir` montado en una línea de
+  `cmd`, que es ejecutar texto (§1.6). Aquí el desinstalador se copia a `%TEMP%` y lanza esa
+  copia con `CreateProcessW`, usando su propia ruta y los argumentos fijos `--remove-folder
+  <pid>`. La copia espera a que ese proceso termine y borra la carpeta de instalación, que
+  **calcula ella misma**: nunca la toma de la línea de comandos. La copia se queda en `%TEMP%`.
+- **El código del instalador vive en `src/installer/`,** y la auditoría le deja justo eso: su
+  `CreateProcessW` y su `WM_CLOSE`.
+
+### 2.9 Dibujar
 
 Direct2D, DirectWrite y DirectComposition sobre la ventana propia, como en Agenda. El panel no
 lee ni captura la pantalla ni las ventanas de otros.

@@ -255,9 +255,9 @@ internal static class Medios
             Publicar(new Cancion(
                 string.IsNullOrWhiteSpace(p.Title) ? "Sin titulo" : p.Title,
                 p.Artist ?? string.Empty,
-                // Tal cual llega. SEGURIDAD.md §3.1: no se resuelve el proceso dueno ni
-                // se busca su ventana ni se mira su ejecutable.
-                s.SourceAppUserModelId ?? string.Empty,
+                // Del AUMID que llega, recortado. SEGURIDAD.md §3.1: no se resuelve el
+                // proceso dueno ni se busca su ventana ni se mira su ejecutable.
+                NombreCorto(s.SourceAppUserModelId ?? string.Empty),
                 t.Position,
                 t.EndTime - t.StartTime,
                 _arte,
@@ -394,6 +394,28 @@ internal static class Medios
             => (byte)Math.Clamp(gris + (canal - gris) * 2.6f, 0f, 255f);
 
         return ((uint)Realza(mr, gris) << 16) | ((uint)Realza(mg, gris) << 8) | Realza(mb, gris);
+    }
+
+    /// <summary>
+    /// El AUMID, legible. La Store manda <c>SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify</c>: lo
+    /// que va tras el <c>!</c> es el id de la app, y casi siempre es su nombre. Cuando es el
+    /// generico <c>App</c>, el nombre del paquete. Las apps de escritorio llegan como
+    /// <c>chrome.exe</c> o <c>Brave</c>. Solo se recorta texto: no se busca nada.
+    /// </summary>
+    internal static string NombreCorto(string aumid)
+    {
+        string s = aumid;
+        int bang = s.LastIndexOf('!');
+        if (bang >= 0 && bang < s.Length - 1)
+        {
+            string id = s[(bang + 1)..];
+            if (!id.Equals("App", StringComparison.OrdinalIgnoreCase)) return id;
+            string paquete = s[..bang];
+            int guion = paquete.IndexOf('_');
+            if (guion > 0) paquete = paquete[..guion];
+            return paquete[(paquete.LastIndexOf('.') + 1)..];
+        }
+        return s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? s[..^4] : s;
     }
 
     private static void Publicar(Cancion? c)

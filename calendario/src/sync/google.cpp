@@ -5,6 +5,7 @@
 #include <chrono>
 #include <format>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "core/log.h"
@@ -116,12 +117,20 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
   // Who is here already. Matched on remote_id and also on our own uid with the dashes taken
   // out, because that is the id handed to Google when Agenda creates an event: it is what saves
   // the day when a creation arrived but its answer never came back.
+  //
+  // Only among this account's calendars (phase 12): a calendar shared into two accounts brings
+  // the same event down twice, and each copy belongs to its own account's calendar. Matched
+  // across accounts, every pass would drag the event from one copy to the other.
   std::wstring uid;
   std::int64_t localUpdated = 0;
-  if (std::optional<Stmt> stmt =
-          db.Prepare("SELECT uid, updated_at FROM events "
-                     "WHERE remote_id = ?1 OR replace(lower(uid), '-', '') = ?1 LIMIT 1")) {
+  if (std::optional<Stmt> stmt = db.Prepare(
+          "SELECT uid, updated_at FROM events "
+          "WHERE (remote_id = ?1 OR replace(lower(uid), '-', '') = ?1) "
+          "  AND calendar_id IN (SELECT id FROM calendars WHERE account_id IS "
+          "                      (SELECT account_id FROM calendars WHERE id = ?2)) "
+          "LIMIT 1")) {
     stmt->Bind(1, row->remoteId);
+    stmt->Bind(2, calendarId);
     if (stmt->Step()) {
       uid = stmt->Wide(0);
       localUpdated = stmt->Int(1);
@@ -365,6 +374,11 @@ struct Outgoing {
   std::string remoteId;
   std::string etag;
   std::string movedFrom;  // events only: the calendar Google still has it in
+  // Whose calendars they are and their ids at Google (phase 12), filled in by WhereAt.
+  int account = 0;
+  std::string remoteContainer;
+  int movedFromAccount = 0;
+  std::string remoteMovedFrom;
   bool occurrence = false;  // events only: kept apart from a series (series_id)
   EventRow event;
   TaskRow task;
@@ -443,17 +457,60 @@ Outgoing LoadTask(Db& db, const std::wstring& uid) {
 
 }  // namespace
 
+// Whose a calendar or a task list is, and its id at Google: the key here unless the same
+// calendar came down from two accounts (calendars.remote_id).
+std::pair<int, std::string> CalendarAt(Db& db, const std::string& key) {
+  if (std::optional<Stmt> stmt = db.Prepare(
+          "SELECT COALESCE(account_id, 0), COALESCE(remote_id, id) FROM calendars WHERE id = ?")) {
+    stmt->Bind(1, key);
+    if (stmt->Step()) return {static_cast<int>(stmt->Int(0)), stmt->Text(1)};
+  }
+  return {0, key};
+}
+
+void WhereAt(Db& db, Outgoing& row) {
+  std::tie(row.account, row.remoteContainer) = CalendarAt(db, row.container);
+  if (!row.movedFrom.empty()) {
+    std::tie(row.movedFromAccount, row.remoteMovedFrom) = CalendarAt(db, row.movedFrom);
+  }
+}
+
 // --- The thread -----------------------------------------------------------------------------
 
 GoogleSync::GoogleSync(Store& store, OAuthConfig config)
-    : store_(store), auth_(std::move(config)) {}
+    : store_(store), config_(std::move(config)) {}
+
+std::vector<GoogleSync::Account> GoogleSync::SnapshotAccounts() const {
+  std::lock_guard<std::mutex> lock(accountsMutex_);
+  return accounts_;
+}
+
+bool GoogleSync::Connected() const {
+  for (const Account& account : SnapshotAccounts()) {
+    if (account.auth->Connected()) return true;
+  }
+  return false;
+}
 
 GoogleSync::~GoogleSync() { Stop(); }
 
 void GoogleSync::Start() {
-  if (!auth_.Configured()) {
+  if (!Configured()) {
     LogInfo(L"sync: sin credenciales de Google, Agenda funciona solo en este equipo");
     return;
+  }
+  // The accounts the cache knows, each with its token file. A token.bin with no row yet is an
+  // account connected before it ever finished a pass: it becomes the first one here.
+  std::vector<AccountInfo> known = store_.Accounts();
+  if (known.empty() && GoogleAuth(config_, "token.bin").Connected()) {
+    known.push_back(store_.AddAccount());
+  }
+  {
+    std::lock_guard<std::mutex> lock(accountsMutex_);
+    for (const AccountInfo& info : known) {
+      if (info.id == 0) continue;
+      accounts_.push_back(Account{info.id, std::make_shared<GoogleAuth>(config_, info.tokenFile)});
+    }
   }
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -462,7 +519,7 @@ void GoogleSync::Start() {
   }
   if (!http_.Open()) LogError(L"sync: {}", http_.error());
   worker_ = std::thread([this] { Loop(); });
-  if (auth_.Connected()) Nudge();
+  if (Connected()) Nudge();
 }
 
 void GoogleSync::Stop() {
@@ -507,15 +564,50 @@ void GoogleSync::Connect() {
   wake_.notify_one();
 }
 
+void GoogleSync::ConnectNew() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!running_) return;
+  connectWanted_ = true;
+  connectNew_ = true;
+  wake_.notify_one();
+}
+
 void GoogleSync::Disconnect() {
-  auth_.Disconnect();
+  for (const Account& account : SnapshotAccounts()) account.auth->Disconnect();
   offline_.store(false);
   store_.Touch();
+}
+
+void GoogleSync::ConnectAccount(int id) {
+  std::shared_ptr<GoogleAuth> auth;
+  for (const Account& account : SnapshotAccounts()) {
+    if (account.id == id) auth = account.auth;
+  }
+  if (!auth) {
+    // A new account has its row -- and so the name of its token file -- before the browser
+    // opens, and loses it again if nobody finishes signing in.
+    const AccountInfo info = store_.AddAccount();
+    if (info.id == 0) return;
+    auth = std::make_shared<GoogleAuth>(config_, info.tokenFile);
+    if (!auth->Connect()) {
+      store_.ForgetAccount(info.id);
+      store_.Touch();
+      return;
+    }
+    std::lock_guard<std::mutex> lock(accountsMutex_);
+    accounts_.push_back(Account{info.id, auth});
+  } else if (!auth->Connect()) {
+    store_.Touch();
+    return;
+  }
+  store_.Touch();
+  RunPass(/*pushOnly=*/false);
 }
 
 void GoogleSync::Loop() {
   for (;;) {
     bool connect = false;
+    bool connectNew = false;
     bool pushOnly = false;
     {
       std::unique_lock<std::mutex> lock(mutex_);
@@ -525,21 +617,25 @@ void GoogleSync::Loop() {
                      [this] { return !running_ || wanted_ || connectWanted_; });
       if (!running_) return;
       connect = connectWanted_;
+      connectNew = connectNew_;
       pushOnly = wanted_ && pushOnly_;
       connectWanted_ = false;
+      connectNew_ = false;
       wanted_ = false;
       pushOnly_ = false;
       if (!connect) lastPass_ = std::chrono::steady_clock::now();
     }
 
     if (connect) {
-      // The asking already happened, in front of a window. This is the browser opening.
-      if (auth_.Connect()) {
-        store_.Touch();
-        RunPass(/*pushOnly=*/false);
-      } else {
-        store_.Touch();
+      // The asking already happened, in front of a window. This is the browser opening: for the
+      // first account that lost its permission, or for a new one.
+      int id = 0;
+      if (!connectNew) {
+        for (const Account& account : SnapshotAccounts()) {
+          if (id == 0 && !account.auth->Connected()) id = account.id;
+        }
       }
+      ConnectAccount(id);
       continue;
     }
     RunPass(pushOnly);
@@ -547,66 +643,78 @@ void GoogleSync::Loop() {
 }
 
 void GoogleSync::RunPass(bool pushOnly) {
-  if (!auth_.Configured() || !auth_.Connected()) return;
+  if (!Configured()) return;
 
-  std::wstring header;
-  if (!auth_.Header(header)) {
-    // No usable permission. Either the network is down -- which the dot already says by itself
-    // -- or Google refused to renew, which is a different thing and the only one the user has
-    // to be told about, because it is the only one they can do something about.
-    if (auth_.TakeLostAccount()) {
-      offline_.store(false);
+  // A header for every account that can be reached. One that cannot is left out of this pass
+  // and the rest go on: a second account whose permission ran out must not stop the first.
+  std::map<int, std::wstring> auths;
+  for (const Account& account : SnapshotAccounts()) {
+    if (!account.auth->Connected()) continue;
+    std::wstring header;
+    if (account.auth->Header(header)) {
+      auths[account.id] = std::move(header);
+    } else if (account.auth->TakeLostAccount()) {
+      // Google refused to renew: the one thing the user has to be told, because it is the only
+      // one they can do something about. The network being down the dot already says.
       if (hwnd_ != nullptr) PostMessageW(hwnd_, kSyncLostAccountMessage, 0, 0);
-    } else {
-      offline_.store(!http_.reachable());
     }
+  }
+  if (auths.empty()) {
+    offline_.store(Connected() && !http_.reachable());
     store_.Touch();
     return;
   }
 
-  bool ok = PushPending(header);
+  bool ok = PushPending(auths);
   if (ok && !pushOnly) {
-    if (PullCalendars(header)) {
-      AdoptLocalRows();
+    for (const auto& [account, header] : auths) {
+      if (!PullCalendars(header, account)) ok = false;
+    }
+    if (ok) AdoptLocalRows();
 
+    for (const auto& [account, header] : auths) {
+      if (!ok) break;
       // Even a read goes through the writing thread. One connection means a read taken from
       // here could land inside a transaction the worker has open.
-      std::vector<CalendarInfo> calendars;
-      std::vector<CalendarInfo> lists;
-      store_.Run([&] {
-        calendars = store_.Calendars(/*tasklists=*/false);
-        lists = store_.Calendars(/*tasklists=*/true);
+      struct Source {
+        std::string key;
+        std::string remote;
+        bool tasks = false;
+      };
+      std::vector<Source> sources;
+      store_.Run([&, account = account] {
+        if (std::optional<Stmt> stmt = store_.db().Prepare(
+                "SELECT id, COALESCE(remote_id, id), kind = 'tasklist' FROM calendars "
+                "WHERE account_id = ? AND visible = 1 AND hidden = 0 "
+                "ORDER BY kind = 'tasklist', sort, title")) {
+          stmt->Bind(1, account);
+          while (stmt->Step()) {
+            sources.push_back(Source{stmt->Text(0), stmt->Text(1), stmt->Int(2) != 0});
+          }
+        }
       });
-
-      for (const CalendarInfo& calendar : calendars) {
-        if (calendar.id == kLocalCalendarId) continue;
-        if (!PullEvents(header, calendar.id)) {
+      for (const Source& source : sources) {
+        const bool pulled = source.tasks ? PullTasks(header, source.key, source.remote)
+                                         : PullEvents(header, source.key, source.remote);
+        if (!pulled) {
           ok = false;
           break;
         }
       }
-      if (ok) {
-        for (const CalendarInfo& list : lists) {
-          if (list.id == kLocalTaskListId) continue;
-          if (!PullTasks(header, list.id)) {
-            ok = false;
-            break;
-          }
-        }
-      }
-    } else {
-      ok = false;
     }
   }
 
   offline_.store(!http_.reachable());
   store_.Touch();
-  if (ok) LogInfo(L"sync: pasada terminada");
+  if (ok) {
+    LogInfo(L"sync: pasada terminada ({} {})", auths.size(),
+            auths.size() == 1 ? L"cuenta" : L"cuentas");
+  }
 }
 
 // --- Down ----------------------------------------------------------------------------------
 
-bool GoogleSync::PullCalendars(const std::wstring& auth) {
+bool GoogleSync::PullCalendars(const std::wstring& auth, int account) {
   HttpResponse response;
   if (!http_.Send(kApiHost, L"GET", L"/calendar/v3/users/me/calendarList?maxResults=250",
                   JsonHeaders(auth), {}, response)) {
@@ -639,36 +747,58 @@ bool GoogleSync::PullCalendars(const std::wstring& auth) {
     Transaction tx(store_.db());
     if (!tx.Begin()) return;
 
-    // The account these calendars belong to. Until the sync walks several (phase 12.2) it is
-    // the one there always was, number 1 with token.bin, written down here the first time.
-    if (std::optional<Stmt> stmt = store_.db().Prepare(
-            "INSERT OR IGNORE INTO accounts (id, token_file, added_at) "
-            "VALUES (1, 'token.bin', ?)")) {
-      stmt->Bind(1, NowSeconds());
-      stmt->Step();
-    }
-
     // Everything that is not the local placeholder goes invisible first, and what comes down
     // turns itself back on. That is how a calendar unticked on the web stops painting dots here
     // without a row being deleted -- which the schema will not allow while events hang off it.
-    if (std::optional<Stmt> stmt = store_.db().Prepare(
-            "UPDATE calendars SET visible = 0 WHERE id NOT IN (?, ?)")) {
-      stmt->Bind(1, kLocalCalendarId);
-      stmt->Bind(2, kLocalTaskListId);
+    // Only this account's: the others are not in this answer, and are not gone.
+    if (std::optional<Stmt> stmt =
+            store_.db().Prepare("UPDATE calendars SET visible = 0 WHERE account_id = ?")) {
+      stmt->Bind(1, account);
       stmt->Step();
     }
 
-    const auto upsert = [&](const std::string& id, const char* kind, const std::string& title,
-                            std::uint32_t color, const std::string& zone, bool primary,
-                            int sort, const std::string& reminders) {
+    // The key a calendar of this account has here: the one it already had, or Google's id, or --
+    // when another account already has a calendar with that id, because it is shared into both --
+    // an id of its own that remembers Google's in remote_id.
+    const auto keyFor = [&](const std::string& googleId) -> std::pair<std::string, std::string> {
+      if (std::optional<Stmt> stmt = store_.db().Prepare(
+              "SELECT id FROM calendars WHERE account_id = ? AND COALESCE(remote_id, id) = ?")) {
+        stmt->Bind(1, account);
+        stmt->Bind(2, googleId);
+        if (stmt->Step()) {
+          std::string key = stmt->Text(0);
+          return {key, key == googleId ? std::string() : googleId};
+        }
+      }
+      if (std::optional<Stmt> stmt =
+              store_.db().Prepare("SELECT COUNT(*) FROM calendars WHERE id = ?")) {
+        stmt->Bind(1, googleId);
+        if (stmt->Step() && stmt->Int(0) > 0) {
+          return {std::format("{}#{}", googleId, account), googleId};
+        }
+      }
+      return {googleId, std::string()};
+    };
+
+    const auto upsert = [&](const std::string& googleId, const char* kind,
+                            const std::string& title, std::uint32_t color,
+                            const std::string& zone, bool primary, int sort,
+                            const std::string& reminders) {
+      const auto [id, remote] = keyFor(googleId);
       std::optional<Stmt> stmt = store_.db().Prepare(
           "INSERT INTO calendars (id, kind, title, color, time_zone, is_primary, visible, sort, "
-          "                       reminders, account_id) "
-          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, 1) "
+          "                       reminders, account_id, remote_id) "
+          // A primary calendar is born the default only while there is no other: the second
+          // account's primary must not take over where things land from the first's.
+          "VALUES (?1, ?2, ?3, ?4, ?5, ?6 AND NOT EXISTS (SELECT 1 FROM calendars "
+          "          WHERE kind = ?2 AND is_primary = 1 AND account_id IS NOT NULL), "
+          "        1, ?7, ?8, ?9, NULLIF(?10, '')) "
           "ON CONFLICT(id) DO UPDATE SET title = excluded.title, color = excluded.color, "
           "  time_zone = excluded.time_zone, visible = 1, sort = excluded.sort, "
-          "  reminders = excluded.reminders, account_id = excluded.account_id");
+          "  reminders = excluded.reminders");
       if (!stmt) return;
+      stmt->Bind(9, account);
+      stmt->Bind(10, remote);
       stmt->Bind(1, id);
       stmt->Bind(2, kind);
       stmt->Bind(3, title);
@@ -707,8 +837,9 @@ bool GoogleSync::PullCalendars(const std::wstring& auth) {
         // The primary calendar's id is the account's address, which is how it is named.
         if (Flag(item, "primary")) {
           if (std::optional<Stmt> stmt =
-                  store_.db().Prepare("UPDATE accounts SET email = ? WHERE id = 1")) {
+                  store_.db().Prepare("UPDATE accounts SET email = ? WHERE id = ?")) {
             stmt->Bind(1, id);
+            stmt->Bind(2, account);
             stmt->Step();
           }
         }
@@ -754,9 +885,12 @@ bool GoogleSync::PullCalendars(const std::wstring& auth) {
         stmt->Bind(1, kind);
         stmt->Step();
       }
-      if (std::optional<Stmt> stmt =
-              store_.db().Prepare("UPDATE calendars SET is_primary = 1 WHERE id = ?")) {
-        stmt->Bind(1, fallback);
+      // `fallback` is Google's id; the row is found by it within this account.
+      if (std::optional<Stmt> stmt = store_.db().Prepare(
+              "UPDATE calendars SET is_primary = 1 "
+              "WHERE account_id = ? AND COALESCE(remote_id, id) = ?")) {
+        stmt->Bind(1, account);
+        stmt->Bind(2, fallback);
         stmt->Step();
       }
     };
@@ -768,7 +902,8 @@ bool GoogleSync::PullCalendars(const std::wstring& auth) {
   return true;
 }
 
-bool GoogleSync::PullEvents(const std::wstring& auth, const std::string& calendarId) {
+bool GoogleSync::PullEvents(const std::wstring& auth, const std::string& calendarId,
+                            const std::string& remote) {
   std::string token;
   store_.Run([&] {
     if (std::optional<Stmt> stmt =
@@ -778,7 +913,7 @@ bool GoogleSync::PullEvents(const std::wstring& auth, const std::string& calenda
     }
   });
 
-  const std::string base = "/calendar/v3/calendars/" + UrlEscape(calendarId) + "/events";
+  const std::string base = "/calendar/v3/calendars/" + UrlEscape(remote) + "/events";
   std::string pageToken;
   std::string nextToken;
   bool restarted = false;
@@ -887,7 +1022,8 @@ bool GoogleSync::PullEvents(const std::wstring& auth, const std::string& calenda
   return true;
 }
 
-bool GoogleSync::PullTasks(const std::wstring& auth, const std::string& listId) {
+bool GoogleSync::PullTasks(const std::wstring& auth, const std::string& listId,
+                           const std::string& remote) {
   std::string updatedMin;
   store_.Run([&] {
     if (std::optional<Stmt> stmt =
@@ -897,7 +1033,7 @@ bool GoogleSync::PullTasks(const std::wstring& auth, const std::string& listId) 
     }
   });
 
-  const std::string base = "/tasks/v1/lists/" + UrlEscape(listId) + "/tasks";
+  const std::string base = "/tasks/v1/lists/" + UrlEscape(remote) + "/tasks";
   const std::int64_t startedAt = NowSeconds();
   std::string pageToken;
 
@@ -1010,7 +1146,7 @@ void GoogleSync::AdoptLocalRows() {
   });
 }
 
-bool GoogleSync::PushPending(const std::wstring& auth) {
+bool GoogleSync::PushPending(const std::map<int, std::wstring>& auths) {
   struct Queued {
     std::int64_t id = 0;
     std::string entity;
@@ -1031,8 +1167,6 @@ bool GoogleSync::PushPending(const std::wstring& auth) {
   });
   if (queue.empty()) return true;
 
-  const std::wstring headers = JsonHeaders(auth);
-
   for (const Queued& item : queue) {
     if (http_.Cancelled()) return false;
 
@@ -1040,6 +1174,7 @@ bool GoogleSync::PushPending(const std::wstring& auth) {
     Outgoing row;
     store_.Run([&] {
       row = isTask ? LoadTask(store_.db(), item.uid) : LoadEvent(store_.db(), item.uid);
+      if (row.found) WhereAt(store_.db(), row);
     });
 
     const auto forget = [&] {
@@ -1087,9 +1222,54 @@ bool GoogleSync::PushPending(const std::wstring& auth) {
     // Still sitting in the local placeholder, which means no account has adopted it yet.
     // Sending it would put it in a calendar Google has never heard of.
     if (row.container == kLocalCalendarId || row.container == kLocalTaskListId) continue;
+    // The account its calendar is in. One that could not be reached this pass keeps its rows
+    // queued; the other accounts' go up anyway.
+    const auto auth = auths.find(row.account);
+    if (auth == auths.end()) continue;
+    const std::wstring headers = JsonHeaders(auth->second);
 
     const bool deleting = item.op == "delete" || row.deleted;
     const unsigned edits = UpdateEdits(item.op);
+
+    // Moved to a calendar of another account: Google's move stays inside one account, so the
+    // event is deleted where it was, with that account's permission, and created again here.
+    if (!isTask && !deleting && !row.remoteId.empty() && !row.movedFrom.empty() &&
+        row.movedFromAccount != row.account) {
+      const auto from = auths.find(row.movedFromAccount);
+      if (from == auths.end()) continue;
+      HttpResponse gone;
+      const std::wstring path = L"/calendar/v3/calendars/" +
+                                ToWide(UrlEscape(row.remoteMovedFrom)) + L"/events/" +
+                                ToWide(UrlEscape(row.remoteId));
+      if (!http_.Send(kApiHost, L"DELETE", path, JsonHeaders(from->second), {}, gone)) {
+        LogInfo(L"sync: sin conexión, quedan {} operaciones en la cola", queue.size());
+        return false;
+      }
+      if (ShouldRetry(gone.status)) {
+        LogError(L"sync: Google pide calma ({}), la cola espera", gone.status);
+        return false;
+      }
+      const bool goneOk = (gone.status >= 200 && gone.status < 300) || gone.status == 404 ||
+                          gone.status == 410;
+      if (!goneOk) {
+        refuse(gone);
+        continue;
+      }
+      LogInfo(L"sync: {} pasa a otra cuenta ({} a {})", item.uid, ToWide(row.movedFrom),
+              ToWide(row.container));
+      store_.Run([&] {
+        if (std::optional<Stmt> stmt = store_.db().Prepare(
+                "UPDATE events SET moved_from = NULL, remote_id = NULL, etag = NULL "
+                "WHERE uid = ?")) {
+          stmt->Bind(1, item.uid);
+          stmt->Step();
+        }
+      });
+      // From here it is a creation in its new calendar, repetition and all.
+      row.movedFrom.clear();
+      row.remoteId.clear();
+      row.etag.clear();
+    }
 
     // Moved to another calendar here: Google moves it with a POST on the calendar it is still
     // in, and only then will a PATCH on the new one find it. A 404 there means it is not in the
@@ -1097,7 +1277,7 @@ bool GoogleSync::PushPending(const std::wstring& auth) {
     if (!isTask && !deleting && !row.remoteId.empty() && !row.movedFrom.empty()) {
       HttpResponse moved;
       const std::wstring movePath =
-          ToWide(MovePath(row.movedFrom, row.remoteId, row.container));
+          ToWide(MovePath(row.remoteMovedFrom, row.remoteId, row.remoteContainer));
       if (!http_.Send(kApiHost, L"POST", movePath, headers, {}, moved)) {
         LogInfo(L"sync: sin conexión, quedan {} operaciones en la cola", queue.size());
         return false;
@@ -1133,7 +1313,8 @@ bool GoogleSync::PushPending(const std::wstring& auth) {
     std::wstring requestHeaders = headers;
 
     if (isTask) {
-      const std::wstring base = L"/tasks/v1/lists/" + ToWide(UrlEscape(row.container)) + L"/tasks";
+      const std::wstring base =
+          L"/tasks/v1/lists/" + ToWide(UrlEscape(row.remoteContainer)) + L"/tasks";
       if (deleting) {
         if (row.remoteId.empty()) {
           forget();
@@ -1155,7 +1336,7 @@ bool GoogleSync::PushPending(const std::wstring& auth) {
       }
     } else {
       const std::wstring base =
-          L"/calendar/v3/calendars/" + ToWide(UrlEscape(row.container)) + L"/events";
+          L"/calendar/v3/calendars/" + ToWide(UrlEscape(row.remoteContainer)) + L"/events";
       if (deleting) {
         if (row.remoteId.empty()) {
           forget();

@@ -43,6 +43,10 @@ sigue [SemVer](https://semver.org/lang/es/).
   cuentas, y cada calendario dice de cuál es. La cuenta que ya estaba conectada pasa a ser la
   primera y sigue con su `token.bin`: no hay que volver a conectarla. Todavía no se puede añadir
   una segunda desde la interfaz.
+- **La sincronización ya sabe de varias cuentas** (fase 12.2): cada una con su permiso, la cola
+  sube cada cambio a la cuenta de su calendario y una cuenta que falla no para a las demás.
+  Mover un evento a un calendario de otra cuenta lo borra en la de origen y lo crea en la de
+  destino. Un calendario compartido en dos cuentas aparece una vez por cuenta.
 - **Varios monitores: el popup se abre donde está el ratón.** Antes salía siempre en el monitor
   principal. Ahora, sin `--monitor`, cada apertura (atajo o bandeja) va a la esquina del
   monitor que tiene el ratón, con su escala; la configuración también. `--monitor=N` y

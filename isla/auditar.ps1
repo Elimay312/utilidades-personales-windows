@@ -171,6 +171,22 @@ if ($tuberia) {
     Write-Output ("  {0,-34} {1}" -f 'buzon de avisos', 'no hay tuberia')
 }
 
+# El mezclador por app (SEGURIDAD.md s.3.3, enmienda del 23-09-2026). Las sesiones de audio
+# de otras apps solo se tocan desde Audio.cs (y se declaran en NativeMethods.txt), y nada
+# las vigila en segundo plano ni les toca el silencio o los canales.
+$mezclaFuera = $codigo | Where-Object {
+    $_.Texto -match 'IAudioSessionManager2|ISimpleAudioVolume|IAudioSessionControl2' -and
+    $_.Fichero -notmatch '(^|[\\/])(Audio\.cs|NativeMethods\.txt)$'
+}
+$mezclaVigila = $codigo | Where-Object { $_.Texto -match 'RegisterAudioSessionNotification|IChannelAudioVolume|SetMute\b' }
+if ($mezclaFuera -or $mezclaVigila) {
+    $fallos++
+    Write-Output ("  {0,-34} INCUMPLE (s.3.3)" -f 'mezclador acotado')
+    @($mezclaFuera) + @($mezclaVigila) | Where-Object { $_ } | ForEach-Object { Write-Output ("      {0}:{1}  {2}" -f $_.Fichero, $_.Linea, $_.Texto.Trim()) }
+} else {
+    Write-Output ("  {0,-34} {1}" -f 'mezclador acotado', 'si, solo en Audio.cs')
+}
+
 if (Test-Path 'NativeMethods.txt') {
     $pinvokes = (Get-Content NativeMethods.txt | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('//') }).Count
     $lista = "$pinvokes entradas en NativeMethods.txt"

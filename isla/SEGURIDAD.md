@@ -107,7 +107,9 @@ qué controles admite) y `GetTimelineProperties` (posición y duración).
 **Los cortes:**
 
 - Solo lo que la lista da. No se resuelve el proceso dueño, no se busca su ventana, no se
-  mira su ejecutable. El nombre de la app se pinta tal cual llega (`SourceAppUserModelId`).
+  mira su ejecutable. El nombre de la app sale del `SourceAppUserModelId` que llega, **acortado
+  sin buscar nada**: `SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify` se pinta `Spotify`, que es
+  recortar texto, no resolver el proceso (enmienda del 23-09-2026).
 - La carátula es la que trae la sesión. **No se busca ninguna en internet**, ni en disco.
 - Ni la lista de sesiones ni ninguna propiedad se escriben en `isla.json`, en el log, ni en
   ningún fichero.
@@ -207,8 +209,42 @@ predeterminado que ya se lee.
 - **Pasos del 2 %**, acotado a [0, 1]. Se lee, se suma y se escribe: no hay ningún nivel
   guardado que se reponga.
 - **Nunca desde un temporizador**, igual que los mandos de §3.2.
-- **Solo el nivel maestro.** Ni silencio, ni balance, ni volumen por app, ni otro
-  dispositivo. `IPolicyConfig` sigue fuera.
+- **Solo el nivel maestro.** Ni silencio, ni balance, ni otro dispositivo. `IPolicyConfig`
+  sigue fuera. El volumen por app tiene su propia enmienda, justo debajo.
+
+#### Volumen por app — enmienda del 23 de septiembre de 2026
+
+Un clic en la onda del panel abierto lo convierte en un mezclador: una fila por app que está
+sonando, con su nivel, como el mezclador de volumen de Windows. Es la enmienda más grande de
+este documento, porque toca las tres cosas que la isla presumía de no hacer: tener una lista,
+saber de quién es un proceso y escribir en algo que no es suyo.
+
+**Lo que se abre**, sobre el mismo endpoint predeterminado de arriba:
+
+- `IAudioSessionManager2` → `GetSessionEnumerator`: las sesiones de audio de esa salida.
+- De cada sesión, `IAudioSessionControl2` para **tres** cosas: `GetProcessId`,
+  `IsSystemSoundsSession` y `GetState`. Y `ISimpleAudioVolume` para leer y poner su nivel.
+- **El nombre del ejecutable** de ese PID, con `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`
+  y `QueryFullProcessImageName`, que ya estaban por §3.5. Se pinta el nombre del fichero sin
+  extensión (`Spotify`), nunca la ruta.
+
+**Los cortes, que son los que sostienen la enmienda:**
+
+- **La lista solo existe con el mezclador abierto.** Se lee al abrirlo y una vez por segundo
+  mientras sigue abierto, con el reloj que el panel ya tenía, y se suelta al cerrarlo. No va a
+  disco, ni al log, ni sobrevive a la isla recogida. Es la única lista de la isla.
+- **Del proceso, el nombre y nada más.** Ni icono, ni ventana, ni ruta, ni línea de comandos,
+  ni memoria. Si el nombre no se puede leer, esa sesión no se enseña.
+- **Solo se escribe detrás de un gesto tuyo** sobre la fila de esa app: clic, arrastre o
+  rueda. Solo su nivel: ni silencio, ni canales (`IChannelAudioVolume` fuera), ni moverla de
+  dispositivo. Nunca desde un temporizador.
+- **Nadie se vigila en segundo plano.** Sin `RegisterAudioSessionNotification`: la isla no se
+  entera de que una app empieza a sonar; mira la lista cuando tú abres el mezclador.
+- **Sin captura**, igual que antes: `eRender` y ningún `IAudioClient`.
+- Los sonidos del sistema salen como «Sistema», sin resolver su recurso.
+
+`auditar.ps1` lo comprueba: esas tres interfaces solo pueden aparecer en `Audio.cs`, y
+`RegisterAudioSessionNotification`, `IChannelAudioVolume` y `SetMute` no pueden aparecer.
 
 ### 3.4 Un atajo de teclado
 
@@ -351,7 +387,8 @@ Cosas que el código hace de una forma concreta **porque este documento existe**
   ventanas hay ni qué se reprodujo antes. Solo existe la sesión actual y la anterior, y la
   anterior solo mientras dura una animación.
   Para elegir sesión se **cuentan** las que hay y se toma la siguiente, sin guardar la lista
-  (enmienda de §3.1).
+  (enmienda de §3.1). La única lista que existe es la del mezclador abierto, y muere al
+  cerrarlo (enmienda de §3.3).
 - **Nada de lo que la isla lee se escribe a disco.** `isla.json` guarda tus ajustes: qué
   monitor, qué atajo, qué avisos quieres. Nunca contenido.
 - **Lo que la isla saca del audio son dos números y un nombre**: el pico, el nivel y de qué

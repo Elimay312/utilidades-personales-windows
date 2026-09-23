@@ -1707,7 +1707,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         _regionBurbuja = (_enTarjeta is not null, HayPrincipal());
         HRGN region = PInvoke.CreateRectRgn(0, 0, 0, 0);
         // Sin linea no hay rectangulo: uno invisible de 140x5 se comeria el borde de la pastilla.
-        if (_lineaVisible) Sumar(region, RectDe(_regionMain));
+        if (_lineaVisible) Sumar(region, _regionMain == Estado.Abierta ? ConSombra(RectDe(_regionMain)) : RectDe(_regionMain));
         // La isla del aviso, mientras hay uno: su burbuja -- solo su cuadrado, nada del hueco que
         // la separa de la brasa --, o la pastilla entera si esta desplegada.
         if (_enTarjeta is not null) Sumar(region, _regionAviso == Estado.Brasa ? Burbuja(0) : RectDe(_regionAviso));
@@ -1723,6 +1723,20 @@ internal sealed unsafe class IslaWindow : IDisposable
         int ry = (int)Scale(lift);
         return new RECT { left = rx, right = rx + rw, top = ry, bottom = ry + (int)Scale(h) };
     }
+
+    /// <summary>
+    /// El panel abierto mas el margen de su sombra, a los lados y por debajo, o la region la
+    /// recorta en seco. Esos pixeles se tragan clics, pero solo con el panel abierto, que es
+    /// cuando lo estas mirando. Arriba no hace falta: es el borde de la pantalla.
+    /// </summary>
+    private RECT ConSombra(RECT r)
+    {
+        int m = (int)Scale(SombraMargen);
+        return new RECT { left = r.left - m, right = r.right + m, top = r.top, bottom = r.bottom + m };
+    }
+
+    // BlurRadius 24 y 6 de caida: 30 cubre lo que se ve de la sombra.
+    private const float SombraMargen = 30f;
 
     private static void Sumar(HRGN region, RECT r)
     {

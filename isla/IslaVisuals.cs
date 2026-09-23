@@ -178,6 +178,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private readonly ContainerVisual _root;
     private readonly ContainerVisual _grupo;
     private readonly ContainerVisual _panel;
+    private readonly SpriteVisual _sombra;
     private readonly SpriteVisual _macizo;
     private readonly SpriteVisual _cristal;
     private readonly ContainerVisual _contenido;
@@ -281,8 +282,12 @@ internal sealed unsafe class IslaVisuals : IDisposable
         //   2. Un LayerVisual con Shadow, que deberia sacar la sombra del alfa real del
         //      contenido. Pinto la VENTANA ENTERA de negro (0,0,0) en los dos estados.
         //
-        // La sombra es un adorno; el morph no. Cuando toque, el camino es DropShadow
-        // con Mask sobre una superficie con la forma de la pastilla.
+        // El tercero, que es este: un sprite SIN pincel por debajo del panel -- no tapa
+        // nada, que era el fallo del primero -- con un DropShadow cuya mascara es la forma
+        // de la pastilla abierta (ver Sombra). Solo con el panel abierto.
+        _sombra = Sombra();
+        _grupo.Children.InsertAtTop(_sombra);
+
         _panel = _compositor.CreateContainerVisual();
         _grupo.Children.InsertAtTop(_panel);
 
@@ -418,6 +423,11 @@ internal sealed unsafe class IslaVisuals : IDisposable
         // Centrado. La ventana es fija y ancha; la pastilla se estrecha dentro de ella.
         string centro = $"({F(anchoVentana)} - P.Size.X) * 0.5";
         Expresion(_panel, "Offset", $"Vector3({centro}, 0, 0)");
+
+        // La sombra calca la caja y solo aparece con la ficha entera.
+        Expresion(_sombra, "Size", "P.Size");
+        Expresion(_sombra, "Offset", $"Vector3({centro}, 0, 0)");
+        Expresion(_sombra, "Opacity", Rampa(PlenoDesde, PlenoRango));
 
         string entrada = Rampa(CristalDesde, CristalRango);
         Expresion(_cristal, "Opacity", entrada);
@@ -1317,12 +1327,60 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// decodifico a 192 y aqui se baja al tamano de pantalla, que es donde D2D
     /// interpola mejor que hacerlo a mano.
     /// </summary>
-    private CompositionSurfaceBrush PincelArte(byte[] bgra)
-    {
-        float lado = S(CaratulaLado);
+    /// <summary>Radio de la pastilla abierta, que es la unica que lleva sombra.</summary>
+    public const float SombraRadio = 28f;
 
+    /// <summary>
+    /// El sprite de la sombra. La mascara es la pastilla abierta tal cual -- 380x180, radio 28 --
+    /// hecha a mano en BGRA, con la misma subida de pixeles que la caratula: sin API de dibujo
+    /// nueva. Se estira con la caja, pero solo se ve con el panel entero, que es su tamano.
+    ///
+    /// Un nine-grid de solo las esquinas seria lo fino, y se probo: como mascara de DropShadow
+    /// no pinta nada. Medido leyendo el borde: plano, igual que sin sombra.
+    /// </summary>
+    private SpriteVisual Sombra()
+    {
+        (float wl, float hl, _, _) = IslaWindow.Medidas(Estado.Abierta);
+        int w = (int)MathF.Ceiling(S(wl)), h = (int)MathF.Ceiling(S(hl));
+        float r = S(SombraRadio);
+        byte[] bgra = new byte[w * h * 4];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                float px = x + 0.5f, py = y + 0.5f;
+                float dx = MathF.Max(MathF.Max(r - px, px - (w - r)), 0f);
+                float dy = MathF.Max(MathF.Max(r - py, py - (h - r)), 0f);
+                float a = Math.Clamp(r - MathF.Sqrt(dx * dx + dy * dy) + 0.5f, 0f, 1f);
+                byte alfa = (byte)(a * 255f);
+                int i = (y * w + x) * 4;
+                bgra[i] = bgra[i + 1] = bgra[i + 2] = bgra[i + 3] = alfa;
+            }
+        }
+
+        CompositionSurfaceBrush molde = PincelBgra(bgra, w, h, w, h);
+        molde.Stretch = CompositionStretch.Fill;
+
+        DropShadow sombra = _compositor.CreateDropShadow();
+        sombra.Mask = molde;
+        sombra.BlurRadius = S(24f);
+        sombra.Offset = new Vector3(0f, S(6f), 0f);
+        sombra.Color = Color.FromArgb(255, 0, 0, 0);
+        sombra.Opacity = 0.45f;
+
+        SpriteVisual v = _compositor.CreateSpriteVisual();
+        v.Shadow = sombra;
+        return v;
+    }
+
+    private CompositionSurfaceBrush PincelArte(byte[] bgra)
+        => PincelBgra(bgra, Medios.ArteLado, Medios.ArteLado, S(CaratulaLado), S(CaratulaLado));
+
+    /// <summary>Sube un BGRA premultiplicado de <paramref name="ancho"/> x <paramref name="alto"/> y lo pinta a <paramref name="destW"/> x <paramref name="destH"/>.</summary>
+    private CompositionSurfaceBrush PincelBgra(byte[] bgra, int ancho, int alto, float destW, float destH)
+    {
         CompositionDrawingSurface superficie = EnsureGraphicsDevice().CreateDrawingSurface(
-            new global::Windows.Foundation.Size(lado, lado),
+            new global::Windows.Foundation.Size(destW, destH),
             DirectXPixelFormat.B8G8R8A8UIntNormalized,
             DirectXAlphaMode.Premultiplied);
 
@@ -1349,18 +1407,18 @@ internal sealed unsafe class IslaVisuals : IDisposable
                 dpiY = 96,
             };
 
-            fixed (byte* pixeles = bgra)
+            fixed (byte* datos = bgra)
             {
                 ctx.CreateBitmap(
-                    new D2D_SIZE_U { width = (uint)Medios.ArteLado, height = (uint)Medios.ArteLado },
-                    pixeles, (uint)(Medios.ArteLado * 4), propiedades, out ID2D1Bitmap1 mapa);
+                    new D2D_SIZE_U { width = (uint)ancho, height = (uint)alto },
+                    datos, (uint)(ancho * 4), propiedades, out ID2D1Bitmap1 mapa);
 
                 D2D_RECT_F destino = new()
                 {
                     left = offset.X,
                     top = offset.Y,
-                    right = offset.X + lado,
-                    bottom = offset.Y + lado,
+                    right = offset.X + destW,
+                    bottom = offset.Y + destH,
                 };
 
                 ctx.DrawBitmap(mapa, &destino, 1f,

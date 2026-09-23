@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(Panel VERSION 0.1.0 LANGUAGES CXX)
+project(Panel VERSION 1.0.0 LANGUAGES CXX)
 
 if(NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   # x64 only: an x86 process on x64 Windows gets an empty list from Radio::GetRadiosAsync.

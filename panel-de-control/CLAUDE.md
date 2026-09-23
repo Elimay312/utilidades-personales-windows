@@ -2,6 +2,10 @@
 
 > Nombre en clave: **Panel**. Si el usuario cambia el nombre, actualiza este archivo, el README,
 > CMake y `SEGURIDAD.md`.
+>
+> **Estado: 1.0.0, terminado el 2026-09-23.** Todas las fases están hechas. Lo que venga después
+> (el menú de Configuración, oscurecer por software un monitor sin DDC/CI) entra como fase
+> nueva, con su enmienda a `SEGURIDAD.md` antes del código si toca el sistema.
 
 ## Qué es
 
@@ -281,6 +285,11 @@ assets/          manifiestos del Panel y del instalador, y .rc
   (`monitorFriendlyDeviceName`), o «Pantalla N» si no lo tiene.
 - **`DisplayState::device`** (`\\.\DISPLAYn`) es un campo añadido, no un cambio de forma. Con él
   la ventana sabe en qué pantalla se abre.
+- **Un monitor sin DDC/CI se queda sin barra.** El ARZOPA contesta `0xC0262582` (nadie
+  responde en el cable). El usuario decidió dejarlo así. La alternativa sería oscurecer por
+  software, con una capa negra que deja pasar los clics: necesitaría enmienda, porque sería
+  dibujar sobre otras ventanas, y no baja la retroiluminación. La curva de gamma queda
+  descartada: choca con la luz nocturna, y para oscurecer mucho hace falta HKLM.
 - **Probar:** con `--monitor=3`, la tarjeta habla del LG. Una sonda escribe y lee el brillo por
   DDC/CI desde fuera, para comprobar el monitor y para simular sus botones. No se probó que la
   tarjeta cerrada hable del portátil o del ARZOPA al abrir el panel en ellos: habría que abrirlo
@@ -489,7 +498,7 @@ assets/          manifiestos del Panel y del instalador, y .rc
   - un deslizador por pantalla;
   - volver a enumerar con `WM_DISPLAYCHANGE`.
 - [x] **5. Wi-Fi y Bluetooth:** Radios, SSID sin ubicación y `DeviceWatcher`s.
-- [ ] **5b. Desplegar Wi-Fi y Bluetooth** (lo pidió el usuario en la fase 5). Decidido: Wi-Fi
+- [x] **5b. Desplegar Wi-Fi y Bluetooth** (lo pidió el usuario en la fase 5). Decidido: Wi-Fi
   con la opción A (buscar pidiendo la ubicación; las redes nuevas con contraseña se dejan a la
   lista de Windows). Bluetooth: los emparejados, conectar y desconectar los de audio
   (`KSPROPERTY_ONESHOT_RECONNECT`/`DISCONNECT`), y «buscar» abre la pantalla de Windows. Va en

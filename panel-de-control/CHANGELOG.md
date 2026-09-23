@@ -4,6 +4,24 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-23
+
+La primera versión entera: las ocho fases del plan, más la 4b, que se probó con las tres
+pantallas. Se instala con `Instalar-Panel.exe`, y `actualizar.ps1` la mantiene al día.
+
+### Límites conocidos
+
+- **Un monitor sin DDC/CI no tiene barra de brillo,** solo la fila «Sin control de brillo».
+  Es el caso del ARZOPA por USB-C del usuario, que contesta con `0xC0262582`: nadie responde
+  en el cable. Su brillo se cambia con sus botones. Se descartó, por ahora, oscurecerlo por
+  software:
+  - una capa negra encima no baja la retroiluminación, así que no ahorra energía y resta
+    contraste;
+  - la curva de gamma choca con la luz nocturna.
+- **Configuración todavía no hace nada.** Es el sitio reservado para el futuro menú de ajustes
+  de las otras utilidades.
+- **Sin icono propio:** el Panel y el instalador llevan el de Windows por defecto.
+
 ### Añadido
 
 - **Fase 4b: el brillo de cada pantalla**, probado con las tres del escritorio del usuario: el

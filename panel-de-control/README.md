@@ -6,9 +6,9 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
 
 ![El panel](docs/img/panel.png)
 
-> **Estado: terminado, las 8 fases.** Todo lo del panel es de verdad: volumen y salidas, el
-> brillo de cada pantalla, Wi-Fi y Bluetooth con sus listas, luz nocturna y utilidades. El plan
-> está en
+> **Estado: 1.0.0, terminado.** Todo lo del panel es de verdad: volumen y salidas, el brillo
+> de cada pantalla, Wi-Fi y Bluetooth con sus listas, luz nocturna y utilidades. Qué queda fuera
+> está en «Límites», abajo. El plan está en
 > [`docs/superpowers/plans/2026-09-23-panel-de-control.md`](docs/superpowers/plans/2026-09-23-panel-de-control.md).
 
 | Wi-Fi desplegado | Bluetooth, a mitad del morph | Brillo desplegado | Tema claro |
@@ -125,6 +125,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File auditar.ps1
 Las vistas de `--render-snapshot` son `panel`, `panel-brillo`, `panel-volumen`,
 `panel-estados`, `panel-wifi`, `panel-bluetooth` y `panel-morph`. La última enseña a la vez el hover, el anillo de foco y la tarjeta de brillo a
 medio abrir. `--theme` acepta `dark`, `light` y `contrast`.
+
+## Límites
+
+- **Monitores sin DDC/CI:** su fila dice «Sin control de brillo», y el brillo se cambia con los
+  botones del propio monitor. Muchos monitores portátiles por USB-C no lo tienen. Si el tuyo trae
+  una opción «DDC/CI» en su menú, enciéndela y vuelve a abrir el Panel (clic derecho › Salir):
+  la barra sale sola.
+- **Configuración** todavía no hace nada.
+- **Sin icono propio:** el Panel y el instalador llevan el de Windows por defecto.
 
 ## Seguridad
 

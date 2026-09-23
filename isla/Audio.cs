@@ -7,6 +7,9 @@ using Windows.Win32.UI.Shell.PropertiesSystem;
 
 namespace Isla;
 
+/// <summary>Una fila del mezclador: de quien es, como se llama su exe, a que nivel esta.</summary>
+internal sealed record AppAudio(uint Pid, string Nombre, float Nivel, bool Activa);
+
 /// <summary>
 /// Lo que la isla saca de la SALIDA de audio (SEGURIDAD.md §3.3): dos numeros y un
 /// nombre. El pico, el nivel, y de que dispositivo son los dos.
@@ -213,6 +216,76 @@ internal static unsafe class Audio
         {
             Caido();
         }
+    }
+
+    /// <summary>
+    /// El mezclador: una fila por app que tiene audio abierto en la salida predeterminada
+    /// (SEGURIDAD.md s.3.3, enmienda del 23-09-2026). Solo se llama con el mezclador abierto,
+    /// y lo que devuelve lo suelta quien lo pidio al cerrarlo. Las sesiones de un mismo proceso
+    /// -- Brave abre una por pestana -- van en una fila; su nivel es el de la primera.
+    /// </summary>
+    public static IReadOnlyList<AppAudio> Apps()
+    {
+        List<AppAudio> apps = [];
+        try
+        {
+            foreach ((IAudioSessionControl2 control, uint pid) in Sesiones())
+            {
+                control.GetState(out AudioSessionState estado);
+                if (estado == AudioSessionState.AudioSessionStateExpired) continue;
+                if (apps.Exists(a => a.Pid == pid)) continue;
+
+                string? nombre = control.IsSystemSoundsSession().Value == 0 ? "Sistema" : IslaWindow.NombreExe(pid);
+                if (nombre is null) continue;
+                // brave.exe es Brave: la mayuscula y nada mas, que el nombre es el del exe.
+                nombre = char.ToUpperInvariant(nombre[0]) + nombre[1..];
+
+                ((ISimpleAudioVolume)control).GetMasterVolume(out float nivel);
+                apps.Add(new AppAudio(pid, nombre, nivel, estado == AudioSessionState.AudioSessionStateActive));
+            }
+        }
+        catch
+        {
+            Caido();
+        }
+
+        // Las que suenan primero, y el resto por nombre: la lista no salta de orden cada segundo.
+        apps.Sort((a, b) => a.Activa != b.Activa ? (a.Activa ? -1 : 1) : string.Compare(a.Nombre, b.Nombre, StringComparison.OrdinalIgnoreCase));
+        return apps;
+    }
+
+    /// <summary>
+    /// El nivel de una app, detras de un gesto sobre su fila y solo entonces. A todas sus
+    /// sesiones, que para ti son una sola fila.
+    /// </summary>
+    public static void AjustarApp(uint pid, float nivel)
+    {
+        try
+        {
+            foreach ((IAudioSessionControl2 control, uint suyo) in Sesiones())
+                if (suyo == pid) ((ISimpleAudioVolume)control).SetMasterVolume(Math.Clamp(nivel, 0f, 1f), null);
+        }
+        catch
+        {
+            Caido();
+        }
+    }
+
+    private static List<(IAudioSessionControl2, uint)> Sesiones()
+    {
+        List<(IAudioSessionControl2, uint)> todas = [];
+        Guid iid = typeof(IAudioSessionManager2).GUID;
+        Salida().Activate(&iid, CLSCTX.CLSCTX_ALL, null, out object gestor);
+        IAudioSessionEnumerator lista = ((IAudioSessionManager2)gestor).GetSessionEnumerator();
+        lista.GetCount(out int n);
+        for (int i = 0; i < n; i++)
+        {
+            lista.GetSession(i, out IAudioSessionControl s);
+            var control = (IAudioSessionControl2)s;
+            control.GetProcessId(out uint pid);
+            todas.Add((control, pid));
+        }
+        return todas;
     }
 
     /// <summary>

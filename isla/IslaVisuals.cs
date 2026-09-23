@@ -39,6 +39,10 @@ internal enum Zona
     Barra,
     App,
     Pomodoro,
+    // Mezclador: la onda lo abre, la cabecera lo cierra, y cada fila tiene su carril.
+    Onda,
+    Atras,
+    FilaApp,
 }
 
 /// <summary>
@@ -145,6 +149,13 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private const string GlifoPausa = "\uE103";
     private const string GlifoReloj = "\uE916"; // Stopwatch
 
+    // El mezclador. Las filas empiezan en FilaY0 y miden FilaAlto (IslaWindow.Medidas).
+    private const float MezclaCabeceraY = 14f;
+    private const float NombreAncho = 104f;
+    private const float CarrilX = 130f;
+    private const float CarrilAncho = 186f;
+    private const float PctDerecha = 364f;
+
     // El pomodoro en el panel abierto: el hueco libre a la izquierda de los botones.
     private const float PomPx = 12f;
     private const float PomAncho = 96f;
@@ -185,6 +196,16 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private ContainerVisual _cajaTitulo;
     private SpriteVisual _caratula;
     private SpriteVisual _notaCaratula;
+
+    // El mezclador: cabecera y hasta MaxFilas filas (nombre, carril, porcentaje).
+    private ContainerVisual _mezcla;
+    private SpriteVisual _mezclaCabecera;
+    private readonly ContainerVisual[] _filas = new ContainerVisual[IslaWindow.MaxFilas];
+    private readonly SpriteVisual[] _filaNombre = new SpriteVisual[IslaWindow.MaxFilas];
+    private readonly SpriteVisual[] _filaRelleno = new SpriteVisual[IslaWindow.MaxFilas];
+    private readonly SpriteVisual[] _filaPct = new SpriteVisual[IslaWindow.MaxFilas];
+    // Lo ultimo pintado en cada fila: los textos solo se rehacen si cambian.
+    private readonly string[] _filaPintada = new string[IslaWindow.MaxFilas];
     private ContainerVisual _pomodoro;
     private SpriteVisual _pomGlifo;
     private SpriteVisual _pomTexto;
@@ -330,8 +351,10 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _grisCaratula = _compositor.CreateColorBrush(Color.FromArgb(38, 255, 255, 255));
         _vista = _compositor.CreatePropertySet();
         _vista.InsertScalar("Dx", 0f);
+        _vista.InsertScalar("M", 0f);
         _contenido = Contenido();
         _compacto = FilaCompacta();
+        Mezclador();
 
         // El pomodoro en la brasa: la linea se va vaciando segun pasa. Blanco tenue sobre el
         // negro, del ancho de la brasa y escalado en X desde la izquierda; se apaga en cuanto
@@ -445,7 +468,9 @@ internal sealed unsafe class IslaVisuals : IDisposable
         // El contenido entra con la misma rampa y ademas crece un poco. Escalar desde
         // el centro del panel -- que tambien se esta moviendo -- es lo que hace que
         // parezca que sale de dentro y no que aparece pegado encima.
-        Expresion(_contenido, "Opacity", pleno);
+        // La ficha y el mezclador se cruzan con V.M, que va de 0 a 1 al abrir el mezclador.
+        Expresion(_contenido, "Opacity", $"({pleno}) * (1 - V.M)");
+        Expresion(_mezcla, "Opacity", $"({pleno}) * V.M");
         EscalaDeEntrada(_contenido, entrada, _panel);
 
         // La isla del aviso, con las mismas rampas sobre su propio tamano (P es su panel). Nace y
@@ -555,8 +580,21 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// </summary>
     public void GoTo(Estado estado, bool abriendo, bool instantaneo = false)
     {
+        bool eraMezcla = _estado == Estado.Mezclador;
         _estado = estado;
         (float w, float h, float r, float lift) = IslaWindow.Medidas(estado);
+
+        // La ficha se funde con la lista mientras la caja crece con sus muelles de siempre.
+        bool mezcla = estado == Estado.Mezclador;
+        if (mezcla != eraMezcla)
+        {
+            ScalarKeyFrameAnimation m = _compositor.CreateScalarKeyFrameAnimation();
+            m.InsertKeyFrame(1f, mezcla ? 1f : 0f);
+            m.Duration = TimeSpan.FromMilliseconds(220);
+            _vista.StartAnimation("M", m);
+        }
+        // La sombra tiene la forma exacta de la caja a la que se va.
+        if (h >= IslaWindow.Medidas(Estado.Abierta).H) MoldeSombra(h);
         // El latido escala el panel en X, asi que el centro tiene que estar en su medio
         // o la tira crece solo hacia la derecha y se descoloca.
         _panel.CenterPoint = new Vector3(S(w) * 0.5f, 0f, 0f);
@@ -1175,6 +1213,99 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _pomTexto.Offset = new Vector3(S(Margen) + _pomGlifo.Size.X + S(4f), cy - _pomTexto.Size.Y * 0.5f, 0);
     }
 
+    /// <summary>
+    /// El mezclador: una cabecera que lo cierra y MaxFilas filas vacias que llena Mezcla.
+    /// Vive dentro del panel como la ficha, y se cruza con ella con V.M.
+    /// </summary>
+    [MemberNotNull(nameof(_mezcla), nameof(_mezclaCabecera))]
+    private void Mezclador()
+    {
+        _mezcla = _compositor.CreateContainerVisual();
+        _mezcla.RelativeSizeAdjustment = Vector2.One;
+        _panel.Children.InsertAtTop(_mezcla);
+
+        _mezclaCabecera = Hueco(new Vector2(S(Margen), S(MezclaCabeceraY)), _mezcla);
+        Rotular(_mezclaCabecera, "‹   Volumen por app", PomPx, true, 0.92f);
+
+        for (int i = 0; i < IslaWindow.MaxFilas; i++)
+        {
+            ContainerVisual fila = _compositor.CreateContainerVisual();
+            fila.Size = new Vector2(S(380f), S(IslaWindow.FilaAlto));
+            fila.Offset = new Vector3(0, S(IslaWindow.FilaY0 + i * IslaWindow.FilaAlto), 0);
+            fila.IsVisible = false;
+            _mezcla.Children.InsertAtTop(fila);
+            _filas[i] = fila;
+
+            _filaNombre[i] = Hueco(Vector2.Zero, fila);
+            _filaPct[i] = Hueco(Vector2.Zero, fila);
+
+            // El carril, como la barra de progreso: surco y un relleno que escala en X.
+            ContainerVisual carril = _compositor.CreateContainerVisual();
+            carril.Size = new Vector2(S(CarrilAncho), S(BarraAlto));
+            carril.Offset = new Vector3(S(CarrilX), S(IslaWindow.FilaAlto * 0.5f - BarraAlto * 0.5f), 0);
+            CompositionRoundedRectangleGeometry forma = _compositor.CreateRoundedRectangleGeometry();
+            forma.Size = carril.Size;
+            forma.CornerRadius = new Vector2(S(BarraAlto * 0.5f), S(BarraAlto * 0.5f));
+            carril.Clip = _compositor.CreateGeometricClip(forma);
+            fila.Children.InsertAtTop(carril);
+
+            SpriteVisual surco = _compositor.CreateSpriteVisual();
+            surco.RelativeSizeAdjustment = Vector2.One;
+            surco.Brush = _compositor.CreateColorBrush(Color.FromArgb(46, 255, 255, 255));
+            carril.Children.InsertAtTop(surco);
+
+            _filaRelleno[i] = _compositor.CreateSpriteVisual();
+            _filaRelleno[i].Size = carril.Size;
+            _filaRelleno[i].Brush = _compositor.CreateColorBrush(Color.FromArgb(235, 255, 255, 255));
+            _filaRelleno[i].Scale = new Vector3(0f, 1f, 1f);
+            carril.Children.InsertAtTop(_filaRelleno[i]);
+        }
+    }
+
+    /// <summary>
+    /// Pinta las filas. El nivel se mueve siempre; los textos solo si cambiaron, que esto
+    /// se llama cada segundo con el mezclador abierto y en cada paso de un arrastre.
+    /// </summary>
+    public void Mezcla(IReadOnlyList<AppAudio> apps)
+    {
+        float centro = S(IslaWindow.FilaAlto * 0.5f);
+        for (int i = 0; i < IslaWindow.MaxFilas; i++)
+        {
+            bool hay = i < apps.Count;
+            _filas[i].IsVisible = hay;
+            if (!hay) { _filaPintada[i] = string.Empty; continue; }
+
+            AppAudio a = apps[i];
+            int pct = (int)Math.Round(a.Nivel * 100);
+            _filaRelleno[i].Scale = new Vector3(Math.Clamp(a.Nivel, 0f, 1f), 1f, 1f);
+
+            string firma = $"{a.Nombre}|{pct}|{a.Activa}";
+            if (firma == _filaPintada[i]) continue;
+            _filaPintada[i] = firma;
+
+            Rotular(_filaNombre[i], Cabe(a.Nombre, S(NombreAncho), S(PomPx), grueso: false), PomPx, false, a.Activa ? 0.92f : 0.5f);
+            _filaNombre[i].Offset = new Vector3(S(Margen), centro - _filaNombre[i].Size.Y * 0.5f, 0);
+            Rotular(_filaPct[i], $"{pct} %", TiempoPx, false, 0.62f);
+            _filaPct[i].Offset = new Vector3(S(PctDerecha) - _filaPct[i].Size.X, centro - _filaPct[i].Size.Y * 0.5f, 0);
+        }
+    }
+
+    /// <summary>
+    /// Que fila hay bajo el punto y a que nivel corresponde en su carril, o fila -1. Con un
+    /// margen generoso, como la barra de progreso: nadie le acierta a 4 px.
+    /// </summary>
+    public (int Fila, float Nivel) GolpeFila(Vector2 p)
+    {
+        int fila = (int)MathF.Floor((p.Y - S(IslaWindow.FilaY0)) / S(IslaWindow.FilaAlto));
+        if (p.Y < S(IslaWindow.FilaY0) || fila < 0 || fila >= IslaWindow.MaxFilas || !_filas[fila].IsVisible)
+            return (-1, 0f);
+        if (p.X < S(CarrilX - 10f) || p.X > S(CarrilX + CarrilAncho + 10f)) return (fila, -1f);
+        return (fila, Math.Clamp((p.X - S(CarrilX)) / S(CarrilAncho), 0f, 1f));
+    }
+
+    /// <summary>El nivel en el carril para una X, sin mirar la fila: para seguir un arrastre.</summary>
+    public float NivelEnX(float x) => Math.Clamp((x - S(CarrilX)) / S(CarrilAncho), 0f, 1f);
+
     /// <summary>Los dos relojes de los extremos de la barra. Solo al cambiar de cancion.</summary>
     public void Tiempos(TimeSpan pasado, TimeSpan total)
     {
@@ -1232,6 +1363,17 @@ internal sealed unsafe class IslaVisuals : IDisposable
 
     public Zona Golpe(Vector2 p)
     {
+        if (_estado == Estado.Mezclador)
+        {
+            if (p.Y < S(IslaWindow.FilaY0 - 4f)) return Zona.Atras;
+            (int fila, float nivel) = GolpeFila(p);
+            return fila >= 0 && nivel >= 0f ? Zona.FilaApp : Zona.Nada;
+        }
+
+        // La onda abre el mezclador. Mas caja que barras: son 25 px de ancho.
+        if (p.X >= S(OndaX - 8f) && p.X <= S(PctDerecha + 4f) && p.Y >= S(OndaBase - OndaAlto - 8f) && p.Y <= S(OndaBase + 6f))
+            return Zona.Onda;
+
         float mitad = S(GolpeLado) * 0.5f;
         for (int i = 0; i < BotonCx.Length; i++)
         {
@@ -1340,8 +1482,33 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// </summary>
     private SpriteVisual Sombra()
     {
-        (float wl, float hl, _, _) = IslaWindow.Medidas(Estado.Abierta);
-        int w = (int)MathF.Ceiling(S(wl)), h = (int)MathF.Ceiling(S(hl));
+        _sombraDrop = _compositor.CreateDropShadow();
+        _sombraDrop.BlurRadius = S(24f);
+        _sombraDrop.Offset = new Vector3(0f, S(6f), 0f);
+        _sombraDrop.Color = Color.FromArgb(255, 0, 0, 0);
+        _sombraDrop.Opacity = 0.45f;
+        MoldeSombra(IslaWindow.Medidas(Estado.Abierta).H);
+
+        SpriteVisual v = _compositor.CreateSpriteVisual();
+        v.Shadow = _sombraDrop;
+        return v;
+    }
+
+    private DropShadow _sombraDrop = null!;
+    private float _sombraAlto;
+
+    /// <summary>
+    /// La mascara para una caja de 380 x <paramref name="altoLogico"/>. El mezclador cambia de
+    /// alto segun cuantas apps suenan, y estirar la de 180 deformaria las esquinas.
+    /// </summary>
+    private void MoldeSombra(float altoLogico)
+    {
+        if (altoLogico == _sombraAlto) return;
+        _sombraAlto = altoLogico;
+
+        CompositionBrush? viejo = _sombraDrop.Mask;
+        float wl = IslaWindow.Medidas(Estado.Abierta).W;
+        int w = (int)MathF.Ceiling(S(wl)), h = (int)MathF.Ceiling(S(altoLogico));
         float r = S(SombraRadio);
         byte[] bgra = new byte[w * h * 4];
         for (int y = 0; y < h; y++)
@@ -1360,17 +1527,8 @@ internal sealed unsafe class IslaVisuals : IDisposable
 
         CompositionSurfaceBrush molde = PincelBgra(bgra, w, h, w, h);
         molde.Stretch = CompositionStretch.Fill;
-
-        DropShadow sombra = _compositor.CreateDropShadow();
-        sombra.Mask = molde;
-        sombra.BlurRadius = S(24f);
-        sombra.Offset = new Vector3(0f, S(6f), 0f);
-        sombra.Color = Color.FromArgb(255, 0, 0, 0);
-        sombra.Opacity = 0.45f;
-
-        SpriteVisual v = _compositor.CreateSpriteVisual();
-        v.Shadow = sombra;
-        return v;
+        _sombraDrop.Mask = molde;
+        Soltar(viejo);
     }
 
     private CompositionSurfaceBrush PincelArte(byte[] bgra)

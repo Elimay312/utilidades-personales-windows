@@ -25,6 +25,9 @@ internal enum Estado
     Asomada,
     /// <summary>Despegada del borde, con contenido y clicable.</summary>
     Abierta,
+    /// <summary>La abierta hecha mezclador: una fila por app, con su volumen. Va detras de
+    /// Abierta a proposito: pasar de una a otra es "abrir mas".</summary>
+    Mezclador,
 }
 
 internal sealed unsafe class IslaWindow : IDisposable
@@ -536,7 +539,7 @@ internal sealed unsafe class IslaWindow : IDisposable
                 return new LRESULT(0);
 
             case WM_MOUSEWHEEL:
-                isla?.OnRueda((short)((wParam.Value >> 16) & 0xFFFF));
+                isla?.OnRueda((short)((wParam.Value >> 16) & 0xFFFF), lParam);
                 return new LRESULT(0);
 
             case WM_HOTKEY:
@@ -797,6 +800,14 @@ internal sealed unsafe class IslaWindow : IDisposable
     {
         // El atajo tambien sirve para invocarla cuando no suena nada.
         Ensenar(true);
+        // Con el mezclador abierto, el atajo lo recoge del todo.
+        if (_actual == Estado.Mezclador)
+        {
+            _base = Estado.Brasa;
+            CerrarMezclador();
+            Console.WriteLine("[isla] atajo -> Brasa");
+            return;
+        }
         // Con la tarjeta del aviso abierta, la siguiente pulsacion lo recoge todo.
         if (_avisoEstado == Estado.Abierta)
         {
@@ -1076,7 +1087,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         // la app. Aunque volumenAsoma este apagado: si giras la rueda quieres verlo. Y sin
         // Avisar: asomar bajaria el panel a pastilla a mitad de giro -- medido, la segunda
         // muesca ya no llegaba.
-        if (_actual == Estado.Abierta)
+        if (_actual >= Estado.Abierta)
         {
             _porcentajeAnterior = porcentaje;
             _visuals.LineaApp($"Volumen   {porcentaje} %");
@@ -1462,30 +1473,35 @@ internal sealed unsafe class IslaWindow : IDisposable
     {
         uint pid = 0;
         PInvoke.GetWindowThreadProcessId(ventana, &pid);
-        if (pid == 0) return false;
+        // Un proceso que no se deja leer no es el shell. Se sigue con la geometria.
+        return pid != 0 && string.Equals(NombreExe(pid), nombre, StringComparison.OrdinalIgnoreCase);
+    }
 
+    /// <summary>
+    /// El nombre del exe de un proceso, sin ruta ni extension, o null si no se deja leer. Lo
+    /// usan la pantalla completa (s.3.5) y el mezclador (s.3.3): solo el nombre, nunca la ruta.
+    /// </summary>
+    internal static string? NombreExe(uint pid)
+    {
         try
         {
             using SafeFileHandle handle = PInvoke.OpenProcess_SafeHandle(
                 (PROCESS_ACCESS_RIGHTS)ProcessQueryLimitedInformation, false, pid);
-            if (handle.IsInvalid) return false;
+            if (handle.IsInvalid) return null;
 
             Span<char> buffer = stackalloc char[260];
             uint largo = (uint)buffer.Length;
             if (!PInvoke.QueryFullProcessImageName(
                     handle, PROCESS_NAME_FORMAT.PROCESS_NAME_WIN32, buffer, ref largo)
                 || largo == 0)
-                return false;
+                return null;
 
             ReadOnlySpan<char> ruta = buffer[..(int)largo];
-            int barra = ruta.LastIndexOf('\\');
-            ReadOnlySpan<char> fichero = barra >= 0 ? ruta[(barra + 1)..] : ruta;
-            return fichero.Equals(nombre + ".exe", StringComparison.OrdinalIgnoreCase);
+            return Path.GetFileNameWithoutExtension(ruta).ToString();
         }
         catch
         {
-            // Un proceso que no se deja leer no es el shell. Se sigue con la geometria.
-            return false;
+            return null;
         }
     }
 
@@ -1506,7 +1522,9 @@ internal sealed unsafe class IslaWindow : IDisposable
 
     private RECT ZonaCaliente(bool abierta)
     {
-        (float w, float h, _, float lift) = Medidas(Estado.Abierta);
+        // Con el mezclador la caja es mas alta: si la zona no crece con ella, bajar el raton
+        // a la ultima fila la recogeria.
+        (float w, float h, _, float lift) = Medidas(_actual == Estado.Mezclador ? Estado.Mezclador : Estado.Abierta);
         float ancho = Scale(abierta ? w + LogicalOpenMargin * 2 : LogicalHotWidth);
         float alto = Scale(abierta ? lift + h + LogicalOpenMargin : LogicalHotHeight);
 
@@ -1523,6 +1541,10 @@ internal sealed unsafe class IslaWindow : IDisposable
     private void Aplicar()
     {
         Estado efectivo = _hover ? Estado.Abierta : _base;
+        // El mezclador es la abierta con la onda pulsada; si la isla se recoge, se olvida y su
+        // lista se suelta (SEGURIDAD.md s.3.3: solo existe con el mezclador abierto).
+        if (efectivo == Estado.Abierta && _apps is not null) efectivo = Estado.Mezclador;
+        else if (efectivo != Estado.Abierta) _apps = null;
         if (efectivo == _actual) return;
 
         bool abriendo = efectivo > _actual;
@@ -1547,7 +1569,7 @@ internal sealed unsafe class IslaWindow : IDisposable
 
         // El reloj solo corre con el panel abierto. En reposo la isla no gasta ni un
         // temporizador de mas.
-        if (efectivo == Estado.Abierta) PInvoke.SetTimer(_hwnd, TimerReloj, RelojMs, null);
+        if (efectivo >= Estado.Abierta) PInvoke.SetTimer(_hwnd, TimerReloj, RelojMs, null);
         else PInvoke.KillTimer(_hwnd, TimerReloj);
 
         if (efectivo == Estado.Brasa) PInvoke.KillTimer(_hwnd, TimerOnda);
@@ -1583,6 +1605,15 @@ internal sealed unsafe class IslaWindow : IDisposable
             case Zona.PlayPausa: Medios.Alternar(); break;
             case Zona.App: Medios.Rotar(); break;
             case Zona.Pomodoro: AlternarPausa(); break;
+            case Zona.Onda: AbrirMezclador(); break;
+            case Zona.Atras: CerrarMezclador(); break;
+
+            case Zona.FilaApp:
+                (int fila, float nivel) = _visuals.GolpeFila(p);
+                _filaArrastre = fila;
+                PInvoke.SetCapture(_hwnd);
+                PonerNivel(fila, nivel);
+                break;
 
             case Zona.Barra:
                 _arrastrando = true;
@@ -1650,21 +1681,96 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// La rueda, SOLO con el panel abierto (SEGURIDAD.md s.3.3). Cada muesca es un 2 %.
     /// Sin tocar nada mas: el numero lo ensena OnVolumen, que avisa COM.
     /// </summary>
-    private void OnRueda(short delta)
+    private void OnRueda(short delta, LPARAM lParam)
     {
-        if (_actual != Estado.Abierta) return;
         int pasos = delta / 120;
-        if (pasos != 0) Audio.Ajustar(pasos);
+        if (pasos == 0) return;
+
+        // En el mezclador, sobre una fila, la rueda es de esa app. La rueda llega con el punto
+        // en coordenadas de PANTALLA, no de ventana como los clics.
+        if (_actual == Estado.Mezclador && _apps is not null)
+        {
+            Vector2 enPantalla = Punto(lParam);
+            (int fila, _) = _visuals.GolpeFila(_visuals.EnPanel(new Vector2(enPantalla.X - _x, enPantalla.Y - _y), _w));
+            if (fila >= 0 && fila < _apps.Count) { PonerNivel(fila, _apps[fila].Nivel + pasos * 0.02f); return; }
+        }
+
+        if (_actual < Estado.Abierta) return;
+        Audio.Ajustar(pasos);
+    }
+
+    // --- el mezclador (SEGURIDAD.md s.3.3, enmienda del 23-09-2026) ------------------
+
+    // La lista de apps con audio. Existe SOLO con el mezclador abierto: nula es cerrado, y
+    // Aplicar la suelta en cuanto la isla deja de estar abierta.
+    private List<AppAudio>? _apps;
+    // La fila cuyo carril se esta arrastrando, o -1.
+    private int _filaArrastre = -1;
+
+    private void AbrirMezclador()
+    {
+        _apps = [.. Audio.Apps()];
+        FilasMezclador = Math.Clamp(_apps.Count, 1, MaxFilas);
+        _visuals.Mezcla(_apps);
+        Console.WriteLine($"[isla] mezclador: {_apps.Count} apps");
+        Aplicar();
+    }
+
+    private void CerrarMezclador()
+    {
+        _apps = null;
+        _filaArrastre = -1;
+        Aplicar();
+    }
+
+    /// <summary>Una vez por segundo con el mezclador abierto: quien suena y a que nivel.</summary>
+    private void RefrescarMezclador()
+    {
+        if (_apps is null || _filaArrastre >= 0) return;
+        _apps = [.. Audio.Apps()];
+        _visuals.Mezcla(_apps);
+
+        int filas = Math.Clamp(_apps.Count, 1, MaxFilas);
+        if (filas == FilasMezclador) return;
+        // Otra app empezo o dejo de sonar: la caja cambia de alto con sus muelles.
+        bool crece = filas > FilasMezclador;
+        FilasMezclador = filas;
+        _visuals.GoTo(Estado.Mezclador, crece);
+        if (crece) { _regionMain = Estado.Mezclador; AplicarRegion(); }
+        else _regionCuando = DateTime.UtcNow.AddMilliseconds(380);
+    }
+
+    /// <summary>El nivel de la app de esa fila, detras de un gesto tuyo y solo entonces.</summary>
+    private void PonerNivel(int fila, float nivel)
+    {
+        if (_apps is null || fila < 0 || fila >= _apps.Count) return;
+        nivel = Math.Clamp(nivel, 0f, 1f);
+        Audio.AjustarApp(_apps[fila].Pid, nivel);
+        _apps[fila] = _apps[fila] with { Nivel = nivel };
+        _visuals.Mezcla(_apps);
     }
 
     private void OnArrastrar(LPARAM lParam)
     {
+        // El carril de una app se aplica en cada paso: es local, no hay otra app al otro
+        // lado recibiendo saltos como con la barra de progreso.
+        if (_filaArrastre >= 0)
+        {
+            PonerNivel(_filaArrastre, _visuals.NivelEnX(_visuals.EnPanel(Punto(lParam), _w).X));
+            return;
+        }
         if (!_arrastrando) return;
         _visuals.VistaPrevia(_visuals.FraccionEnX(_visuals.EnPanel(Punto(lParam), _w).X));
     }
 
     private void OnSoltar(LPARAM lParam)
     {
+        if (_filaArrastre >= 0)
+        {
+            _filaArrastre = -1;
+            PInvoke.ReleaseCapture();
+            return;
+        }
         if (!_arrastrando) return;
         _arrastrando = false;
         PInvoke.ReleaseCapture();
@@ -1683,6 +1789,7 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// </summary>
     private void OnReloj()
     {
+        if (_actual == Estado.Mezclador) { RefrescarMezclador(); return; }
         Cancion? c = Medios.Ultima;
         if (c is null || _arrastrando) return;
         _visuals.Transcurrido(Ahora(c));
@@ -1707,7 +1814,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         _regionBurbuja = (_enTarjeta is not null, HayPrincipal());
         HRGN region = PInvoke.CreateRectRgn(0, 0, 0, 0);
         // Sin linea no hay rectangulo: uno invisible de 140x5 se comeria el borde de la pastilla.
-        if (_lineaVisible) Sumar(region, _regionMain == Estado.Abierta ? ConSombra(RectDe(_regionMain)) : RectDe(_regionMain));
+        if (_lineaVisible) Sumar(region, _regionMain >= Estado.Abierta ? ConSombra(RectDe(_regionMain)) : RectDe(_regionMain));
         // La isla del aviso, mientras hay uno: su burbuja -- solo su cuadrado, nada del hueco que
         // la separa de la brasa --, o la pastilla entera si esta desplegada.
         if (_enTarjeta is not null) Sumar(region, _regionAviso == Estado.Brasa ? Burbuja(0) : RectDe(_regionAviso));
@@ -1756,8 +1863,17 @@ internal sealed unsafe class IslaWindow : IDisposable
         // 56 de alto y no 38: con 38 la rampa del contenido ni arrancaba y el
         // aviso salia vacio. Ahora cabe el titular entero.
         Estado.Asomada => (320f, 56f, 26f, 8f),
+        Estado.Mezclador => (380f, FilaY0 + FilasMezclador * FilaAlto + 8f, 28f, 10f),
         _ => (380f, 180f, 28f, 10f),
     };
+
+    // El mezclador crece con las apps que hay. Cinco filas son 260 de alto: lo que cabe en la
+    // ventana despegada 10. ponytail: con mas de cinco apps sobran las ultimas; el techo es
+    // un scroll.
+    public const int MaxFilas = 5;
+    public const float FilaY0 = 52f;
+    public const float FilaAlto = 38f;
+    public static int FilasMezclador = 1;
 
     public void Dispose()
     {

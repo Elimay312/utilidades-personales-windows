@@ -178,3 +178,14 @@ AppendMenuW
 TrackPopupMenu
 DestroyMenu
 SetForegroundWindow
+
+// --- Mezclador por app (SEGURIDAD.md 3.3, enmienda del 23-09-2026) ---
+// Las sesiones de audio del endpoint predeterminado, SOLO con el mezclador abierto. De cada
+// una: su PID (para el nombre del exe, con las de 3.5), si es la del sistema, su estado, y su
+// nivel, que solo se escribe detras de un gesto sobre su fila. Sin notificaciones de sesion,
+// sin canales y sin silencio: auditar.ps1 lo vigila.
+IAudioSessionManager2
+IAudioSessionEnumerator
+IAudioSessionControl2
+ISimpleAudioVolume
+AudioSessionState

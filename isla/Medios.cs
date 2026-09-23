@@ -68,6 +68,14 @@ internal static class Medios
     private static byte[]? _arte;
     private static uint _tinte;
 
+    // Reintentos de la caratula mientras la sesion aun no la tiene (ver Leer). Un solo
+    // reintento en vuelo a la vez: con Spotify llegan avisos a rafagas y cada uno
+    // programaria el suyo.
+    private const int EsperaArteMs = 10_000;
+    private static string _claveEsperando = string.Empty;
+    private static long _esperandoDesde;
+    private static int _reintentoPendiente;
+
     // Guardados en campos para poder darse de baja con la MISMA instancia: un grupo de
     // metodos crea un delegate nuevo cada vez que se escribe.
     private static readonly TypedEventHandler<GlobalSystemMediaTransportControlsSession, MediaPropertiesChangedEventArgs>
@@ -150,7 +158,28 @@ internal static class Medios
             {
                 _arte = await Arte(p.Thumbnail);
                 _tinte = Dominante(_arte);
-                _claveArte = clave;
+
+                // El navegador suele avisar del titulo nuevo antes de tener la miniatura:
+                // la primera lectura llega sin ella o no se puede abrir todavia. En vez de
+                // dar la cancion por vista sin caratula, se vuelve a mirar cada segundo
+                // hasta que aparezca o pasen EsperaArteMs.
+                if (_arte is not null)
+                {
+                    _claveArte = clave;
+                }
+                else
+                {
+                    if (clave != _claveEsperando) { _claveEsperando = clave; _esperandoDesde = Environment.TickCount64; }
+
+                    if (Environment.TickCount64 - _esperandoDesde > EsperaArteMs)
+                        _claveArte = clave; // de verdad no tiene; se deja el relleno
+                    else if (Interlocked.Exchange(ref _reintentoPendiente, 1) == 0)
+                        _ = Task.Delay(1000).ContinueWith(_ =>
+                        {
+                            Interlocked.Exchange(ref _reintentoPendiente, 0);
+                            return Leer();
+                        });
+                }
             }
 
             Publicar(new Cancion(

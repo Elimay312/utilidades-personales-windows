@@ -84,6 +84,10 @@ autocompleta · `~` carpeta de usuario · `.` ocultos · `T` pestaña nueva, `Ct
 
 ## Tenerlos al día en otro equipo
 
+**Doble clic en [`Instalar.cmd`](Instalar.cmd)** y listo. Vale suelto: bájalo solo y él instala
+git, clona el repo en `%USERPROFILE%\utilidades-personales-windows`, instala todo y lo deja
+actualizándose al iniciar sesión. A mano es esto:
+
 ```powershell
 winget install --id Git.Git -e                                                   # si el equipo no tiene git
 git clone https://github.com/Elimay312/utilidades-personales-windows.git; cd utilidades-personales-windows

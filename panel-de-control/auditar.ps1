@@ -156,7 +156,8 @@ else { Regla '2.2 IPolicyConfig en un solo archivo' 'bien' }
 # 2.3 WMI: solo ROOT\WMI y solo las clases WmiMonitorBrightness*.
 $espacios = @(Buscar '(?i)"root\\\\\w+' | Where-Object { $_ -notmatch '(?i)"root\\\\wmi$' })
 $win32 = Buscar '(?i)\bWin32_\w+|\bMSFT_\w+|\bCIM_\w+'
-$clases = @(Buscar '(?i)"[^"\r\n]*\bFROM\s+\w+|"Wmi\w+' | Where-Object { $_ -notmatch '(?i)(FROM\s+|")(WmiMonitorBrightness\w*|WmiSetBrightness)$' })
+# Solo consultas WQL (SELECT ... FROM clase): un texto que dice "from here" no es una consulta.
+$clases = @(Buscar '(?i)"[^"\r\n]*\bSELECT\b[^"\r\n]*\bFROM\s+\w+|"Wmi\w+' | Where-Object { $_ -notmatch '(?i)(FROM\s+|")(WmiMonitorBrightness\w*|WmiSetBrightness)$' })
 if ($espacios) { Regla '2.3 WMI solo para el brillo' 'FALLA' $espacios[0] }
 elseif ($win32) { Regla '2.3 WMI solo para el brillo' 'FALLA' $win32[0] }
 elseif ($clases) { Regla '2.3 WMI solo para el brillo' 'FALLA' $clases[0] }

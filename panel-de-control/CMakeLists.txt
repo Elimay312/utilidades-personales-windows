@@ -72,6 +72,7 @@ target_link_options(Panel PRIVATE /MANIFEST:NO)
 enable_testing()
 add_executable(panel_tests
   tests/main.cpp
+  tests/test_audio.cpp
   tests/test_controls.cpp
   tests/test_hotkey.cpp
   tests/test_layout.cpp

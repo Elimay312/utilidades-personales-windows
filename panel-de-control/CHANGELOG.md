@@ -6,6 +6,31 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
 
 ### Añadido
 
+- **Fase 3b: elegir la salida de audio.**
+  - La tarjeta del volumen se despliega con las salidas activas de verdad
+    (`EnumAudioEndpoints`). Cada una lleva el icono de auriculares o de altavoz según su forma,
+    y la marca va en la predeterminada.
+  - **Nombres:** si dos salidas comparten el nombre corto, las dos enseñan el largo. En esta
+    máquina, las tres «Altavoces» salen como «Altavoces (Realtek(R) Audio)» y las dos de Steam.
+    La cabecera usa el mismo nombre que la fila.
+  - **Elegir:** un clic en una fila la hace predeterminada con `IPolicyConfig`, en los tres
+    roles. Esa API solo aparece en `system/policy_config.h`, y justo antes de llamarla se vuelve
+    a enumerar: una salida desenchufada con el panel abierto no se elige.
+  - **La lista se mantiene al día:** enchufar o quitar algo la actualiza con el panel abierto. Si
+    se queda vacía, la tarjeta se pliega sola.
+  - **Si este Windows no tiene `IPolicyConfig`,** la lista se ve apagada y un clic lo explica en
+    la línea de avisos. Los avisos se borran al esconder el panel.
+  - La enmienda a `SEGURIDAD.md` §2.1 y §2.2 va en su propio commit, antes que el código.
+  - **Auditoría:** la regla de WMI saltaba con cualquier texto que dijera «from here». Ahora
+    solo mira consultas `SELECT … FROM`. La sonda de violaciones sigue pillando `MSFT_Disk`.
+  - **Pruebas:** 3 casos nuevos para los nombres, 25 en total.
+  - **Probado desde el propio panel:**
+    - un clic en «Altavoces (Realtek(R) Audio)» la hace predeterminada, y la cabecera pasa a
+      esa salida y a su nivel (3 %);
+    - otro clic vuelve a «Auriculares»;
+    - se abre en 9-15 ms listando las salidas;
+    - al terminar, el audio del usuario quedó en «Auriculares» al 100 %.
+
 - **Fase 3a: el volumen, de verdad.**
   - El deslizador lee y escribe el volumen maestro de la salida predeterminada con Core Audio.
     El icono del altavoz silencia de verdad, y subir el volumen quita el silencio, como hace el

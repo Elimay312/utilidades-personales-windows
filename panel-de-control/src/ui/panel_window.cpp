@@ -80,9 +80,8 @@ bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view
   themeChoice_ = theme;
   theme_ = ResolveTheme(themeChoice_);
   // Made-up data until each later phase replaces one part of it with the real thing. The volume
-  // is real since phase 3a; the list of outputs comes with 3b, so until then there is none.
+  // and its outputs are real since phase 3.
   state_ = SampleState();
-  state_.audio.outputs.clear();
   if (!fonts_.Create()) LogError(L"panel: DirectWrite is unavailable, opening without text");
 
   WNDCLASSEXW windowClass{};
@@ -394,6 +393,10 @@ void PanelWindow::ReadAudio() {
   } else {
     KillTimer(hwnd_, kAudioRetryTimer);
   }
+  audio_.ReadOutputs(state_.audio);
+  // A list that emptied under an open card folds it; the keyboard goes back to its header.
+  if (state_.audio.outputs.empty() && audioGoal_) ToggleCard(audioGoal_);
+  KeepFocusValid();
 }
 
 void PanelWindow::Toggle() {
@@ -410,6 +413,9 @@ void PanelWindow::Shelve() {
   // they come back from the standby list in the few milliseconds the next opening can spare.
   Rest();
   composition_->Commit();
+  // A notice is about the time it was said in; the next opening starts without it. Cleared
+  // here, hidden, so the panel never changes height in the middle of its fade.
+  state_.notice.clear();
   SetProcessWorkingSetSizeEx(GetCurrentProcess(), static_cast<SIZE_T>(-1),
                              static_cast<SIZE_T>(-1), 0);
 }
@@ -606,14 +612,27 @@ void PanelWindow::Activate(Target target) {
         ReadAudio();
       }
       break;
-    case Part::Output:
-      if (state_.audio.canSwitch && target.index < state_.audio.outputs.size()) {
-        for (size_t i = 0; i < state_.audio.outputs.size(); ++i) {
-          state_.audio.outputs[i].isDefault = i == target.index;
-        }
-        state_.audio.device = state_.audio.outputs[target.index].name;
+    case Part::Output: {
+      if (target.index >= state_.audio.outputs.size()) break;
+      if (!state_.audio.canSwitch) {
+        // SEGURIDAD.md 2.2: shown but not changeable, and the panel says why.
+        SetNotice(std::wstring(T(L"Este Windows no deja cambiar la salida desde aquí. Usa Win+A.",
+                                 L"This Windows does not let the output be changed from here. Use Win+A.")));
+        break;
+      }
+      const AudioOutput chosen = state_.audio.outputs[target.index];
+      if (chosen.isDefault) break;
+      if (audio_.SetDefault(chosen.id)) {
+        // Said now, not when Windows' notice arrives a moment later: the check moves with the
+        // click. The notice then reads everything again anyway.
+        for (AudioOutput& output : state_.audio.outputs) output.isDefault = output.id == chosen.id;
+        state_.audio.device = chosen.name;
+      } else {
+        ReadAudio();
+        Relayout();
       }
       break;
+    }
     case Part::App:
       if (target.index < state_.apps.size()) state_.apps[target.index].running = !state_.apps[target.index].running;
       break;
@@ -687,7 +706,10 @@ void PanelWindow::KeepFocusValid() {
   Target& focus = view_.focus;
   if (focus.part == Part::DisplaySlider && !brightnessGoal_) focus = Target{Part::BrightnessHeader};
   if (focus.part == Part::BrightnessSlider && brightnessGoal_) focus = Target{Part::BrightnessHeader};
-  if (focus.part == Part::Output && !audioGoal_) focus = Target{Part::AudioHeader};
+  if (focus.part == Part::Output &&
+      (!audioGoal_ || focus.index >= state_.audio.outputs.size())) {
+    focus = Target{Part::AudioHeader};
+  }
 }
 
 void PanelWindow::UpdateHot() {
@@ -848,6 +870,8 @@ LRESULT PanelWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       // is done now -- Show reads it all again anyway.
       if (visible_) {
         ReadAudio();
+        // An output plugged in or out changes how many rows an open card has.
+        Relayout();
         UpdateHot();
         Render();
       }

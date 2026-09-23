@@ -124,8 +124,9 @@ src/
                  layout (todos los rectángulos, puro), controls (qué hay bajo el ratón, orden
                  del foco, valor de un deslizador; puro), spring, vsync (de Agenda), theme,
                  paint, glyphs, snapshot
-  system/        audio (Core Audio, desde la fase 3a); llegarán policy_config, brightness,
-                 display_ids, radios, nightlight_blob, nightlight, apps y worker
+  system/        audio (Core Audio y la lista de salidas), policy_config (la única API no
+                 documentada, en un solo archivo); llegarán brightness, display_ids, radios,
+                 nightlight_blob, nightlight, apps y worker
 tests/           doctest: hotkey, options, layout, controls
 assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
 ```
@@ -219,6 +220,19 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   cambiar la salida usa `IPolicyConfig`, solo en la sonda, y vuelve a la original en un
   `finally`. **Pregunta antes de cambiar la salida:** si algo está sonando, se oye un momento
   por la otra.
+### Decisiones de la fase 3b
+
+- **La lista se lee en cada apertura y con cada aviso del enumerador** (dispositivo añadido,
+  quitado o que cambia de estado). Cuesta poco: el panel se abre igual en 9-15 ms.
+- **Los nombres cortos repetidos pasan al largo** (`ChooseOutputNames`, puro y con pruebas). En
+  esta máquina hay tres «Altavoces».
+- **Elegir una salida marca la fila al instante** y no espera al aviso de Windows, que llega un
+  momento después y vuelve a leerlo todo.
+- **Los avisos (`PanelState::notice`) duran lo que dura una apertura:** se borran en `Shelve()`,
+  con el panel ya escondido, para que no cambie de alto a mitad del fundido.
+- **`PKEY_AudioEndpoint_FormFactor` está escrito a mano** en `audio.cpp`. El SDK solo lo declara,
+  y definirlo son dos líneas frente a meter `INITGUID` en todo el archivo.
+
 - **Pendiente para la fase 8:** si el HUD está en marcha, arrastrar el deslizador del panel
   saca también su cápsula. La solución es que el HUD ignore `kPanelVolumeContext`, y toca
   otro proyecto.
@@ -291,7 +305,7 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   - uso completo con el teclado.
 - [x] **3a. Volumen:** Core Audio, el nombre del dispositivo, el silencio y el arreglo del
   endpoint caducado.
-- [ ] **3b. Elegir la salida de audio:** `EnumAudioEndpoints` e `IPolicyConfig`.
+- [x] **3b. Elegir la salida de audio:** `EnumAudioEndpoints` e `IPolicyConfig`.
 - [ ] **4a. Brillo del portátil:** WMI y su evento de cambio.
 - [ ] **4b. Monitores externos:**
   - DDC/CI;

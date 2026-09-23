@@ -7,8 +7,9 @@
 // - The SSID comes from NetworkInformation's connection profile, which gives the name and
 //   nothing else. WlanQueryInterface would ask for the location since Windows 11 24H2 and put
 //   the panel in the "location in use" icon; it is forbidden here.
-// - Two DeviceWatchers, classic and LE, keep the set of connected devices; a device that talks
-//   both is counted once, by its address.
+// - Two DeviceWatchers, classic and LE, keep the paired devices with their name, their class
+//   and whether they are connected (phase 5b-3; before, they only counted the connected ones).
+//   A device that talks both is one row, by its address.
 //
 // Everything that waits (.get() on an async call) runs on the worker: C++/WinRT refuses to
 // block an STA like the interface thread. Events arrive on the thread pool, update a copy under
@@ -17,6 +18,7 @@
 #include <windows.h>
 
 #include <memory>
+#include <map>
 #include <mutex>
 #include <set>
 #include <string>
@@ -60,6 +62,10 @@ class Radios {
   void Stop();
   void SetWifi(bool on);
   void SetBluetooth(bool on);
+  // Connects or disconnects the paired audio device at `address` (system/bt_audio.cpp). Its row
+  // says "busy" until the watcher sees it change, or ClearBusy.
+  void SetAudioConnected(const std::wstring& address, bool connect);
+  void ClearBusy();
 
   Snapshot Current();  // also clears `problem`, which is said once
 
@@ -81,8 +87,17 @@ class Radios {
   // notice read "on", stored after the worker's "off", and the tile stayed on.
   std::mutex publish_;
   Snapshot snapshot_;
-  std::set<std::wstring> classic_;  // ids the classic watcher says are connected
-  std::set<std::wstring> le_;       // and the LE one
+  // What each watcher knows about each paired device, by its id.
+  struct Paired {
+    std::wstring name;
+    BluetoothDevice::Kind kind = BluetoothDevice::Kind::Other;
+    bool connected = false;
+  };
+  std::map<std::wstring, Paired> classic_;
+  std::map<std::wstring, Paired> le_;
+  // Addresses asked to change, with whether they were connected when asked: busy until that
+  // is no longer true.
+  std::map<std::wstring, bool> busy_;
 };
 
 }  // namespace panel

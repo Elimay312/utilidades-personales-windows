@@ -128,7 +128,8 @@ src/
                  documentada, en un solo archivo), worker (el hilo para lo que bloquea),
                  brightness (WMI del portátil y el aviso de Windows), radios (Wi-Fi,
                  Bluetooth, SSID; el único archivo con C++/WinRT), wifi (las redes de
-                 alrededor y conectar a una guardada; el único con WlanAPI); llegarán display_ids,
+                 alrededor y conectar a una guardada; el único con WlanAPI), bt_audio
+                 (conectar y desconectar audio Bluetooth; el único con IOCTL); llegarán display_ids,
                  nightlight_blob, nightlight y apps
 tests/           doctest: hotkey, options, layout, controls
 assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
@@ -315,6 +316,24 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
 - **Las filas se ordenan** poniendo primero la conectada, luego las guardadas, luego por señal y
   luego por nombre. Así lo que se puede pulsar sin contraseña queda arriba.
 
+### Decisiones de la fase 5b-3
+
+- **Un solo par de `DeviceWatcher`,** con el filtro de emparejados y `IsConnected` entre las
+  propiedades pedidas. Sustituyen a los que solo contaban los conectados. `Updated` trae el
+  cambio de conexión.
+- **Clase:** Class of Device clásico (major 4 es audio; en major 5, minor 0x10 es teclado y 0x20
+  ratón) o apariencia LE (categoría 15, subcategoría 1 teclado y 2 ratón). Los valores llegan
+  como enteros de tamaños distintos, y `UIntOf` los lee todos.
+- **Conectar audio:** los filtros de `KSCATEGORY_AUDIO` cuya ruta lleva `bthenum` y la dirección
+  entera. En estos soundcore solo uno tomó la petición (el de A2DP), y bastó.
+- **«Ocupado» (`BluetoothDevice::busy`)** dura hasta que `IsConnected` deja de ser el de cuando
+  se pidió, o 12 s (`kBluetoothBusyTimer`). Se publica antes de la llamada lenta, para que la
+  fila lo diga ya.
+- **Probar con auriculares de verdad:** se conectan solos al salir del estuche, así que la fila
+  cambia de sitio (los conectados van arriba). La sonda tiene que mirar el orden antes de
+  pulsar. Desconectar cambia la salida de audio del usuario: comprueba al final que vuelve a
+  «Auriculares».
+
 - **Pendiente para la fase 8:** si el HUD está en marcha, arrastrar el deslizador del panel
   saca también su cápsula. La solución es que el HUD ignore `kPanelVolumeContext`, y toca
   otro proyecto.
@@ -402,7 +421,7 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   tres pasos:
   - [x] **5b-1:** el morph con listas de ejemplo;
   - [x] **5b-2:** el Wi-Fi real, con su enmienda antes;
-  - [ ] **5b-3:** el Bluetooth real, con su enmienda antes.
+  - [x] **5b-3:** el Bluetooth real, con su enmienda antes.
 
   El planteamiento de partida: una flecha
   en cada uno de los dos tiles. El clic en el tile sigue siendo encender y apagar; la flecha

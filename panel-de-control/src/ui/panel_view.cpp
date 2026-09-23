@@ -459,11 +459,12 @@ void DrawModule(Painter& p, const PanelLayout& layout, const PanelState& state,
     for (size_t i = 0; i < items; ++i) {
       const D2D1_RECT_F& row = m.rows[i];
       const float mid = MidY(row);
-      p.Wash(row, kWashRadiusDip, view.Hover(Target{Part::ModuleRow, i}));
       wchar_t icon = 0;
       std::wstring_view name;
       bool connected = false;
       bool locked = false;
+      bool busy = false;
+      bool clickable = true;
       if (wifi) {
         const WifiNetwork& network = state.wifi.networks[i];
         icon = glyph::kWifiBars[std::clamp(network.bars, 0, 4)];
@@ -480,14 +481,21 @@ void DrawModule(Painter& p, const PanelLayout& layout, const PanelState& state,
         }
         name = device.name;
         connected = device.connected;
+        busy = device.busy;
+        // Only audio connects from here; the rest shows its state and does not pretend.
+        clickable = device.kind == BluetoothDevice::Kind::Audio;
       }
+      if (clickable) p.Wash(row, kWashRadiusDip, view.Hover(Target{Part::ModuleRow, i}));
       DrawGlyph(p.target, p.fonts.icon.Get(), icon, Point(row.left + 18.0f, mid), p.With(p.theme.textPrimary));
       const float right = row.right - (locked ? 34.0f : 12.0f);
       // The one in use says so in words and in weight, not only with a colour.
       DrawTextIn(p.target, (connected ? p.fonts.title : p.fonts.body).Get(), name,
-                 D2D1_RECT_F{row.left + 40.0f, row.top, right - (connected ? 76.0f : 0.0f), row.bottom},
+                 D2D1_RECT_F{row.left + 40.0f, row.top, right - (connected || busy ? 76.0f : 0.0f), row.bottom},
                  p.With(p.theme.textPrimary));
-      if (connected) {
+      if (busy) {
+        DrawTextIn(p.target, p.fonts.caption.Get(), T(L"Un momento…", L"A moment…"),
+                   D2D1_RECT_F{right - 76.0f, row.top, right, row.bottom}, p.With(p.theme.textSecondary), Align::Right);
+      } else if (connected) {
         DrawTextIn(p.target, p.fonts.caption.Get(), T(L"Conectado", L"Connected"),
                    D2D1_RECT_F{right - 76.0f, row.top, right, row.bottom}, p.With(p.theme.accent), Align::Right);
       }

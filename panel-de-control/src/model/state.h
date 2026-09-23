@@ -35,6 +35,7 @@ struct BluetoothDevice {
   std::wstring name;
   Kind kind = Kind::Other;
   bool connected = false;
+  bool busy = false;  // asked to connect or disconnect, and not there yet
 };
 
 struct BluetoothState {

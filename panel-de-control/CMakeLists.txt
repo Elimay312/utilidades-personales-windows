@@ -57,6 +57,7 @@ add_executable(Panel WIN32
   src/model/sample.cpp
   src/system/audio.cpp
   src/system/brightness.cpp
+  src/system/bt_audio.cpp
   src/system/radios.cpp
   src/system/wifi.cpp
   src/system/worker.cpp
@@ -75,7 +76,9 @@ target_link_libraries(Panel PRIVATE nlohmann_json::nlohmann_json
   # windowsapp: WinRT, for Windows.Devices.Radios, DeviceWatcher and NetworkInformation.
   windowsapp
   # wlanapi: the networks around, only while the Wi-Fi card is open (SEGURIDAD.md 1.2).
-  wlanapi)
+  wlanapi
+  # cfgmgr32: the audio filters of a Bluetooth device, to connect it (SEGURIDAD.md 2.6).
+  cfgmgr32)
 # The manifest (PerMonitorV2, asInvoker) comes in through panel.rc.
 target_link_options(Panel PRIVATE /MANIFEST:NO)
 
@@ -83,6 +86,7 @@ enable_testing()
 add_executable(panel_tests
   tests/main.cpp
   tests/test_audio.cpp
+  tests/test_bt_audio.cpp
   tests/test_controls.cpp
   tests/test_hotkey.cpp
   tests/test_layout.cpp

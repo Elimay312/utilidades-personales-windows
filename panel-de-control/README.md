@@ -32,7 +32,11 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
     nueva abre la lista de Windows, que es quien pide la contraseña. **Buscar redes usa el
     permiso de ubicación** (así lo exige Windows 11 desde 24H2), y solo mientras la tarjeta
     está abierta.
-  - **Bluetooth:** por ahora, una lista de ejemplo; la real llega en la fase 5b-3.
+  - **Bluetooth:** los dispositivos emparejados, con su icono (auriculares, teclado, ratón) y si
+    están conectados. Un clic en unos auriculares o un altavoz los conecta o los desconecta,
+    como el botón «Conectar» de la configuración de sonido de Windows. Teclados y ratones se
+    conectan solos al encenderlos. «Añadir un dispositivo» abre la pantalla de Windows, que es
+    quien empareja.
 - **Luz nocturna.** El interruptor de siempre. Debajo, a qué hora se enciende sola, si tiene
   horario.
 - **Configuración.** Todavía no hace nada. Algún día abrirá los ajustes de las otras

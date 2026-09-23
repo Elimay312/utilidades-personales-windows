@@ -94,6 +94,7 @@ class PanelWindow {
   void TakeRadios();
   void TakeWifi();
   void OpenWindowsNetworks();
+  void OpenWindowsAddDevice();
   bool OpenSettingsFor(Target target);
   void BrightnessFromWindows(float level);
 

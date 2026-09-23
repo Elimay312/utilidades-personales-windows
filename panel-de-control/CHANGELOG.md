@@ -6,6 +6,35 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
 
 ### Añadido
 
+- **Fase 5b-3: los dispositivos Bluetooth de verdad.**
+  - **Los dos `DeviceWatcher` siguen ahora a los emparejados**, con su nombre, si están
+    conectados (`System.Devices.Aep.IsConnected`) y su clase. La clase sale del Class of Device
+    clásico o de la apariencia LE: audio, teclado, ratón u otro. El recuento del tile sale de
+    esta lista.
+  - **Una fila por dispositivo**, aunque hable clásico y LE: se juntan por su dirección, y la
+    cara clásica pone el nombre y la clase. Van primero los conectados.
+  - **Un clic en un dispositivo de audio lo conecta o lo desconecta** (`system/bt_audio.cpp`).
+    Es lo que hace el botón «Conectar» de la configuración de sonido: las propiedades de un solo
+    uso del driver de audio Bluetooth (`KSPROPERTY_ONESHOT_RECONNECT` y `_DISCONNECT`), por
+    `IOCTL_KS_PROPERTY`, a los filtros `KSCATEGORY_AUDIO` que llevan su dirección en la ruta
+    (`AudioFilterOf`, con pruebas). Mientras tanto la fila dice «Un momento…». Si a los 12 s
+    no ha cambiado (unos auriculares en su estuche no contestan), deja de decirlo.
+  - **Teclados, ratones y lo demás** enseñan su estado pero no se pulsan: se conectan solos al
+    encenderlos.
+  - **«Añadir un dispositivo»** abre la pantalla de Windows
+    (`ms-settings-connectabledevices:devicediscovery`). El panel no empareja ni desempareja.
+  - La enmienda a `SEGURIDAD.md` §1.6 y §2.6 va en su propio commit, antes que el código, con
+    sus reglas de auditoría: un solo archivo, un solo ioctl y dos propiedades.
+  - **Pruebas:** 2 casos nuevos, 38 en total.
+  - **Probado con unos soundcore P31i**, con permiso del usuario:
+    - la lista enseña «soundcore P31i» con icono de auriculares y «BT5.0 KB» con icono de
+      teclado;
+    - el clic en el teclado no hace nada;
+    - desconectar y reconectar desde el panel funciona las dos veces, y Windows lo confirma.
+  - **Efecto de desconectar:** Windows mandó el audio a «Altavoces (Steam Streaming Speakers)»
+    y lo devolvió a «Auriculares» al reconectarse. Eso lo decide Windows; el panel lo enseña en
+    la tarjeta del volumen.
+
 - **Fase 5b-2: las redes Wi-Fi de verdad.**
   - **Al desplegar la tarjeta de Wi-Fi se buscan las redes de alrededor** con WlanAPI
     (`system/wifi.cpp`, en el hilo de trabajo). Primero sale lo que Windows ya sabe y después se

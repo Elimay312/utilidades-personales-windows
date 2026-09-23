@@ -20,6 +20,10 @@ namespace {
 constexpr wchar_t kClassName[] = L"PanelDeControl";
 constexpr UINT_PTR kHideTimer = 1;
 constexpr UINT_PTR kAudioRetryTimer = 2;
+// A Bluetooth device asked to connect gets this long to do it before its row stops saying
+// "a moment": headphones in their case never answer.
+constexpr UINT_PTR kBluetoothBusyTimer = 3;
+constexpr UINT kBluetoothBusyMs = 12000;
 // After a real Core Audio failure: the HUD's two seconds, soon enough to come back by itself
 // and rare enough to cost nothing while the audio service restarts.
 constexpr UINT kAudioRetryMs = 2000;
@@ -101,8 +105,10 @@ bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view
   // empty until the worker has looked.
   state_ = SampleState();
   state_.displays.clear();
-  // The networks are real since 5b-2, and only listed while the Wi-Fi card is open.
+  // The networks are real since 5b-2, and only listed while the Wi-Fi card is open; the paired
+  // Bluetooth devices since 5b-3.
   state_.wifi.networks.clear();
+  state_.bluetooth.devices.clear();
   if (!fonts_.Create()) LogError(L"panel: DirectWrite is unavailable, opening without text");
 
   WNDCLASSEXW windowClass{};
@@ -455,11 +461,14 @@ void PanelWindow::TakeBrightness() {
 void PanelWindow::TakeRadios() {
   Radios::Snapshot snapshot = radios_.Current();
   if (!snapshot.known) return;
-  // The lists are not the radios' yet (phase 5b-2 and 5b-3): until then, keep the ones there are.
+  // The networks are the Wi-Fi card's (system/wifi.cpp), not the radios': keep them.
   snapshot.wifi.networks = std::move(state_.wifi.networks);
   snapshot.wifi.scanning = state_.wifi.scanning;
   snapshot.wifi.locationDenied = state_.wifi.locationDenied;
-  snapshot.bluetooth.devices = std::move(state_.bluetooth.devices);
+  const bool busy = std::any_of(snapshot.bluetooth.devices.begin(), snapshot.bluetooth.devices.end(),
+                                [](const BluetoothDevice& device) { return device.busy; });
+  if (busy) SetTimer(hwnd_, kBluetoothBusyTimer, kBluetoothBusyMs, nullptr);
+  else KillTimer(hwnd_, kBluetoothBusyTimer);
   state_.wifi = snapshot.wifi;
   state_.bluetooth = snapshot.bluetooth;
   if (!snapshot.problem.empty()) SetNotice(std::move(snapshot.problem));
@@ -479,6 +488,16 @@ void PanelWindow::OpenWindowsNetworks() {
   const HINSTANCE opened = ShellExecuteW(nullptr, L"open", L"ms-availablenetworks:", nullptr, nullptr, SW_SHOWNORMAL);
   if (reinterpret_cast<INT_PTR>(opened) <= 32) {
     LogError(L"panel: could not open Windows' network list (error {})", reinterpret_cast<INT_PTR>(opened));
+  }
+  Hide();
+}
+
+void PanelWindow::OpenWindowsAddDevice() {
+  // Pairing is Windows' (SEGURIDAD.md 2.6): its add-a-device screen, URI written out whole.
+  const HINSTANCE opened = ShellExecuteW(nullptr, L"open", L"ms-settings-connectabledevices:devicediscovery",
+                                         nullptr, nullptr, SW_SHOWNORMAL);
+  if (reinterpret_cast<INT_PTR>(opened) <= 32) {
+    LogError(L"panel: could not open Windows' add-a-device screen (error {})", reinterpret_cast<INT_PTR>(opened));
   }
   Hide();
 }
@@ -769,14 +788,16 @@ void PanelWindow::Activate(Target target) {
           OpenWindowsNetworks();
         }
       } else if (OpenModuleTile() == 1 && target.index < state_.bluetooth.devices.size()) {
-        // 5b-3: connect or disconnect the audio device. Until then, the made-up list.
+        // Audio only: keyboards and mice connect by themselves when they are switched on.
         BluetoothDevice& device = state_.bluetooth.devices[target.index];
-        device.connected = !device.connected;
+        if (device.kind != BluetoothDevice::Kind::Audio || device.busy) break;
+        device.busy = true;
+        radios_.SetAudioConnected(device.id, !device.connected);
       }
       break;
     case Part::ModuleFooter:
       if (OpenModuleTile() == 0) OpenWindowsNetworks();
-      // 5b-3 opens Windows' add-a-device screen, with its amendment.
+      if (OpenModuleTile() == 1) OpenWindowsAddDevice();
       break;
     case Part::BrightnessHeader:
       if (CanUnfold(state_.displays.size()) || brightnessGoal_) ToggleCard(brightnessGoal_);
@@ -1198,6 +1219,11 @@ LRESULT PanelWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       return 0;
 
     case WM_TIMER:
+      if (wparam == kBluetoothBusyTimer) {
+        KillTimer(hwnd_, kBluetoothBusyTimer);
+        radios_.ClearBusy();
+        return 0;
+      }
       if (wparam == kAudioRetryTimer) {
         ReadAudio();
         if (visible_) Render();

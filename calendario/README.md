@@ -195,7 +195,10 @@ salir de él o con Enter, y `Tab` pasa al siguiente. Fecha y horas se escriben c
 formulario («25/09», «17:30») o como en el campo de arriba («mañana», «5pm»); lo que no se
 entiende se pone en rojo y no se guarda. En las notas, `Shift+Enter` es un salto de línea. Una
 repetición que no es ninguna de las cinco («el primer martes de cada mes») se enseña como
-personalizada y se conserva. **Borrar evento**, abajo, hace lo mismo que `Supr`.
+personalizada y se conserva. Debajo, **Aviso** elige el recordatorio: *Auto* (los del
+calendario), *Ninguno*, *10 min*, *1 h* o *1 día*; uno distinto puesto en Google se conserva, y
+los avisos por correo que tenga no se pierden. **Borrar evento**, abajo, hace lo mismo que
+`Supr`.
 
 Borrar no es inmediato: el evento desaparece de la pantalla y se borra de verdad cuando se va
 el aviso de cinco segundos. Deshacer solo lo vuelve a enseñar, así que no se pierde nada de lo
@@ -327,7 +330,7 @@ que las credenciales de Google que viven en ese mismo archivo no se tocan.
 Agenda avisa con una **notificación de Windows** en el minuto que dicen los recordatorios de
 Google: los del propio evento o, si no tiene, los del calendario. Solo los de tipo
 *notificación*; los de correo los manda Google. El calendario local, sin cuenta, avisa diez
-minutos antes.
+minutos antes. Se cambian en el panel de detalle, en **Aviso**, y el cambio sube a Google.
 
 La notificación se queda en pantalla hasta que se responde, con **Posponer** (5, 10 o 30
 minutos) y **Descartar**, que resuelve el propio Windows. Un clic en ella abre el popup en ese

@@ -221,6 +221,8 @@ class PopupWindow final : public A11ySource {
   void SaveDetail(const EventDetail& event, unsigned edits);
   void StoreEvent(const EventDetail& event, unsigned edits);
   void SaveAsSeries(const EventDetail& shown, unsigned edits);
+  // The reminder pill, from the mouse, the keys and UI Automation alike.
+  void ChooseReminder(ReminderChoice choice);
   void DetachShown(const EventDetail& shown, unsigned edits);
   bool OnDetailKeyDown(WPARAM key);
   bool OnDetailLeftDown(float x, float y);

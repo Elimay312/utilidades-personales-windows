@@ -467,7 +467,7 @@ std::optional<EventDetail> Store::Event(const std::wstring& uid) {
   if (!db_.IsOpen()) return std::nullopt;
   std::optional<Stmt> stmt = db_.Prepare(
       "SELECT calendar_id, title, location, notes, recurrence, start_day, start_min, end_day, "
-      "       end_min FROM events WHERE uid = ? AND deleted_at IS NULL");
+      "       end_min, reminders FROM events WHERE uid = ? AND deleted_at IS NULL");
   if (!stmt) return std::nullopt;
   stmt->Bind(1, uid);
   if (!stmt->Step()) return std::nullopt;
@@ -486,6 +486,7 @@ std::optional<EventDetail> Store::Event(const std::wstring& uid) {
   out.startMin = stmt->OptInt(6);
   out.endDay = *end;
   out.endMin = stmt->OptInt(8);
+  if (!stmt->IsNull(9)) out.reminders = stmt->Text(9);
   return out;
 }
 
@@ -844,7 +845,7 @@ void Store::UpdateEvent(const EventDetail& edit, unsigned edits) {
     if (std::optional<Stmt> stmt = db_.Prepare(
             "UPDATE events SET calendar_id = ?, title = ?, notes = ?, location = ?, "
             "  start_day = ?, start_min = ?, end_day = ?, end_min = ?, recurrence = ?, "
-            "  moved_from = ?, updated_at = ? WHERE uid = ?")) {
+            "  moved_from = ?, updated_at = ?, reminders = ? WHERE uid = ?")) {
       stmt->Bind(1, edit.calendarId);
       stmt->Bind(2, edit.title);
       stmt->Bind(3, edit.notes);
@@ -860,7 +861,12 @@ void Store::UpdateEvent(const EventDetail& edit, unsigned edits) {
         stmt->Bind(10, movedFrom);
       }
       stmt->Bind(11, NowSeconds());
-      stmt->Bind(12, edit.uid);
+      if (edit.reminders) {
+        stmt->Bind(12, *edit.reminders);
+      } else {
+        stmt->BindNull(12);
+      }
+      stmt->Bind(13, edit.uid);
       stmt->Step(&ok);
     }
 
@@ -894,13 +900,13 @@ std::wstring Store::DetachOccurrence(const std::wstring& seriesUid, Date occurre
       Report(uid, T(L"no se pudo guardar el cambio", L"could not save the change"));
       return;
     }
-    // Everything the panel does not edit comes from the series: its calendar and reminders.
+    // What the panel does not edit comes from the series: its calendar.
     bool ok = false;
     if (std::optional<Stmt> stmt = db_.Prepare(
             "INSERT INTO events (uid, calendar_id, title, notes, location, start_day, start_min, "
             "                    end_day, end_min, reminders, updated_at, series_id, "
             "                    original_day) "
-            "SELECT ?1, calendar_id, ?2, ?3, ?4, ?5, ?6, ?7, ?8, reminders, ?9, "
+            "SELECT ?1, calendar_id, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?12, ?9, "
             "       COALESCE(remote_id, replace(lower(uid), '-', '')), ?10 "
             "FROM events WHERE uid = ?11 AND deleted_at IS NULL")) {
       stmt->Bind(1, uid);
@@ -914,6 +920,11 @@ std::wstring Store::DetachOccurrence(const std::wstring& seriesUid, Date occurre
       stmt->Bind(9, NowSeconds());
       stmt->Bind(10, DayKey(occurrence));
       stmt->Bind(11, seriesUid);
+      if (edit.reminders) {
+        stmt->Bind(12, *edit.reminders);
+      } else {
+        stmt->BindNull(12);
+      }
       stmt->Step(&ok);
     }
     // An update and not a creation: the occurrence already exists at Google, inside its series.

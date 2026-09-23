@@ -9,6 +9,11 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **Elegir el aviso de un evento.** El panel de detalle tiene una fila **Aviso** con *Auto* (los
+  del calendario), *Ninguno*, *10 min*, *1 h* y *1 día*, con el ratón, el teclado y Narrador.
+  El cambio sube a Google y ya no lo pisa la siguiente sincronización mientras está en la cola.
+  Un aviso distinto hecho en Google se enseña como personalizado y se conserva, y los avisos por
+  correo se guardan para no perderlos al cambiar el recordatorio desde aquí.
 - **Buscar.** Con `?` delante del campo, o **Ctrl+F** en el popup y en la app, Agenda busca en
   vez de crear: título, lugar y notas de eventos y tareas, sin acentos ni mayúsculas. Los
   resultados se apilan junto a la tarjeta —hacia arriba en el popup, hacia abajo en la app—

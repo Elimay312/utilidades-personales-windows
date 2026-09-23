@@ -511,11 +511,17 @@ void DrawSidebar(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& the
 // --- The detail panel -----------------------------------------------------------------------
 
 constexpr std::wstring_view kDetailLabelNames[2][kDetailLabels] = {
-    {L"Título", L"Fecha", L"Inicio", L"Fin", L"Calendario", L"Ubicación", L"Notas", L"Repetición"},
-    {L"Title", L"Date", L"Start", L"End", L"Calendar", L"Location", L"Notes", L"Repeat"}};
+    {L"Título", L"Fecha", L"Inicio", L"Fin", L"Calendario", L"Ubicación", L"Notas", L"Repetición",
+     L"Aviso"},
+    {L"Title", L"Date", L"Start", L"End", L"Calendar", L"Location", L"Notes", L"Repeat",
+     L"Reminder"}};
 constexpr std::wstring_view kRepeatNames[2][kRepeatChoices] = {
     {L"Nunca", L"Diaria", L"Semanal", L"Mensual", L"Anual"},
     {L"Never", L"Daily", L"Weekly", L"Monthly", L"Yearly"}};
+// "Auto" is the calendar's own reminders, which is what every event is born with.
+constexpr std::wstring_view kReminderNames[2][kReminderChoices] = {
+    {L"Auto", L"Ninguno", L"10 min", L"1 h", L"1 día"},
+    {L"Default", L"None", L"10 min", L"1 h", L"1 day"}};
 
 // A field's text, laid out the way it is drawn: one line that scrolls to keep the caret in
 // sight, or -- for the notes -- wrapped inside the box. The drawing and the click both build
@@ -720,6 +726,30 @@ void DrawDetail(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
     DrawTextIn(target, fonts.label.Get(), T(L"Personalizada: se conserva", L"Custom: kept as is"),
                D2D1_RECT_F{layout.labels[7].left + std::round(80.0f * type), layout.labels[7].top,
                            layout.labels[7].right, layout.labels[7].bottom},
+               brush, Align::Right);
+  }
+
+  // The reminder, drawn like the repetition, and a list set on the web kept the same way.
+  const ReminderChoice reminder = ReminderOf(detail.event.reminders);
+  for (int i = 0; i < kReminderChoices; ++i) {
+    const bool on = static_cast<int>(reminder) == i;
+    const D2D1_RECT_F pill = layout.reminder[i];
+    const float radius = (pill.bottom - pill.top) / 2.0f;
+    brush->SetColor(on ? theme.accent : theme.panelOpaque);
+    FillRound(target, pill, radius, brush);
+    if (!on) {
+      brush->SetColor(theme.border);
+      StrokeRound(target, pill, radius, brush, 1.0f);
+    }
+    brush->SetColor(on ? theme.onAccent : theme.textSecondary);
+    DrawTextIn(target, fonts.label.Get(), kReminderNames[English() ? 1 : 0][i], pill, brush,
+               Align::Center);
+  }
+  if (reminder == ReminderChoice::Custom) {
+    brush->SetColor(theme.textSecondary);
+    DrawTextIn(target, fonts.label.Get(), T(L"Personalizado: se conserva", L"Custom: kept as is"),
+               D2D1_RECT_F{layout.labels[8].left + std::round(80.0f * type), layout.labels[8].top,
+                           layout.labels[8].right, layout.labels[8].bottom},
                brush, Align::Right);
   }
 

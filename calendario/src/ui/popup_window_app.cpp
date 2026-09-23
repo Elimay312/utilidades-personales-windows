@@ -1056,6 +1056,15 @@ void PopupWindow::SaveDetail(const EventDetail& event, unsigned edits) {
   // The rest arrives with the worker's "something changed", a moment from now.
 }
 
+void PopupWindow::ChooseReminder(ReminderChoice choice) {
+  const DetailModel& detail = app_.detail;
+  if (!detail.open || ReminderOf(detail.event.reminders) == choice) return;
+  EventDetail event = detail.event;
+  // The e-mail reminders Google has for it ride along untouched.
+  event.reminders = RemindersFor(choice, event.reminders);
+  SaveDetail(event, kEditReminders);
+}
+
 void PopupWindow::StoreEvent(const EventDetail& event, unsigned edits) {
   store_->UpdateEvent(event, edits);
   if (sync_ != nullptr) sync_->Push();
@@ -1246,6 +1255,9 @@ bool PopupWindow::OnDetailLeftDown(float x, float y) {
         event.recurrence = RuleFor(repeat, event.startDay);
         SaveDetail(event, kEditRecurrence);
       }
+    }
+    for (int i = 0; i < kReminderChoices; ++i) {
+      if (Inside(layout.reminder[i], x, y)) ChooseReminder(static_cast<ReminderChoice>(i));
     }
   }
   Invalidate();

@@ -51,6 +51,7 @@ constexpr int kFieldIds = 5000;
 constexpr int kChooserId = 5100;
 constexpr int kDeleteId = 5101;
 constexpr int kRepeatIds = 5200;
+constexpr int kReminderIds = 5300;
 
 bool Within(int id, int base, int count) { return id >= base && id < base + count; }
 
@@ -365,6 +366,14 @@ bool PopupWindow::OnDetailControlKey(WPARAM key) {
       }
       break;
     }
+    case kControlReminder: {
+      if (key != VK_LEFT && key != VK_RIGHT && key != VK_UP && key != VK_DOWN) return true;
+      const ReminderChoice now = ReminderOf(detail.event.reminders);
+      const int at = now == ReminderChoice::Custom ? 0 : static_cast<int>(now);
+      const int step = key == VK_LEFT || key == VK_UP ? -1 : 1;
+      ChooseReminder(static_cast<ReminderChoice>(std::clamp(at + step, 0, kReminderChoices - 1)));
+      break;
+    }
     case kControlDelete:
       if (key == VK_SPACE || key == VK_RETURN) AskDelete(detail.event.uid);
       break;
@@ -618,6 +627,15 @@ void PopupWindow::UpdateRing() {
           const D2D1_RECT_F& pill = layout.repeat[static_cast<int>(repeat)];
           set(Inset(pill, -pad), (pill.bottom - pill.top) / 2.0f + pad);
         }
+      } else if (detail.control == kControlReminder) {
+        const ReminderChoice reminder = ReminderOf(detail.event.reminders);
+        const int last = kReminderChoices - 1;
+        const D2D1_RECT_F pill =
+            reminder == ReminderChoice::Custom
+                ? D2D1_RECT_F{layout.reminder[0].left, layout.reminder[0].top,
+                              layout.reminder[last].right, layout.reminder[last].bottom}
+                : layout.reminder[static_cast<int>(reminder)];
+        set(Inset(pill, -pad), (pill.bottom - pill.top) / 2.0f + pad);
       } else {
         set(Inset(layout.remove, -pad), radius);
       }
@@ -891,6 +909,23 @@ std::vector<A11yNode> PopupWindow::A11yNodes() {
     choice.focused = keysHere && detail.control == kControlRepeat && choice.selected == 1;
     nodes.push_back(std::move(choice));
   }
+  const std::wstring_view reminders[kReminderChoices] = {
+      T(L"Los del calendario", L"The calendar's"), T(L"Ninguno", L"None"),
+      T(L"10 minutos antes", L"10 minutes before"), T(L"1 hora antes", L"1 hour before"),
+      T(L"1 día antes", L"1 day before")};
+  const ReminderChoice reminder = ReminderOf(detail.event.reminders);
+  for (int i = 0; i < kReminderChoices; ++i) {
+    A11yNode choice;
+    choice.id = kReminderIds + i;
+    choice.parent = kDetailId;
+    choice.type = UIA_RadioButtonControlTypeId;
+    choice.name = std::wstring(T(L"Aviso: ", L"Reminder: ")) + std::wstring(reminders[i]);
+    choice.rect = layout.reminder[i];
+    choice.selected = static_cast<int>(reminder) == i ? 1 : 0;
+    choice.focusable = true;
+    choice.focused = keysHere && detail.control == kControlReminder && choice.selected == 1;
+    nodes.push_back(std::move(choice));
+  }
   A11yNode remove;
   remove.id = kDeleteId;
   remove.parent = kDetailId;
@@ -966,6 +1001,8 @@ void PopupWindow::A11ySelect(int id) {
     EventDetail event = app_.detail.event;
     event.recurrence = RuleFor(static_cast<Repeat>(id - kRepeatIds), event.startDay);
     SaveDetail(event, kEditRecurrence);
+  } else if (Within(id, kReminderIds, kReminderChoices)) {
+    ChooseReminder(static_cast<ReminderChoice>(id - kReminderIds));
   }
   Invalidate();
 }
@@ -1012,6 +1049,8 @@ void PopupWindow::A11yFocus(int id) {
     FocusDetailStop(kDetailFields + kControlCalendar);
   } else if (Within(id, kRepeatIds, kRepeatChoices)) {
     FocusDetailStop(kDetailFields + kControlRepeat);
+  } else if (Within(id, kReminderIds, kReminderChoices)) {
+    FocusDetailStop(kDetailFields + kControlReminder);
   } else if (id == kDeleteId) {
     FocusDetailStop(kDetailFields + kControlDelete);
   }

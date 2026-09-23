@@ -241,23 +241,58 @@ TEST_CASE("an event's reminders are the notification ones, or its calendar's") {
   event["reminders"] = {{"useDefault", true}};
   CHECK_FALSE(ReadEvent(event)->reminders.has_value());
 
-  // Its own: the e-mail one is Google's to send, so only the notifications stay.
+  // Its own: the e-mail one is Google's to send, and is kept marked so it can go back up.
   event["reminders"] = {{"useDefault", false},
                         {"overrides",
                          {{{"method", "email"}, {"minutes", 1440}},
                           {{"method", "popup"}, {"minutes", 10}},
                           {{"method", "popup"}, {"minutes", 60}}}}};
-  CHECK(ReadEvent(event)->reminders == std::optional<std::string>("10,60"));
+  CHECK(ReadEvent(event)->reminders == std::optional<std::string>("m1440,10,60"));
 
   // Switched off on purpose is an empty list, which is not the same as the calendar's.
   event["reminders"] = {{"useDefault", false}};
   CHECK(ReadEvent(event)->reminders == std::optional<std::string>(""));
 }
 
+TEST_CASE("reminders go up only when they were chosen here, e-mail ones included") {
+  EventRow row = *ReadEvent(AllDay("2026-09-23", "2026-09-24"));
+  row.reminders = "m1440,60";
+  CHECK_FALSE(WriteEvent(row, "").contains("reminders"));
+  const nlohmann::json body = WriteEvent(row, "", kEditReminders);
+  CHECK(body["reminders"]["useDefault"] == false);
+  CHECK(body["reminders"]["overrides"] ==
+        nlohmann::json::array({{{"method", "email"}, {"minutes", 1440}},
+                               {{"method", "popup"}, {"minutes", 60}}}));
+  // The calendar's is Google's useDefault, with no list at all.
+  row.reminders.reset();
+  CHECK(WriteEvent(row, "", kEditReminders)["reminders"] ==
+        nlohmann::json({{"useDefault", true}}));
+  // None is an empty list, which is not the calendar's.
+  row.reminders = "";
+  CHECK(WriteEvent(row, "", kEditReminders)["reminders"]["overrides"].empty());
+  CHECK(UpdateEdits(UpdateOp(kEditReminders | kEditLocation)) ==
+        (kEditReminders | kEditLocation));
+}
+
+TEST_CASE("the panel's five reminder answers, keeping the e-mail ones") {
+  CHECK(ReminderOf(std::nullopt) == ReminderChoice::Calendar);
+  CHECK(ReminderOf(std::string()) == ReminderChoice::None);
+  CHECK(ReminderOf(std::string("m1440")) == ReminderChoice::None);
+  CHECK(ReminderOf(std::string("10")) == ReminderChoice::TenMinutes);
+  CHECK(ReminderOf(std::string("m30,60")) == ReminderChoice::OneHour);
+  CHECK(ReminderOf(std::string("1440")) == ReminderChoice::OneDay);
+  CHECK(ReminderOf(std::string("10,60")) == ReminderChoice::Custom);
+  CHECK(RemindersFor(ReminderChoice::OneDay, std::string("10,m30")) ==
+        std::optional<std::string>("1440,m30"));
+  CHECK(RemindersFor(ReminderChoice::None, std::string("10,m30")) ==
+        std::optional<std::string>("m30"));
+  CHECK_FALSE(RemindersFor(ReminderChoice::Calendar, std::string("10")).has_value());
+}
+
 TEST_CASE("a calendar's default reminders are read the same way") {
   const nlohmann::json list = {{{"method", "popup"}, {"minutes", 30}},
                                {{"method", "email"}, {"minutes", 10}}};
-  CHECK(ReadReminders(list) == "30");
+  CHECK(ReadReminders(list) == "30,m10");
   CHECK(ReadReminders(nlohmann::json::array()).empty());
   CHECK(ReadReminders(nlohmann::json::object()).empty());
 }

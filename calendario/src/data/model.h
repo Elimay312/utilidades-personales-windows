@@ -105,7 +105,73 @@ struct EventDetail {
   std::optional<int> startMin;    // empty means all day
   Date endDay{};
   std::optional<int> endMin;
+  // As events.reminders keeps them: nullopt is "the calendar's" (Google's useDefault), an empty
+  // string is none, otherwise minutes before the start, "10,60", with Google's e-mail ones
+  // written "m1440" so they go back up untouched when the list is edited here.
+  std::optional<std::string> reminders;
 };
+
+// The five answers the detail panel offers for the reminder, and Custom for a list that is none
+// of them -- "10,60" set on the web -- which the panel shows and keeps.
+enum class ReminderChoice { Calendar, None, TenMinutes, OneHour, OneDay, Custom };
+inline constexpr int kReminderChoices = 5;
+
+inline ReminderChoice ReminderOf(const std::optional<std::string>& reminders) {
+  if (!reminders) return ReminderChoice::Calendar;
+  // Only the notification ones count; the e-mail ones are Google's business.
+  std::string popups;
+  for (size_t at = 0; at <= reminders->size();) {
+    size_t comma = reminders->find(',', at);
+    if (comma == std::string::npos) comma = reminders->size();
+    const std::string_view item = std::string_view(*reminders).substr(at, comma - at);
+    if (!item.empty() && item.front() != 'm') {
+      if (!popups.empty()) popups += ',';
+      popups += item;
+    }
+    at = comma + 1;
+  }
+  if (popups.empty()) return ReminderChoice::None;
+  if (popups == "10") return ReminderChoice::TenMinutes;
+  if (popups == "60") return ReminderChoice::OneHour;
+  if (popups == "1440") return ReminderChoice::OneDay;
+  return ReminderChoice::Custom;
+}
+
+// The list for an answer, keeping whatever e-mail reminders `current` had. "The calendar's" is
+// Google's useDefault, which has no list of its own at all.
+inline std::optional<std::string> RemindersFor(ReminderChoice choice,
+                                               const std::optional<std::string>& current) {
+  std::string out;
+  switch (choice) {
+    case ReminderChoice::Calendar:
+    case ReminderChoice::Custom:
+      return std::nullopt;
+    case ReminderChoice::TenMinutes:
+      out = "10";
+      break;
+    case ReminderChoice::OneHour:
+      out = "60";
+      break;
+    case ReminderChoice::OneDay:
+      out = "1440";
+      break;
+    case ReminderChoice::None:
+      break;
+  }
+  if (current) {
+    for (size_t at = 0; at <= current->size();) {
+      size_t comma = current->find(',', at);
+      if (comma == std::string::npos) comma = current->size();
+      const std::string_view item = std::string_view(*current).substr(at, comma - at);
+      if (!item.empty() && item.front() == 'm') {
+        if (!out.empty()) out += ',';
+        out += item;
+      }
+      at = comma + 1;
+    }
+  }
+  return out;
+}
 
 // What an edit touched beyond the times and the title, which always go up. The queue has no
 // payload (schema.cpp), so the operation itself says it: "update+location+recurrence".
@@ -116,11 +182,14 @@ struct EventDetail {
 // it with every move would bring back the occurrences somebody deleted on the web.
 inline constexpr unsigned kEditLocation = 1u;
 inline constexpr unsigned kEditRecurrence = 2u;
+// The reminders were changed here (phase 11), so this once they go up instead of coming down.
+inline constexpr unsigned kEditReminders = 4u;
 
 inline std::string UpdateOp(unsigned edits) {
   std::string op = "update";
   if (edits & kEditLocation) op += "+location";
   if (edits & kEditRecurrence) op += "+recurrence";
+  if (edits & kEditReminders) op += "+reminders";
   return op;
 }
 
@@ -128,6 +197,7 @@ inline unsigned UpdateEdits(std::string_view op) {
   unsigned edits = 0;
   if (op.find("+location") != std::string_view::npos) edits |= kEditLocation;
   if (op.find("+recurrence") != std::string_view::npos) edits |= kEditRecurrence;
+  if (op.find("+reminders") != std::string_view::npos) edits |= kEditReminders;
   return edits;
 }
 

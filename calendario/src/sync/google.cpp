@@ -213,14 +213,18 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
   // the column, and this is how they learn it without losing to a tie on updated_at. A location
   // typed here is never overwritten this way.
   //
-  // The reminders ride along whoever wins too: Agenda never edits them, so Google's are always
-  // the right ones, and a tie on updated_at must not keep a stale list.
+  // The reminders ride along whoever wins too, so a tie on updated_at never keeps a stale
+  // list -- unless a list chosen here is still waiting to go up (phase 11): that one is newer
+  // than anything Google can be sending back.
   //
   // Which series an occurrence belongs to is Google's bookkeeping as well.
   if (std::optional<Stmt> stmt = db.Prepare(
-          "UPDATE events SET etag = ?, remote_id = ?, reminders = ?, "
-          "  location = CASE WHEN location = '' THEN ? ELSE location END, "
-          "  series_id = NULLIF(?, ''), original_day = NULLIF(?, '') WHERE uid = ?")) {
+          "UPDATE events SET etag = ?1, remote_id = ?2, "
+          "  reminders = CASE WHEN EXISTS (SELECT 1 FROM pending_ops WHERE uid = ?7 "
+          "                                AND op LIKE '%+reminders%') "
+          "              THEN reminders ELSE ?3 END, "
+          "  location = CASE WHEN location = '' THEN ?4 ELSE location END, "
+          "  series_id = NULLIF(?5, ''), original_day = NULLIF(?6, '') WHERE uid = ?7")) {
     stmt->Bind(1, row->etag);
     stmt->Bind(2, row->remoteId);
     BindReminders(*stmt, 3, row->reminders);
@@ -371,7 +375,7 @@ Outgoing LoadEvent(Db& db, const std::wstring& uid) {
   std::optional<Stmt> stmt = db.Prepare(
       "SELECT calendar_id, title, notes, start_day, start_min, end_day, end_min, recurrence, "
       "       remote_id, etag, updated_at, deleted_at, location, moved_from, series_id, "
-      "       original_day "
+      "       original_day, reminders "
       "FROM events WHERE uid = ?");
   if (!stmt) return out;
   stmt->Bind(1, uid);
@@ -393,6 +397,7 @@ Outgoing LoadEvent(Db& db, const std::wstring& uid) {
   out.event.location = stmt->Text(12);
   out.movedFrom = stmt->IsNull(13) ? std::string() : stmt->Text(13);
   out.occurrence = !stmt->IsNull(14);
+  if (!stmt->IsNull(16)) out.event.reminders = stmt->Text(16);
 
   // An occurrence detached here ("solo este") has never had an id of its own, but it has one at
   // Google already, inside its series: worked out from the series' current start. A series

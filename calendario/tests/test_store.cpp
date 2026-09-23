@@ -500,6 +500,28 @@ TEST_CASE("search finds titles, places and notes without caring about accents or
   CHECK(store->Search(L"reunion", today, 2).size() == 2);
 }
 
+TEST_CASE("a reminder chosen in the panel is written, queued, and rings at its minute") {
+  Open store;
+  const Date day = Day(2026, 9, 23);
+  const std::wstring uid = store->Create(EventAt(L"Dentista", day, 17 * 60, 18 * 60)).uid;
+  store.settle();
+  EventDetail edit = *store->Event(uid);
+  CHECK_FALSE(edit.reminders.has_value());  // born with the calendar's
+  edit.reminders = "60,m1440";
+  store->UpdateEvent(edit, kEditReminders);
+  store.settle();
+  CHECK(store->Event(uid)->reminders == std::optional<std::string>("60,m1440"));
+  CHECK(CountRows(store->db(),
+                  "SELECT COUNT(*) FROM pending_ops WHERE op = 'update+reminders'") == 1);
+  // An hour before, and the e-mail one says nothing here.
+  const long long due = WallMinute(day, 16 * 60);
+  const std::vector<Reminder> found = store->DueReminders(due - 1, due);
+  REQUIRE(found.size() == 1);
+  CHECK(found[0].minutesBefore == 60);
+  CHECK(store->DueReminders(WallMinute(day, 16 * 60 + 50) - 1, WallMinute(day, 16 * 60 + 50))
+            .empty());
+}
+
 TEST_CASE("a reminder falls due once, at its minute, and not before or after") {
   Open store;
   const Date day = Day(2026, 9, 23);

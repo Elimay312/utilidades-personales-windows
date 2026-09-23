@@ -1,6 +1,7 @@
 #include "sync/map.h"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <ctime>
 #include <format>
@@ -206,10 +207,15 @@ std::string ReadReminders(const nlohmann::json& list) {
   std::string out;
   if (!list.is_array()) return out;
   for (const nlohmann::json& reminder : list) {
-    if (!reminder.is_object() || Str(reminder, "method") != "popup") continue;
+    if (!reminder.is_object()) continue;
+    const std::string method = Str(reminder, "method");
+    if (method != "popup" && method != "email") continue;
     const auto minutes = reminder.find("minutes");
     if (minutes == reminder.end() || !minutes->is_number_integer()) continue;
     if (!out.empty()) out += ',';
+    // The e-mail ones are kept apart with an "m", so the notifications skip them and an edit
+    // made here sends them back to Google as they were.
+    if (method == "email") out += 'm';
     out += std::to_string(minutes->get<int>());
   }
   return out;
@@ -360,6 +366,29 @@ nlohmann::json WriteEvent(const EventRow& row, std::string_view id, unsigned edi
 
   const bool creating = !id.empty();
   if (!row.location.empty() || (edits & kEditLocation)) body["location"] = row.location;
+
+  // Only when they were chosen here: left out, Google keeps whatever it has.
+  if (edits & kEditReminders) {
+    nlohmann::json reminders = nlohmann::json::object();
+    reminders["useDefault"] = !row.reminders.has_value();
+    if (row.reminders) {
+      nlohmann::json overrides = nlohmann::json::array();
+      std::string_view rest = *row.reminders;
+      while (!rest.empty()) {
+        const size_t comma = rest.find(',');
+        std::string_view item = rest.substr(0, comma);
+        rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+        const bool email = item.starts_with('m');
+        if (email) item.remove_prefix(1);
+        int minutes = 0;
+        const auto [end, error] = std::from_chars(item.data(), item.data() + item.size(), minutes);
+        if (error != std::errc{} || end != item.data() + item.size()) continue;
+        overrides.push_back({{"method", email ? "email" : "popup"}, {"minutes", minutes}});
+      }
+      reminders["overrides"] = std::move(overrides);
+    }
+    body["reminders"] = std::move(reminders);
+  }
 
   // This body is a PATCH, so a field left out is a field Google keeps. A modification says
   // nothing about the repetition unless the repetition is what was edited -- and then an empty

@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "data/model.h"
 #include "ui/layout.h"
 #include "ui/paint.h"
 
@@ -280,11 +281,12 @@ inline AppLayout MakeAppLayout(D2D1_SIZE_F size, const PanelLayout& popup, AppVi
 enum DetailField { kFieldTitle, kFieldDate, kFieldStart, kFieldEnd, kFieldLocation, kFieldNotes };
 inline constexpr int kDetailFields = 6;
 inline constexpr int kRepeatChoices = 5;  // Nunca, Diaria, Semanal, Mensual, Anual
-// Título, Fecha, Inicio, Fin, Calendario, Ubicación, Notas, Repetición.
-inline constexpr int kDetailLabels = 8;
+// Título, Fecha, Inicio, Fin, Calendario, Ubicación, Notas, Repetición, Aviso.
+inline constexpr int kDetailLabels = 9;
 
-// What the keyboard reaches in the panel that is not a text field.
-enum DetailControl { kControlCalendar, kControlRepeat, kControlDelete };
+// What the keyboard reaches in the panel that is not a text field. The reminder came last
+// (phase 11), so it is last here too and the others keep their numbers.
+enum DetailControl { kControlCalendar, kControlRepeat, kControlDelete, kControlReminder };
 
 // The order Tab walks the panel in, top to bottom as it reads. A text field is its own index; a
 // control is kDetailFields plus its own.
@@ -296,6 +298,7 @@ inline constexpr int kDetailStops[] = {kFieldTitle,
                                        kFieldLocation,
                                        kFieldNotes,
                                        kDetailFields + kControlRepeat,
+                                       kDetailFields + kControlReminder,
                                        kDetailFields + kControlDelete};
 
 struct DetailLayout {
@@ -305,6 +308,7 @@ struct DetailLayout {
   D2D1_RECT_F fields[kDetailFields]{};
   D2D1_RECT_F calendar{};
   D2D1_RECT_F repeat[kRepeatChoices]{};
+  D2D1_RECT_F reminder[kReminderChoices]{};
   D2D1_RECT_F remove{};
   float pad = 0.0f;
   float fieldHeight = 0.0f;
@@ -366,6 +370,18 @@ inline DetailLayout MakeDetailLayout(const AppLayout& app) {
   for (int i = 0; i < kRepeatChoices; ++i) {
     const float pillLeft = left + static_cast<float>(i) * (pill + app.gap);
     out.repeat[i] = D2D1_RECT_F{pillLeft, pillTop, pillLeft + pill, pillTop + at(28.0f)};
+  }
+  y = pillTop + at(28.0f) + row;
+
+  // The reminder: the same five pills, under the repetition.
+  const float reminderTop = labelled(8, right);
+  const float reminderPill =
+      (right - left - static_cast<float>(kReminderChoices - 1) * app.gap) /
+      static_cast<float>(kReminderChoices);
+  for (int i = 0; i < kReminderChoices; ++i) {
+    const float pillLeft = left + static_cast<float>(i) * (reminderPill + app.gap);
+    out.reminder[i] =
+        D2D1_RECT_F{pillLeft, reminderTop, pillLeft + reminderPill, reminderTop + at(28.0f)};
   }
 
   out.remove = D2D1_RECT_F{left, out.panel.bottom - out.pad - out.fieldHeight, right,

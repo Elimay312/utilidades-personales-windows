@@ -59,8 +59,9 @@ struct EventRow {
   // the series' id at Google (`recurringEventId`) and the day it had (`originalStartTime`).
   std::string seriesId;
   std::string originalDay;
-  // Minutes before the start, "10,60", of the notification reminders; nullopt is Google's
-  // useDefault -- the calendar's own list -- and an empty string is "no reminders at all".
+  // Minutes before the start, "10,60", of the notification reminders, and the e-mail ones as
+  // "m1440"; nullopt is Google's useDefault -- the calendar's own list -- and an empty string is
+  // "no reminders at all".
   std::optional<std::string> reminders;
   std::int64_t updatedAt = 0;  // epoch seconds UTC, the one instant in the schema
   bool cancelled = false;      // how a deletion arrives in an incremental pass
@@ -116,7 +117,9 @@ std::string LocalZoneName();
 std::optional<Wall> ReadStamp(const nlohmann::json& node);
 
 // A list of Google reminders -- an event's `overrides` or a calendar's `defaultReminders` --
-// as the minutes of the notification ones, "10,60". E-mail reminders are Google's to send.
+// as the minutes of the notification ones, "10,60", and the e-mail ones with an "m", "m1440".
+// Google sends the e-mails itself; they are kept only to go back up whole when the list is
+// edited here, and the notifications skip them.
 std::string ReadReminders(const nlohmann::json& list);
 
 // '#039be5' as 0x039BE5. Nullopt for anything that is not six hex digits behind a hash.

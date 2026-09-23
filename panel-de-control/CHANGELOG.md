@@ -6,6 +6,34 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
 
 ### Añadido
 
+- **Fase 2: los controles, todavía con datos de ejemplo.**
+  - **Tiles y utilidades:** hover con un fundido de 120 ms, y al pulsarlos se hunden al 97 %. Si
+    sueltas el botón fuera del tile, no pasa nada.
+  - **Deslizadores:**
+    - un clic lleva la barra a ese punto y se puede arrastrar;
+    - la rueda mueve un 2 % por muesca;
+    - el porcentaje aparece en la cabecera mientras los tocas;
+    - el icono del altavoz silencia, y subir el volumen quita el silencio, como hace el HUD.
+  - **Tarjetas desplegables:**
+    - van con un muelle de 250 ms de periodo y se pueden interrumpir: un segundo clic a mitad
+      da la vuelta desde donde está, sin saltos;
+    - el chevron gira con el mismo muelle;
+    - la ventana crece hacia arriba, anclada a la esquina;
+    - en el brillo, la barra única viaja hasta la fila de su pantalla mientras se funde.
+  - **Teclado completo:**
+    - `Tab`, flechas, `RePág`/`AvPág`, `Inicio`/`Fin`, `Espacio`/`Enter` y `Esc`;
+    - un anillo de foco que solo sale tras usar el teclado, como en Windows.
+  - **Reloj de fotogramas:** es el de Agenda (`vsync`). Todo lo que se mueve va con él, y se
+    para en cuanto nada se mueve.
+  - **Vista `panel-estados`** en `--render-snapshot`.
+  - **Pruebas:** 22 casos, 7 de ellos nuevos, para lo que hay bajo el ratón, el orden del foco,
+    el valor de un deslizador según la posición y el muelle.
+  - **Medido en esta máquina** (una pantalla, al 125 %):
+    - desplegar el brillo lleva la ventana de 490 a 668 px en 22 fotogramas de 15,9 ms, a la
+      frecuencia del monitor;
+    - dibujar cuesta 1,3-1,9 ms por fotograma;
+    - escondido, 0 ms de CPU en 20 s.
+
 - **Fase 1: el esqueleto, con datos de ejemplo.**
   - `Ctrl+Alt+A` abre y cierra el panel abajo a la derecha del monitor del ratón: sube 8 DIP
     en 160 ms y se funde en 120, como Agenda.

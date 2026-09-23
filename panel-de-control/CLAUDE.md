@@ -120,11 +120,13 @@ src/
   core/          config, log, paths, hr, i18n (de calendario/src/core), hotkey.h (de
                  calendario/src/app), options (--monitor, --render-snapshot, --theme)
   model/         state.h: PanelState, el esquema único; sample.cpp: los datos de ejemplo
-  ui/            panel_window (ventana y composición), panel_view (el dibujo), layout (todos
-                 los rectángulos, puro), theme, paint, glyphs, snapshot
+  ui/            panel_window (ventana, composición y entrada), panel_view (el dibujo),
+                 layout (todos los rectángulos, puro), controls (qué hay bajo el ratón, orden
+                 del foco, valor de un deslizador; puro), spring, vsync (de Agenda), theme,
+                 paint, glyphs, snapshot
   system/        (desde la fase 3) audio, policy_config, brightness, display_ids, radios,
                  nightlight_blob, nightlight, apps, worker
-tests/           doctest: hotkey, options, layout
+tests/           doctest: hotkey, options, layout, controls
 assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
 ```
 
@@ -170,6 +172,32 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   cuando haya algo que se cambie a menudo.
 - **`small` es una macro de `rpcndr.h`** (`#define small char`). La fuente de 11 se llama
   `caption`.
+
+### Decisiones de la fase 2
+
+- **Un solo reloj para todo lo que se mueve.** Es `FrameClock` (de Agenda), que avisa una vez
+  por fotograma compuesto. Mueve los fundidos de hover, el hundido de los botones y los muelles
+  de las tarjetas, y se para cuando nada se mueve. No hay `SetTimer` de 16 ms: se desfasa con
+  la frecuencia del monitor.
+- **Muelle de las tarjetas:** 250 ms de periodo y amortiguación 0,85 (`ui/spring.h`, al
+  estilo de Brújula). La prueba mide 6-60 fotogramas hasta el reposo, y en la app, unos 200 ms
+  visibles. Si se siente lento o brusco, se toca el periodo, y se juzga con la app delante.
+- **Mientras una tarjeta se mueve, el buffer ya tiene el tamaño final.** Así crecer es un
+  `SetWindowPos` por fotograma y no un `ResizeBuffers`, que parpadearía. Es lo que hace la
+  expansión de Agenda. Al llegar al reposo, el buffer vuelve al tamaño de la ventana.
+- **Una fila que todavía entra en su tarjeta no se puede pulsar**, ni con el ratón ni con Tab
+  (`Shown` en `controls.h`). Solo cuenta lo que la tarjeta enseña entero.
+- **Hacer clic en algo le da el foco**, pero sin anillo, como en Windows. Las flechas mueven el
+  foco hasta que llegan a un deslizador; ahí cambian su valor.
+- **Los niveles se guardan en porcentajes enteros** (`Quantize`). Lo que dice la cabecera es
+  lo que se escribe, y WMI solo acepta enteros.
+- **Las acciones aún cambian solo `state_`** (`PanelWindow::Activate` y `SetSliderLevel`).
+  Esos dos son los sitios donde cada fase siguiente conecta la llamada real.
+- **Cómo se prueba sin mover el ratón:** los clics y las teclas se postean
+  (`WM_LBUTTONDOWN`/`WM_MOUSEMOVE`/`WM_LBUTTONUP`/`WM_KEYDOWN`). El hover real no se puede
+  probar así: `TrackMouseEvent` ve que el cursor no está encima y lo quita al momento. Si el
+  usuario está usando el equipo, un clic suyo esconde el panel a mitad de una prueba; eso es
+  lo correcto, no un fallo.
 
 ## Convenciones
 
@@ -233,7 +261,7 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   - el diseño pintado de forma estática;
   - `--render-snapshot`;
   - el menú del clic derecho: «Abrir panel.json» y «Salir».
-- [ ] **2. Controles:**
+- [x] **2. Controles:**
   - tile, deslizador, sección que se despliega y chip de utilidad;
   - estados de hover, pulsado y foco;
   - uso completo con el teclado.
@@ -273,6 +301,7 @@ build\debug\Panel.exe --monitor=3
 build\debug\Panel.exe --render-snapshot=panel --out=docs\img\panel.png
 build\debug\Panel.exe --render-snapshot=panel-brillo --out=docs\img\panel-brillo.png
 build\debug\Panel.exe --render-snapshot=panel-volumen --out=docs\img\panel-volumen.png
+build\debug\Panel.exe --render-snapshot=panel-estados --out=docs\img\panel-estados.png
 build\debug\Panel.exe --render-snapshot=panel --theme=light --out=docs\img\panel-claro.png
 build\debug\Panel.exe --render-snapshot=panel --theme=contrast --out=docs\img\panel-contraste.png
 powershell -NoProfile -ExecutionPolicy Bypass -File auditar.ps1

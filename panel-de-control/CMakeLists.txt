@@ -58,6 +58,7 @@ add_executable(Panel WIN32
   src/ui/panel_window.cpp
   src/ui/snapshot.cpp
   src/ui/theme.cpp
+  src/ui/vsync.cpp
   assets/panel.rc)
 target_include_directories(Panel PRIVATE src)
 target_compile_options(Panel PRIVATE ${PANEL_WARNINGS})
@@ -70,6 +71,7 @@ target_link_options(Panel PRIVATE /MANIFEST:NO)
 enable_testing()
 add_executable(panel_tests
   tests/main.cpp
+  tests/test_controls.cpp
   tests/test_hotkey.cpp
   tests/test_layout.cpp
   tests/test_options.cpp

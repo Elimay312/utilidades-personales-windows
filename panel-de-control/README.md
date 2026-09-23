@@ -6,9 +6,10 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
 
 ![El panel](docs/img/panel.png)
 
-> **Estado: fase 1 de 8.** El panel se abre, se cierra y se ve como será, pero **todavía no
-> controla nada**: lo que enseña son datos de ejemplo. Cada fase siguiente conecta una parte
-> de verdad (volumen, brillo, radios, luz nocturna, utilidades). El plan está en
+> **Estado: fase 2 de 8.** El panel ya se usa entero con el ratón y con el teclado: los tiles
+> se encienden, los deslizadores se arrastran y las tarjetas se despliegan. Pero **todavía no
+> controla nada del equipo**: lo que mueve son datos de ejemplo. Cada fase siguiente conecta
+> una parte de verdad (volumen, brillo, radios, luz nocturna, utilidades). El plan está en
 > [`docs/superpowers/plans/2026-09-23-panel-de-control.md`](docs/superpowers/plans/2026-09-23-panel-de-control.md).
 
 | Brillo desplegado | Volumen desplegado | Tema claro |
@@ -39,6 +40,23 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
 | `Ctrl+Alt+A` | Abre o cierra el panel. Se cambia con `hotkey` en `panel.json` |
 | `Esc`, `Alt+F4` o clic fuera | Esconde el panel |
 | Clic derecho en el panel | Menú con «Abrir panel.json» y «Salir» |
+
+Dentro del panel:
+
+| Tecla | Qué hace |
+|---|---|
+| `Tab` / `Shift+Tab` | Pasa al control siguiente o al anterior |
+| Flechas | Fuera de un deslizador, mueven el foco. Dentro, suben o bajan un 2 % |
+| `RePág` / `AvPág` | En un deslizador, ±10 % |
+| `Inicio` / `Fin` | En un deslizador, 0 % o 100 % |
+| `Espacio` o `Enter` | Pulsa lo que tiene el foco: enciende un tile, despliega una tarjeta, elige una salida. En el volumen, silencia |
+
+Con el ratón:
+- **Tiles y utilidades:** un clic los activa.
+- **Deslizadores:** un clic en la barra la lleva a ese punto, y se puede arrastrar. La rueda
+  sube o baja un 2 % por muesca.
+- **Silencio:** clic en el icono del altavoz.
+- **Tarjetas:** se despliegan con un clic en su título.
 
 `Win+A` no se puede usar: es el panel de Windows, y el sistema no deja que otra aplicación
 lo registre.
@@ -72,8 +90,9 @@ build\debug\Panel.exe --render-snapshot=panel --out=docs\img\panel.png
 powershell -NoProfile -ExecutionPolicy Bypass -File auditar.ps1
 ```
 
-Las vistas de `--render-snapshot` son `panel`, `panel-brillo` y `panel-volumen`. `--theme`
-acepta `dark`, `light` y `contrast`.
+Las vistas de `--render-snapshot` son `panel`, `panel-brillo`, `panel-volumen` y
+`panel-estados`. La última enseña a la vez el hover, el anillo de foco y la tarjeta de brillo a
+medio abrir. `--theme` acepta `dark`, `light` y `contrast`.
 
 ## Seguridad
 

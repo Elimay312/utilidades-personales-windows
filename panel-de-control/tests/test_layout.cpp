@@ -31,8 +31,8 @@ TEST_CASE("closed, the panel is the design's 344 x 392") {
 
 TEST_CASE("nothing sticks out of the panel or overlaps the next section") {
   const PanelState state = Sample(3, 3, 5);
-  for (const Expanded open : {Expanded{}, Expanded{true, false}, Expanded{false, true},
-                              Expanded{true, true}}) {
+  for (const Expanded open : {Expanded{}, Expanded{1.0f, 0.0f}, Expanded{0.0f, 1.0f},
+                              Expanded{1.0f, 1.0f}}) {
     const PanelLayout layout = MakeLayout(open, state);
     const D2D1_RECT_F whole{0.0f, 0.0f, layout.width, layout.height};
     for (const D2D1_RECT_F& tile : layout.tiles) CHECK(Inside(tile, whole));
@@ -55,19 +55,34 @@ TEST_CASE("nothing sticks out of the panel or overlaps the next section") {
 TEST_CASE("opening a card grows the panel by exactly what it shows") {
   const PanelState state = Sample(3, 3, 5);
   const float closed = MakeLayout(Expanded{}, state).height;
-  const float brightness = MakeLayout(Expanded{true, false}, state).height;
-  const float audio = MakeLayout(Expanded{false, true}, state).height;
+  const float brightness = MakeLayout(Expanded{1.0f, 0.0f}, state).height;
+  const float audio = MakeLayout(Expanded{0.0f, 1.0f}, state).height;
   // Three rows instead of one slider.
   CHECK(brightness - closed ==
         doctest::Approx(3 * kDisplayRowDip + 2 * kDisplayRowGapDip - kSliderHeightDip));
   CHECK(audio - closed == doctest::Approx(kGapDip + 5.0f + 3 * kOutputRowDip - kPadDip + kGapDip / 2));
-  CHECK(MakeLayout(Expanded{true, true}, state).height ==
+  CHECK(MakeLayout(Expanded{1.0f, 1.0f}, state).height ==
         doctest::Approx(closed + (brightness - closed) + (audio - closed)));
+}
+
+TEST_CASE("a card halfway open is halfway between, and the rest moves with it") {
+  const PanelState state = Sample(3, 3, 5);
+  const PanelLayout closed = MakeLayout(Expanded{}, state);
+  const PanelLayout open = MakeLayout(Expanded{1.0f, 0.0f}, state);
+  const PanelLayout half = MakeLayout(Expanded{0.5f, 0.0f}, state);
+  CHECK(half.brightnessCard.bottom ==
+        doctest::Approx((closed.brightnessCard.bottom + open.brightnessCard.bottom) / 2.0f));
+  CHECK(half.audioCard.top - closed.audioCard.top ==
+        doctest::Approx(half.brightnessCard.bottom - closed.brightnessCard.bottom));
+  // The rows are laid out where they will end up, and the card clips them on the way.
+  REQUIRE(half.displayRows.size() == 3);
+  CHECK(half.displayRows[2].slider.top == doctest::Approx(open.displayRows[2].slider.top));
+  CHECK(half.displayRows[2].slider.bottom > half.brightnessCard.bottom);
 }
 
 TEST_CASE("an open card with nothing to list stays closed") {
   const PanelState empty = Sample(0, 0, 5);
-  CHECK(MakeLayout(Expanded{true, true}, empty).height ==
+  CHECK(MakeLayout(Expanded{1.0f, 1.0f}, empty).height ==
         doctest::Approx(MakeLayout(Expanded{}, empty).height));
 }
 

@@ -23,6 +23,7 @@ inline constexpr std::wstring_view kSnapshotViews[] = {
     L"panel",          // as it opens
     L"panel-brillo",   // with the brightness card open: one slider per screen
     L"panel-volumen",  // with the volume card open: the list of outputs
+    L"panel-estados",  // hover, the keyboard's ring and the brightness card halfway open
 };
 
 inline bool KnowsSnapshotView(std::wstring_view view) {

@@ -8,14 +8,18 @@
 #include <dxgi1_2.h>
 #include <wrl/client.h>
 
+#include <chrono>
 #include <string>
 #include <string_view>
 
 #include "model/state.h"
+#include "ui/controls.h"
 #include "ui/layout.h"
 #include "ui/paint.h"
 #include "ui/panel_view.h"
+#include "ui/spring.h"
 #include "ui/theme.h"
+#include "ui/vsync.h"
 
 namespace panel {
 
@@ -48,7 +52,8 @@ class PanelWindow {
   void Backdrop(bool on);
   bool CreateDevices();
   void Place(const RECT& work);
-  void Resize(SIZE size);
+  void Relayout();
+  void Buffer(SIZE want);
   void Render();
   void Rest();
   void Animate(bool opening);
@@ -59,10 +64,33 @@ class PanelWindow {
   void FollowMonitor();
   void ShowMenu(POINT screen);
 
+  // Input. Coordinates are DIP from the panel's top left.
+  D2D1_POINT_2F ToDip(LPARAM lparam) const;
+  void OnMouseMove(float x, float y);
+  void OnLeftDown(float x, float y);
+  void OnLeftUp(float x, float y);
+  void OnWheel(int delta);
+  bool OnKey(WPARAM key);
+  void Activate(Target target);
+  void ToggleCard(bool& goal);
+  float SliderLevel(Target target) const;
+  void SetSliderLevel(Target target, float level);
+  void Nudge(Target target, float by);
+  void KeepFocusValid();
+  void UpdateHot();
+
+  // Animation: everything that moves inside the panel steps on one clock, once per composed
+  // frame, and the clock stops when nothing is moving.
+  void StartAnimating();
+  void OnFrame();
+  bool StepInks(float seconds);
+
   HWND hwnd_ = nullptr;
   HMONITOR monitor_ = nullptr;
   UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
-  SIZE size_{};
+  RECT work_{};
+  SIZE size_{};    // the window
+  SIZE buffer_{};  // the swap chain: the window's size, or the size the window is growing to
   bool visible_ = false;
   bool placing_ = false;
   bool backdrop_ = false;  // DWM accepted the system backdrop at all
@@ -74,6 +102,26 @@ class PanelWindow {
   PanelState state_;
   ViewState view_;
   PanelLayout layout_;
+
+  Target hover_;     // under the mouse
+  Target pressed_;   // the button went down on it and has not come up
+  Target dragging_;  // the slider that has the mouse captured
+  bool tracking_ = false;  // TrackMouseEvent is watching for the mouse to leave
+  bool mouseIn_ = false;
+  D2D1_POINT_2F mouse_{};  // the last place the mouse was seen, to hit test again after a relayout
+
+  bool brightnessGoal_ = false;
+  bool audioGoal_ = false;
+  Spring brightnessSpring_;
+  Spring audioSpring_;
+  FrameClock clock_;
+  bool animating_ = false;
+  std::chrono::steady_clock::time_point lastFrame_{};
+  // What the last card movement cost, logged when it comes to rest: the acceptance criterion
+  // "moves at the monitor's rate" is checked against this line, not by eye alone.
+  int cardFrames_ = 0;
+  double cardRenderMs_ = 0.0;
+  std::chrono::steady_clock::time_point cardStart_{};
 
   Microsoft::WRL::ComPtr<ID3D11Device> d3d_;
   Microsoft::WRL::ComPtr<IDXGISwapChain1> swapChain_;

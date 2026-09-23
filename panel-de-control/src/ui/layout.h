@@ -5,6 +5,7 @@
 #include <d2d1.h>
 #include <shellscalingapi.h>  // GetDpiForMonitor
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <vector>
@@ -68,10 +69,11 @@ inline RECT PlaceRect(const RECT& work, D2D1_SIZE_F size, UINT dpi) {
               bottom};
 }
 
-// Which cards are open. The only view state the layout depends on.
+// How open each card is, 0 closed and 1 open, and anything in between while its spring runs
+// (a hair over 1 on the overshoot). The only view state the layout depends on.
 struct Expanded {
-  bool brightness = false;
-  bool audio = false;
+  float brightness = 0.0f;
+  float audio = 0.0f;
 };
 
 struct DisplayRow {
@@ -89,7 +91,8 @@ struct PanelLayout {
   D2D1_RECT_F brightnessCard{};
   D2D1_RECT_F brightnessHeader{};      // the title line; the chevron sits at its right end
   D2D1_RECT_F brightnessSlider{};      // closed: the one slider for the monitor it opened on
-  std::vector<DisplayRow> displayRows; // open: one per screen
+  std::vector<DisplayRow> displayRows; // opening or open: one per screen, laid out as if open
+                                       // and clipped to the card while it grows
 
   D2D1_RECT_F audioCard{};
   D2D1_RECT_F audioHeader{};
@@ -126,19 +129,22 @@ inline PanelLayout MakeLayout(Expanded open, const PanelState& state) {
   layout.brightnessHeader =
       D2D1_RECT_F{left + inner, cardTop + inner, right - inner, cardTop + inner + kHeaderHeightDip};
   y = layout.brightnessHeader.bottom + kGapDip;
-  if (open.brightness && displays > 0) {
+  layout.brightnessSlider = D2D1_RECT_F{left + inner, y, right - inner, y + kSliderHeightDip};
+  const float closedBottom = y + kSliderHeightDip;
+  float openBottom = closedBottom;
+  if (open.brightness > 0.0f && displays > 0) {
+    float row = y;
     for (size_t i = 0; i < displays; ++i) {
-      DisplayRow row;
-      row.label = D2D1_RECT_F{left + inner, y, right - inner, y + kHeaderHeightDip};
-      const float sliderTop = y + kDisplayRowDip - kSliderHeightDip;
-      row.slider = D2D1_RECT_F{left + inner, sliderTop, right - inner, sliderTop + kSliderHeightDip};
-      layout.displayRows.push_back(row);
-      y += kDisplayRowDip + (i + 1 < displays ? kDisplayRowGapDip : 0.0f);
+      DisplayRow r;
+      r.label = D2D1_RECT_F{left + inner, row, right - inner, row + kHeaderHeightDip};
+      const float sliderTop = row + kDisplayRowDip - kSliderHeightDip;
+      r.slider = D2D1_RECT_F{left + inner, sliderTop, right - inner, sliderTop + kSliderHeightDip};
+      layout.displayRows.push_back(r);
+      row += kDisplayRowDip + (i + 1 < displays ? kDisplayRowGapDip : 0.0f);
     }
-  } else {
-    layout.brightnessSlider = D2D1_RECT_F{left + inner, y, right - inner, y + kSliderHeightDip};
-    y += kSliderHeightDip;
+    openBottom = row;
   }
+  y = closedBottom + (openBottom - closedBottom) * std::max(open.brightness, 0.0f);
   y += inner;
   layout.brightnessCard = D2D1_RECT_F{left, cardTop, right, y};
   y += kGapDip;
@@ -150,19 +156,20 @@ inline PanelLayout MakeLayout(Expanded open, const PanelState& state) {
   y = layout.audioHeader.bottom + kGapDip;
   layout.audioSlider = D2D1_RECT_F{left + inner, y, right - inner, y + kSliderHeightDip};
   y += kSliderHeightDip;
-  if (open.audio && outputs > 0) {
-    y += kGapDip;
-    layout.outputsDivider = D2D1_RECT_F{left + inner, y, right - inner, y + 1.0f};
-    y += 1.0f + 4.0f;
+  const float audioClosed = y + inner;
+  float audioOpen = audioClosed;
+  if (open.audio > 0.0f && outputs > 0) {
+    float row = y + kGapDip;
+    layout.outputsDivider = D2D1_RECT_F{left + inner, row, right - inner, row + 1.0f};
+    row += 1.0f + 4.0f;
     for (size_t i = 0; i < outputs; ++i) {
       // The rows run the card's full width, so their hover wash reaches its edges.
-      layout.outputRows.push_back(D2D1_RECT_F{left + 4.0f, y, right - 4.0f, y + kOutputRowDip});
-      y += kOutputRowDip;
+      layout.outputRows.push_back(D2D1_RECT_F{left + 4.0f, row, right - 4.0f, row + kOutputRowDip});
+      row += kOutputRowDip;
     }
-    y += kGapDip / 2.0f;
-  } else {
-    y += inner;
+    audioOpen = row + kGapDip / 2.0f;
   }
+  y = audioClosed + (audioOpen - audioClosed) * std::max(open.audio, 0.0f);
   layout.audioCard = D2D1_RECT_F{left, audioTop, right, y};
   y += kGapDip;
 

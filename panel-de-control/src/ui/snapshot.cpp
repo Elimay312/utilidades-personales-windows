@@ -70,15 +70,21 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme,
 
   const PanelState state = SampleState();
   ViewState viewState;
-  viewState.open.brightness = view == L"panel-brillo";
-  viewState.open.audio = view == L"panel-volumen";
   // A still has no mouse, so each view pretends one slider is being touched: that is the only
   // way the percentages ever reach a PNG.
-  if (viewState.open.brightness) {
-    viewState.hot = Hot::Display;
-    viewState.hotDisplay = 0;
-  } else {
-    viewState.hot = Hot::Volume;
+  viewState.hot = Target{Part::VolumeSlider};
+  if (view == L"panel-brillo") {
+    viewState.open.brightness = 1.0f;
+    viewState.hot = Target{Part::DisplaySlider, 0};
+  } else if (view == L"panel-volumen") {
+    viewState.open.audio = 1.0f;
+  } else if (view == L"panel-estados") {
+    // Caught halfway through opening, where the clip and the crossfade show; the mouse on the
+    // settings tile, pressed; and the keyboard on the volume slider.
+    viewState.open.brightness = 0.5f;
+    viewState.inks = {Ink{Target{Part::Tile, 3}, 1.0f, 1.0f}, Ink{Target{Part::Mute}, 1.0f, 0.0f}};
+    viewState.focus = Target{Part::VolumeSlider};
+    viewState.focusVisible = true;
   }
 
   const PanelLayout layout = MakeLayout(viewState.open, state);

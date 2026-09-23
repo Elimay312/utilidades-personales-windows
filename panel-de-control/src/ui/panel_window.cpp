@@ -4,7 +4,8 @@
 #include <shellapi.h>
 #include <windowsx.h>
 
-#include <chrono>
+#include <algorithm>
+#include <cmath>
 
 #include "core/config.h"
 #include "core/hr.h"
@@ -18,9 +19,19 @@ namespace {
 
 constexpr wchar_t kClassName[] = L"PanelDeControl";
 constexpr UINT_PTR kHideTimer = 1;
+constexpr UINT kFrameMessage = WM_APP + 1;
 // Agenda's timings: one vocabulary of movement for the two popups in the same corner.
 constexpr UINT kOpenMs = 160;
 constexpr UINT kCloseMs = 120;
+// A colour crossing delays no click, so it can take the time it needs to read as a
+// fade and not as a cut (Brújula's kInkMs, and the lesson that came with it). Pressing is
+// quicker in than out: the sink answers the finger, the return is just the tile settling.
+constexpr float kInkSeconds = 0.120f;
+constexpr float kPressInSeconds = 0.060f;
+constexpr float kPressOutSeconds = 0.120f;
+
+constexpr float kStep = 0.02f;      // arrows and one notch of the wheel
+constexpr float kPageStep = 0.10f;  // Page Up and Page Down
 
 constexpr UINT kMenuOpenConfig = 1;
 constexpr UINT kMenuQuit = 2;
@@ -47,13 +58,24 @@ bool WorkArea(HMONITOR monitor, RECT& work) {
   return true;
 }
 
+// Whole percents: what the header shows, what WMI takes and what the keyboard steps by, so the
+// number on screen is always the number that was set.
+float Quantize(float level) { return std::round(std::clamp(level, 0.0f, 1.0f) * 100.0f) / 100.0f; }
+
+bool Walk(float& value, float goal, float seconds, float duration) {
+  if (value == goal) return false;
+  const float step = duration > 0.0f ? seconds / duration : 1.0f;
+  value = value < goal ? std::min(goal, value + step) : std::max(goal, value - step);
+  return value != goal;
+}
+
 }  // namespace
 
 bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view theme) {
   monitor_ = monitor;
   themeChoice_ = theme;
   theme_ = ResolveTheme(themeChoice_);
-  // Phase 1: made-up data. Each later phase replaces one part of it with the real thing.
+  // Made-up data until each later phase replaces one part of it with the real thing.
   state_ = SampleState();
   if (!fonts_.Create()) LogError(L"panel: DirectWrite is unavailable, opening without text");
 
@@ -130,8 +152,8 @@ bool PanelWindow::CreateDevices() {
   if (Failed(adapter->GetParent(IID_PPV_ARGS(&factory)), L"IDXGIAdapter::GetParent")) return false;
 
   DXGI_SWAP_CHAIN_DESC1 description{};
-  description.Width = static_cast<UINT>(size_.cx);
-  description.Height = static_cast<UINT>(size_.cy);
+  description.Width = static_cast<UINT>(buffer_.cx);
+  description.Height = static_cast<UINT>(buffer_.cy);
   description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
   description.SampleDesc.Count = 1;
   description.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -173,9 +195,9 @@ bool PanelWindow::CreateDevices() {
 
 void PanelWindow::Place(const RECT& work) {
   placing_ = true;
+  work_ = work;
   layout_ = MakeLayout(view_.open, state_);
-
-  RECT rect = PlaceRect(work, layout_.size(), dpi_);
+  RECT rect = PlaceRect(work_, layout_.size(), dpi_);
   SetWindowPos(hwnd_, HWND_TOPMOST, rect.left, rect.top, rect.right - rect.left,
                rect.bottom - rect.top, SWP_NOACTIVATE);
   // Now that the window sits on the target monitor its real DPI is known. Fixing it while the
@@ -183,20 +205,47 @@ void PanelWindow::Place(const RECT& work) {
   const UINT dpi = MonitorDpi(hwnd_);
   if (dpi != 0 && dpi != dpi_) {
     dpi_ = dpi;
-    rect = PlaceRect(work, layout_.size(), dpi_);
+    rect = PlaceRect(work_, layout_.size(), dpi_);
     SetWindowPos(hwnd_, HWND_TOPMOST, rect.left, rect.top, rect.right - rect.left,
                  rect.bottom - rect.top, SWP_NOACTIVATE);
   }
-  Resize(SIZE{rect.right - rect.left, rect.bottom - rect.top});
+  size_ = SIZE{rect.right - rect.left, rect.bottom - rect.top};
+  Buffer(size_);
   placing_ = false;
 }
 
-void PanelWindow::Resize(SIZE size) {
-  if (size.cx == size_.cx && size.cy == size_.cy) return;
-  size_ = size;
+void PanelWindow::Relayout() {
+  layout_ = MakeLayout(view_.open, state_);
+  const RECT rect = PlaceRect(work_, layout_.size(), dpi_);
+  const SIZE size{rect.right - rect.left, rect.bottom - rect.top};
+  if (size.cx != size_.cx || size.cy != size_.cy) {
+    // Anchored at the bottom: a card that opens pushes the top of the panel up, and the corner
+    // it sits in stays put, like the taskbar's own flyouts.
+    SetWindowPos(hwnd_, nullptr, rect.left, rect.top, size.cx, size.cy,
+                 SWP_NOACTIVATE | SWP_NOZORDER);
+    size_ = size;
+  }
+  // While a card moves, the buffer is already the size the panel is going to, so growing the
+  // window every frame is a SetWindowPos and never a ResizeBuffers, which is what would flicker
+  // (Agenda's expansion does the same). It comes back to the window's size once at rest.
+  SIZE want = size_;
+  if (animating_) {
+    const PanelLayout goal =
+        MakeLayout(Expanded{brightnessGoal_ ? 1.0f : 0.0f, audioGoal_ ? 1.0f : 0.0f}, state_);
+    const RECT goalRect = PlaceRect(work_, goal.size(), dpi_);
+    want.cy = std::max(want.cy, goalRect.bottom - goalRect.top);
+  }
+  Buffer(want);
+  // The same pointer is over something else now that everything below the card moved.
+  if (mouseIn_ && dragging_.empty()) hover_ = HitTest(layout_, state_, mouse_.x, mouse_.y);
+}
+
+void PanelWindow::Buffer(SIZE want) {
+  if (want.cx == buffer_.cx && want.cy == buffer_.cy) return;
+  buffer_ = want;
   if (!swapChain_) return;  // still creating the devices, which will pick up the new size
   dc_->SetTarget(nullptr);
-  Failed(swapChain_->ResizeBuffers(0, static_cast<UINT>(size_.cx), static_cast<UINT>(size_.cy),
+  Failed(swapChain_->ResizeBuffers(0, static_cast<UINT>(buffer_.cx), static_cast<UINT>(buffer_.cy),
                                    DXGI_FORMAT_UNKNOWN, 0),
          L"IDXGISwapChain1::ResizeBuffers");
 }
@@ -271,8 +320,12 @@ void PanelWindow::Show() {
 
   RECT work{};
   if (!WorkArea(TargetMonitor(monitor_), work)) return;
-  // It always opens with the cards closed: what it shows first is the same every time.
+  // It always opens the same way: cards closed, nothing hovered, no keyboard ring.
   view_ = ViewState{};
+  brightnessGoal_ = audioGoal_ = false;
+  brightnessSpring_.Snap(0.0f);
+  audioSpring_.Snap(0.0f);
+  hover_ = pressed_ = dragging_ = Target{};
   const Theme theme = ResolveTheme(themeChoice_);
   const bool flipped = theme.light != theme_.light;
   theme_ = theme;
@@ -295,6 +348,12 @@ void PanelWindow::Show() {
 void PanelWindow::Hide() {
   if (hwnd_ == nullptr || !visible_) return;
   visible_ = false;
+  if (!dragging_.empty()) {
+    dragging_ = Target{};
+    ReleaseCapture();
+  }
+  clock_.Pause();
+  animating_ = false;
   Backdrop(false);
   Render();
   Animate(/*opening=*/false);
@@ -341,7 +400,7 @@ void PanelWindow::FollowTheme() {
 
 void PanelWindow::FollowMonitor() {
   // A scale change on the panel's own monitor arrives as a setting or display change and not
-  // as WM_DPICHANGED (Agenda, phase 7), so open or not, it is laid out again where it is.
+  // as WM_DPICHANGED (Agenda, phase 7), so it is laid out again where it is.
   if (!visible_ || placing_) return;
   RECT work{};
   if (!WorkArea(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), work)) return;
@@ -374,6 +433,313 @@ void PanelWindow::ShowMenu(POINT screen) {
   }
 }
 
+// --- Input ------------------------------------------------------------------------------
+
+D2D1_POINT_2F PanelWindow::ToDip(LPARAM lparam) const {
+  const float scale = static_cast<float>(USER_DEFAULT_SCREEN_DPI) / static_cast<float>(dpi_);
+  return D2D1_POINT_2F{static_cast<float>(GET_X_LPARAM(lparam)) * scale,
+                       static_cast<float>(GET_Y_LPARAM(lparam)) * scale};
+}
+
+void PanelWindow::OnMouseMove(float x, float y) {
+  mouse_ = D2D1_POINT_2F{x, y};
+  mouseIn_ = true;
+  if (!tracking_) {
+    TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, hwnd_, 0};
+    tracking_ = TrackMouseEvent(&track) != FALSE;
+  }
+  if (!dragging_.empty()) {
+    // A drag follows the pointer even outside the slider, and past its ends it just pins.
+    SetSliderLevel(dragging_, SliderValueAt(RectOf(layout_, dragging_), x));
+    Render();
+    return;
+  }
+  const Target over = HitTest(layout_, state_, x, y);
+  if (over == hover_) return;
+  hover_ = over;
+  UpdateHot();
+  StartAnimating();
+  Render();
+}
+
+void PanelWindow::OnLeftDown(float x, float y) {
+  // The mouse is in charge again: the keyboard's ring goes until a key brings it back.
+  view_.focusVisible = false;
+  const Target target = HitTest(layout_, state_, x, y);
+  hover_ = target;
+  pressed_ = target;
+  if (!target.empty() && target.part != Part::Mute) view_.focus = target;
+  if (IsSlider(target.part)) {
+    // Straight to where the click was, then it follows the pointer until the button comes up.
+    dragging_ = target;
+    SetCapture(hwnd_);
+    SetSliderLevel(target, SliderValueAt(RectOf(layout_, target), x));
+  }
+  UpdateHot();
+  StartAnimating();
+  Render();
+}
+
+void PanelWindow::OnLeftUp(float x, float y) {
+  if (!dragging_.empty()) {
+    // The last value, on release: DDC/CI writes at most every so often while dragging and
+    // always once here, so the monitor ends exactly where the pointer did (SEGURIDAD.md 2.4).
+    SetSliderLevel(dragging_, SliderValueAt(RectOf(layout_, dragging_), x));
+    dragging_ = Target{};
+    pressed_ = Target{};
+    ReleaseCapture();
+  } else {
+    const Target released = HitTest(layout_, state_, x, y);
+    const Target pressed = pressed_;
+    pressed_ = Target{};
+    // Only if it comes up on what it went down on: sliding off a tile is how you change your
+    // mind about pressing it.
+    if (!pressed.empty() && pressed == released) Activate(pressed);
+  }
+  hover_ = HitTest(layout_, state_, x, y);
+  UpdateHot();
+  StartAnimating();
+  Render();
+}
+
+void PanelWindow::OnWheel(int delta) {
+  Target target = hover_;
+  if (target.part == Part::Mute) target = Target{Part::VolumeSlider};
+  if (!IsSlider(target.part)) return;
+  Nudge(target, kStep * static_cast<float>(delta) / WHEEL_DELTA);
+  UpdateHot();
+  Render();
+}
+
+bool PanelWindow::OnKey(WPARAM key) {
+  const std::vector<Target> order = FocusOrder(layout_, state_);
+  Target& focus = view_.focus;
+  const bool slider = IsSlider(focus.part);
+  const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+
+  switch (key) {
+    case VK_ESCAPE:
+      Hide();
+      return true;
+    case VK_TAB:
+      focus = NextFocus(order, focus, shift);
+      break;
+    case VK_LEFT:
+    case VK_DOWN:
+      if (slider) Nudge(focus, -kStep);
+      else focus = NextFocus(order, focus, /*backwards=*/true);
+      break;
+    case VK_RIGHT:
+    case VK_UP:
+      if (slider) Nudge(focus, kStep);
+      else focus = NextFocus(order, focus, /*backwards=*/false);
+      break;
+    case VK_PRIOR:
+    case VK_NEXT:
+      if (!slider) return false;
+      Nudge(focus, key == VK_PRIOR ? kPageStep : -kPageStep);
+      break;
+    case VK_HOME:
+    case VK_END:
+      if (!slider) return false;
+      SetSliderLevel(focus, key == VK_END ? 1.0f : 0.0f);
+      break;
+    case VK_SPACE:
+    case VK_RETURN:
+      if (focus.empty()) return false;
+      // On the volume slider, Space is the mute button it carries at its left end.
+      Activate(focus.part == Part::VolumeSlider ? Target{Part::Mute} : focus);
+      break;
+    default:
+      return false;
+  }
+  view_.focusVisible = true;
+  UpdateHot();
+  Render();
+  return true;
+}
+
+void PanelWindow::Activate(Target target) {
+  // Phase 2: every action changes the made-up state and nothing else. Each later phase puts the
+  // real call here, one part at a time.
+  switch (target.part) {
+    case Part::Tile:
+      if (target.index == 0 && state_.wifi.available) state_.wifi.on = !state_.wifi.on;
+      if (target.index == 1 && state_.bluetooth.available) state_.bluetooth.on = !state_.bluetooth.on;
+      if (target.index == 2 && state_.night.supported) state_.night.on = !state_.night.on;
+      // Index 3, settings: not wired to anything yet. The press shows; nothing happens.
+      break;
+    case Part::BrightnessHeader:
+      if (!state_.displays.empty()) ToggleCard(brightnessGoal_);
+      break;
+    case Part::AudioHeader:
+      if (!state_.audio.outputs.empty()) ToggleCard(audioGoal_);
+      break;
+    case Part::Mute:
+      if (state_.audio.available) state_.audio.muted = !state_.audio.muted;
+      break;
+    case Part::Output:
+      if (state_.audio.canSwitch && target.index < state_.audio.outputs.size()) {
+        for (size_t i = 0; i < state_.audio.outputs.size(); ++i) {
+          state_.audio.outputs[i].isDefault = i == target.index;
+        }
+        state_.audio.device = state_.audio.outputs[target.index].name;
+      }
+      break;
+    case Part::App:
+      if (target.index < state_.apps.size()) state_.apps[target.index].running = !state_.apps[target.index].running;
+      break;
+    default:
+      break;
+  }
+}
+
+void PanelWindow::ToggleCard(bool& goal) {
+  // The spring starts from wherever it is: interrupting a card halfway is just a new target.
+  goal = !goal;
+  KeepFocusValid();
+  StartAnimating();
+}
+
+float PanelWindow::SliderLevel(Target target) const {
+  switch (target.part) {
+    case Part::BrightnessSlider: {
+      const DisplayState* here = HereDisplay(state_);
+      return here != nullptr ? here->level : 0.0f;
+    }
+    case Part::DisplaySlider:
+      return target.index < state_.displays.size() ? state_.displays[target.index].level : 0.0f;
+    case Part::VolumeSlider:
+      return state_.audio.level;
+    default:
+      return 0.0f;
+  }
+}
+
+void PanelWindow::SetSliderLevel(Target target, float level) {
+  level = Quantize(level);
+  switch (target.part) {
+    case Part::BrightnessSlider: {
+      const DisplayState* here = HereDisplay(state_);
+      if (here == nullptr) return;
+      state_.displays[static_cast<size_t>(here - state_.displays.data())].level = level;
+      break;
+    }
+    case Part::DisplaySlider:
+      if (target.index >= state_.displays.size()) return;
+      state_.displays[target.index].level = level;
+      break;
+    case Part::VolumeSlider:
+      state_.audio.level = level;
+      // Turning it up is wanting to hear it, like the HUD does with the keys.
+      if (level > 0.0f) state_.audio.muted = false;
+      break;
+    default:
+      return;
+  }
+}
+
+void PanelWindow::Nudge(Target target, float by) { SetSliderLevel(target, SliderLevel(target) + by); }
+
+void PanelWindow::KeepFocusValid() {
+  // A row that is folding away takes the keyboard back to its card's header, which is where
+  // the key that folded it was.
+  Target& focus = view_.focus;
+  if (focus.part == Part::DisplaySlider && !brightnessGoal_) focus = Target{Part::BrightnessHeader};
+  if (focus.part == Part::BrightnessSlider && brightnessGoal_) focus = Target{Part::BrightnessHeader};
+  if (focus.part == Part::Output && !audioGoal_) focus = Target{Part::AudioHeader};
+}
+
+void PanelWindow::UpdateHot() {
+  // The percentage shows for the slider being dragged, else the one under the mouse, else the
+  // one the keyboard is on.
+  if (!dragging_.empty()) {
+    view_.hot = dragging_;
+  } else if (IsSlider(hover_.part) || hover_.part == Part::Mute) {
+    view_.hot = hover_;
+  } else if (view_.focusVisible && IsSlider(view_.focus.part)) {
+    view_.hot = view_.focus;
+  } else {
+    view_.hot = Target{};
+  }
+}
+
+// --- Animation ------------------------------------------------------------------------
+
+void PanelWindow::StartAnimating() {
+  if (!AnimationsEnabled()) {
+    // No movement: every fade and every card lands where it is going, now.
+    brightnessSpring_.Snap(brightnessGoal_ ? 1.0f : 0.0f);
+    audioSpring_.Snap(audioGoal_ ? 1.0f : 0.0f);
+    view_.open = Expanded{brightnessSpring_.x, audioSpring_.x};
+    StepInks(1000.0f);
+    Relayout();
+    return;
+  }
+  if (animating_) return;
+  animating_ = true;
+  lastFrame_ = std::chrono::steady_clock::now();
+  clock_.Run(hwnd_, kFrameMessage);
+}
+
+bool PanelWindow::StepInks(float seconds) {
+  // Whatever the mouse is on or pressing gets an ink, so it can fade in.
+  for (const Target& wanted : {hover_, pressed_}) {
+    if (!wanted.empty() && view_.InkOf(wanted) == nullptr) view_.inks.push_back(Ink{wanted});
+  }
+  bool moving = false;
+  for (Ink& ink : view_.inks) {
+    const float hoverGoal = ink.target == hover_ ? 1.0f : 0.0f;
+    const float pressGoal = ink.target == pressed_ && pressed_ == hover_ ? 1.0f : 0.0f;
+    moving |= Walk(ink.hover, hoverGoal, seconds, kInkSeconds);
+    moving |= Walk(ink.press, pressGoal, seconds, pressGoal > ink.press ? kPressInSeconds : kPressOutSeconds);
+  }
+  std::erase_if(view_.inks, [this](const Ink& ink) {
+    return ink.hover == 0.0f && ink.press == 0.0f && ink.target != hover_ && ink.target != pressed_;
+  });
+  return moving;
+}
+
+void PanelWindow::OnFrame() {
+  clock_.Taken();
+  if (!animating_) return;
+  const auto now = std::chrono::steady_clock::now();
+  const float seconds = std::chrono::duration<float>(now - lastFrame_).count();
+  lastFrame_ = now;
+
+  bool moving = brightnessSpring_.Step(seconds, brightnessGoal_ ? 1.0f : 0.0f);
+  moving |= audioSpring_.Step(seconds, audioGoal_ ? 1.0f : 0.0f);
+  const Expanded open{std::max(0.0f, brightnessSpring_.x), std::max(0.0f, audioSpring_.x)};
+  const bool resized = open.brightness != view_.open.brightness || open.audio != view_.open.audio;
+  view_.open = open;
+  moving |= StepInks(seconds);
+
+  if (resized && cardFrames_ == 0) cardStart_ = now;
+  if (!moving) {
+    // At rest: the clock stops and the buffer comes back to the window's size.
+    clock_.Pause();
+    animating_ = false;
+  }
+  if (resized || !moving) Relayout();
+  UpdateHot();
+  const auto drawStart = std::chrono::steady_clock::now();
+  Render();
+  if (resized) {
+    ++cardFrames_;
+    cardRenderMs_ +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - drawStart).count();
+  }
+  if ((!resized || !moving) && cardFrames_ > 0) {
+    const double total = std::chrono::duration<double, std::milli>(now - cardStart_).count();
+    LogInfo(L"panel: card moved in {} frames over {:.0f} ms ({:.1f} ms a frame, {:.2f} ms to draw)",
+            cardFrames_, total, total / cardFrames_, cardRenderMs_ / cardFrames_);
+    cardFrames_ = 0;
+    cardRenderMs_ = 0.0;
+  }
+}
+
+// --- Window procedure -----------------------------------------------------------------
+
 LRESULT CALLBACK PanelWindow::WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
   if (message == WM_NCCREATE) {
     auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
@@ -388,6 +754,54 @@ LRESULT CALLBACK PanelWindow::WndProc(HWND hwnd, UINT message, WPARAM wparam, LP
 
 LRESULT PanelWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
   switch (message) {
+    case WM_MOUSEMOVE: {
+      const D2D1_POINT_2F point = ToDip(lparam);
+      OnMouseMove(point.x, point.y);
+      return 0;
+    }
+
+    case WM_MOUSELEAVE:
+      tracking_ = false;
+      mouseIn_ = false;
+      if (dragging_.empty()) {
+        hover_ = Target{};
+        UpdateHot();
+        StartAnimating();
+        Render();
+      }
+      return 0;
+
+    case WM_LBUTTONDOWN: {
+      const D2D1_POINT_2F point = ToDip(lparam);
+      OnLeftDown(point.x, point.y);
+      return 0;
+    }
+
+    case WM_LBUTTONUP: {
+      const D2D1_POINT_2F point = ToDip(lparam);
+      OnLeftUp(point.x, point.y);
+      return 0;
+    }
+
+    case WM_CAPTURECHANGED:
+      // Somebody else took the mouse mid-drag -- an alt-tab, a menu. The value stays where it
+      // got to; there is no drag left to finish.
+      if (!dragging_.empty() && reinterpret_cast<HWND>(lparam) != hwnd_) {
+        dragging_ = Target{};
+        pressed_ = Target{};
+        UpdateHot();
+        Render();
+      }
+      break;
+
+    case WM_MOUSEWHEEL:
+      OnWheel(GET_WHEEL_DELTA_WPARAM(wparam));
+      return 0;
+
+    case kFrameMessage:
+      OnFrame();
+      return 0;
+
     case WM_ACTIVATE:
       // It goes when something else is clicked, like Windows' own quick settings.
       if (LOWORD(wparam) == WA_INACTIVE) {
@@ -397,10 +811,7 @@ LRESULT PanelWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       break;
 
     case WM_KEYDOWN:
-      if (wparam == VK_ESCAPE) {
-        Hide();
-        return 0;
-      }
+      if (OnKey(wparam)) return 0;
       break;
 
     case WM_CLOSE:

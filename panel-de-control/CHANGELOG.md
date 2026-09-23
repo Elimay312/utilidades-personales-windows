@@ -6,6 +6,31 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
 
 ### Añadido
 
+- **Fase 3a: el volumen, de verdad.**
+  - El deslizador lee y escribe el volumen maestro de la salida predeterminada con Core Audio.
+    El icono del altavoz silencia de verdad, y subir el volumen quita el silencio, como hace el
+    HUD.
+  - La cabecera dice por dónde sale el sonido con el nombre corto del dispositivo
+    («Auriculares»), y el largo solo si el driver no da el corto. La enmienda a
+    `SEGURIDAD.md` §2.1 va en su propio commit, antes que el código.
+  - **Sigue a la salida:** el aviso de cambio de dispositivo va en el enumerador, y el endpoint
+    viejo se suelta antes de volver a usarse, porque no falla nunca y seguiría dando los números
+    del dispositivo anterior. Es el arreglo que midieron el HUD y la isla.
+  - Los cambios que vienen de fuera (teclas, el HUD, el mezclador de Windows) llegan por aviso,
+    sin consultar en bucle. Con el panel escondido no se hace nada: lee una vez al abrirse.
+  - Las escrituras del panel llevan su propio GUID de contexto, `kPanelVolumeContext`, y su eco
+    se ignora.
+  - Si Core Audio falla de verdad, lo reintenta a los 2 s. Un equipo sin ninguna salida no es un
+    fallo: espera al aviso de que aparezca una.
+  - La lista de salidas de ejemplo se quita de la app hasta la fase 3b, y una tarjeta sin nada
+    que desplegar no dibuja el chevron.
+  - **Probado contra el sistema, con una sonda aparte:**
+    - lee el 100 %, arrastra al 30 %, silencia y quita el silencio;
+    - un cambio desde fuera al 55 % aparece en el panel;
+    - cambiando la salida a «Altavoces» con el panel abierto, el nombre y el nivel (3 %) pasan
+      a los suyos, y al volver quedan «Auriculares» al 100 %;
+    - al terminar, el volumen y la salida del usuario quedaron como estaban.
+
 - **Fase 2: los controles, todavía con datos de ejemplo.**
   - **Tiles y utilidades:** hover con un fundido de 120 ms, y al pulsarlos se hunden al 97 %. Si
     sueltas el botón fuera del tile, no pasa nada.

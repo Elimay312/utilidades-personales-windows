@@ -134,6 +134,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   }
 
   UnregisterHotKey(host, kHotkeyId);
+  window.Shutdown();
   CoUninitialize();
   LogInfo(L"exit");
   return 0;

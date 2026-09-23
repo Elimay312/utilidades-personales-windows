@@ -124,8 +124,8 @@ src/
                  layout (todos los rectángulos, puro), controls (qué hay bajo el ratón, orden
                  del foco, valor de un deslizador; puro), spring, vsync (de Agenda), theme,
                  paint, glyphs, snapshot
-  system/        (desde la fase 3) audio, policy_config, brightness, display_ids, radios,
-                 nightlight_blob, nightlight, apps, worker
+  system/        audio (Core Audio, desde la fase 3a); llegarán policy_config, brightness,
+                 display_ids, radios, nightlight_blob, nightlight, apps y worker
 tests/           doctest: hotkey, options, layout, controls
 assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
 ```
@@ -199,6 +199,30 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   usuario está usando el equipo, un clic suyo esconde el panel a mitad de una prueba; eso es
   lo correcto, no un fallo.
 
+### Decisiones de la fase 3a
+
+- **`Audio` es de la ventana,** y `PanelWindow::Shutdown()` lo suelta desde `main` antes de
+  `CoUninitialize`. Si lo soltara el destructor, sería después de cerrar COM.
+- **El rol es `eMultimedia`,** el mismo que usan el HUD y la isla, y el aviso de cambio se filtra
+  a ese rol. Windows manda un aviso por rol.
+- **El endpoint caducado:** el aviso pone `stale_` y avisa a la ventana; el siguiente
+  `Endpoint()` suelta el viejo antes de usarlo. Así también lo hace una escritura que llegue
+  entre el aviso y el mensaje.
+- **El nombre corto** (`PKEY_Device_DeviceDesc`), con el largo de respaldo. La isla enseña el
+  largo; aquí no cabe en la cabecera.
+- **Escondido no se atienden los avisos del audio.** `Show()` lee una vez, y así un panel
+  cerrado no despierta con cada tecla de volumen.
+- **Solo se escribe un porcentaje nuevo.** Un arrastre manda muchos movimientos dentro del
+  mismo 1 %, y esos no llegan a Core Audio.
+- **Probar sin tocar lo del usuario:** una sonda en PowerShell con su propia interop de Core
+  Audio lee el volumen antes, comprueba cada paso contra Windows y lo deja como estaba. Para
+  cambiar la salida usa `IPolicyConfig`, solo en la sonda, y vuelve a la original en un
+  `finally`. **Pregunta antes de cambiar la salida:** si algo está sonando, se oye un momento
+  por la otra.
+- **Pendiente para la fase 8:** si el HUD está en marcha, arrastrar el deslizador del panel
+  saca también su cápsula. La solución es que el HUD ignore `kPanelVolumeContext`, y toca
+  otro proyecto.
+
 ## Convenciones
 
 - Código, identificadores y comentarios en **inglés**. README, CHANGELOG y estos documentos
@@ -265,7 +289,7 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   - tile, deslizador, sección que se despliega y chip de utilidad;
   - estados de hover, pulsado y foco;
   - uso completo con el teclado.
-- [ ] **3a. Volumen:** Core Audio, el nombre del dispositivo, el silencio y el arreglo del
+- [x] **3a. Volumen:** Core Audio, el nombre del dispositivo, el silencio y el arreglo del
   endpoint caducado.
 - [ ] **3b. Elegir la salida de audio:** `EnumAudioEndpoints` e `IPolicyConfig`.
 - [ ] **4a. Brillo del portátil:** WMI y su evento de cambio.

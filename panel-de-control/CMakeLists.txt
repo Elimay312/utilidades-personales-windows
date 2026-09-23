@@ -53,6 +53,7 @@ add_executable(Panel WIN32
   src/core/log.cpp
   src/core/options.cpp
   src/model/sample.cpp
+  src/system/audio.cpp
   src/ui/paint.cpp
   src/ui/panel_view.cpp
   src/ui/panel_window.cpp

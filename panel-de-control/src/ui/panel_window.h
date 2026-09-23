@@ -13,6 +13,7 @@
 #include <string_view>
 
 #include "model/state.h"
+#include "system/audio.h"
 #include "ui/controls.h"
 #include "ui/layout.h"
 #include "ui/paint.h"
@@ -41,6 +42,8 @@ class PanelWindow {
   void Toggle();
   // One line at the bottom of the panel saying what went wrong; empty takes it away.
   void SetNotice(std::wstring notice);
+  // Lets go of everything that talks to the system. Before COM goes, so from main.
+  void Shutdown();
   bool visible() const { return visible_; }
   HWND hwnd() const { return hwnd_; }
 
@@ -78,6 +81,7 @@ class PanelWindow {
   void Nudge(Target target, float by);
   void KeepFocusValid();
   void UpdateHot();
+  void ReadAudio();
 
   // Animation: everything that moves inside the panel steps on one clock, once per composed
   // frame, and the clock stops when nothing is moving.
@@ -102,6 +106,7 @@ class PanelWindow {
   PanelState state_;
   ViewState view_;
   PanelLayout layout_;
+  Audio audio_;
 
   Target hover_;     // under the mouse
   Target pressed_;   // the button went down on it and has not come up

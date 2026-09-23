@@ -135,15 +135,18 @@ struct Painter {
   // a slider under it is being touched, its percentage. The chevron turns a quarter as the card
   // opens, on the card's own spring, so mid-way it still says which way the card is going.
   void Header(Target self, const D2D1_RECT_F& rect, std::wstring_view title, float open,
-              std::wstring_view percent) const {
-    Wash(Inset(rect, -6.0f, -4.0f), kWashRadiusDip, view.Hover(self));
+              std::wstring_view percent, bool expandable) const {
+    // A card with nothing to unfold has no chevron and no hover: it is not a button then.
+    if (expandable) Wash(Inset(rect, -6.0f, -4.0f), kWashRadiusDip, view.Hover(self));
     const float chevron = 16.0f;
     const D2D1_POINT_2F pivot = Point(rect.right - chevron / 2.0f, MidY(rect));
-    D2D1_MATRIX_3X2_F saved{};
-    target->GetTransform(&saved);
-    target->SetTransform(D2D1::Matrix3x2F::Rotation(90.0f * Unit(open), pivot) * saved);
-    DrawGlyph(target, fonts.iconSmall.Get(), glyph::kChevronRight, pivot, With(theme.textSecondary));
-    target->SetTransform(saved);
+    if (expandable) {
+      D2D1_MATRIX_3X2_F saved{};
+      target->GetTransform(&saved);
+      target->SetTransform(D2D1::Matrix3x2F::Rotation(90.0f * Unit(open), pivot) * saved);
+      DrawGlyph(target, fonts.iconSmall.Get(), glyph::kChevronRight, pivot, With(theme.textSecondary));
+      target->SetTransform(saved);
+    }
 
     const float percentWidth = percent.empty() ? 0.0f : 56.0f;
     DrawTextIn(target, fonts.caption.Get(), percent,
@@ -202,7 +205,8 @@ void DrawBrightness(Painter& p, const PanelLayout& layout, const PanelState& sta
   if (view.hot == Target{Part::BrightnessSlider} && here != nullptr && here->reachable) {
     percent = Percent(here->level);
   }
-  p.Header(Target{Part::BrightnessHeader}, layout.brightnessHeader, title, open, percent);
+  p.Header(Target{Part::BrightnessHeader}, layout.brightnessHeader, title, open, percent,
+           !state.displays.empty());
 
   // Everything under the header is clipped to the card while it grows, and the two contents
   // cross. The one slider does not just fade where it is -- it would sit on the first row's
@@ -268,7 +272,8 @@ void DrawAudio(Painter& p, const PanelLayout& layout, const PanelState& state) {
       audio.available) {
     percent = audio.muted ? std::wstring(T(L"Silencio", L"Muted")) : Percent(audio.level);
   }
-  p.Header(Target{Part::AudioHeader}, layout.audioHeader, title, view.open.audio, percent);
+  p.Header(Target{Part::AudioHeader}, layout.audioHeader, title, view.open.audio, percent,
+           !audio.outputs.empty());
   p.Slider(layout.audioSlider, audio.level, audio.muted ? glyph::kMute : glyph::kVolume,
            audio.muted, view.Hover(Target{Part::Mute}));
 

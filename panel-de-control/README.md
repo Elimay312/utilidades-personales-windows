@@ -6,10 +6,10 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
 
 ![El panel](docs/img/panel.png)
 
-> **Estado: fase 2 de 8.** El panel ya se usa entero con el ratón y con el teclado: los tiles
-> se encienden, los deslizadores se arrastran y las tarjetas se despliegan. Pero **todavía no
-> controla nada del equipo**: lo que mueve son datos de ejemplo. Cada fase siguiente conecta
-> una parte de verdad (volumen, brillo, radios, luz nocturna, utilidades). El plan está en
+> **Estado: fase 3a de 8.** El panel se usa entero con el ratón y con el teclado, y **el
+> volumen ya es el de verdad**: el nivel, el silencio y el nombre de la salida, y sigue a la
+> salida si cambias de dispositivo. Lo demás todavía son datos de ejemplo: brillo, Wi-Fi,
+> Bluetooth, luz nocturna y utilidades. La lista de salidas llega en la fase 3b. El plan está en
 > [`docs/superpowers/plans/2026-09-23-panel-de-control.md`](docs/superpowers/plans/2026-09-23-panel-de-control.md).
 
 | Brillo desplegado | Volumen desplegado | Tema claro |

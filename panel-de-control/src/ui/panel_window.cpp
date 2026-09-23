@@ -19,6 +19,10 @@ namespace {
 
 constexpr wchar_t kClassName[] = L"PanelDeControl";
 constexpr UINT_PTR kHideTimer = 1;
+constexpr UINT_PTR kAudioRetryTimer = 2;
+// After a real Core Audio failure: the HUD's two seconds, soon enough to come back by itself
+// and rare enough to cost nothing while the audio service restarts.
+constexpr UINT kAudioRetryMs = 2000;
 constexpr UINT kFrameMessage = WM_APP + 1;
 // Agenda's timings: one vocabulary of movement for the two popups in the same corner.
 constexpr UINT kOpenMs = 160;
@@ -75,8 +79,10 @@ bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view
   monitor_ = monitor;
   themeChoice_ = theme;
   theme_ = ResolveTheme(themeChoice_);
-  // Made-up data until each later phase replaces one part of it with the real thing.
+  // Made-up data until each later phase replaces one part of it with the real thing. The volume
+  // is real since phase 3a; the list of outputs comes with 3b, so until then there is none.
   state_ = SampleState();
+  state_.audio.outputs.clear();
   if (!fonts_.Create()) LogError(L"panel: DirectWrite is unavailable, opening without text");
 
   WNDCLASSEXW windowClass{};
@@ -101,6 +107,8 @@ bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view
   }
 
   ApplyDwmAttributes();
+  if (!audio_.Start(hwnd_)) LogError(L"panel: Core Audio is unavailable, the volume will not work");
+  ReadAudio();
   Place(work);
   if (!CreateDevices()) return false;
   Rest();
@@ -330,6 +338,9 @@ void PanelWindow::Show() {
   const bool flipped = theme.light != theme_.light;
   theme_ = theme;
   if (flipped) ApplyDwmAttributes();
+  // Hidden, the panel ignores the audio's notifications; it reads once here instead. A change
+  // of device while it was hidden is already flagged, and this read acts on it.
+  ReadAudio();
   Place(work);
   // The material back on before the first frame: it came off when this last closed.
   Backdrop(true);
@@ -370,6 +381,19 @@ void PanelWindow::Hide() {
 void PanelWindow::SetNotice(std::wstring notice) {
   state_.notice = std::move(notice);
   if (visible_) FollowMonitor();
+}
+
+void PanelWindow::Shutdown() {
+  KillTimer(hwnd_, kAudioRetryTimer);
+  audio_.Stop();
+}
+
+void PanelWindow::ReadAudio() {
+  if (audio_.Read(state_.audio) == Audio::Result::Failed) {
+    SetTimer(hwnd_, kAudioRetryTimer, kAudioRetryMs, nullptr);
+  } else {
+    KillTimer(hwnd_, kAudioRetryTimer);
+  }
 }
 
 void PanelWindow::Toggle() {
@@ -576,7 +600,11 @@ void PanelWindow::Activate(Target target) {
       if (!state_.audio.outputs.empty()) ToggleCard(audioGoal_);
       break;
     case Part::Mute:
-      if (state_.audio.available) state_.audio.muted = !state_.audio.muted;
+      if (state_.audio.available && audio_.SetMuted(!state_.audio.muted)) {
+        state_.audio.muted = !state_.audio.muted;
+      } else {
+        ReadAudio();
+      }
       break;
     case Part::Output:
       if (state_.audio.canSwitch && target.index < state_.audio.outputs.size()) {
@@ -629,11 +657,23 @@ void PanelWindow::SetSliderLevel(Target target, float level) {
       if (target.index >= state_.displays.size()) return;
       state_.displays[target.index].level = level;
       break;
-    case Part::VolumeSlider:
-      state_.audio.level = level;
+    case Part::VolumeSlider: {
+      if (!state_.audio.available) return;
       // Turning it up is wanting to hear it, like the HUD does with the keys.
-      if (level > 0.0f) state_.audio.muted = false;
+      const bool unmute = level > 0.0f && state_.audio.muted;
+      // A drag sends many moves inside one percent; only a new percent reaches Core Audio.
+      if (level != state_.audio.level && !audio_.SetLevel(level)) {
+        ReadAudio();
+        return;
+      }
+      if (unmute && !audio_.SetMuted(false)) {
+        ReadAudio();
+        return;
+      }
+      state_.audio.level = level;
+      if (unmute) state_.audio.muted = false;
       break;
+    }
     default:
       return;
   }
@@ -802,6 +842,17 @@ LRESULT PanelWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       OnFrame();
       return 0;
 
+    case kAudioChangedMessage:
+    case kAudioDeviceMessage:
+      // From outside: the keys, the HUD, Windows' own mixer, another output. Hidden, nothing
+      // is done now -- Show reads it all again anyway.
+      if (visible_) {
+        ReadAudio();
+        UpdateHot();
+        Render();
+      }
+      return 0;
+
     case WM_ACTIVATE:
       // It goes when something else is clicked, like Windows' own quick settings.
       if (LOWORD(wparam) == WA_INACTIVE) {
@@ -851,6 +902,11 @@ LRESULT PanelWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       return 0;
 
     case WM_TIMER:
+      if (wparam == kAudioRetryTimer) {
+        ReadAudio();
+        if (visible_) Render();
+        return 0;
+      }
       if (wparam == kHideTimer) {
         KillTimer(hwnd_, kHideTimer);
         ShowWindow(hwnd_, SW_HIDE);

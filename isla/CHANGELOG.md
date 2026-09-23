@@ -13,6 +13,27 @@ está en el mensaje de su commit.
 
 Todo lo que hay. Falta probarlo en otros equipos y con otras aplicaciones de música.
 
+### Añadido: menú, sesiones, rueda, pomodoro entero y sombra
+
+Tres de estas cosas abrían puertas que `SEGURIDAD.md` tenía cerradas, y se enmendó antes de
+escribirlas, en su propio commit: la rueda escribe el volumen (§3.3), cambiar de sesión pide la
+lista de sesiones sin guardarla (§3.1) y el menú necesita `SetForegroundWindow` sobre la ventana
+propia y abrir `isla.json` (§3.8, con la regla 17 nueva en `auditar.ps1`).
+
+- **Clic derecho → Abrir isla.json / Salir.** Ya no hace falta `Stop-Process`.
+- **`‹ App ›` rota entre sesiones.** Probado con tres a la vez (Spotify, Brave y una de
+  prueba): cada clic pasa a la siguiente y la última vuelve a la primera.
+- **La rueda sobre el panel abierto cambia el volumen**, un 2 % por muesca, medido. El número
+  sale en la línea de la app: asomar, como hacía el aviso de volumen, bajaba el panel a
+  pastilla y la segunda muesca ya no llegaba.
+- **Pomodoro con pausa.** Se ve en el panel abierto y en la brasa, que se va vaciando. La
+  pausa sobrevive a rehacer la ventana (probado: «retomado en pausa, quedan 00:58»). Al
+  terminar sale una tarjeta que espera, como las de Agenda, en vez de un asomo de 4 s.
+- **Nota musical** en la carátula vacía, en vez del cuadrado gris a secas.
+- **Sombra bajo el panel abierto**, al tercer intento. Medido en el borde inferior: de 33 a 45
+  de luminancia en 30 px.
+- **La carátula que llega tarde ya no se pierde**: se reintenta cada segundo durante 10 s.
+
 ### Arreglado: el layout en la pantalla del portátil
 
 Medido en esta máquina, `DISPLAY1` a 1920×1080 y al 100 %, ventana 520×260 en 700,0.

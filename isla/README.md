@@ -56,7 +56,12 @@ cruzar el borde de camino al botón de cerrar no la despierta.
 | Clic en ⏯ / ⏮ / ⏭ | Lo mismo que la tecla de play del teclado |
 | Arrastrar la barra de progreso | Salta a esa posición al soltar |
 | `Ctrl+Alt+I` | Rota brasa → asomada → abierta |
-| `Ctrl+Alt+T` | Arranca un pomodoro. Otra vez lo cancela |
+| `Ctrl+Alt+T` | Arranca un pomodoro. Otra vez lo cancela. Mientras corre, la brasa se va vaciando y el panel abierto lo enseña a la izquierda de los botones |
+| Clic en el pomodoro del panel | Lo pausa; otro clic lo reanuda. La pausa sobrevive a mudarse de pantalla |
+| Acaba un pomodoro | Sale una tarjeta que espera: **Descanso 5 min**, **Otro** o **Listo** |
+| Rueda sobre el panel abierto | Sube o baja el volumen un 2 % por muesca, y el número sale en la línea de la app |
+| Clic en `‹ App ›` | Con más de una sesión de medios (Spotify y Brave a la vez), pasa a la siguiente |
+| Clic derecho | Menú con **Abrir isla.json** y **Salir** |
 | Llevar el ratón a otra pantalla | La isla se muda ahí (~375 ms) **en el estado en que estaba**: no vuelve a presentarse |
 | Cambiar el volumen, o de altavoces | Asoma con el número y por dónde sale: `Volumen 48 % · LG ULTRAWIDE (NVI…` |
 | Un recordatorio de [Agenda](../calendario/README.md) | Sale de detrás del borde, junto a la isla, asoma 8 s con el título y la hora, y se recoge en **su burbuja**: un círculo negro con el día del evento, escondida como la brasa, de la que solo asoma el aro de su color |
@@ -130,7 +135,11 @@ Hace falta el SDK de .NET 10 allí también; no hay zip que copiar porque `SEGUR
 no hay PowerShell 7 instalado. El script está escrito para correr también en Windows
 PowerShell 5.1, que es lo que hay.
 
-Para salir todavía no hay interfaz: `Stop-Process -Name Isla`.
+Para salir: clic derecho sobre la isla → **Salir**. O `Stop-Process -Name Isla`.
+
+La rueda llega a la isla sin que esté activa gracias a *Desplazar ventanas inactivas al pasar
+el ratón por encima* (Configuración → Bluetooth y dispositivos → Mouse), que en Windows 11
+viene encendido. Si lo apagas, la rueda sobre el panel no hace nada.
 
 ### Trazas
 
@@ -381,15 +390,21 @@ lee `GetCursorPos` entre muestras antes de culpar al código.
 
 ## 8. Lo que falta
 
-- **Sin sombra.** Dos intentos: un sprite de molde por debajo del panel tapaba el fondo al
-  volverlo translúcido, y un `LayerVisual` con `Shadow` pintó la ventana entera de negro.
-  El camino cuando toque es `DropShadow` con `Mask` sobre una superficie con la forma.
+- **La sombra solo existe con el panel abierto.** Su máscara es la pastilla de 380×180
+  hecha a mano; un nine-grid que sirviera para cualquier tamaño no pinta nada como máscara
+  de `DropShadow`. Brasa y asomada no llevan sombra.
+- **La carátula de la canción anterior.** Si el navegador cambia el título antes que la
+  miniatura, la primera lectura puede traer la carátula vieja, y como ya hay una se da por
+  buena. El reintento solo cubre el caso de que no llegue ninguna.
+- **La onda sigue animándose con la isla recogida.** A opacidad cero no se ve y apenas
+  cuesta; si el reposo llega a gastar CPU, se para desde `GoTo`.
+- **Solo Agenda usa el buzón.** El dock, el lanzador o Rayo podrían avisar por ahí (una copia
+  que termina, por ejemplo); cada uno tendría que aprender a escribir en la tubería.
 - **Una sola isla**, aunque ahora se muda a la pantalla donde estás trabajando. No hay una
   por monitor, igual que un portátil no repite la muesca en cada pantalla: lo que faltaba
   no era tener tres, era que la que hay estuviera donde miras.
 - **El nombre del dispositivo se recorta** si no cabe en la píldora: `LG ULTRAWIDE (NVI…`.
   Cabe lo que cabe, y la parte útil va delante.
-- **Sin forma de salir por interfaz.** Hoy es `Stop-Process`.
 - **Las notificaciones de otras apps** no van a estar: `UserNotificationListener` exige
   identidad de paquete, y aunque no la exigiera está prohibido por la regla 13. Lo que sí
   llega es lo que una app deja a propósito en el [buzón](#avisos-de-otras-apps-el-buzón).

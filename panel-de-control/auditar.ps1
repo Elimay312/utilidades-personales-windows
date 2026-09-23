@@ -119,7 +119,15 @@ if ($null -eq $manifiesto) {
 Prohibido '1.4 Sin escuchar el teclado' '\b(SetWindowsHookEx\w*|RegisterRawInputDevices)\s*\('
 
 # 1.5 Cerrar es pedir, nunca matar.
-Prohibido '1.5 Sin matar procesos' '\bTerminateProcess\s*\(|\bRmForceShutdown\b|\bRmShutdown\s*\([^;]*\b1\b'
+#     Enmienda 7: cerrar es pedirlo con WM_CLOSE, y solo system/apps.cpp lo manda a otra ventana.
+$matar = Buscar '\bTerminateProcess\s*\(|\bRmForceShutdown\b|\bRmShutdown\s*\([^;]*\b1\b'
+# (La lista se guarda antes de filtrarla: por la tuberia, Sentencias pasaria el array entero como
+# un solo objeto y el detalle senalaria el archivo equivocado.)
+$cierres = Sentencias '\b(PostMessage|SendMessage|SendNotifyMessage|PostThreadMessage)\w*\s*\([^;]*\bWM_(CLOSE|QUIT|DESTROY|ENDSESSION)\b'
+$cerrarFuera = @($cierres | Where-Object { $_ -notmatch '^src\\system\\apps\.cpp:' })
+if ($matar) { Regla '1.5 Sin matar procesos' 'FALLA' $matar[0] }
+elseif ($cerrarFuera) { Regla '1.5 Sin matar procesos' 'FALLA' "WM_CLOSE fuera de apps.cpp: $($cerrarFuera[0])" }
+else { Regla '1.5 Sin matar procesos' 'bien' }
 
 # 1.6 Sin ejecutar texto; ShellExecute solo con ms-settings: o el propio panel.json, y
 #     CreateProcess solo en system/apps.cpp.

@@ -83,8 +83,16 @@ nivel, que ve **todo lo que se escribe** en la sesión. Por abrir un panel, no.
 ### 1.5 Matar procesos
 
 Sin `TerminateProcess` y sin `RmShutdown` con `RmForceShutdown`. Cerrar una utilidad es
-**pedírselo**, con el Restart Manager. Si no se cierra, el panel lo dice y no insiste. Un
-cierre forzado se lleva lo que la app no haya guardado, y deja un icono muerto en la bandeja.
+**pedírselo**. Si no se cierra, el panel lo dice y no insiste. Un cierre forzado se lleva lo
+que la app no haya guardado, y deja un icono muerto en la bandeja.
+
+*Enmienda de la fase 7:* **la forma de pedirlo es `WM_CLOSE`, no el Restart Manager.**
+- **Por qué no el Restart Manager:** ninguna de las utilidades de la carpeta atiende
+  `WM_QUERYENDSESSION` ni `WM_ENDSESSION`. `RmShutdown` sin forzar recibiría un «sí» y la app
+  seguiría abierta, y solo `RmForceShutdown`, que está prohibido, las cerraría.
+- **Por qué `WM_CLOSE`:** ninguna lo intercepta en su ventana principal. `DefWindowProc` la
+  destruye, `WM_DESTROY` pone `PostQuitMessage`, y la app sale por el mismo camino que su
+  «Salir», guardando lo que guarda. Es lo que ya hace el instalador de Agenda para cerrarla.
 
 ### 1.6 Ejecutar texto
 
@@ -314,8 +322,7 @@ cambios. Es la API documentada, la misma que usa el panel de Windows.
 - **Qué está corriendo:** una instantánea de Toolhelp cada vez que se abre el panel, sin
   sondeo en segundo plano.
 - **Arrancar:** `CreateProcessW`, con los cortes de §1.6.
-- **Cerrar:** Restart Manager (`RmStartSession`, `RmRegisterResources`, `RmShutdown` sin
-  forzar).
+- **Cerrar:** `WM_CLOSE` a las ventanas de su clase (*enmienda de la fase 7*, ver §1.5).
 
 **Cortes:**
 
@@ -323,6 +330,20 @@ cambios. Es la API documentada, la misma que usa el panel de Windows.
   conoce `actualizar.ps1`.
 - **Solo se cierra un proceso cuya ruta completa** (`QueryFullProcessImageNameW`) coincide con
   la configurada. Si otro programa se llama igual, no se toca.
+- *Enmienda de la fase 7:*
+  - **`WM_CLOSE` va solo a las ventanas de nivel superior de la clase que dice `ventana`** en su
+    entrada de `utilidades`, y solo si son de ese proceso. Por ejemplo, las `DockWindowClass`
+    del Dock, que tiene una por pantalla, o la `AgendaApp` de Agenda, no su popup, que solo se
+    escondería.
+  - Nunca a todas las ventanas del proceso: en QuickLook eso cerraría el panel de vista previa y
+    dejaría la ventana principal apuntando a una ventana muerta.
+  - **Una utilidad sin `ventana`** en la configuración solo se puede arrancar desde el panel.
+    Cerrarla es cosa suya.
+  - **Después se espera, como mucho 3 s,** a que el proceso termine. Si no termina, el panel lo
+    dice en su línea de avisos y lo deja como está.
+  - **Lo que se pierde** es lo mismo que con el «Salir» de cada app. En Agenda, un borrado que
+    aún ofrece «Deshacer» en su popup abierto.
+  - **Solo `system/apps.cpp` manda `WM_CLOSE`** a otra ventana.
 
 ### 2.8 Dibujar
 

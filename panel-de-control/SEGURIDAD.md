@@ -168,16 +168,35 @@ Core Audio. Es la misma superficie que ya usan el HUD y la isla:
 **Qué se usa:**
 
 - `IWbemServices` en el espacio de nombres `ROOT\WMI`;
-- las clases `WmiMonitorBrightness` (leer), `WmiMonitorBrightnessMethods`
-  (`WmiSetBrightness`) y `WmiMonitorBrightnessEvent` (seguir las teclas Fn).
+- las clases `WmiMonitorBrightness` (leer) y `WmiMonitorBrightnessMethods`
+  (`WmiSetBrightness`).
+
+*Enmienda de la fase 4a, que cierra más de lo que abre:*
+
+- **`WmiMonitorBrightnessEvent` no se usa.** Suscribirse a un evento de WMI pide una de dos
+  cosas:
+  - un sumidero asíncrono, que por seguridad Windows sirve a través de `unsecapp.exe`, un
+    proceso aparte;
+  - o un hilo esperando en un bucle con tiempo de espera.
+- **Para seguir las teclas Fn** se usa `RegisterPowerSettingNotification` con
+  `GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS`. Es una notificación documentada de solo lectura:
+  Windows manda el brillo actual, del 0 al 100, en un `WM_POWERBROADCAST` a la ventana del
+  panel. Sin proceso aparte, sin hilo y sin WMI.
+- **Toda la conversación con WMI va en el hilo de trabajo** (`system/worker`, COM en modo
+  MTA), que es el dueño de la única conexión:
+  - al arrancar, lee si hay pantalla interna, cuál es y a qué nivel está;
+  - cuando el usuario mueve el brillo, escribe, y solo el último valor pendiente.
+
+  El hilo de la interfaz no toca WMI nunca.
 
 **Cortes:**
 
 - **Ningún otro espacio de nombres ni otra clase:** nada de `root\cimv2` ni de `Win32_*`. WMI
   sabe hacer casi cualquier cosa en el equipo, así que la puerta se abre para una clase
   concreta y no para WMI entero.
-- **Una sola conexión** abierta mientras vive el proceso, y las escrituras van por el hilo de
-  trabajo.
+- **Una sola conexión** abierta mientras vive el proceso, en el hilo de trabajo.
+- **Solo se escribe por una acción del usuario:** arrastrar, la rueda o una tecla. Nunca desde
+  un temporizador ni para «corregir» un valor.
 
 ### 2.4 Brillo de monitores externos: DDC/CI
 

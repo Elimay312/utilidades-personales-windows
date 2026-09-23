@@ -769,6 +769,36 @@ void DrawConfirm(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& the
              Inset(bar, std::round(12.0f * app.type)), brush, Align::Center);
 }
 
+void DrawScope(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+               const AppLayout& app, const AppModel& appModel, ID2D1SolidColorBrush* brush) {
+  const ScopeQuestion& scope = appModel.scope;
+  if (scope.text.empty()) return;
+  const ScopeRects rects = PlaceScope(app);
+  const float height = rects.bar.bottom - rects.bar.top;
+  brush->SetColor(theme.surface);
+  FillRound(target, rects.bar, height / 2.0f, brush);
+  brush->SetColor(scope.deleting ? Fade(theme.now, 0.6f) : theme.border);
+  StrokeRound(target, rects.bar, height / 2.0f, brush, 1.5f * app.type);
+  brush->SetColor(theme.textPrimary);
+  DrawTextIn(target, fonts.event.Get(), scope.text, rects.text, brush);
+
+  for (int i = 0; i < 2; ++i) {
+    const D2D1_RECT_F& option = rects.options[i];
+    const float radius = (option.bottom - option.top) / 2.0f;
+    const bool picked = scope.pick == i;
+    if (picked) {
+      brush->SetColor(scope.deleting ? theme.now : theme.accent);
+      FillRound(target, option, radius, brush);
+      brush->SetColor(theme.onAccent);
+    } else {
+      brush->SetColor(theme.hover);
+      FillRound(target, option, radius, brush);
+      brush->SetColor(theme.textPrimary);
+    }
+    DrawTextIn(target, fonts.event.Get(), ScopeOption(i), option, brush, Align::Center);
+  }
+}
+
 // A task from the tray on its way to the timeline, drawn under the pointer.
 void DrawFreeGhost(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                    const AppLayout& app, const Ghost& ghost, ID2D1SolidColorBrush* brush) {
@@ -799,7 +829,10 @@ std::vector<PlacedBlock> PlaceBlocks(const AppLayout& app, const AppModel& model
     std::vector<std::pair<int, int>> spans;
     for (const DayItem& item : model.days[static_cast<size_t>(i)]) {
       if (!item.startMin) continue;
-      if (model.ghost.on && item.uid == model.ghost.hideUid) continue;
+      if (model.ghost.on && item.uid == model.ghost.hideUid &&
+          (model.ghost.hideDay == Date{} || item.occurrence == model.ghost.hideDay)) {
+        continue;
+      }
       const int start = *item.startMin;
       // A task has a moment and not a length; half an hour is what makes it big enough to read.
       int end = item.isTask ? start + 30 : (item.endMin ? *item.endMin : start + 60);
@@ -902,6 +935,43 @@ std::wstring PeriodTitle(AppView view, Date anchor) {
   return {};
 }
 
+ScopeRects PlaceScope(const AppLayout& app) {
+  // The capsule of "¿Borrar...?", taller by the answers it carries: 32 DIP controls, as in the
+  // detail panel, inside a 48 DIP capsule, with 8 DIP around them.
+  ScopeRects out;
+  const float type = app.type;
+  const float width = (std::min)(std::round(600.0f * type), app.main.right - app.main.left);
+  const float height = std::round(48.0f * type);
+  const float middle = (app.main.left + app.main.right) / 2.0f;
+  const float bottom = app.main.bottom - std::round(16.0f * type);
+  out.bar = D2D1_RECT_F{middle - width / 2.0f, bottom - height, middle + width / 2.0f, bottom};
+  const float pad = std::round(8.0f * type);
+  const float control = std::round(32.0f * type);
+  const float top = out.bar.top + (height - control) / 2.0f;
+  const float widths[2] = {std::round(104.0f * type), std::round(128.0f * type)};
+  float right = out.bar.right - pad;
+  for (int i = 1; i >= 0; --i) {
+    out.options[i] = D2D1_RECT_F{right - widths[i], top, right, top + control};
+    right -= widths[i] + pad;
+  }
+  out.text = D2D1_RECT_F{out.bar.left + std::round(20.0f * type), out.bar.top, right,
+                         out.bar.bottom};
+  return out;
+}
+
+std::wstring_view ScopeOption(int index) {
+  return index == 0 ? T(L"Solo este", L"This one") : T(L"Toda la serie", L"All of them");
+}
+
+std::wstring ScopeText(std::wstring_view title, bool deleting) {
+  if (English()) {
+    return deleting ? std::format(L"“{}” repeats. Delete which?", title)
+                    : std::format(L"“{}” repeats. Change which?", title);
+  }
+  return deleting ? std::format(L"«{}» se repite. ¿Cuál borras?", title)
+                  : std::format(L"«{}» se repite. ¿Cuál cambias?", title);
+}
+
 std::wstring ConfirmDeleteText(std::wstring_view title) {
   if (English()) return std::format(L"Delete “{}”?   Del to delete · Esc to keep it", title);
   return std::format(L"¿Borrar «{}»?   Supr para borrar · Esc para dejarlo", title);
@@ -941,6 +1011,7 @@ void DrawApp(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
         target->PopAxisAlignedClip();
         DrawDetail(target, fonts, theme, popup, app, appModel, brush.Get(), rounded.Get());
         DrawConfirm(target, fonts, theme, app, appModel, brush.Get());
+        DrawScope(target, fonts, theme, app, appModel, brush.Get());
       }
       target->SetTransform(before);
     }

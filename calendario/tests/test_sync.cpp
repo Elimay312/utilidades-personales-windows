@@ -190,6 +190,17 @@ TEST_CASE("a bare rule next to an EXDATE still goes up with its RRULE:") {
         nlohmann::json::array({"RRULE:FREQ=DAILY", "EXDATE;VALUE=DATE:20260925"}));
 }
 
+TEST_CASE("the id of one occurrence is its series' and when it was due, in UTC") {
+  CHECK(InstanceIdFor("serie1", "2026-10-05", std::nullopt) == "serie1_20261005");
+  // Whatever the zone of this machine, the stamp is the instant of that wall clock in UTC.
+  const std::optional<std::int64_t> start = InstantFromLocal("2026-10-05", 7 * 60);
+  REQUIRE(start.has_value());
+  std::string utc = FormatInstant(*start);
+  std::erase_if(utc, [](char c) { return c == '-' || c == ':'; });
+  CHECK(InstanceIdFor("serie1", "2026-10-05", 7 * 60) == "serie1_" + utc);
+  CHECK(utc.size() == 16);  // 20261005T120000Z in Bogotá
+}
+
 TEST_CASE("an occurrence Google keeps apart says its series and the day it had") {
   nlohmann::json moved = Timed("2026-10-06T12:00:00Z", "2026-10-06T13:00:00Z");
   moved["id"] = "serie1_20261005T120000Z";

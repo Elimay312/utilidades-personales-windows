@@ -82,6 +82,14 @@ class Store {
   // in moved_from: Google moves events with POST .../move on the calendar they are in, and by
   // the time the queue sends this the row already says where it is going.
   void UpdateEvent(const EventDetail& edit, unsigned edits);
+  // "Solo este": the occurrence of `seriesUid` on `occurrence` becomes a row of its own, written
+  // as `edit` says, the way Google keeps an occurrence apart (series_id and original_day). The
+  // series skips that day from now on. Returns the new row's uid, which the interface edits from
+  // then on. What goes up is a PATCH on the occurrence's id at Google.
+  std::wstring DetachOccurrence(const std::wstring& seriesUid, Date occurrence,
+                                const EventDetail& edit, unsigned edits);
+  // "Solo este" when deleting: a tombstone for that one day, and a deletion queued behind it.
+  void RemoveOccurrence(const std::wstring& seriesUid, Date occurrence);
   // Undo. While nothing had ever been sent, the row and its queued operation could just leave
   // together. With an account connected that is no longer true: the five seconds of the notice
   // are long enough for the creation to already be up at Google, and a row deleted here would

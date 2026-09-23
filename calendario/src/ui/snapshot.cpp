@@ -43,7 +43,7 @@ constexpr RECT kSnapshotWork{0, 0, 1920, 1032};
 
 AppView ViewFor(std::wstring_view view) {
   if (view == L"app-semana" || view == L"app-detalle" || view == L"app-arrastre" ||
-      view == L"app-borrar") {
+      view == L"app-borrar" || view == L"app-repeticion") {
     return AppView::Week;
   }
   if (view == L"app-mes") return AppView::Month;
@@ -143,6 +143,10 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
     } else if (view == L"app-borrar") {
       appModel.selected = L"week-3";
       appModel.confirm = ConfirmDeleteText(L"Revisión de código");
+    } else if (view == L"app-repeticion") {
+      // Monday's gym dragged somewhere else: which one moves, this Monday's or every Monday's.
+      appModel.selected = L"gym";
+      appModel.scope.text = ScopeText(L"Gimnasio", false);
     }
     if (transition) {
       progress = 0.5f;

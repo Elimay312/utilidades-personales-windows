@@ -446,7 +446,9 @@ void PopupWindow::SelectAdjacentEvent(int direction) {
   app_.selected = events[static_cast<size_t>(next)]->uid;
   RevealSelected();
   // With the panel open it follows the selection, the way it follows a drag.
-  if (app_.detail.open) OpenDetailFor(app_.selected);
+  if (app_.detail.open) {
+    OpenDetailFor(app_.selected, events[static_cast<size_t>(next)]->occurrence);
+  }
 }
 
 void PopupWindow::RevealSelected() {
@@ -521,7 +523,7 @@ void PopupWindow::OpenFocusedCard() {
   const DayItem item = model_.day[static_cast<size_t>(listFocus_)];
   Expand(model_.selected);
   if (item.isTask) return;
-  OpenDetailFor(item.uid);
+  OpenDetailFor(item.uid, item.occurrence);
   if (app_.detail.open) FocusDetailStop(kDetailStops[0]);
 }
 
@@ -926,7 +928,7 @@ void PopupWindow::A11yInvoke(int id) {
     const size_t index = static_cast<size_t>(id - kEventIds);
     if (index < events.size()) {
       app_.selected = events[index]->uid;
-      OpenDetailFor(app_.selected);
+      OpenDetailFor(app_.selected, events[index]->occurrence);
     }
   } else if (id == kChooserId) {
     app_.detail.calendarOpen = !app_.detail.calendarOpen;

@@ -162,6 +162,7 @@ inline std::vector<DayItem> SampleAppDay(Date date) {
     gym.title = L"Gimnasio";
     gym.color = kSampleTaskColor;
     gym.repeats = true;
+    gym.occurrence = date;
     items.push_back(gym);
   }
   std::sort(items.begin(), items.end(), EarlierThan);

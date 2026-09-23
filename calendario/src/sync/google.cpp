@@ -361,6 +361,7 @@ struct Outgoing {
   std::string remoteId;
   std::string etag;
   std::string movedFrom;  // events only: the calendar Google still has it in
+  bool occurrence = false;  // events only: kept apart from a series (series_id)
   EventRow event;
   TaskRow task;
 };
@@ -369,7 +370,8 @@ Outgoing LoadEvent(Db& db, const std::wstring& uid) {
   Outgoing out;
   std::optional<Stmt> stmt = db.Prepare(
       "SELECT calendar_id, title, notes, start_day, start_min, end_day, end_min, recurrence, "
-      "       remote_id, etag, updated_at, deleted_at, location, moved_from "
+      "       remote_id, etag, updated_at, deleted_at, location, moved_from, series_id, "
+      "       original_day "
       "FROM events WHERE uid = ?");
   if (!stmt) return out;
   stmt->Bind(1, uid);
@@ -390,6 +392,24 @@ Outgoing LoadEvent(Db& db, const std::wstring& uid) {
   out.deleted = !stmt->IsNull(11);
   out.event.location = stmt->Text(12);
   out.movedFrom = stmt->IsNull(13) ? std::string() : stmt->Text(13);
+  out.occurrence = !stmt->IsNull(14);
+
+  // An occurrence detached here ("solo este") has never had an id of its own, but it has one at
+  // Google already, inside its series: worked out from the series' current start. A series
+  // that is gone leaves it with none, and the queue lets it go.
+  if (out.occurrence && out.remoteId.empty()) {
+    const std::string seriesId = stmt->Text(14);
+    const std::string originalDay = stmt->Text(15);
+    if (std::optional<Stmt> series = db.Prepare(
+            "SELECT start_min FROM events WHERE series_id IS NULL "
+            "  AND COALESCE(remote_id, replace(lower(uid), '-', '')) = ?")) {
+      series->Bind(1, seriesId);
+      if (series->Step()) {
+        out.remoteId = InstanceIdFor(seriesId, originalDay, series->OptInt(0));
+      }
+    }
+    if (out.remoteId.empty()) out.found = false;
+  }
   return out;
 }
 
@@ -1164,8 +1184,9 @@ bool GoogleSync::PushPending(const std::wstring& auth) {
       store_.Run([&] {
         Transaction tx(store_.db());
         if (!tx.Begin()) return;
-        if (deleting) {
-          // The tombstone has done its job.
+        if (deleting && !row.occurrence) {
+          // The tombstone has done its job. One of an occurrence stays: it is what keeps the
+          // series from drawing that day, until Google says the same with a cancelled item.
           if (std::optional<Stmt> stmt = store_.db().Prepare(
                   isTask ? "DELETE FROM tasks WHERE uid = ?" : "DELETE FROM events WHERE uid = ?")) {
             stmt->Bind(1, item.uid);

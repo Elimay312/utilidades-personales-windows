@@ -201,6 +201,17 @@ Borrar no es inmediato: el evento desaparece de la pantalla y se borra de verdad
 el aviso de cinco segundos. Deshacer solo lo vuelve a enseñar, así que no se pierde nada de lo
 que Google tiene de él, como los invitados o los recordatorios.
 
+**Un evento que se repite pregunta cuál**: al soltarlo tras arrastrarlo, al cambiar un campo
+del panel o al borrarlo, abajo aparece «¿Cuál cambias?» con **Solo este** y **Toda la serie**.
+`←` `→` (o pasar el ratón) eligen, `Enter` o un clic responden y `Esc` o un clic fuera lo dejan
+todo como estaba. *Solo este* aparta esa repetición de la serie, como hace Google: se queda en
+su día nuevo con sus cambios y la serie sigue igual. *Toda la serie* mueve o cambia todas, y el
+panel ya no vuelve a preguntar mientras siga abierto. El calendario y la repetición son siempre
+de la serie entera. El panel abierto sobre una repetición enseña la fecha de esa, no la de la
+primera.
+
+![La pregunta al mover una repetición](docs/img/app-repeticion.png)
+
 | Panel de detalle | Arrastrando | Borrando |
 |---|---|---|
 | ![El panel de detalle abierto](docs/img/app-detalle.png) | ![Un evento a medio mover](docs/img/app-arrastre.png) | ![La pregunta antes de borrar](docs/img/app-borrar.png) |
@@ -475,8 +486,9 @@ configuración.
 La app tiene siete vistas más: `app-dia`, `app-semana` y `app-mes`, a su tamaño de diseño de
 1536×826 DIP (el 80 % de un área de trabajo de 1920×1032); `app-transicion`, que pinta la
 ventana a mitad de la expansión sobre esa área de trabajo entera para poder juzgar cómo se
-reorganiza; y `app-detalle`, `app-arrastre` y `app-borrar`, la semana con el panel de detalle
-abierto, con un evento a medio arrastrar y con la pregunta de borrar. Llevan una semana de
+reorganiza; y `app-detalle`, `app-arrastre`, `app-borrar` y `app-repeticion`, la semana con el
+panel de detalle abierto, con un evento a medio arrastrar, con la pregunta de borrar y con la de
+«solo este o toda la serie». Llevan una semana de
 ejemplo propia, con solapes, días enteros y una repetición.
 
 | | Tema oscuro | Tema claro |
@@ -608,8 +620,7 @@ Dos límites que conviene saber:
   «el último día», como las ofrece Google. Lo poco que Agenda no sabe leer (`BYSETPOS`) se
   queda en su primer día. Lo que se haga en
   Google a una sola repetición sí llega: una que se movió aparece en su día nuevo y no en el
-  viejo, y una que se borró desaparece. Desde Agenda, en cambio, todavía no se puede tocar una
-  sola: arrastrar o borrar afecta a la serie entera.
+  viejo, y una que se borró desaparece. Desde Agenda se puede hacer lo mismo con *Solo este*.
 
 ## Preguntas frecuentes
 

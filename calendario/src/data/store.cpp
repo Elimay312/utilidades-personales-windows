@@ -234,6 +234,7 @@ std::vector<DayItem> Store::ItemsForDay(Date day, bool includeUndated) {
       item.endMin = startsHere ? stmt->OptInt(4) : std::nullopt;
       item.repeats = !stmt->Text(5).empty();
       item.color = static_cast<std::uint32_t>(stmt->Int(6));
+      item.occurrence = ParseDayKey(stmt->Text(2)).value_or(day);
       items.push_back(std::move(item));
     }
   }
@@ -261,6 +262,7 @@ std::vector<DayItem> Store::ItemsForDay(Date day, bool includeUndated) {
       item.endMin = stmt->OptInt(4);
       item.repeats = true;
       item.color = static_cast<std::uint32_t>(stmt->Int(6));
+      item.occurrence = day;
       items.push_back(std::move(item));
     }
   }
@@ -280,6 +282,7 @@ std::vector<DayItem> Store::ItemsForDay(Date day, bool includeUndated) {
       item.startMin = stmt->OptInt(2);
       item.done = !stmt->IsNull(3);
       item.color = static_cast<std::uint32_t>(stmt->Int(4));
+      item.occurrence = day;
       items.push_back(std::move(item));
     }
   }
@@ -800,6 +803,79 @@ void Store::UpdateEvent(const EventDetail& edit, unsigned edits) {
   });
 }
 
+std::wstring Store::DetachOccurrence(const std::wstring& seriesUid, Date occurrence,
+                                     const EventDetail& edit, unsigned edits) {
+  const std::wstring uid = NewUid();
+  Enqueue([this, uid, seriesUid, occurrence, edit, edits] {
+    Transaction tx(db_);
+    if (!tx.Begin()) {
+      Report(uid, T(L"no se pudo guardar el cambio", L"could not save the change"));
+      return;
+    }
+    // Everything the panel does not edit comes from the series: its calendar and reminders.
+    bool ok = false;
+    if (std::optional<Stmt> stmt = db_.Prepare(
+            "INSERT INTO events (uid, calendar_id, title, notes, location, start_day, start_min, "
+            "                    end_day, end_min, reminders, updated_at, series_id, "
+            "                    original_day) "
+            "SELECT ?1, calendar_id, ?2, ?3, ?4, ?5, ?6, ?7, ?8, reminders, ?9, "
+            "       COALESCE(remote_id, replace(lower(uid), '-', '')), ?10 "
+            "FROM events WHERE uid = ?11 AND deleted_at IS NULL")) {
+      stmt->Bind(1, uid);
+      stmt->Bind(2, edit.title);
+      stmt->Bind(3, edit.notes);
+      stmt->Bind(4, edit.location);
+      stmt->Bind(5, DayKey(edit.startDay));
+      stmt->Bind(6, edit.startMin);
+      stmt->Bind(7, DayKey(edit.endDay));
+      stmt->Bind(8, edit.endMin);
+      stmt->Bind(9, NowSeconds());
+      stmt->Bind(10, DayKey(occurrence));
+      stmt->Bind(11, seriesUid);
+      stmt->Step(&ok);
+    }
+    // An update and not a creation: the occurrence already exists at Google, inside its series.
+    if (ok) ok = db_.Changes() == 1 && QueueOp("event", uid, UpdateOp(edits).c_str());
+    if (!ok || !tx.Commit()) {
+      Report(uid, T(L"no se pudo guardar el cambio", L"could not save the change"));
+      return;
+    }
+    Notify();
+  });
+  return uid;
+}
+
+void Store::RemoveOccurrence(const std::wstring& seriesUid, Date occurrence) {
+  Enqueue([this, seriesUid, occurrence] {
+    Transaction tx(db_);
+    if (!tx.Begin()) {
+      Report(seriesUid, T(L"no se pudo borrar", L"could not delete"));
+      return;
+    }
+    const std::wstring uid = NewUid();
+    const std::int64_t now = NowSeconds();
+    bool ok = false;
+    if (std::optional<Stmt> stmt = db_.Prepare(
+            "INSERT INTO events (uid, calendar_id, title, start_day, end_day, updated_at, "
+            "                    deleted_at, series_id, original_day) "
+            "SELECT ?1, calendar_id, '', ?2, ?2, ?3, ?3, "
+            "       COALESCE(remote_id, replace(lower(uid), '-', '')), ?2 "
+            "FROM events WHERE uid = ?4 AND deleted_at IS NULL")) {
+      stmt->Bind(1, uid);
+      stmt->Bind(2, DayKey(occurrence));
+      stmt->Bind(3, now);
+      stmt->Bind(4, seriesUid);
+      stmt->Step(&ok);
+    }
+    if (ok) ok = db_.Changes() == 1 && QueueOp("event", uid, "delete");
+    if (!ok || !tx.Commit()) {
+      Report(seriesUid, T(L"no se pudo borrar", L"could not delete"));
+      return;
+    }
+    Notify();
+  });
+}
+
 void Store::Remove(const std::wstring& uid, bool isTask) {
   Enqueue([this, uid, isTask] {
     Transaction tx(db_);
@@ -810,10 +886,15 @@ void Store::Remove(const std::wstring& uid, bool isTask) {
 
     // Has this ever been up there? That is the whole question, and it decides between a delete
     // and a tombstone. Five seconds is plenty for a creation to have reached Google.
+    //
+    // An occurrence kept apart from its series always leaves a tombstone: it exists at Google
+    // inside the series whether or not this row went up, and without the tombstone the series
+    // would draw its original day again.
     bool sent = false;
-    if (std::optional<Stmt> stmt =
-            db_.Prepare(isTask ? "SELECT remote_id IS NOT NULL FROM tasks WHERE uid = ?"
-                               : "SELECT remote_id IS NOT NULL FROM events WHERE uid = ?")) {
+    if (std::optional<Stmt> stmt = db_.Prepare(
+            isTask ? "SELECT remote_id IS NOT NULL FROM tasks WHERE uid = ?"
+                   : "SELECT remote_id IS NOT NULL OR series_id IS NOT NULL FROM events "
+                     "WHERE uid = ?")) {
       stmt->Bind(1, uid);
       if (stmt->Step()) sent = stmt->Int(0) != 0;
     }

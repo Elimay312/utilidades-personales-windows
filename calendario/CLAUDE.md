@@ -120,7 +120,7 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
 - **La cola dice qué cambió.** Una operación de edición de evento es `update`, `update+location`, `update+recurrence` o las dos: el PATCH solo manda la ubicación y la repetición cuando se editaron (la RRULE sin sus EXDATE, reenviada con cada movimiento, devolvería repeticiones borradas en la web).
 - **En `pending_ops` la nueva operación entra antes de que salgan las que sustituye.** El id es un rowid sin AUTOINCREMENT y borrar primero reutiliza el número; una pasada con la vieja en vuelo borraría la nueva al terminar.
 - **Borrar desde la app es diferido**: se oculta al momento y se borra al irse el aviso de deshacer (o al ocultar la ventana). Si la app se cierra antes, no se borra, que es el lado seguro.
-- **Arrastrar un evento que se repite mueve la serie entera**, y un evento que dura varios días no se arrastra. Editar una sola repetición llegará con las excepciones de instancia.
+- **Una repetición pregunta «Solo este / Toda la serie»** (fase 8.3) al arrastrarla, al editar un campo del panel y al borrarla, en la cápsula de abajo de «¿Borrar...?» con los dos botones. *Solo este* crea la fila apartada (`Store::DetachOccurrence`, `RemoveOccurrence`) y sube un PATCH o un DELETE al id de la ocurrencia en Google, que se calcula (`InstanceIdFor`: id de la serie, `_`, y el día o el instante UTC de su inicio) en vez de pedirlo. *Toda la serie* se recuerda mientras el panel siga abierto. Calendario y repetición van siempre a la serie. `DayItem::occurrence` dice qué día de la serie es cada tarjeta, y el panel abierto sobre una repetición enseña las fechas de ese día. Un evento que dura varios días sigue sin arrastrarse.
 - **La app expandida no se cierra al perder el foco**, a diferencia del popup: deja de estar siempre encima y se queda detrás como cualquier ventana. Sigue siendo `WS_EX_TOOLWINDOW`, sin botón en la barra de tareas; la trae al frente la bandeja, y el atajo la cierra.
 
 ## Parser de lenguaje natural
@@ -209,6 +209,7 @@ build\debug\Agenda.exe --render-snapshot=app-transicion --out=docs\img\app-trans
 build\debug\Agenda.exe --render-snapshot=app-detalle --out=docs\img\app-detalle.png
 build\debug\Agenda.exe --render-snapshot=app-arrastre --out=docs\img\app-arrastre.png
 build\debug\Agenda.exe --render-snapshot=app-borrar --out=docs\img\app-borrar.png
+build\debug\Agenda.exe --render-snapshot=app-repeticion --out=docs\img\app-repeticion.png
 build\debug\Agenda.exe --render-snapshot=configuracion --theme=light --out=docs\img\configuracion-claro.png
 build\debug\Agenda.exe --render-snapshot=popup --theme=contrast --out=docs\img\popup-contraste.png
 powershell -NoProfile -ExecutionPolicy Bypass -File empaquetar.ps1   # build\release\Instalar-Agenda.exe

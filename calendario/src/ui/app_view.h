@@ -30,6 +30,21 @@ struct DetailModel {
   bool caretOn = false;
   unsigned invalid = 0;  // one bit per field that did not read, which turns it red
   bool calendarOpen = false;
+  // Open on one occurrence of a repetition: which day of the series it is. `event` then shows
+  // that day's dates, not the series' first ones. `wholeSeries` is the answer "toda la serie",
+  // kept while the panel stays on it so every field does not ask again.
+  std::optional<Date> occurrence;
+  bool wholeSeries = false;
+};
+
+// "Solo este / Toda la serie": asked when one occurrence of a repetition is moved, edited or
+// deleted, in the same capsule at the foot of the view as "¿Borrar...?", with the two answers
+// in it. `text` empty means nothing is being asked; `pick` is the answer the arrows and the
+// pointer are on, 0 this one and 1 the whole series, drawn filled like a default button.
+struct ScopeQuestion {
+  std::wstring text;
+  int pick = 0;
+  bool deleting = false;  // the outline goes red, as "¿Borrar...?" does
 };
 
 // What a drag is showing. On the timeline it is a block at `column`, from `start` to `end`;
@@ -44,6 +59,7 @@ struct Ghost {
   std::uint32_t color = 0;
   std::wstring title;
   std::wstring hideUid;
+  Date hideDay{};  // which occurrence of it, for a repetition; unset hides every one
   D2D1_POINT_2F at{};
 };
 
@@ -71,7 +87,20 @@ struct AppModel {
   DetailModel detail;
   Ghost ghost;
   std::wstring confirm;   // "¿Borrar «...»?" while it waits for an answer, empty otherwise
+  ScopeQuestion scope;
 };
+
+// Where the question and its two answers are, shared by the drawing and the mouse.
+struct ScopeRects {
+  D2D1_RECT_F bar{};
+  D2D1_RECT_F text{};
+  D2D1_RECT_F options[2]{};
+};
+ScopeRects PlaceScope(const AppLayout& app);
+// "Solo este" and "Toda la serie", in the interface language.
+std::wstring_view ScopeOption(int index);
+// The question itself: moving or editing ("«Gym» se repite. ¿Qué cambias?") or deleting.
+std::wstring ScopeText(std::wstring_view title, bool deleting);
 
 // Where each timed item of the day and week views lands, shared by the drawing and the mouse
 // so a click always hits the block it looks like it hits. `end` is the end of the block as

@@ -681,6 +681,8 @@ LRESULT PopupWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
         eatSpace_ = false;
         return 0;
       }
+      // "Solo este / Toda la serie" is waiting: nothing is typed anywhere until it is answered.
+      if (InApp() && !app_.scope.text.empty()) return 0;
       // In the app a letter is a shortcut until Ctrl+K or a click puts the capsule -- or a field
       // of the detail panel -- in charge.
       if (InApp() && !inputFocused_) {
@@ -1222,6 +1224,8 @@ bool PopupWindow::OnKeyDown(WPARAM key) {
       if (key == VK_ESCAPE) CancelDrag();
       return true;
     }
+    // So does "Solo este / Toda la serie".
+    if (!app_.scope.text.empty()) return OnScopeKey(key);
     // "¿Borrar...?" waits for its answer and nothing else happens meanwhile.
     if (!app_.confirm.empty()) {
       if (key == VK_DELETE || key == VK_RETURN) {

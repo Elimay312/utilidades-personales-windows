@@ -163,6 +163,14 @@ nlohmann::json WriteTask(const TaskRow& row);
 std::string EventIdFor(std::wstring_view uid);
 bool IsUsableEventId(std::string_view id);
 
+// The id Google gives one occurrence of a series: the series' id, an underscore and when the
+// occurrence was due to start -- the day for an all-day series ('serie_20261005'), the instant
+// in UTC otherwise ('serie_20261005T120000Z'). Knowing it is what lets "solo este" PATCH or
+// DELETE one occurrence without asking Google for its instances first. `startMin` is the
+// series' own start; empty means all day. Empty when the wall clock cannot be converted.
+std::string InstanceIdFor(std::string_view seriesId, std::string_view originalDay,
+                          std::optional<int> startMin);
+
 // --- The wire -----------------------------------------------------------------------------
 
 // Percent-encoding for anything that goes into a query string or a form. Unreserved characters

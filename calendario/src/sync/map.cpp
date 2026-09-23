@@ -406,6 +406,20 @@ nlohmann::json WriteTask(const TaskRow& row) {
   return body;
 }
 
+std::string InstanceIdFor(std::string_view seriesId, std::string_view originalDay,
+                          std::optional<int> startMin) {
+  std::string stamp;
+  if (startMin) {
+    const std::optional<std::int64_t> start = InstantFromLocal(originalDay, *startMin);
+    if (!start) return {};
+    stamp = FormatInstant(*start);  // '2026-10-05T12:00:00Z'
+  } else {
+    stamp = std::string(originalDay);  // '2026-10-05'
+  }
+  std::erase_if(stamp, [](char c) { return c == '-' || c == ':'; });
+  return std::string(seriesId) + '_' + stamp;
+}
+
 std::string EventIdFor(std::wstring_view uid) {
   std::string id;
   id.reserve(uid.size());

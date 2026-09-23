@@ -197,20 +197,37 @@ class PopupWindow final : public A11ySource {
   void EndDrag();
   void CancelDrag();
   void CommitMove(const Ghost& ghost, Date origin);
+  void CommitMoveSeries(const Ghost& ghost, Date origin);
+  void CommitMoveOccurrence(const Ghost& ghost, Date origin);
   void ConvertTask(const DayItem& task, int column, int start);
   bool SelectAllDayAt(float x, float y);
   void OpenDetail(const EventDetail& event, int focus);
-  void OpenDetailFor(const std::wstring& uid);
+  // `occurrence` is which day of a repetition was clicked: the panel shows that one, with its
+  // date, and editing it asks "solo este o toda la serie". Without it, the first one on screen.
+  void OpenDetailFor(const std::wstring& uid, std::optional<Date> occurrence = std::nullopt);
+  void OpenOccurrence(EventDetail event, std::optional<Date> occurrence);
+  std::optional<Date> OccurrenceOf(const std::wstring& uid) const;
   void CloseDetail();
   void FillDetailFields();
   void FocusDetail(int field);
   bool CommitField(int field);
+  // What the panel shows, written back. On an occurrence of a repetition it asks first, or goes
+  // to the series once the answer was "toda la serie".
   void SaveDetail(const EventDetail& event, unsigned edits);
+  void StoreEvent(const EventDetail& event, unsigned edits);
+  void SaveAsSeries(const EventDetail& shown, unsigned edits);
+  void DetachShown(const EventDetail& shown, unsigned edits);
   bool OnDetailKeyDown(WPARAM key);
   bool OnDetailLeftDown(float x, float y);
   bool DetailCursor(float x, float y, LPCWSTR& cursor);
   void AskDelete(const std::wstring& uid);
   void ConfirmDelete();
+
+  // --- "Solo este / Toda la serie" (phase 8.3) --------------------------------------------
+  void AskScope(std::wstring_view title, bool deleting);
+  void AnswerScope(int pick);  // 0 this one, 1 the whole series
+  void CancelScope();
+  bool OnScopeKey(WPARAM key);
 
   D2D1_POINT_2F ToDip(LPARAM lparam) const;
   int HitDay(float x, float y) const;
@@ -298,9 +315,23 @@ class PopupWindow final : public A11ySource {
   struct Pending {
     std::wstring uid;
     bool isTask = false;
+    std::optional<Date> occurrence;  // "solo este": only that day of the repetition
   };
   std::vector<Pending> pendingDelete_;
   std::wstring confirmUid_;
+  void HideDeleted(const Pending& pending);
+
+  // What "Solo este / Toda la serie" was asked about, kept until the answer comes.
+  enum class ScopeAction { None, Move, Edit, Delete };
+  struct ScopeAsk {
+    ScopeAction action = ScopeAction::None;
+    std::wstring uid;       // the series
+    Date occurrence{};      // which of its days
+    Ghost ghost;            // Move: where it was dropped
+    EventDetail shown;      // Edit: the panel's version of it
+    unsigned edits = 0;     // Edit
+  };
+  ScopeAsk scopeAsk_;
 
   enum class DragKind { None, Create, Move, Resize, Task };
   struct DragState {

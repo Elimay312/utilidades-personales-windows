@@ -415,6 +415,52 @@ TEST_CASE("an occurrence Google moved or cancelled leaves its day in the series"
   CHECK(CountRows(store->db(), "SELECT COUNT(*) FROM events WHERE series_id = 'serie1'") == 0);
 }
 
+TEST_CASE("solo este: one occurrence moved or deleted here leaves the rest of the series") {
+  Open store;
+  Draft draft = EventAt(L"Gym", Day(2026, 9, 28), 7 * 60, 8 * 60);
+  draft.recurrence = L"FREQ=WEEKLY;BYDAY=MO";
+  const std::wstring series = store->Create(draft).uid;
+  store.settle();
+  // A card of the series knows which Monday it stands for.
+  const std::vector<DayItem> monday = store->ItemsForDay(Day(2026, 10, 5), false);
+  REQUIRE(monday.size() == 1);
+  CHECK(monday[0].occurrence == Day(2026, 10, 5));
+
+  // The 5th moves to Tuesday at nine, and gets a title of its own.
+  EventDetail edit = *store->Event(series);
+  edit.title = L"Gym (movido)";
+  edit.startDay = edit.endDay = Day(2026, 10, 6);
+  edit.startMin = 9 * 60;
+  edit.endMin = 10 * 60;
+  const std::wstring moved = store->DetachOccurrence(series, Day(2026, 10, 5), edit, 0);
+  // The 12th goes.
+  store->RemoveOccurrence(series, Day(2026, 10, 12));
+  store.settle();
+
+  CHECK(store->ItemsForDay(Day(2026, 10, 5), false).empty());
+  const std::vector<DayItem> tuesday = store->ItemsForDay(Day(2026, 10, 6), false);
+  REQUIRE(tuesday.size() == 1);
+  CHECK(tuesday[0].uid == moved);
+  CHECK(tuesday[0].title == L"Gym (movido)");
+  CHECK_FALSE(tuesday[0].repeats);
+  CHECK(store->ItemsForDay(Day(2026, 10, 12), false).empty());
+  REQUIRE(store->ItemsForDay(Day(2026, 10, 19), false).size() == 1);
+  CHECK(store->ItemsForDay(Day(2026, 10, 19), false)[0].uid == series);
+  // The series itself is untouched.
+  CHECK(store->Event(series)->title == L"Gym");
+  CHECK(store->Event(series)->startDay == Day(2026, 9, 28));
+
+  // What goes up: a PATCH for the moved one and a DELETE for the other, never a creation.
+  CHECK(CountRows(store->db(), "SELECT COUNT(*) FROM pending_ops WHERE op = 'update'") == 1);
+  CHECK(CountRows(store->db(), "SELECT COUNT(*) FROM pending_ops WHERE op = 'delete'") == 1);
+
+  // Deleting the moved one keeps its day away from the series: it becomes a tombstone.
+  store->Remove(moved, false);
+  store.settle();
+  CHECK(store->ItemsForDay(Day(2026, 10, 5), false).empty());
+  CHECK(store->ItemsForDay(Day(2026, 10, 6), false).empty());
+}
+
 TEST_CASE("a reminder falls due once, at its minute, and not before or after") {
   Open store;
   const Date day = Day(2026, 9, 23);

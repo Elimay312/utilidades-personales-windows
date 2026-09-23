@@ -66,7 +66,10 @@ void PopupWindow::DropPending(std::vector<DayItem>& items) const {
   if (pendingDelete_.empty()) return;
   std::erase_if(items, [this](const DayItem& item) {
     for (const Pending& pending : pendingDelete_) {
-      if (pending.uid == item.uid) return true;
+      if (pending.uid == item.uid &&
+          (!pending.occurrence || *pending.occurrence == item.occurrence)) {
+        return true;
+      }
     }
     return false;
   });
@@ -74,7 +77,13 @@ void PopupWindow::DropPending(std::vector<DayItem>& items) const {
 
 void PopupWindow::FlushDeletes() {
   if (pendingDelete_.empty() || store_ == nullptr) return;
-  for (const Pending& pending : pendingDelete_) store_->Remove(pending.uid, pending.isTask);
+  for (const Pending& pending : pendingDelete_) {
+    if (pending.occurrence) {
+      store_->RemoveOccurrence(pending.uid, *pending.occurrence);
+    } else {
+      store_->Remove(pending.uid, pending.isTask);
+    }
+  }
   pendingDelete_.clear();
   if (sync_ != nullptr) sync_->Push();
 }
@@ -245,7 +254,9 @@ void PopupWindow::AddToApp(const DayItem& item, std::optional<Date> day) {
     const int index = DaysBetween(app_.first, *day);
     if (index < 0 || index >= static_cast<int>(app_.days.size())) return;
     std::vector<DayItem>& list = app_.days[static_cast<size_t>(index)];
-    list.insert(std::lower_bound(list.begin(), list.end(), item, EarlierThan), item);
+    DayItem placed = item;
+    if (placed.occurrence == Date{}) placed.occurrence = *day;
+    list.insert(std::lower_bound(list.begin(), list.end(), placed, EarlierThan), placed);
   }
   Relayout();
 }
@@ -335,6 +346,18 @@ bool PopupWindow::OnAppKeyDown(WPARAM key) {
 }
 
 bool PopupWindow::OnAppLeftDown(float x, float y) {
+  // "Solo este / Toda la serie": one of the two, or anywhere else is "neither".
+  if (!app_.scope.text.empty()) {
+    const ScopeRects rects = PlaceScope(appLayout_);
+    for (int i = 0; i < 2; ++i) {
+      if (Inside(rects.options[i], x, y)) {
+        AnswerScope(i);
+        return true;
+      }
+    }
+    if (!Inside(rects.bar, x, y)) CancelScope();
+    return true;
+  }
   // A click while "¿Borrar...?" waits is a no, whatever it lands on.
   if (!app_.confirm.empty()) {
     app_.confirm.clear();
@@ -433,6 +456,16 @@ void PopupWindow::ToggleUndated(int index) {
 }
 
 bool PopupWindow::OnAppMouseMove(float x, float y) {
+  // The answer under the pointer is the one Enter would give, as with the arrows.
+  if (!app_.scope.text.empty()) {
+    const ScopeRects rects = PlaceScope(appLayout_);
+    for (int i = 0; i < 2; ++i) {
+      if (Inside(rects.options[i], x, y) && app_.scope.pick != i) {
+        app_.scope.pick = i;
+        Invalidate();
+      }
+    }
+  }
   int tab = -1;
   for (int i = 0; i < 3; ++i) {
     if (Inside(appLayout_.tabs[i], x, y)) tab = i;
@@ -525,6 +558,8 @@ bool PopupWindow::BeginDrag(float x, float y) {
     CommitField(app_.detail.focus);
     app_.detail.focus = -1;
   }
+  // The field just written asked "solo este o toda la serie": that is answered first.
+  if (!app_.scope.text.empty()) return true;
   FocusInput(false);
   drag_ = drag;
   SetCapture(hwnd_);
@@ -568,6 +603,7 @@ void PopupWindow::UpdateDrag(float x, float y) {
       ghost.color = drag.item.color;
       ghost.title = drag.item.title;
       ghost.hideUid = drag.item.uid;
+      ghost.hideDay = drag.item.occurrence;
       break;
     }
     case DragKind::Resize: {
@@ -577,6 +613,7 @@ void PopupWindow::UpdateDrag(float x, float y) {
       ghost.color = drag.item.color;
       ghost.title = drag.item.title;
       ghost.hideUid = drag.item.uid;
+      ghost.hideDay = drag.item.occurrence;
       break;
     }
     case DragKind::Task: {
@@ -618,7 +655,7 @@ void PopupWindow::EndDrag() {
   if (!drag.moved) {
     // A click. On an event it opens it; on empty timeline it lets go of whatever was open.
     if (drag.kind == DragKind::Move || drag.kind == DragKind::Resize) {
-      OpenDetailFor(drag.item.uid);
+      OpenDetailFor(drag.item.uid, drag.item.occurrence);
     } else if (drag.kind == DragKind::Create) {
       app_.selected.clear();
       CloseDetail();
@@ -669,11 +706,29 @@ void PopupWindow::CommitMove(const Ghost& ghost, Date origin) {
   std::optional<EventDetail> event = store_->Event(ghost.hideUid);
   // A row that spans days is not moved on a timeline that shows one day's worth of it.
   if (!event || event->startDay != event->endDay) return;
-
-  // `origin` is the day the block was picked up from, which for a repetition is not the day the
-  // series starts: the whole series moves by the same number of days.
   const int shift = DaysBetween(origin, AddDays(app_.first, ghost.column));
   if (shift == 0 && event->startMin == ghost.start && event->endMin == ghost.end) return;
+
+  // A repetition asks which: the occurrence that was dragged, or all of them.
+  if (!event->recurrence.empty()) {
+    scopeAsk_ = ScopeAsk{};
+    scopeAsk_.action = ScopeAction::Move;
+    scopeAsk_.uid = event->uid;
+    scopeAsk_.occurrence = origin;
+    scopeAsk_.ghost = ghost;
+    AskScope(event->title, false);
+    return;
+  }
+  CommitMoveSeries(ghost, origin);
+}
+
+void PopupWindow::CommitMoveSeries(const Ghost& ghost, Date origin) {
+  std::optional<EventDetail> event = store_->Event(ghost.hideUid);
+  if (!event) return;
+  // `origin` is the day the block was picked up from, which for a repetition is not the day the
+  // series starts: the whole series moves by the same number of days.
+  const Date dropped = AddDays(app_.first, ghost.column);
+  const int shift = DaysBetween(origin, dropped);
 
   event->startDay = AddDays(event->startDay, shift);
   event->endDay = event->startDay;
@@ -687,7 +742,7 @@ void PopupWindow::CommitMove(const Ghost& ghost, Date origin) {
       edits |= kEditRecurrence;
     }
   }
-  SaveDetail(*event, edits);
+  StoreEvent(*event, edits);
 
   // On screen now, not when the worker is done: the block lands where it was dropped.
   for (std::vector<DayItem>& day : app_.days) {
@@ -700,9 +755,40 @@ void PopupWindow::CommitMove(const Ghost& ghost, Date origin) {
   landed.endMin = event->endMin;
   landed.color = ghost.color;
   landed.repeats = !event->recurrence.empty();
-  AddToApp(landed, AddDays(app_.first, ghost.column));
+  AddToApp(landed, dropped);
   app_.selected = event->uid;
-  if (app_.detail.open && app_.detail.event.uid != event->uid) OpenDetail(*event, -1);
+  // The panel follows: on the occurrence that was dropped, if it is a repetition.
+  if (app_.detail.open) OpenOccurrence(*event, dropped);
+}
+
+void PopupWindow::CommitMoveOccurrence(const Ghost& ghost, Date origin) {
+  std::optional<EventDetail> series = store_->Event(ghost.hideUid);
+  if (!series) return;
+  const Date dropped = AddDays(app_.first, ghost.column);
+  EventDetail moved = *series;
+  moved.startDay = dropped;
+  moved.endDay = dropped;
+  moved.startMin = ghost.start;
+  moved.endMin = ghost.end;
+  moved.recurrence.clear();
+  moved.uid = store_->DetachOccurrence(series->uid, origin, moved, 0);
+  if (sync_ != nullptr) sync_->Push();
+
+  // On screen now: that one occurrence leaves its day, and lands as an event of its own.
+  for (std::vector<DayItem>& day : app_.days) {
+    std::erase_if(day, [&](const DayItem& item) {
+      return item.uid == series->uid && item.occurrence == origin;
+    });
+  }
+  DayItem landed;
+  landed.uid = moved.uid;
+  landed.title = moved.title;
+  landed.startMin = moved.startMin;
+  landed.endMin = moved.endMin;
+  landed.color = ghost.color;
+  AddToApp(landed, dropped);
+  app_.selected = moved.uid;
+  if (app_.detail.open) OpenDetail(moved, -1);
 }
 
 void PopupWindow::ConvertTask(const DayItem& task, int column, int start) {
@@ -751,7 +837,7 @@ bool PopupWindow::SelectAllDayAt(float x, float y) {
       // The last chip of a full strip is the "+N más", not an item.
       const bool counter = row == appLayout_.allDayRows - 1 && total > appLayout_.allDayRows;
       const DayItem& item = *chips[static_cast<size_t>(row)];
-      if (!counter && !item.isTask) OpenDetailFor(item.uid);
+      if (!counter && !item.isTask) OpenDetailFor(item.uid, item.occurrence);
       return true;
     }
   }
@@ -760,9 +846,34 @@ bool PopupWindow::SelectAllDayAt(float x, float y) {
 
 // --- The detail panel -----------------------------------------------------------------------
 
-void PopupWindow::OpenDetailFor(const std::wstring& uid) {
+void PopupWindow::OpenDetailFor(const std::wstring& uid, std::optional<Date> occurrence) {
   if (store_ == nullptr) return;
-  if (const std::optional<EventDetail> event = store_->Event(uid)) OpenDetail(*event, -1);
+  if (const std::optional<EventDetail> event = store_->Event(uid)) {
+    OpenOccurrence(*event, occurrence ? occurrence : OccurrenceOf(uid));
+  }
+}
+
+void PopupWindow::OpenOccurrence(EventDetail event, std::optional<Date> occurrence) {
+  if (event.recurrence.empty() || !occurrence) {
+    OpenDetail(event, -1);
+    return;
+  }
+  // The dates of the occurrence, not the series' first ones: that is the one being looked at.
+  event.endDay = AddDays(event.endDay, DaysBetween(event.startDay, *occurrence));
+  event.startDay = *occurrence;
+  OpenDetail(event, -1);
+  app_.detail.occurrence = occurrence;
+}
+
+// The occurrence of a repetition on screen, for the callers that only know the uid.
+// ponytail: the first one in the view; the keyboard's selection could remember its day instead.
+std::optional<Date> PopupWindow::OccurrenceOf(const std::wstring& uid) const {
+  for (const std::vector<DayItem>& day : app_.days) {
+    for (const DayItem& item : day) {
+      if (item.uid == uid && item.repeats) return item.occurrence;
+    }
+  }
+  return std::nullopt;
 }
 
 void PopupWindow::OpenDetail(const EventDetail& event, int focus) {
@@ -773,6 +884,8 @@ void PopupWindow::OpenDetail(const EventDetail& event, int focus) {
   detail.invalid = 0;
   detail.calendarOpen = false;
   detail.focus = -1;
+  detail.occurrence.reset();
+  detail.wholeSeries = false;
   detail.fields[kFieldNotes].AllowNewlines(true);
   FillDetailFields();
   app_.selected = event.uid;
@@ -912,16 +1025,79 @@ bool PopupWindow::CommitField(int field) {
 
 void PopupWindow::SaveDetail(const EventDetail& event, unsigned edits) {
   if (store_ == nullptr) return;
-  store_->UpdateEvent(event, edits);
-  if (sync_ != nullptr) sync_->Push();
+  DetailModel& detail = app_.detail;
+  if (detail.occurrence && detail.event.uid == event.uid) {
+    // Which calendar it is in and how it repeats belong to the series: Google keeps neither
+    // for one occurrence. Anything else asks, until the answer was the whole series.
+    const bool seriesOnly = event.calendarId != detail.event.calendarId ||
+                            event.recurrence != detail.event.recurrence;
+    if (seriesOnly || detail.wholeSeries) {
+      SaveAsSeries(event, edits);
+      return;
+    }
+    scopeAsk_ = ScopeAsk{};
+    scopeAsk_.action = ScopeAction::Edit;
+    scopeAsk_.uid = event.uid;
+    scopeAsk_.occurrence = *detail.occurrence;
+    scopeAsk_.shown = event;
+    scopeAsk_.edits = edits;
+    AskScope(detail.event.title, false);
+    return;
+  }
+
+  StoreEvent(event, edits);
   // The panel says what was just written, whoever wrote it: a drag on the timeline moves the
   // hours in the fields too. Only the field being typed in could hold anything unwritten, and
   // every caller has committed it by now.
-  if (app_.detail.event.uid == event.uid) {
-    app_.detail.event = event;
+  if (detail.event.uid == event.uid) {
+    detail.event = event;
     FillDetailFields();
   }
   // The rest arrives with the worker's "something changed", a moment from now.
+}
+
+void PopupWindow::StoreEvent(const EventDetail& event, unsigned edits) {
+  store_->UpdateEvent(event, edits);
+  if (sync_ != nullptr) sync_->Push();
+}
+
+// "Toda la serie" from the panel: what it shows is one occurrence, so a new date there moves the
+// series by as many days, the way dragging the series does.
+void PopupWindow::SaveAsSeries(const EventDetail& shown, unsigned edits) {
+  DetailModel& detail = app_.detail;
+  const std::optional<EventDetail> series = store_->Event(shown.uid);
+  if (!series || !detail.occurrence) return;
+  const int shift = DaysBetween(*detail.occurrence, shown.startDay);
+  EventDetail out = shown;
+  out.startDay = AddDays(series->startDay, shift);
+  out.endDay = AddDays(out.startDay, DaysBetween(shown.startDay, shown.endDay));
+  if (shift != 0 && !out.recurrence.empty() && out.recurrence == series->recurrence) {
+    const std::wstring moved = MoveRuleTo(out.recurrence, out.startDay);
+    if (moved != out.recurrence) {
+      out.recurrence = moved;
+      edits |= kEditRecurrence;
+    }
+  }
+  StoreEvent(out, edits);
+  detail.event = shown;
+  detail.event.recurrence = out.recurrence;
+  detail.occurrence = shown.startDay;
+  FillDetailFields();
+}
+
+// "Solo este" from the panel: the occurrence becomes an event of its own, and the panel stays on
+// it -- no longer a repetition, so nothing it does asks again.
+void PopupWindow::DetachShown(const EventDetail& shown, unsigned edits) {
+  DetailModel& detail = app_.detail;
+  if (!detail.occurrence) return;
+  EventDetail detached = shown;
+  detached.recurrence.clear();
+  detached.uid = store_->DetachOccurrence(shown.uid, *detail.occurrence, detached, edits);
+  if (sync_ != nullptr) sync_->Push();
+  detail.event = detached;
+  detail.occurrence.reset();
+  app_.selected = detached.uid;
+  FillDetailFields();
 }
 
 bool PopupWindow::OnDetailKeyDown(WPARAM key) {
@@ -1116,6 +1292,20 @@ void PopupWindow::AskDelete(const std::wstring& uid) {
     app_.detail.focus = -1;
     RestartCaret();
   }
+  if (!app_.scope.text.empty()) return;  // the field asked first
+
+  // A repetition asks which, and that question is the confirmation as well.
+  const std::optional<Date> occurrence =
+      app_.detail.open && app_.detail.event.uid == uid ? app_.detail.occurrence
+                                                       : OccurrenceOf(uid);
+  if (occurrence) {
+    scopeAsk_ = ScopeAsk{};
+    scopeAsk_.action = ScopeAction::Delete;
+    scopeAsk_.uid = uid;
+    scopeAsk_.occurrence = *occurrence;
+    AskScope(title, true);
+    return;
+  }
   confirmUid_ = uid;
   app_.confirm = ConfirmDeleteText(title);
   a11y_.Announce(app_.confirm);
@@ -1127,21 +1317,103 @@ void PopupWindow::ConfirmDelete() {
   app_.confirm.clear();
   confirmUid_.clear();
   if (uid.empty()) return;
+  HideDeleted(Pending{uid, false, std::nullopt});
+}
 
+void PopupWindow::HideDeleted(const Pending& pending) {
   // Hidden now and deleted when the notice goes, so undo is only showing it again.
   FlushDeletes();
-  pendingDelete_.push_back(Pending{uid, false});
+  pendingDelete_.push_back(pending);
   for (std::vector<DayItem>& day : app_.days) DropPending(day);
   DropPending(model_.day);
-  if (app_.detail.event.uid == uid) {
+  if (app_.detail.event.uid == pending.uid) {
     app_.detail.focus = -1;
     CloseDetail();
   }
   app_.selected.clear();
-  undo_ = Undone{uid, false, {}, UndoKind::Deleted, {}};
+  undo_ = Undone{pending.uid, false, {}, UndoKind::Deleted, {}};
   ShowToast(std::wstring(T(L"Borrado · Deshacer", L"Deleted · Undo")));
   Relayout();
   Invalidate();
+}
+
+// --- "Solo este / Toda la serie" ------------------------------------------------------------
+
+void PopupWindow::AskScope(std::wstring_view title, bool deleting) {
+  app_.scope.text = ScopeText(title, deleting);
+  app_.scope.pick = 0;
+  app_.scope.deleting = deleting;
+  a11y_.Announce(std::format(L"{} {} · {}", app_.scope.text, ScopeOption(0), ScopeOption(1)));
+  Invalidate();
+}
+
+void PopupWindow::AnswerScope(int pick) {
+  const ScopeAsk ask = std::exchange(scopeAsk_, ScopeAsk{});
+  app_.scope = ScopeQuestion{};
+  if (store_ == nullptr) return;
+  const bool thisOne = pick == 0;
+  switch (ask.action) {
+    case ScopeAction::Move:
+      if (thisOne) {
+        CommitMoveOccurrence(ask.ghost, ask.occurrence);
+      } else {
+        CommitMoveSeries(ask.ghost, ask.occurrence);
+      }
+      break;
+    case ScopeAction::Edit:
+      if (thisOne) {
+        DetachShown(ask.shown, ask.edits);
+      } else {
+        app_.detail.wholeSeries = true;
+        SaveAsSeries(ask.shown, ask.edits);
+      }
+      break;
+    case ScopeAction::Delete:
+      HideDeleted(Pending{ask.uid, false,
+                          thisOne ? std::optional<Date>(ask.occurrence) : std::nullopt});
+      break;
+    case ScopeAction::None:
+      break;
+  }
+  Invalidate();
+}
+
+void PopupWindow::CancelScope() {
+  const ScopeAsk ask = std::exchange(scopeAsk_, ScopeAsk{});
+  app_.scope = ScopeQuestion{};
+  // An edit that was not answered is not written: the fields go back to what is stored.
+  if (ask.action == ScopeAction::Edit && app_.detail.event.uid == ask.uid) FillDetailFields();
+  Invalidate();
+}
+
+bool PopupWindow::OnScopeKey(WPARAM key) {
+  switch (key) {
+    case VK_LEFT:
+    case VK_UP:
+      app_.scope.pick = 0;
+      break;
+    case VK_RIGHT:
+    case VK_DOWN:
+      app_.scope.pick = 1;
+      break;
+    case VK_TAB:
+      app_.scope.pick = 1 - app_.scope.pick;
+      break;
+    case VK_SPACE:
+      eatSpace_ = true;
+      [[fallthrough]];
+    case VK_RETURN:
+      AnswerScope(app_.scope.pick);
+      return true;
+    case VK_ESCAPE:
+      CancelScope();
+      return true;
+    default:
+      return true;  // nothing else happens while it waits
+  }
+  a11y_.Announce(std::wstring(ScopeOption(app_.scope.pick)));
+  Invalidate();
+  return true;
 }
 
 }  // namespace agenda

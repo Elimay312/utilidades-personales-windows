@@ -9,6 +9,11 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **Solo este o toda la serie.** Arrastrar, editar o borrar un evento que se repite pregunta
+  cuál, en la cápsula de abajo, con **Solo este** y **Toda la serie** (flechas, `Enter`, `Esc`
+  o el ratón). *Solo este* aparta esa repetición de la serie igual que Google —en su día nuevo,
+  con sus cambios— y la sube como cambio de esa ocurrencia; la serie sigue igual. El panel
+  abierto sobre una repetición enseña su fecha y no la de la primera. Captura `app-repeticion`.
 - **Repeticiones mensuales por posición y por día del mes.** «El primer martes», «el último
   viernes», «el día 15» y «el último día del mes», que son las que ofrece el menú de repetir de
   Google, ya aparecen en todos sus días; antes se quedaban en el primero. También las anuales

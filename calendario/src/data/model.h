@@ -65,7 +65,10 @@ struct DayItem {
   std::wstring title;
   std::uint32_t color = 0;        // 0xRRGGBB, from the calendar or list it belongs to
   bool done = false;              // tasks only
-  bool repeats = false;           // it carries an RRULE; phase 4 does not expand it
+  bool repeats = false;           // it carries an RRULE
+  // The day this card stands for. For a repetition it is which occurrence of the series, the
+  // one "solo este" edits; for anything else, the day it starts on.
+  Date occurrence{};
 };
 
 // The order the day list reads in: all-day events first, then everything with a clock by the

@@ -21,6 +21,7 @@ inline constexpr std::wstring_view kSnapshotViews[] = {
     L"app-detalle",         // the week with an event open in the detail panel
     L"app-arrastre",        // an event halfway through being dragged to another day
     L"app-borrar",          // Supr pressed: the question before anything is deleted
+    L"app-repeticion",      // a repetition moved: this one, or all of them
     L"configuracion",       // the settings window's client area, as it opens
 };
 

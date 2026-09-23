@@ -93,6 +93,8 @@ internal sealed unsafe class IslaVisuals : IDisposable
     // --- colocacion del contenido, en unidades logicas sobre el panel abierto -------
     private const float Margen = 16f;
     private const float CaratulaLado = 92f;
+    private const string GlifoNota = ""; // MusicNote, Segoe Fluent Icons
+    private const float NotaPx = 34f;
     private const float CaratulaRadio = 10f;
     private const float TextoX = 124f;
     private const float TituloY = 22f;
@@ -173,6 +175,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private readonly ContainerVisual _contenido;
     private ContainerVisual _cajaTitulo;
     private SpriteVisual _caratula;
+    private SpriteVisual _notaCaratula;
     private SpriteVisual _rotTitulo;
     private SpriteVisual _rotArtista;
     private SpriteVisual _rotApp;
@@ -303,8 +306,8 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _degradado.ColorStops.Insert(1, _compositor.CreateColorGradientStop(1f, Color.FromArgb(0, 0, 0, 0)));
         _aura = Capa(_degradado);
 
-        // ponytail: cuadrado gris cuando la cancion no trae caratula. Un icono
-        // generico quedaria mejor, pero eso es un recurso que hay que empaquetar.
+        // Sin caratula: este cuadrado con una nota encima (ver Contenido). La nota es un
+        // glifo de Segoe Fluent Icons, asi que no hay recurso que empaquetar.
         _grisCaratula = _compositor.CreateColorBrush(Color.FromArgb(38, 255, 255, 255));
         _vista = _compositor.CreatePropertySet();
         _vista.InsertScalar("Dx", 0f);
@@ -645,7 +648,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// Lo que se ve dentro del panel. Las posiciones son fijas respecto a su esquina
     /// superior izquierda, asi que no hace falta ninguna expresion para colocarlas.
     /// </summary>
-    [MemberNotNull(nameof(_onda), nameof(_cajaTitulo), nameof(_caratula),
+    [MemberNotNull(nameof(_onda), nameof(_cajaTitulo), nameof(_caratula), nameof(_notaCaratula),
                    nameof(_rotTitulo), nameof(_rotArtista), nameof(_rotApp),
                    nameof(_barra), nameof(_relleno), nameof(_rotPasado), nameof(_rotTotal),
                    nameof(_botAnterior), nameof(_botPlay), nameof(_botSiguiente))]
@@ -666,6 +669,12 @@ internal sealed unsafe class IslaVisuals : IDisposable
         marco.CornerRadius = new Vector2(S(CaratulaRadio), S(CaratulaRadio));
         _caratula.Clip = _compositor.CreateGeometricClip(marco);
         raiz.Children.InsertAtTop(_caratula);
+
+        // La nota del cuadrado vacio. Se pinta una vez; Mostrar solo la enciende o apaga.
+        _notaCaratula = _compositor.CreateSpriteVisual();
+        Rotular(_notaCaratula, GlifoNota, NotaPx, false, 0.35f, iconos: true);
+        _notaCaratula.Offset = new Vector3((_caratula.Size - _notaCaratula.Size) * 0.5f, 0);
+        _caratula.Children.InsertAtTop(_notaCaratula);
 
         // El titulo va dentro de una caja que lo recorta. Si no cabe se pasea: cortarlo
         // con puntos suspensivos esconde justo la parte que distingue dos canciones del
@@ -1051,6 +1060,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
 
         CompositionBrush? arteVieja = _caratula.Brush;
         _caratula.Brush = c.Arte is null ? _grisCaratula : PincelArte(c.Arte);
+        _notaCaratula.IsVisible = c.Arte is null;
         Soltar(arteVieja);
 
         // El aura se tine del color de la caratula. Alfa bajo a proposito: tiene que

@@ -114,6 +114,8 @@ internal sealed unsafe class IslaWindow : IDisposable
     private const uint WM_MOUSEMOVE = 0x0200;
     private const uint WM_LBUTTONDOWN = 0x0201;
     private const uint WM_LBUTTONUP = 0x0202;
+    private const uint WM_RBUTTONUP = 0x0205;
+    private const uint WM_NULL = 0x0000;
     private const uint WM_HOTKEY = 0x0312;
     private const uint WM_POWERBROADCAST = 0x0218;
     private const uint WM_DISPLAYCHANGE = 0x007E;
@@ -518,6 +520,10 @@ internal sealed unsafe class IslaWindow : IDisposable
 
             case WM_LBUTTONUP:
                 isla?.OnSoltar(lParam);
+                return new LRESULT(0);
+
+            case WM_RBUTTONUP:
+                isla?.OnMenu();
                 return new LRESULT(0);
 
             case WM_HOTKEY:
@@ -1456,6 +1462,60 @@ internal sealed unsafe class IslaWindow : IDisposable
                 PInvoke.SetCapture(_hwnd);
                 _visuals.VistaPrevia(_visuals.FraccionEnX(p.X));
                 break;
+        }
+    }
+
+    private const uint MenuAbrirConfig = 1;
+    private const uint MenuSalir = 2;
+
+    /// <summary>
+    /// Clic derecho: abrir isla.json o salir (SEGURIDAD.md s.3.8). Nada mas.
+    /// </summary>
+    private void OnMenu()
+    {
+        HMENU menu = PInvoke.CreatePopupMenu();
+        try
+        {
+            unsafe
+            {
+                fixed (char* abrir = "Abrir isla.json", salir = "Salir")
+                {
+                    PInvoke.AppendMenu(menu, MENU_ITEM_FLAGS.MF_STRING, MenuAbrirConfig, abrir);
+                    PInvoke.AppendMenu(menu, MENU_ITEM_FLAGS.MF_SEPARATOR, 0, default(PCWSTR));
+                    PInvoke.AppendMenu(menu, MENU_ITEM_FLAGS.MF_STRING, MenuSalir, salir);
+                }
+            }
+
+            PInvoke.GetCursorPos(out System.Drawing.Point c);
+            // Sin esto el menu no se cierra al clicar fuera: es el requisito documentado de
+            // TrackPopupMenu. La ventana propia y ninguna otra; auditar.ps1 lo vigila.
+            PInvoke.SetForegroundWindow(_hwnd);
+            uint elegido;
+            unsafe
+            {
+                elegido = (uint)PInvoke.TrackPopupMenu(menu,
+                    TRACK_POPUP_MENU_FLAGS.TPM_RETURNCMD | TRACK_POPUP_MENU_FLAGS.TPM_RIGHTBUTTON,
+                    c.X, c.Y, 0, _hwnd, null).Value;
+            }
+            // El PostMessage de la documentacion: sin el, el siguiente clic derecho abre el
+            // menu y lo cierra en el acto.
+            PInvoke.PostMessage(_hwnd, WM_NULL, default, default);
+
+            if (elegido == MenuSalir)
+            {
+                // No DestroyWindow: al salir del bucle, Program llama a Cerrar() y Dispose ya
+                // la destruye. Dos veces seria destruir un HWND muerto.
+                PInvoke.PostQuitMessage(0);
+            }
+            else if (elegido == MenuAbrirConfig)
+            {
+                try { Process.Start(new ProcessStartInfo(Config.Ruta) { UseShellExecute = true }); }
+                catch (Exception ex) { Console.Error.WriteLine($"[isla] no se pudo abrir isla.json: {ex.Message}"); }
+            }
+        }
+        finally
+        {
+            PInvoke.DestroyMenu(menu);
         }
     }
 

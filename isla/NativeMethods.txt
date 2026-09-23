@@ -168,3 +168,12 @@ STGM
 // pulsar uno de sus botones, para que "Abrir" pueda traer su ventana delante. Nunca ASFW_ANY.
 GetNamedPipeClientProcessId
 AllowSetForegroundWindow
+
+// --- Menu propio (SEGURIDAD.md 3.8) ---
+// Clic derecho: "Abrir isla.json" y "Salir". SetForegroundWindow SOLO sobre la ventana
+// propia: sin eso el menu no se cierra al clicar fuera. auditar.ps1 marca cualquier otra.
+CreatePopupMenu
+AppendMenuW
+TrackPopupMenu
+DestroyMenu
+SetForegroundWindow

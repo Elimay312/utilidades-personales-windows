@@ -85,6 +85,8 @@ autocompleta · `~` carpeta de usuario · `.` ocultos · `T` pestaña nueva, `Ct
 ## Tenerlos al día en otro equipo
 
 ```powershell
+winget install --id Git.Git -e                                                   # si el equipo no tiene git
+git clone https://github.com/Elimay312/utilidades-personales-windows.git; cd utilidades-personales-windows
 powershell -NoProfile -ExecutionPolicy Bypass -File actualizar.ps1 -Todo       # equipo nuevo: instala todo
 powershell -NoProfile -ExecutionPolicy Bypass -File actualizar.ps1 -Programar  # y desde entonces, solo al iniciar sesión
 ```

@@ -179,7 +179,9 @@ elseif (-not $escribeNoche) { Regla '2.5 Luz nocturna con cuidado' 'pendiente' '
 else { Regla '2.5 Luz nocturna con cuidado' 'bien' }
 
 # 2.6 Radios: sin emparejar, conectar ni desconectar.
-Prohibido '2.6 Radios: solo encender y apagar' '\b(PairAsync|UnpairAsync|BluetoothAuthenticate\w*|BluetoothRemoveDevice|BluetoothSetServiceState|WlanConnect\w*|WlanDisconnect)\b'
+#     WlanConnect y WlanConnect2 son las funciones que conectan; WlanConnectionProfileDetails,
+#     de WinRT, solo lee el nombre de la red y no cuenta.
+Prohibido '2.6 Radios: solo encender y apagar' '\b(PairAsync|UnpairAsync|BluetoothAuthenticate\w*|BluetoothRemoveDevice|BluetoothSetServiceState|WlanConnect2?|WlanDisconnect)\b'
 
 # --- Salida ------------------------------------------------------------------------
 

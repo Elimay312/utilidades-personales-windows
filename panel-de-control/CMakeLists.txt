@@ -44,7 +44,9 @@ set(DOCTEST_NO_INSTALL ON CACHE BOOL "" FORCE)
 set(DOCTEST_WITH_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(nlohmann_json doctest)
 
-set(PANEL_WARNINGS /W4 /permissive- /utf-8 /EHsc)
+# /external: the SDK's C++/WinRT headers are not ours to fix, and /W4 over winrt/base.h is noise
+# (Brújula does the same). Anything included with angle brackets is treated as external.
+set(PANEL_WARNINGS /W4 /permissive- /utf-8 /EHsc /external:anglebrackets /external:W0)
 set(PANEL_DEFINES UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 
 add_executable(Panel WIN32
@@ -55,6 +57,7 @@ add_executable(Panel WIN32
   src/model/sample.cpp
   src/system/audio.cpp
   src/system/brightness.cpp
+  src/system/radios.cpp
   src/system/worker.cpp
   src/ui/paint.cpp
   src/ui/panel_view.cpp
@@ -67,7 +70,9 @@ target_include_directories(Panel PRIVATE src)
 target_compile_options(Panel PRIVATE ${PANEL_WARNINGS})
 target_compile_definitions(Panel PRIVATE ${PANEL_DEFINES})
 target_link_libraries(Panel PRIVATE nlohmann_json::nlohmann_json
-  d2d1 d3d11 dxgi dcomp dwmapi dwrite windowscodecs shcore wbemuuid)
+  d2d1 d3d11 dxgi dcomp dwmapi dwrite windowscodecs shcore wbemuuid
+  # windowsapp: WinRT, for Windows.Devices.Radios, DeviceWatcher and NetworkInformation.
+  windowsapp)
 # The manifest (PerMonitorV2, asInvoker) comes in through panel.rc.
 target_link_options(Panel PRIVATE /MANIFEST:NO)
 
@@ -79,6 +84,7 @@ add_executable(panel_tests
   tests/test_hotkey.cpp
   tests/test_layout.cpp
   tests/test_options.cpp
+  tests/test_radios.cpp
   tests/test_worker.cpp
   src/core/log.cpp
   src/core/options.cpp

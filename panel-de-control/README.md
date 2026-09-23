@@ -6,14 +6,17 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
 
 ![El panel](docs/img/panel.png)
 
-> **Estado: fase 4a de 8.** El panel se usa entero con el ratón y con el teclado. Ya es de
-> verdad:
+> **Estado: fase 5 de 8** (la 4b, monitores externos, espera a probarse con las tres
+> pantallas). El panel se usa entero con el ratón y con el teclado. Ya es de verdad:
 > - **el volumen:** nivel, silencio, el nombre de la salida (y la sigue si cambias de
 >   dispositivo) y la lista de salidas para elegir otra;
-> - **el brillo de la pantalla del portátil,** que también sigue las teclas Fn.
+> - **el brillo de la pantalla del portátil,** que también sigue las teclas Fn;
+> - **Wi-Fi y Bluetooth:** encender y apagar, la red a la que estás conectado y cuántos
+>   dispositivos Bluetooth hay conectados. Clic derecho en su tile abre su página de
+>   Configuración.
 >
-> Todavía son datos de ejemplo: los monitores externos (llegan en la 4b), Wi-Fi, Bluetooth, luz
-> nocturna y utilidades. El plan está en
+> Todavía son datos de ejemplo: los monitores externos, la luz nocturna y las utilidades. El
+> plan está en
 > [`docs/superpowers/plans/2026-09-23-panel-de-control.md`](docs/superpowers/plans/2026-09-23-panel-de-control.md).
 
 | Brillo desplegado | Volumen desplegado | Tema claro |

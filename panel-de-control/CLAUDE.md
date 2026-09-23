@@ -126,8 +126,9 @@ src/
                  paint, glyphs, snapshot
   system/        audio (Core Audio y la lista de salidas), policy_config (la única API no
                  documentada, en un solo archivo), worker (el hilo para lo que bloquea),
-                 brightness (WMI del portátil y el aviso de Windows); llegarán display_ids,
-                 radios, nightlight_blob, nightlight y apps
+                 brightness (WMI del portátil y el aviso de Windows), radios (Wi-Fi,
+                 Bluetooth, SSID; el único archivo con C++/WinRT); llegarán display_ids,
+                 nightlight_blob, nightlight y apps
 tests/           doctest: hotkey, options, layout, controls
 assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
 ```
@@ -258,6 +259,29 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   se pueden pulsar desde una sonda. Lo que se prueba es el aviso, con un cambio hecho desde
   fuera por WMI, que llega por el mismo camino.
 
+### Decisiones de la fase 5
+
+- **C++/WinRT solo en `system/radios.cpp`:** el estado de WinRT vive en un `State` escondido en
+  el `.cpp`, así que nada más compila esas cabeceras. `.get()` solo en el hilo de trabajo:
+  C++/WinRT no deja bloquear un STA como el de la interfaz.
+- **`RequestAccessAsync` desde el hilo de trabajo (MTA)** contesta «Allowed» en esta app sin
+  paquete. Si algún día contesta otra cosa, el panel lo dice en la línea de avisos.
+- **El SSID sale de cualquier perfil Wi-Fi con conectividad**, no solo del que tiene internet: una
+  red sin internet sigue siendo la red en la que estás.
+- **`Publish()` va bajo `publish_`**, leyendo y guardando juntos. Lo encontró la sonda: el tile
+  se quedaba encendido con la radio apagada.
+- **Un `DeviceWatcher` necesita un manejador de `Updated`,** aunque no haga nada, para que
+  `Removed` llegue cuando un dispositivo deja de cumplir el filtro de «conectado».
+- **Probar las radios corta cosas de verdad:** el Wi-Fi corta internet unos segundos, y el
+  Bluetooth desconecta los auriculares del usuario (soundcore P31i), con lo que la salida de
+  audio cambia. **Pregunta antes siempre.** La sonda deja las dos encendidas en un `finally` y
+  espera a que vuelva la red.
+- **Sin probar de forma automática:** que el clic derecho abra Configuración, porque abriría una
+  ventana en la pantalla del usuario. Es un `ShellExecuteW` con cada URI escrita entera.
+- **`ponytail:`** al cerrar la app, un hilo del pool que ya estuviera dentro de un manejador
+  podría llamar a `Publish` mientras se suelta `State`. Solo puede pasar al salir del proceso;
+  si aparece en un volcado, hay que esperar al `Stopped` de los watchers.
+
 - **Pendiente para la fase 8:** si el HUD está en marcha, arrastrar el deslizador del panel
   saca también su cápsula. La solución es que el HUD ignore `kPanelVolumeContext`, y toca
   otro proyecto.
@@ -337,7 +361,25 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   - emparejar cada monitor con su ID;
   - un deslizador por pantalla;
   - volver a enumerar con `WM_DISPLAYCHANGE`.
-- [ ] **5. Wi-Fi y Bluetooth:** Radios, SSID sin ubicación y `DeviceWatcher`s.
+- [x] **5. Wi-Fi y Bluetooth:** Radios, SSID sin ubicación y `DeviceWatcher`s.
+- [ ] **5b. Desplegar Wi-Fi y Bluetooth** (lo pidió el usuario en la fase 5). Una flecha
+  en cada uno de los dos tiles. El clic en el tile sigue siendo encender y apagar; la flecha
+  despliega una tarjeta debajo:
+  - **Wi-Fi:** las redes que hay alrededor para cambiar de una a otra, y buscar. **Choca con
+    `SEGURIDAD.md` §1.2:** listar redes (`WiFiAdapter.ScanAsync`, `WlanGetAvailableNetworkList`)
+    exige el permiso de ubicación desde 24H2. Windows lo pide la primera vez, y desde entonces
+    el panel sale en el icono de «ubicación en uso» cada vez que busca. Hace falta una enmienda
+    y que el usuario decida si lo acepta, antes de escribir código. La alternativa sin ubicación
+    es listar solo los perfiles guardados (`GetConnectionProfiles`), sin ver qué hay alrededor.
+  - **Bluetooth:** los dispositivos emparejados, para conectar y desconectar uno, y buscar
+    nuevos para emparejarlos. **Choca con `SEGURIDAD.md` §2.6**, que hoy prohíbe emparejar,
+    conectar y desconectar. Hace falta una enmienda antes, con sus cortes: solo por un clic, solo
+    dispositivos que se ven en la lista, y sin tocar nunca los que no son de audio o de entrada
+    sin confirmarlo.
+  - **Encaje en el diseño:** la tarjeta desplegada va entre los tiles y el brillo, con el mismo
+    muelle que las otras. El `PanelState` actual no tiene sitio para las listas: habrá que
+    añadir `wifi.networks[]` y `bluetooth.devices[]`, que es añadir campos, no cambiar los que
+    hay.
 - [ ] **6. Luz nocturna:**
   - el blob, con tests sobre los datos reales de esta máquina; solo se escribe el valor del
     estado, nunca el del horario;

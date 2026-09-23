@@ -6,6 +6,42 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
 
 ### Añadido
 
+- **Fase 5: Wi-Fi y Bluetooth.**
+  - **Los dos tiles encienden y apagan su radio de verdad** con `Windows.Devices.Radios`.
+    `RequestAccessAsync` se pide una vez; en esta máquina contesta «Allowed», sin preguntar
+    nada. Cuando Windows avisa de que una radio cambió, el tile cambia también: lo que se haga
+    desde Win+A o desde Configuración aparece en el panel.
+  - **Wi-Fi:** debajo dice la red a la que estás conectado, sacada de los perfiles de conexión
+    de `NetworkInformation` (`GetConnectedSsid`), aunque esa red no tenga internet. Sin WlanAPI:
+    el panel **no** aparece en el icono de «ubicación en uso». Comprobado en el registro de
+    permisos de ubicación, donde no hay ninguna entrada suya.
+  - **Bluetooth:** debajo dice cuántos dispositivos hay conectados. Lo cuentan dos
+    `DeviceWatcher`, uno clásico y otro LE; un dispositivo que habla los dos cuenta una vez, por
+    su dirección (`BluetoothAddressFromId`, con pruebas).
+  - **Clic derecho en un tile:** abre su página de Configuración (`ms-settings:network-wifi`,
+    `bluetooth` o `nightlight`). En el resto del panel, el clic derecho sigue abriendo el menú.
+  - **Una radio apagada por un interruptor físico o por el firmware** sale atenuada, y el panel
+    no hace como que la puede encender.
+  - **Carrera arreglada antes de salir:** `Publish()` se llama a la vez desde el hilo de trabajo
+    y desde los avisos de red. Un aviso que había leído el Wi-Fi «encendido» guardaba después
+    del «apagado» del hilo de trabajo, y el tile se quedaba encendido; con eso, el segundo clic
+    volvía a apagar en vez de encender. Ahora leer y guardar van bajo el mismo mutex.
+    Encontrado con la sonda, no leyendo el código.
+  - **Auditoría:** la regla 2.6 prohibía `WlanConnect\w*` y saltaba con
+    `WlanConnectionProfileDetails`, que solo lee el nombre de la red. Ahora solo prohíbe
+    `WlanConnect` y `WlanConnect2`, que son las funciones que conectan.
+  - **Compilación:** `/external:anglebrackets /external:W0` para no ver los warnings de las
+    cabeceras C++/WinRT del SDK, y se enlaza `windowsapp`.
+  - **Pruebas:** 3 casos nuevos para las direcciones Bluetooth, 30 en total.
+  - **Probado con las radios de verdad:**
+    - Wi-Fi apagado y encendido desde el panel;
+    - Bluetooth apagado desde el panel y encendido desde fuera, y el panel lo siguió;
+    - las dos radios quedaron encendidas y la red volvió.
+  - **Medido:**
+    - en calma, 31 ms de CPU en 30 s con el panel escondido, y 2,2 MB;
+    - los avisos de red que Windows manda de vez en cuando (hay Tailscale además del Wi-Fi)
+      cuestan una lectura del SSID cada uno.
+
 - **Fase 4a: el brillo del portátil.**
   - **La barra del brillo mueve la pantalla del portátil** por WMI (`ROOT\WMI`,
     `WmiMonitorBrightness` y `WmiSetBrightness`). Toda la conversación con WMI va en el hilo de

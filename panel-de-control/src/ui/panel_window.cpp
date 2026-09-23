@@ -121,6 +121,7 @@ bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view
   ReadAudio();
   worker_.Start();
   brightness_.Start(hwnd_, worker_);
+  radios_.Start(hwnd_, worker_);
   brightnessNotify_ = RegisterBrightnessNotification(hwnd_);
   if (brightnessNotify_ == nullptr) LogError(L"panel: no brightness notifications, Fn keys will not show");
   Place(work);
@@ -404,7 +405,8 @@ void PanelWindow::Shutdown() {
   KillTimer(hwnd_, kAudioRetryTimer);
   if (brightnessNotify_ != nullptr) UnregisterPowerSettingNotification(brightnessNotify_);
   brightnessNotify_ = nullptr;
-  // The connection is let go on the worker's thread, then the worker ends.
+  // The connections are let go on the worker's thread, then the worker ends.
+  radios_.Stop();
   brightness_.Stop();
   worker_.Stop();
   audio_.Stop();
@@ -428,6 +430,39 @@ void PanelWindow::TakeBrightness() {
   }
   if (!CanUnfold(state_.displays.size()) && brightnessGoal_) ToggleCard(brightnessGoal_);
   KeepFocusValid();
+}
+
+void PanelWindow::TakeRadios() {
+  Radios::Snapshot snapshot = radios_.Current();
+  if (!snapshot.known) return;
+  state_.wifi = snapshot.wifi;
+  state_.bluetooth = snapshot.bluetooth;
+  if (!snapshot.problem.empty()) SetNotice(std::move(snapshot.problem));
+}
+
+bool PanelWindow::OpenSettingsFor(Target target) {
+  // Right click on a tile: its page in Settings, like Windows' own quick settings. Each URI is
+  // written out whole (SEGURIDAD.md 1.6: ShellExecute only with a fixed ms-settings: page).
+  if (target.part != Part::Tile) return false;
+  HINSTANCE opened = nullptr;
+  switch (target.index) {
+    case 0:
+      opened = ShellExecuteW(nullptr, L"open", L"ms-settings:network-wifi", nullptr, nullptr, SW_SHOWNORMAL);
+      break;
+    case 1:
+      opened = ShellExecuteW(nullptr, L"open", L"ms-settings:bluetooth", nullptr, nullptr, SW_SHOWNORMAL);
+      break;
+    case 2:
+      opened = ShellExecuteW(nullptr, L"open", L"ms-settings:nightlight", nullptr, nullptr, SW_SHOWNORMAL);
+      break;
+    default:
+      return false;  // settings: nothing to open yet, and the menu is more use there
+  }
+  if (reinterpret_cast<INT_PTR>(opened) <= 32) {
+    LogError(L"panel: could not open the settings page (error {})", reinterpret_cast<INT_PTR>(opened));
+  }
+  Hide();
+  return true;
 }
 
 void PanelWindow::BrightnessFromWindows(float level) {
@@ -643,8 +678,18 @@ void PanelWindow::Activate(Target target) {
   // real call here, one part at a time.
   switch (target.part) {
     case Part::Tile:
-      if (target.index == 0 && state_.wifi.available) state_.wifi.on = !state_.wifi.on;
-      if (target.index == 1 && state_.bluetooth.available) state_.bluetooth.on = !state_.bluetooth.on;
+      // The tile flips now; Windows' notice that the radio changed confirms it a moment later,
+      // or puts it back if it did not.
+      if (target.index == 0 && state_.wifi.available) {
+        state_.wifi.on = !state_.wifi.on;
+        if (!state_.wifi.on) state_.wifi.ssid.clear();
+        radios_.SetWifi(state_.wifi.on);
+      }
+      if (target.index == 1 && state_.bluetooth.available) {
+        state_.bluetooth.on = !state_.bluetooth.on;
+        if (!state_.bluetooth.on) state_.bluetooth.connected = 0;
+        radios_.SetBluetooth(state_.bluetooth.on);
+      }
       if (target.index == 2 && state_.night.supported) state_.night.on = !state_.night.on;
       // Index 3, settings: not wired to anything yet. The press shows; nothing happens.
       break;
@@ -919,6 +964,20 @@ LRESULT PanelWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
     case kFrameMessage:
       OnFrame();
       return 0;
+
+    case kRadiosMessage:
+      TakeRadios();
+      if (visible_) {
+        UpdateHot();
+        Render();
+      }
+      return 0;
+
+    case WM_RBUTTONUP: {
+      const D2D1_POINT_2F point = ToDip(lparam);
+      if (OpenSettingsFor(HitTest(layout_, state_, point.x, point.y))) return 0;
+      break;  // anywhere else: DefWindowProc turns it into WM_CONTEXTMENU, the menu
+    }
 
     case kBrightnessMessage:
       TakeBrightness();

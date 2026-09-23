@@ -163,6 +163,35 @@ CREATE INDEX events_by_series ON events(series_id, original_day);
 UPDATE sync_state SET sync_token = '';
 )SQL";
 
+// --- v5 -----------------------------------------------------------------------------------
+//
+// Phase 12, with the user's permission, and again nothing rebuilt: more than one Google account.
+//
+// `accounts` is one row per account, with the file its refresh token is kept in (next to the
+// cache, encrypted with DPAPI). The account that was already connected is number 1 and keeps
+// token.bin, so connecting again is not needed; the ones added later get token-<id>.bin. Its
+// email is the id of its primary calendar, which the next pass writes down.
+//
+// `calendars.account_id` says whose a calendar or a task list is; NULL is the local
+// placeholders. `calendars.remote_id` is Google's id when it cannot be ours: the same calendar
+// shared into two accounts would be one primary key twice, so the second one gets a key of its
+// own and remembers the real id here. NULL means the key IS Google's id, which is every row
+// that already exists.
+constexpr const char* kV5 = R"SQL(
+CREATE TABLE accounts (
+  id          INTEGER PRIMARY KEY,
+  email       TEXT NOT NULL DEFAULT '',
+  token_file  TEXT NOT NULL UNIQUE,
+  added_at    INTEGER NOT NULL
+);
+ALTER TABLE calendars ADD COLUMN account_id INTEGER REFERENCES accounts(id);
+ALTER TABLE calendars ADD COLUMN remote_id TEXT;
+INSERT INTO accounts (id, token_file, added_at)
+  SELECT 1, 'token.bin', CAST(strftime('%s', 'now') AS INTEGER)
+  WHERE EXISTS (SELECT 1 FROM calendars WHERE id NOT IN ('local', 'local-tasks'));
+UPDATE calendars SET account_id = 1 WHERE id NOT IN ('local', 'local-tasks');
+)SQL";
+
 struct Migration {
   int version;
   const char* sql;
@@ -173,11 +202,12 @@ constexpr Migration kMigrations[] = {
     {2, kV2},
     {3, kV3},
     {4, kV4},
+    {5, kV5},
 };
 
 }  // namespace
 
-bool Migrate(Db& db) {
+bool Migrate(Db& db, int upTo) {
   const std::optional<std::int64_t> current = db.UserVersion();
   if (!current) return false;
 
@@ -187,7 +217,7 @@ bool Migrate(Db& db) {
              from);
     return db.Fail(L"la cache es de una version mas nueva de Agenda");
   }
-  if (from == kSchemaVersion) return true;
+  if (from >= upTo) return true;
 
   // Everything inside one transaction, user_version included. If a CREATE TABLE fails, the
   // Transaction destructor undoes whatever there was and the number stays where it was, so
@@ -196,14 +226,14 @@ bool Migrate(Db& db) {
   if (!tx.Begin()) return false;
 
   for (const Migration& step : kMigrations) {
-    if (step.version <= from) continue;
+    if (step.version <= from || step.version > upTo) continue;
     if (!db.Exec(step.sql)) return false;
   }
 
-  if (!db.SetUserVersion(kSchemaVersion)) return false;
+  if (!db.SetUserVersion(upTo)) return false;
   if (!tx.Commit()) return false;
 
-  LogInfo(L"db: esquema en v{} (venia de v{})", kSchemaVersion, from);
+  LogInfo(L"db: esquema en v{} (venia de v{})", upTo, from);
   return true;
 }
 

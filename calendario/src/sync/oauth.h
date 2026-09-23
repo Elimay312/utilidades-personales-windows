@@ -11,14 +11,16 @@
 // Server API, which would want a URL reservation and therefore an administrator, for the sake
 // of receiving one GET.
 //
-// The refresh token is encrypted with DPAPI and written to %LOCALAPPDATA%\Agenda\token.bin. It
-// is tied to the Windows account: copying that file to another machine, or another user on this
-// one, gets nothing. The access token is never written anywhere -- it lasts an hour and asking
-// for another costs one request.
+// The refresh token is encrypted with DPAPI and written next to the cache, in
+// %LOCALAPPDATA%\Agenda: token.bin for the first account, token-<id>.bin for the ones after it
+// (phase 12). It is tied to the Windows account: copying that file to another machine, or
+// another user on this one, gets nothing. The access token is never written anywhere -- it
+// lasts an hour and asking for another costs one request.
 
 #include <windows.h>
 
 #include <cstdint>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -34,7 +36,8 @@ struct OAuthConfig {
 
 class GoogleAuth {
  public:
-  explicit GoogleAuth(OAuthConfig config);
+  // `tokenFile` is the name of the file the account's refresh token lives in, next to the cache.
+  explicit GoogleAuth(OAuthConfig config, std::string_view tokenFile = "token.bin");
   ~GoogleAuth();
 
   GoogleAuth(const GoogleAuth&) = delete;
@@ -79,6 +82,7 @@ class GoogleAuth {
   bool Fail(std::wstring_view what);
 
   OAuthConfig config_;
+  std::filesystem::path tokenFile_;
   Http http_;  // its own session: the token endpoint is a different host and a different life
 
   mutable std::mutex mutex_;

@@ -566,9 +566,11 @@ PowerShell conviene lanzarlo con `Start-Process ... -Wait` si hace falta esperar
   calendarios, el estado de sincronización y la cola de operaciones pendientes de subir.
   Las horas se guardan como **reloj de pared local** —un día y un minuto de ese día—, que
   es lo que guarda también Google Calendar. Desde la 1.0.0 guarda también los recordatorios
-  (esquema v3), y después las repeticiones que Google aparta de su serie (esquema v4). Se crea sola la primera vez y se migra con
+  (esquema v3), después las repeticiones que Google aparta de su serie (esquema v4) y las
+  cuentas de Google (esquema v5). Se crea sola la primera vez y se migra con
   `PRAGMA user_version`; una base escrita por una versión más nueva de Agenda no se toca.
-- Token de Google: `%LOCALAPPDATA%\Agenda\token.bin`, el *refresh token* cifrado con
+- Token de Google: `%LOCALAPPDATA%\Agenda\token.bin` para la primera cuenta y
+  `token-2.bin`, `token-3.bin`… para las siguientes: el *refresh token* cifrado con
   **DPAPI**. Va atado a la cuenta de Windows: copiarlo a otro equipo o a otro usuario no sirve
   de nada. Borrarlo es desconectar. El *access token* no se escribe en ningún sitio.
 - Log: `%LOCALAPPDATA%\Agenda\logs\agenda-AAAAMMDD.log` (UTF-8, un archivo por día).

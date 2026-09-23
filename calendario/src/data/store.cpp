@@ -670,8 +670,8 @@ std::vector<CalendarInfo> Store::AllCalendars() {
   std::vector<CalendarInfo> out;
   if (!db_.IsOpen()) return out;
   if (std::optional<Stmt> stmt = db_.Prepare(
-          "SELECT id, title, is_primary, kind, color, hidden FROM calendars "
-          "WHERE visible = 1 ORDER BY kind = 'tasklist', sort, title")) {
+          "SELECT id, title, is_primary, kind, color, hidden, COALESCE(account_id, 0) "
+          "FROM calendars WHERE visible = 1 ORDER BY kind = 'tasklist', sort, title")) {
     while (stmt->Step()) {
       CalendarInfo info;
       info.id = stmt->Text(0);
@@ -680,10 +680,93 @@ std::vector<CalendarInfo> Store::AllCalendars() {
       info.isTaskList = stmt->Text(3) == "tasklist";
       info.color = static_cast<std::uint32_t>(stmt->Int(4));
       info.hidden = stmt->Int(5) != 0;
+      info.accountId = static_cast<int>(stmt->Int(6));
       out.push_back(std::move(info));
     }
   }
   return out;
+}
+
+// --- Google accounts ------------------------------------------------------------------------
+
+std::vector<AccountInfo> Store::Accounts() {
+  std::vector<AccountInfo> out;
+  if (!db_.IsOpen()) return out;
+  if (std::optional<Stmt> stmt =
+          db_.Prepare("SELECT id, email, token_file FROM accounts ORDER BY id")) {
+    while (stmt->Step()) {
+      out.push_back(AccountInfo{static_cast<int>(stmt->Int(0)), stmt->Text(1), stmt->Text(2)});
+    }
+  }
+  return out;
+}
+
+AccountInfo Store::AddAccount() {
+  AccountInfo added;
+  Run([this, &added] {
+    int id = 1;
+    if (std::optional<Stmt> stmt = db_.Prepare("SELECT COALESCE(MAX(id), 0) + 1 FROM accounts")) {
+      if (stmt->Step()) id = static_cast<int>(stmt->Int(0));
+    }
+    // The first keeps the name the single account always had, so a cache from before phase 12
+    // and one made after it agree on where that token is.
+    const std::string file = id == 1 ? "token.bin" : std::format("token-{}.bin", id);
+    bool ok = false;
+    if (std::optional<Stmt> stmt = db_.Prepare(
+            "INSERT INTO accounts (id, token_file, added_at) VALUES (?, ?, ?)")) {
+      stmt->Bind(1, id);
+      stmt->Bind(2, file);
+      stmt->Bind(3, NowSeconds());
+      stmt->Step(&ok);
+    }
+    if (ok) added = AccountInfo{id, {}, file};
+  });
+  if (added.id == 0) LogError(L"store: no se pudo añadir la cuenta");
+  return added;
+}
+
+void Store::ForgetAccount(int id) {
+  Enqueue([this, id] {
+    Transaction tx(db_);
+    if (!tx.Begin()) return;
+    // Children before parents: the foreign keys are on, and a calendar cannot go while events
+    // still hang from it.
+    constexpr const char* kSteps[] = {
+        "DELETE FROM pending_ops WHERE uid IN (SELECT e.uid FROM events e JOIN calendars c "
+        "  ON c.id = e.calendar_id WHERE c.account_id = ?1) "
+        "OR uid IN (SELECT t.uid FROM tasks t JOIN calendars c ON c.id = t.list_id "
+        "  WHERE c.account_id = ?1)",
+        "DELETE FROM events WHERE calendar_id IN (SELECT id FROM calendars WHERE account_id = ?1)",
+        "DELETE FROM tasks WHERE list_id IN (SELECT id FROM calendars WHERE account_id = ?1)",
+        "DELETE FROM sync_state WHERE id IN (SELECT id FROM calendars WHERE account_id = ?1)",
+        "DELETE FROM calendars WHERE account_id = ?1",
+        "DELETE FROM accounts WHERE id = ?1",
+    };
+    for (const char* sql : kSteps) {
+      std::optional<Stmt> stmt = db_.Prepare(sql);
+      bool ok = false;
+      if (stmt) {
+        stmt->Bind(1, id);
+        stmt->Step(&ok);
+      }
+      if (!ok) {
+        LogError(L"store: no se pudo olvidar la cuenta {}", id);
+        return;
+      }
+    }
+    // Where new things land, when it was one of the calendars that just went.
+    for (const auto& [kind, local] : {std::pair{"calendar", kLocalCalendarId},
+                                      std::pair{"tasklist", kLocalTaskListId}}) {
+      if (std::optional<Stmt> stmt = db_.Prepare(
+              "UPDATE calendars SET is_primary = 1 WHERE id = ?2 AND NOT EXISTS "
+              "  (SELECT 1 FROM calendars WHERE kind = ?1 AND is_primary = 1)")) {
+        stmt->Bind(1, kind);
+        stmt->Bind(2, local);
+        stmt->Step();
+      }
+    }
+    if (tx.Commit()) Notify();
+  });
 }
 
 void Store::SetCalendarHidden(const std::string& id, bool hidden) {

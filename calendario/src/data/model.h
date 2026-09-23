@@ -231,6 +231,15 @@ struct CalendarInfo {
   bool isTaskList = false;
   std::uint32_t color = 0;
   bool hidden = false;
+  int accountId = 0;  // whose it is; 0 is the local placeholders
+};
+
+// A Google account (phase 12). `tokenFile` is the name of the file its refresh token is kept in,
+// next to the cache: the first one is token.bin, the ones after it token-<id>.bin.
+struct AccountInfo {
+  int id = 0;
+  std::string email;  // its primary calendar's id; empty until the first pass has read it
+  std::string tokenFile;
 };
 
 }  // namespace agenda

@@ -39,6 +39,10 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Cambiado
 
+- **Esquema v5, el primer paso para varias cuentas de Google** (fase 12.1). Una tabla de
+  cuentas, y cada calendario dice de cuál es. La cuenta que ya estaba conectada pasa a ser la
+  primera y sigue con su `token.bin`: no hay que volver a conectarla. Todavía no se puede añadir
+  una segunda desde la interfaz.
 - **Varios monitores: el popup se abre donde está el ratón.** Antes salía siempre en el monitor
   principal. Ahora, sin `--monitor`, cada apertura (atajo o bandeja) va a la esquina del
   monitor que tiene el ratón, con su escala; la configuración también. `--monitor=N` y

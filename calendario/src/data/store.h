@@ -103,6 +103,17 @@ class Store {
   // never sent goes for good.
   void Remove(const std::wstring& uid, bool isTask);
 
+  // --- Google accounts (phase 12) ------------------------------------------------------
+  // The accounts there are, in the order they were added.
+  std::vector<AccountInfo> Accounts();
+  // A new one, with its token file named, before the browser is opened for it. Waits for the
+  // writer, so it must not be called from inside Run.
+  AccountInfo AddAccount();
+  // Everything of one account goes: its calendars and lists, their events and tasks, what was
+  // queued for them, and the account itself. The default calendar falls back to the local one
+  // when it was among them. The token file is the caller's, like the browser was.
+  void ForgetAccount(int id);
+
   // Where new things land: the calendar flagged is_primary for its kind. Seeded on 'local',
   // moved onto a Google calendar when one is connected, and moved again from the tray menu.
   // One column that already existed instead of a settings store nobody asked for.

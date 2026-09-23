@@ -639,6 +639,15 @@ bool GoogleSync::PullCalendars(const std::wstring& auth) {
     Transaction tx(store_.db());
     if (!tx.Begin()) return;
 
+    // The account these calendars belong to. Until the sync walks several (phase 12.2) it is
+    // the one there always was, number 1 with token.bin, written down here the first time.
+    if (std::optional<Stmt> stmt = store_.db().Prepare(
+            "INSERT OR IGNORE INTO accounts (id, token_file, added_at) "
+            "VALUES (1, 'token.bin', ?)")) {
+      stmt->Bind(1, NowSeconds());
+      stmt->Step();
+    }
+
     // Everything that is not the local placeholder goes invisible first, and what comes down
     // turns itself back on. That is how a calendar unticked on the web stops painting dots here
     // without a row being deleted -- which the schema will not allow while events hang off it.
@@ -654,11 +663,11 @@ bool GoogleSync::PullCalendars(const std::wstring& auth) {
                             int sort, const std::string& reminders) {
       std::optional<Stmt> stmt = store_.db().Prepare(
           "INSERT INTO calendars (id, kind, title, color, time_zone, is_primary, visible, sort, "
-          "                       reminders) "
-          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8) "
+          "                       reminders, account_id) "
+          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, 1) "
           "ON CONFLICT(id) DO UPDATE SET title = excluded.title, color = excluded.color, "
           "  time_zone = excluded.time_zone, visible = 1, sort = excluded.sort, "
-          "  reminders = excluded.reminders");
+          "  reminders = excluded.reminders, account_id = excluded.account_id");
       if (!stmt) return;
       stmt->Bind(1, id);
       stmt->Bind(2, kind);
@@ -695,6 +704,14 @@ bool GoogleSync::PullCalendars(const std::wstring& auth) {
         if (title.empty()) title = id;
         const std::uint32_t color = ReadColor(Str(item, "backgroundColor")).value_or(0x4A8BF5u);
         if (Flag(item, "primary") || fallbackCalendar.empty()) fallbackCalendar = id;
+        // The primary calendar's id is the account's address, which is how it is named.
+        if (Flag(item, "primary")) {
+          if (std::optional<Stmt> stmt =
+                  store_.db().Prepare("UPDATE accounts SET email = ? WHERE id = 1")) {
+            stmt->Bind(1, id);
+            stmt->Step();
+          }
+        }
         const auto defaults = item.find("defaultReminders");
         upsert(id, "calendar", title, color, Str(item, "timeZone"), Flag(item, "primary"),
                sort++, defaults != item.end() ? ReadReminders(*defaults) : std::string());

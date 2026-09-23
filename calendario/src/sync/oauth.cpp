@@ -93,8 +93,6 @@ void Scrub(std::string& secret) {
   secret.clear();
 }
 
-std::filesystem::path TokenFile() { return AppDataDir() / L"token.bin"; }
-
 // The one GET Google sends back, and the page the browser is left showing.
 //
 // A socket and not the HTTP Server API: this listens once, for one request, on a port nobody
@@ -230,7 +228,8 @@ std::string Field(std::string_view query, std::string_view name) {
 
 }  // namespace
 
-GoogleAuth::GoogleAuth(OAuthConfig config) : config_(std::move(config)) {}
+GoogleAuth::GoogleAuth(OAuthConfig config, std::string_view tokenFile)
+    : config_(std::move(config)), tokenFile_(AppDataDir() / std::filesystem::path(tokenFile)) {}
 
 GoogleAuth::~GoogleAuth() {
   Scrub(access_);
@@ -474,13 +473,13 @@ bool GoogleAuth::SaveRefresh() {
 
   std::error_code ignored;
   std::filesystem::create_directories(AppDataDir(), ignored);
-  std::ofstream file(TokenFile(), std::ios::binary | std::ios::trunc);
+  std::ofstream file(tokenFile_, std::ios::binary | std::ios::trunc);
   const bool written =
       file && file.write(reinterpret_cast<const char*>(sealed.pbData), sealed.cbData).good();
   LocalFree(sealed.pbData);
   if (!written) return Fail(L"no se pudo guardar el token");
 
-  LogInfo(L"oauth: cuenta conectada, token guardado en {}", TokenFile().wstring());
+  LogInfo(L"oauth: cuenta conectada, token guardado en {}", tokenFile_.wstring());
   return true;
 }
 
@@ -490,7 +489,7 @@ bool GoogleAuth::LoadRefresh() {
     loaded_ = true;  // asked and answered, even when the answer is no
   }
 
-  std::ifstream file(TokenFile(), std::ios::binary);
+  std::ifstream file(tokenFile_, std::ios::binary);
   if (!file) return false;
   const std::string sealed((std::istreambuf_iterator<char>(file)),
                            std::istreambuf_iterator<char>());
@@ -529,7 +528,7 @@ void GoogleAuth::Disconnect() {
     loaded_ = true;
   }
   std::error_code ignored;
-  std::filesystem::remove(TokenFile(), ignored);
+  std::filesystem::remove(tokenFile_, ignored);
   LogInfo(L"oauth: cuenta desconectada");
 }
 

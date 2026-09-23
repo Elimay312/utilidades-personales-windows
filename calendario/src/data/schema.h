@@ -15,7 +15,7 @@
 
 namespace agenda {
 
-inline constexpr int kSchemaVersion = 4;
+inline constexpr int kSchemaVersion = 5;
 
 // Ids of the rows v1 seeds, so an event has somewhere to hang before there is a Google
 // account.
@@ -23,7 +23,8 @@ inline constexpr const char* kLocalCalendarId = "local";
 inline constexpr const char* kLocalTaskListId = "local-tasks";
 
 // Brings the database up to kSchemaVersion. Idempotent: calling it on a database that is
-// already current does nothing and is not an error.
-bool Migrate(Db& db);
+// already current does nothing and is not an error. `upTo` stops earlier, which is how the
+// tests build a cache the way an older build left it.
+bool Migrate(Db& db, int upTo = kSchemaVersion);
 
 }  // namespace agenda

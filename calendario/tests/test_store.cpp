@@ -266,42 +266,30 @@ TEST_CASE("a repeating event shows on every day its rule lands on, and puts dots
   CHECK(dots.size() == 3);
 }
 
-// What schema v4 added, taken away again, to build a cache the way an older build left it.
-constexpr const char* kUndoV4 =
-    "DROP INDEX events_by_series; "
-    "ALTER TABLE events DROP COLUMN series_id; "
-    "ALTER TABLE events DROP COLUMN original_day;";
+// A cache the way an older build left it: migrated only up to `version`, with one event in it
+// written with the columns that version had.
+void OldCache(const std::filesystem::path& file, int version) {
+  Db db;
+  REQUIRE(db.Open(file));
+  REQUIRE(Migrate(db, version));
+  REQUIRE(db.Exec(
+      "INSERT INTO events (uid, calendar_id, title, start_day, start_min, end_day, end_min, "
+      "                    updated_at) "
+      "VALUES ('ev1', 'local', 'Dentista', '2026-09-23', 1020, '2026-09-23', 1080, 1);"
+      "UPDATE sync_state SET sync_token = 'CPDAlvWDx70CEPDAlvWDx70CGAU=';"));
+}
 
 TEST_CASE("v1 caches migrate to v2 and keep what they had") {
   const std::filesystem::path file = ScratchFile();
   Erase(file);
-  std::wstring uid;
-  {
-    Store store;
-    REQUIRE(store.Open(file));
-    uid = store.Create(EventAt(L"Dentista", Day(2026, 9, 23), 17 * 60, 18 * 60)).uid;
-    store.Drain();
-  }
-  {
-    // Put the file back the way a phase 5 build left it: the v2, v3 and v4 columns gone, the
-    // stamp at 1.
-    Db db;
-    REQUIRE(db.Open(file));
-    REQUIRE(db.Exec(kUndoV4));
-    REQUIRE(db.Exec("ALTER TABLE events DROP COLUMN reminders; "
-                    "ALTER TABLE calendars DROP COLUMN reminders; "
-                    "ALTER TABLE events DROP COLUMN location; "
-                    "ALTER TABLE events DROP COLUMN moved_from; "
-                    "ALTER TABLE calendars DROP COLUMN hidden;"));
-    REQUIRE(db.SetUserVersion(1));
-  }
+  OldCache(file, 1);
   {
     Store store;
     REQUIRE(store.Open(file));
     CHECK(store.db().UserVersion() == kSchemaVersion);
     const std::vector<DayItem> items = store.ItemsForDay(Day(2026, 9, 23), false);
     REQUIRE(items.size() == 1);
-    CHECK(items[0].uid == uid);
+    CHECK(items[0].uid == L"ev1");
     CHECK(CountRows(store.db(), "SELECT COUNT(*) FROM events WHERE location = ''") == 1);
     CHECK(CountRows(store.db(), "SELECT COUNT(*) FROM calendars WHERE hidden = 0") == 2);
   }
@@ -311,22 +299,7 @@ TEST_CASE("v1 caches migrate to v2 and keep what they had") {
 TEST_CASE("v2 caches migrate to v3, learn the reminders and download everything once more") {
   const std::filesystem::path file = ScratchFile();
   Erase(file);
-  {
-    Store store;
-    REQUIRE(store.Open(file));
-    store.Create(EventAt(L"Dentista", Day(2026, 9, 23), 17 * 60, 18 * 60));
-    store.Drain();
-  }
-  {
-    // A phase 6 cache: no reminder columns, and a sync token the next pass would carry on from.
-    Db db;
-    REQUIRE(db.Open(file));
-    REQUIRE(db.Exec(kUndoV4));
-    REQUIRE(db.Exec("ALTER TABLE events DROP COLUMN reminders; "
-                    "ALTER TABLE calendars DROP COLUMN reminders; "
-                    "UPDATE sync_state SET sync_token = 'CPDAlvWDx70CEPDAlvWDx70CGAU=';"));
-    REQUIRE(db.SetUserVersion(2));
-  }
+  OldCache(file, 2);
   {
     Store store;
     REQUIRE(store.Open(file));
@@ -343,20 +316,7 @@ TEST_CASE("v2 caches migrate to v3, learn the reminders and download everything 
 TEST_CASE("v3 caches migrate to v4 and download the exceptions once more") {
   const std::filesystem::path file = ScratchFile();
   Erase(file);
-  {
-    Store store;
-    REQUIRE(store.Open(file));
-    store.Create(EventAt(L"Dentista", Day(2026, 9, 23), 17 * 60, 18 * 60));
-    store.Drain();
-  }
-  {
-    // A 1.0.0 cache: no series columns, and a sync token that would skip what is already there.
-    Db db;
-    REQUIRE(db.Open(file));
-    REQUIRE(db.Exec(kUndoV4));
-    REQUIRE(db.Exec("UPDATE sync_state SET sync_token = 'CPDAlvWDx70CEPDAlvWDx70CGAU=';"));
-    REQUIRE(db.SetUserVersion(3));
-  }
+  OldCache(file, 3);
   {
     Store store;
     REQUIRE(store.Open(file));
@@ -366,6 +326,87 @@ TEST_CASE("v3 caches migrate to v4 and download the exceptions once more") {
     CHECK(store.ItemsForDay(Day(2026, 9, 23), false).size() == 1);
   }
   Erase(file);
+}
+
+TEST_CASE("v4 caches migrate to v5: the account that was connected is number 1") {
+  const std::filesystem::path file = ScratchFile();
+  Erase(file);
+  OldCache(file, 4);
+  {
+    // A calendar that came from Google, and an event in it.
+    Db db;
+    REQUIRE(db.Open(file));
+    REQUIRE(db.Exec(
+        "INSERT INTO calendars (id, kind, title, color) "
+        "VALUES ('ana@gmail.com', 'calendar', 'Ana', 1);"
+        "INSERT INTO events (uid, calendar_id, title, start_day, end_day, updated_at) "
+        "VALUES ('ev2', 'ana@gmail.com', 'Cena', '2026-09-24', '2026-09-24', 1);"));
+  }
+  {
+    Store store;
+    REQUIRE(store.Open(file));
+    CHECK(store.db().UserVersion() == kSchemaVersion);
+    const std::vector<AccountInfo> accounts = store.Accounts();
+    REQUIRE(accounts.size() == 1);
+    CHECK(accounts[0].id == 1);
+    CHECK(accounts[0].tokenFile == "token.bin");
+    CHECK(CountRows(store.db(),
+                    "SELECT COUNT(*) FROM calendars WHERE account_id = 1") == 1);
+    CHECK(CountRows(store.db(),
+                    "SELECT COUNT(*) FROM calendars WHERE account_id IS NULL") == 2);
+    CHECK(store.ItemsForDay(Day(2026, 9, 24), false).size() == 1);
+  }
+  Erase(file);
+}
+
+TEST_CASE("a cache that never had an account gets none from the migration") {
+  const std::filesystem::path file = ScratchFile();
+  Erase(file);
+  OldCache(file, 4);
+  {
+    Store store;
+    REQUIRE(store.Open(file));
+    CHECK(store.Accounts().empty());
+  }
+  Erase(file);
+}
+
+TEST_CASE("accounts are added with their own token file and forgotten with all they had") {
+  Open store;
+  const AccountInfo first = store->AddAccount();
+  const AccountInfo second = store->AddAccount();
+  CHECK(first.id == 1);
+  CHECK(first.tokenFile == "token.bin");
+  CHECK(second.id == 2);
+  CHECK(second.tokenFile == "token-2.bin");
+
+  // Each with a calendar; the second's is the default, and holds an event with a queued edit.
+  REQUIRE(store->db().Exec(
+      "INSERT INTO calendars (id, kind, title, color, account_id) "
+      "VALUES ('ana@gmail.com', 'calendar', 'Ana', 1, 1), "
+      "       ('trabajo@empresa.com', 'calendar', 'Trabajo', 2, 2);"
+      "INSERT INTO sync_state (id) VALUES ('ana@gmail.com'), ('trabajo@empresa.com');"
+      "UPDATE calendars SET is_primary = 0;"
+      "UPDATE calendars SET is_primary = 1 WHERE id IN ('trabajo@empresa.com', 'local-tasks');"
+      "INSERT INTO events (uid, calendar_id, title, start_day, end_day, updated_at) "
+      "VALUES ('ev-ana', 'ana@gmail.com', 'Cena', '2026-09-24', '2026-09-24', 1), "
+      "       ('ev-work', 'trabajo@empresa.com', 'Junta', '2026-09-24', '2026-09-24', 1);"
+      "INSERT INTO pending_ops (entity, uid, op, queued_at) "
+      "VALUES ('event', 'ev-work', 'update', 1);"));
+
+  store->ForgetAccount(2);
+  store.settle();
+  const std::vector<AccountInfo> left = store->Accounts();
+  REQUIRE(left.size() == 1);
+  CHECK(left[0].id == 1);
+  CHECK(CountRows(store->db(), "SELECT COUNT(*) FROM events") == 1);
+  CHECK(CountRows(store->db(), "SELECT COUNT(*) FROM pending_ops") == 0);
+  CHECK(CountRows(store->db(),
+                  "SELECT COUNT(*) FROM calendars WHERE id = 'trabajo@empresa.com'") == 0);
+  CHECK(CountRows(store->db(),
+                  "SELECT COUNT(*) FROM sync_state WHERE id = 'trabajo@empresa.com'") == 0);
+  // Where new things land went with it, so it is back on the local calendar.
+  CHECK(store->DefaultCalendar(false) == "local");
 }
 
 TEST_CASE("an occurrence Google moved or cancelled leaves its day in the series") {

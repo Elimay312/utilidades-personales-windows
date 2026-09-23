@@ -110,7 +110,10 @@ Core Audio. Es la misma superficie que ya usan el HUD y la isla:
 
 - `IAudioEndpointVolume` sobre `eRender`/`eMultimedia`, e `IMMNotificationClient` sobre el
   enumerador;
-- `PKEY_Device_FriendlyName` para el nombre de la salida.
+- `PKEY_Device_DeviceDesc` para el nombre de la salida («Auriculares»), con
+  `PKEY_Device_FriendlyName` («Auriculares (Realtek Audio)») de respaldo si el primero viene
+  vacío. *Enmienda de la fase 3a:* el corto es el que cabe en la cabecera de la tarjeta. Las
+  dos propiedades se leen del almacén del dispositivo en modo `STGM_READ` y nunca se escriben.
 
 **Cortes:**
 

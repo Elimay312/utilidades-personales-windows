@@ -7,6 +7,14 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- **Repeticiones mensuales por posición y por día del mes.** «El primer martes», «el último
+  viernes», «el día 15» y «el último día del mes», que son las que ofrece el menú de repetir de
+  Google, ya aparecen en todos sus días; antes se quedaban en el primero. También las anuales
+  con mes («el cuarto jueves de noviembre») y el viernes 13 de toda la vida (`BYDAY` y
+  `BYMONTHDAY` a la vez).
+
 ### Cambiado
 
 - **Varios monitores: el popup se abre donde está el ratón.** Antes salía siempre en el monitor

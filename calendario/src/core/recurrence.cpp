@@ -19,6 +19,12 @@ struct Rule {
   std::optional<Date> until;     // inclusive
   std::array<bool, 7> byDay{};   // Monday first, like the grid
   bool hasByDay = false;
+  // "1TU", "-1FR": the nth weekday of the month, counted from the end when negative. Kept as
+  // {n, weekday}; the plain weekdays of the same BYDAY go to byDay.
+  std::vector<std::pair<int, int>> byNthDay;
+  std::vector<int> byMonthDay;   // 15, or -1 for the last day of the month
+  std::array<bool, 12> byMonth{};
+  bool hasByMonth = false;
   bool understood = true;        // false: something in it this file does not read
   std::vector<Date> except;      // EXDATE: days the series skips
 };
@@ -31,6 +37,25 @@ std::optional<int> Number(std::string_view text) {
     value = value * 10 + (c - '0');
   }
   return value;
+}
+
+// "-1" and "+2" as well as "15": BYDAY ordinals and BYMONTHDAY count from the end when negative.
+std::optional<int> SignedNumber(std::string_view text) {
+  const bool negative = text.starts_with('-');
+  if (negative || text.starts_with('+')) text.remove_prefix(1);
+  const std::optional<int> value = Number(text);
+  if (!value) return std::nullopt;
+  return negative ? -*value : *value;
+}
+
+// Each item of a comma-separated value.
+template <typename Each>
+void ForEachItem(std::string_view list, Each each) {
+  while (!list.empty()) {
+    const size_t comma = list.find(',');
+    each(list.substr(0, comma));
+    list = comma == std::string_view::npos ? std::string_view{} : list.substr(comma + 1);
+  }
 }
 
 int WeekdayIndex(std::string_view code) {
@@ -89,16 +114,36 @@ void ParseRule(std::string_view text, Rule& rule) {
       rule.until = ReadUntil(value);
       if (!rule.until) rule.understood = false;
     } else if (key == "BYDAY") {
-      rule.hasByDay = true;
-      std::string_view days = value;
-      while (!days.empty()) {
-        const size_t comma = days.find(',');
-        const int index = WeekdayIndex(days.substr(0, comma));
-        // "1MO", "-1FR": the nth weekday of a month. Not read, so not guessed at.
-        if (index < 0) rule.understood = false;
-        else rule.byDay[static_cast<size_t>(index)] = true;
-        days = comma == std::string_view::npos ? std::string_view{} : days.substr(comma + 1);
-      }
+      ForEachItem(value, [&](std::string_view item) {
+        const int index = item.size() >= 2 ? WeekdayIndex(item.substr(item.size() - 2)) : -1;
+        if (index < 0) {
+          rule.understood = false;
+        } else if (item.size() == 2) {
+          rule.hasByDay = true;
+          rule.byDay[static_cast<size_t>(index)] = true;
+        } else if (const std::optional<int> n = SignedNumber(item.substr(0, item.size() - 2));
+                   n && *n != 0 && *n >= -5 && *n <= 5) {
+          rule.byNthDay.emplace_back(*n, index);
+        } else {
+          rule.understood = false;
+        }
+      });
+    } else if (key == "BYMONTHDAY") {
+      ForEachItem(value, [&](std::string_view item) {
+        const std::optional<int> n = SignedNumber(item);
+        if (n && *n != 0 && *n >= -31 && *n <= 31) rule.byMonthDay.push_back(*n);
+        else rule.understood = false;
+      });
+    } else if (key == "BYMONTH") {
+      ForEachItem(value, [&](std::string_view item) {
+        const std::optional<int> n = Number(item);
+        if (n && *n >= 1 && *n <= 12) {
+          rule.hasByMonth = true;
+          rule.byMonth[static_cast<size_t>(*n - 1)] = true;
+        } else {
+          rule.understood = false;
+        }
+      });
     } else if (key == "WKST") {
       // Monday is where this app starts its weeks; any other start only matters to a weekly
       // rule with an interval, and none of those have ever been seen coming from Google.
@@ -150,6 +195,16 @@ Rule Parse(std::string_view text) {
     }
   }
   if (rule.freq == Freq::None) rule.understood = false;
+  // The nth weekday and the day of the month only mean something inside a month. RFC 5545 does
+  // not allow them in a weekly rule, and a yearly one without BYMONTH counts them across the
+  // whole year ("the 20th Monday"), which nobody writes and this file does not read.
+  const bool dayOfMonth = !rule.byNthDay.empty() || !rule.byMonthDay.empty();
+  if (dayOfMonth && (rule.freq == Freq::Daily || rule.freq == Freq::Weekly)) {
+    rule.understood = false;
+  }
+  if ((dayOfMonth || rule.hasByDay) && rule.freq == Freq::Yearly && !rule.hasByMonth) {
+    rule.understood = false;
+  }
   return rule;
 }
 
@@ -160,9 +215,38 @@ int DaysBetween(Date from, Date to) {
 
 int Weekday(Date date) { return MondayIndex(std::chrono::weekday{std::chrono::sys_days{date}}); }
 
+// Whether `day` is one of the days a monthly rule picks inside its month -- or a yearly one,
+// inside the months it repeats in. BYMONTHDAY and BYDAY when the rule has them, and both at once
+// is where they meet: "Friday the 13th". With neither, the start's own day of the month.
+bool PicksDay(const Rule& rule, Date start, Date day) {
+  const bool byWeekday = rule.hasByDay || !rule.byNthDay.empty();
+  if (rule.byMonthDay.empty() && !byWeekday) return day.day() == start.day();
+
+  const int dom = static_cast<int>(static_cast<unsigned>(day.day()));
+  const int last = static_cast<int>(static_cast<unsigned>(
+      std::chrono::year_month_day_last{day.year(), std::chrono::month_day_last{day.month()}}
+          .day()));
+  if (!rule.byMonthDay.empty() &&
+      std::none_of(rule.byMonthDay.begin(), rule.byMonthDay.end(),
+                   [&](int n) { return n > 0 ? dom == n : dom == last + n + 1; })) {
+    return false;
+  }
+  if (!byWeekday) return true;
+
+  const int weekday = Weekday(day);
+  if (rule.hasByDay && rule.byDay[static_cast<size_t>(weekday)]) return true;
+  // The first Tuesday is the Tuesday in days 1-7, the last one the Tuesday in the last seven.
+  return std::any_of(rule.byNthDay.begin(), rule.byNthDay.end(), [&](const auto& nth) {
+    const auto [n, on] = nth;
+    return on == weekday && (n > 0 ? (dom - 1) / 7 + 1 == n : (last - dom) / 7 + 1 == -n);
+  });
+}
+
 // Does the pattern land on this day, before COUNT and UNTIL have their say?
 bool Lands(const Rule& rule, Date start, Date day) {
   const int days = DaysBetween(start, day);
+  const auto month = static_cast<size_t>(static_cast<unsigned>(day.month()) - 1);
+  if (rule.hasByMonth && !rule.byMonth[month]) return false;
   switch (rule.freq) {
     case Freq::Daily:
       if (days % rule.interval != 0) return false;
@@ -182,12 +266,13 @@ bool Lands(const Rule& rule, Date start, Date day) {
           static_cast<int>(static_cast<unsigned>(day.month())) -
           static_cast<int>(static_cast<unsigned>(start.month()));
       // The 31st of a month that has no 31st is skipped, which is what RFC 5545 and Google do.
-      return months % rule.interval == 0 && day.day() == start.day();
+      return months % rule.interval == 0 && PicksDay(rule, start, day);
     }
     case Freq::Yearly: {
       const int years = static_cast<int>(day.year()) - static_cast<int>(start.year());
-      return years % rule.interval == 0 && day.month() == start.month() &&
-             day.day() == start.day();
+      // BYMONTH, when there is one, was already asked above.
+      return years % rule.interval == 0 && (rule.hasByMonth || day.month() == start.month()) &&
+             PicksDay(rule, start, day);
     }
     case Freq::None:
       break;

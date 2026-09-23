@@ -603,8 +603,10 @@ Dos límites que conviene saber:
 - **Google Tasks no guarda la hora de una tarea.** Solo el día. Agenda conserva la hora en
   local mientras el día no cambie, pero en el móvil esa tarea no tendrá hora.
 - **Las repeticiones se despliegan** en los días en que caen: diarias, semanales (con sus
-  días), mensuales y anuales, con intervalo, número de veces o fecha final. Lo que Agenda no
-  sabe leer —«el primer martes de cada mes»— se queda en su primer día. Lo que se haga en
+  días), mensuales y anuales, con intervalo, número de veces o fecha final. Las mensuales
+  también por posición —«el primer martes», «el último viernes»— o por día del mes, incluido
+  «el último día», como las ofrece Google. Lo poco que Agenda no sabe leer (`BYSETPOS`) se
+  queda en su primer día. Lo que se haga en
   Google a una sola repetición sí llega: una que se movió aparece en su día nuevo y no en el
   viejo, y una que se borró desaparece. Desde Agenda, en cambio, todavía no se puede tocar una
   sola: arrastrar o borrar afecta a la serie entera.

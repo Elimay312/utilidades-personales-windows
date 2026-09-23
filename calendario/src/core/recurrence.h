@@ -7,10 +7,12 @@
 // what CLAUDE.md was waiting for, so the rule is read here -- on a day, for a day, with no
 // timezone and no instant in sight, because the cache keeps wall clocks.
 //
-// What it understands is what the parser writes and what Google sends for the everyday cases:
-// FREQ DAILY/WEEKLY/MONTHLY/YEARLY with INTERVAL, BYDAY (plain weekdays), COUNT and UNTIL.
-// Anything else -- BYDAY=1MO, BYMONTHDAY, BYSETPOS -- is not guessed at: the event stays on its
-// first day, which is exactly what it did before this file existed.
+// What it understands is what the parser writes and what Google's own repeat menu offers:
+// FREQ DAILY/WEEKLY/MONTHLY/YEARLY with INTERVAL, COUNT and UNTIL; BYDAY with plain weekdays and,
+// in a month, with an ordinal ("1TU" the first Tuesday, "-1FR" the last Friday); BYMONTHDAY
+// ("15", "-1" the last day) and BYMONTH. Anything else -- BYSETPOS, a yearly rule counting
+// weekdays across the whole year -- is not guessed at: the event stays on its first day, which
+// is exactly what it did before this file existed.
 //
 // A recurrence is Google's list kept one line per line: the RRULE and any EXDATE next to it.
 // An occurrence moved or cancelled at Google is not in here; it is a row of its own in the cache

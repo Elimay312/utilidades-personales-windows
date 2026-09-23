@@ -143,6 +143,26 @@ UPDATE calendars SET reminders = '10' WHERE id = 'local';
 UPDATE sync_state SET sync_token = '';
 )SQL";
 
+// --- v4 -----------------------------------------------------------------------------------
+//
+// Phase 8, with the user's permission, only columns added: the occurrences of a series that
+// Google keeps apart. An occurrence moved or cancelled on the web arrives as an item of its own
+// with the id of its series and the start it had; without these columns it was stored as one
+// more event and the series still drew the original, so it showed up twice.
+//
+// `series_id` is the series' id AT GOOGLE, not our uid: that is what arrives, and the series may
+// come on a later page than its exception. A series created here goes up with EventIdFor(uid),
+// so its key is known before it has a remote_id. `original_day` is the day the occurrence had.
+// A cancelled occurrence is kept as a tombstone with both, and the store skips that day too.
+//
+// The sync tokens are emptied, as in v3, so the exceptions already out there come down.
+constexpr const char* kV4 = R"SQL(
+ALTER TABLE events ADD COLUMN series_id TEXT;
+ALTER TABLE events ADD COLUMN original_day TEXT;
+CREATE INDEX events_by_series ON events(series_id, original_day);
+UPDATE sync_state SET sync_token = '';
+)SQL";
+
 struct Migration {
   int version;
   const char* sql;
@@ -152,6 +172,7 @@ constexpr Migration kMigrations[] = {
     {1, kV1},
     {2, kV2},
     {3, kV3},
+    {4, kV4},
 };
 
 }  // namespace

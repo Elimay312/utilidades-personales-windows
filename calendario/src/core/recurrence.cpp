@@ -1,9 +1,11 @@
 #include "core/recurrence.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace agenda {
 namespace {
@@ -18,6 +20,7 @@ struct Rule {
   std::array<bool, 7> byDay{};   // Monday first, like the grid
   bool hasByDay = false;
   bool understood = true;        // false: something in it this file does not read
+  std::vector<Date> except;      // EXDATE: days the series skips
 };
 
 std::optional<int> Number(std::string_view text) {
@@ -52,10 +55,8 @@ std::optional<Date> ReadUntil(std::string_view text) {
   return date;
 }
 
-Rule Parse(std::string_view text) {
-  Rule rule;
-  if (text.starts_with("RRULE:")) text.remove_prefix(6);
-
+// One RRULE, without its "RRULE:".
+void ParseRule(std::string_view text, Rule& rule) {
   while (!text.empty()) {
     const size_t semicolon = text.find(';');
     const std::string_view part = text.substr(0, semicolon);
@@ -103,6 +104,49 @@ Rule Parse(std::string_view text) {
       // rule with an interval, and none of those have ever been seen coming from Google.
     } else {
       rule.understood = false;
+    }
+  }
+}
+
+// The next line of a multi-line recurrence, the way the cache keeps Google's list: one per line.
+std::string_view NextLine(std::string_view& text) {
+  const size_t newline = text.find('\n');
+  std::string_view line = text.substr(0, newline);
+  text = newline == std::string_view::npos ? std::string_view{} : text.substr(newline + 1);
+  if (line.ends_with('\r')) line.remove_suffix(1);
+  return line;
+}
+
+// "EXDATE;TZID=America/Bogota:20261001T090000,20261008T090000" or "EXDATE:20261001". Only the
+// day of each is kept, like UNTIL.
+// ponytail: a UTC value ("...T020000Z") is read as its UTC day, which for an evening event west
+// of London is the day after; Google writes EXDATE with a TZID, so this is only what imports do.
+void ParseExdate(std::string_view line, Rule& rule) {
+  const size_t colon = line.find(':');
+  if (colon == std::string_view::npos) return;
+  std::string_view days = line.substr(colon + 1);
+  while (!days.empty()) {
+    const size_t comma = days.find(',');
+    if (const std::optional<Date> day = ReadUntil(days.substr(0, comma))) {
+      rule.except.push_back(*day);
+    }
+    days = comma == std::string_view::npos ? std::string_view{} : days.substr(comma + 1);
+  }
+}
+
+// The whole recurrence: the RRULE, bare as the parser writes it or with its prefix as Google
+// does, and the EXDATE lines next to it. RDATE adds days this file does not add, and is left out.
+Rule Parse(std::string_view text) {
+  Rule rule;
+  bool sawRule = false;
+  while (!text.empty()) {
+    std::string_view line = NextLine(text);
+    if (line.starts_with("EXDATE")) {
+      ParseExdate(line, rule);
+    } else if (line.starts_with("RRULE:") || line.starts_with("FREQ=")) {
+      if (line.starts_with("RRULE:")) line.remove_prefix(6);
+      if (!sawRule) ParseRule(line, rule);
+      sawRule = true;
     }
   }
   if (rule.freq == Freq::None) rule.understood = false;
@@ -153,7 +197,27 @@ bool Lands(const Rule& rule, Date start, Date day) {
 
 constexpr std::wstring_view kDayCodes[7] = {L"MO", L"TU", L"WE", L"TH", L"FR", L"SA", L"SU"};
 
-std::wstring_view Bare(std::wstring_view rule) {
+// Where the RRULE line sits inside a recurrence that may carry EXDATE lines as well: its offset
+// and length, prefix included. The whole text when there is only the rule.
+std::pair<size_t, size_t> RuleLine(std::wstring_view text) {
+  size_t at = 0;
+  while (at < text.size()) {
+    size_t end = text.find(L'\n', at);
+    if (end == std::wstring_view::npos) end = text.size();
+    const std::wstring_view line = text.substr(at, end - at);
+    if (line.starts_with(L"RRULE:") || line.starts_with(L"FREQ=")) {
+      size_t length = line.size();
+      if (line.ends_with(L'\r')) --length;
+      return {at, length};
+    }
+    at = end + 1;
+  }
+  return {0, 0};
+}
+
+std::wstring_view Bare(std::wstring_view text) {
+  const auto [at, length] = RuleLine(text);
+  std::wstring_view rule = text.substr(at, length);
   if (rule.starts_with(L"RRULE:")) rule.remove_prefix(6);
   return rule;
 }
@@ -196,16 +260,20 @@ std::wstring MoveRuleTo(std::wstring_view rule, Date start) {
   if (!bare.starts_with(kWeeklyOn) || bare.size() != kWeeklyOn.size() + 2) {
     return std::wstring(rule);
   }
+  // The day code is the last two characters of the RRULE line; any EXDATE line stays as it was.
+  const auto [at, length] = RuleLine(rule);
   std::wstring out(rule);
-  out.replace(out.size() - 2, 2, kDayCodes[Weekday(start)]);
+  out.replace(at + length - 2, 2, kDayCodes[Weekday(start)]);
   return out;
 }
 
 bool OccursOn(std::string_view text, Date start, Date day) {
-  if (day == start) return true;
   if (day < start) return false;
-
   const Rule rule = Parse(text);
+  // An EXDATE takes the day away whatever else is true, the first day included. It does not give
+  // the occurrence back to COUNT: RFC 5545 counts before it excludes, and so does Google.
+  if (std::find(rule.except.begin(), rule.except.end(), day) != rule.except.end()) return false;
+  if (day == start) return true;
   if (!rule.understood) return false;
   if (rule.until && day > *rule.until) return false;
   if (!Lands(rule, start, day)) return false;

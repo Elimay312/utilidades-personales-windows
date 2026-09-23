@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <format>
+#include <unordered_set>
 #include <utility>
 
 #include "core/log.h"
@@ -27,6 +28,30 @@ void AddDot(std::vector<DayDot>& dots, Date date, std::uint32_t color) {
     if (dot.date == date) return;
   }
   dots.push_back(DayDot{date, color});
+}
+
+// The days that occurrences Google keeps apart -- moved or cancelled on their own -- took from
+// their series, between two days, as "seriesId|YYYY-MM-DD". The moved ones show up on their new
+// day as events of their own; the series must not draw them on the old one as well.
+//
+// A series is known by its id at Google, which the queries that expand one read as
+// COALESCE(e.remote_id, replace(lower(e.uid), '-', '')): its remote_id, or before it has gone
+// up, the one it will go up with (EventIdFor).
+std::unordered_set<std::string> TakenDays(Db& db, const std::string& first,
+                                          const std::string& last) {
+  std::unordered_set<std::string> taken;
+  if (std::optional<Stmt> stmt = db.Prepare(
+          "SELECT series_id, original_day FROM events "
+          "WHERE series_id IS NOT NULL AND original_day BETWEEN ?1 AND ?2")) {
+    stmt->Bind(1, first);
+    stmt->Bind(2, last);
+    while (stmt->Step()) taken.insert(stmt->Text(0) + '|' + stmt->Text(1));
+  }
+  return taken;
+}
+
+bool IsTaken(const std::unordered_set<std::string>& taken, const std::string& series, Date day) {
+  return !taken.empty() && taken.contains(series + '|' + DayKey(day));
 }
 
 }  // namespace
@@ -182,16 +207,25 @@ std::vector<DayItem> Store::ItemsForDay(Date day, bool includeUndated) {
   std::vector<DayItem> items;
   if (!db_.IsOpen()) return items;
   const std::string key = DayKey(day);
+  const std::unordered_set<std::string> taken = TakenDays(db_, "0000-00-00", key);
 
   // An event spanning days shows up on every one of them, but only the day it starts on gets
   // a clock: "17:00" on the second day of a trip would be a lie.
   if (std::optional<Stmt> stmt = db_.Prepare(
-          "SELECT e.uid, e.title, e.start_day, e.start_min, e.end_min, e.recurrence, c.color "
+          "SELECT e.uid, e.title, e.start_day, e.start_min, e.end_min, e.recurrence, c.color, "
+          "       COALESCE(e.remote_id, replace(lower(e.uid), '-', '')) "
           "FROM events e JOIN calendars c ON c.id = e.calendar_id "
           "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
           "  AND e.start_day <= ?1 AND e.end_day >= ?1")) {
     stmt->Bind(1, key);
     while (stmt->Step()) {
+      // A series whose first occurrence is gone, to an EXDATE or to Google moving it.
+      if (const std::string rule = stmt->Text(5); !rule.empty()) {
+        const std::optional<Date> start = ParseDayKey(stmt->Text(2));
+        if (start && (!OccursOn(rule, *start, *start) || IsTaken(taken, stmt->Text(7), *start))) {
+          continue;
+        }
+      }
       DayItem item;
       item.uid = stmt->Wide(0);
       item.title = stmt->Wide(1);
@@ -210,7 +244,8 @@ std::vector<DayItem> Store::ItemsForDay(Date day, bool includeUndated) {
   // ponytail: every series older than the day is read and tested, fine for a personal agenda;
   // an index on recurrence != '' if thousands of them ever show up.
   if (std::optional<Stmt> stmt = db_.Prepare(
-          "SELECT e.uid, e.title, e.start_day, e.start_min, e.end_min, e.recurrence, c.color "
+          "SELECT e.uid, e.title, e.start_day, e.start_min, e.end_min, e.recurrence, c.color, "
+          "       COALESCE(e.remote_id, replace(lower(e.uid), '-', '')) "
           "FROM events e JOIN calendars c ON c.id = e.calendar_id "
           "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
           "  AND e.recurrence != '' AND e.start_day < ?1 AND e.end_day < ?1")) {
@@ -218,6 +253,7 @@ std::vector<DayItem> Store::ItemsForDay(Date day, bool includeUndated) {
     while (stmt->Step()) {
       const std::optional<Date> start = ParseDayKey(stmt->Text(2));
       if (!start || !OccursOn(stmt->Text(5), *start, day)) continue;
+      if (IsTaken(taken, stmt->Text(7), day)) continue;
       DayItem item;
       item.uid = stmt->Wide(0);
       item.title = stmt->Wide(1);
@@ -264,7 +300,8 @@ std::vector<Reminder> Store::DueReminders(long long from, long long to) {
   std::optional<Stmt> stmt = db_.Prepare(
       "SELECT e.uid, e.title, e.location, e.start_day, e.start_min, e.end_min, e.recurrence, "
       "       COALESCE(e.reminders, c.reminders), c.color, "
-      "       CAST(strftime('%s', e.updated_at, 'unixepoch', 'localtime') AS INTEGER) / 60 "
+      "       CAST(strftime('%s', e.updated_at, 'unixepoch', 'localtime') AS INTEGER) / 60, "
+      "       COALESCE(e.remote_id, replace(lower(e.uid), '-', '')) "
       "FROM events e JOIN calendars c ON c.id = e.calendar_id "
       "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
       "  AND COALESCE(e.reminders, c.reminders) != '' "
@@ -272,6 +309,7 @@ std::vector<Reminder> Store::DueReminders(long long from, long long to) {
   if (!stmt) return out;
   stmt->Bind(1, DayKey(first));
   stmt->Bind(2, DayKey(last));
+  const std::unordered_set<std::string> taken = TakenDays(db_, "0000-00-00", DayKey(last));
   while (stmt->Step()) {
     const std::optional<Date> start = ParseDayKey(stmt->Text(3));
     if (!start) continue;
@@ -299,7 +337,10 @@ std::vector<Reminder> Store::DueReminders(long long from, long long to) {
     const Date lastDay = DayOfWall(to + longest);
     for (Date day = rule.empty() ? *start : (std::max)(*start, first); day <= lastDay;
          day = AddDays(day, 1)) {
-      if (day != *start && (rule.empty() || !OccursOn(rule, *start, day))) {
+      const bool happens = rule.empty() ? day == *start
+                                        : OccursOn(rule, *start, day) &&
+                                              !IsTaken(taken, stmt->Text(10), day);
+      if (!happens) {
         if (rule.empty()) break;
         continue;
       }
@@ -343,26 +384,35 @@ std::vector<DayDot> Store::DotsForRange(Date from, Date to) {
   const std::string last = DayKey(to);
 
   if (std::optional<Stmt> stmt = db_.Prepare(
-          "SELECT e.start_day, e.end_day, c.color, e.recurrence "
+          "SELECT e.start_day, e.end_day, c.color, e.recurrence, "
+          "       COALESCE(e.remote_id, replace(lower(e.uid), '-', '')) "
           "FROM events e JOIN calendars c ON c.id = e.calendar_id "
           "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
           "  AND e.start_day <= ?2 AND (e.end_day >= ?1 OR e.recurrence != '') "
           "ORDER BY e.start_day, e.start_min")) {
     stmt->Bind(1, first);
     stmt->Bind(2, last);
+    const std::unordered_set<std::string> taken = TakenDays(db_, "0000-00-00", last);
     while (stmt->Step()) {
       const std::optional<Date> start = ParseDayKey(stmt->Text(0));
       const std::optional<Date> end = ParseDayKey(stmt->Text(1));
       if (!start || !end) continue;
       const auto color = static_cast<std::uint32_t>(stmt->Int(2));
-      for (Date date = *start; date <= *end; date = AddDays(date, 1)) {
+      const std::string rule = stmt->Text(3);
+      const std::string series = stmt->Text(4);
+      // The first occurrence too can be gone, to an EXDATE or to Google moving it.
+      const bool firstGone =
+          !rule.empty() && (!OccursOn(rule, *start, *start) || IsTaken(taken, series, *start));
+      for (Date date = *start; date <= *end && !firstGone; date = AddDays(date, 1)) {
         if (date >= from && date <= to) AddDot(dots, date, color);
       }
       // A repetition puts a dot wherever its rule lands, the same days ItemsForDay finds it on.
-      if (const std::string rule = stmt->Text(3); !rule.empty() && *end == *start) {
+      if (!rule.empty() && *end == *start) {
         for (Date date = (std::max)(from, AddDays(*start, 1)); date <= to;
              date = AddDays(date, 1)) {
-          if (OccursOn(rule, *start, date)) AddDot(dots, date, color);
+          if (OccursOn(rule, *start, date) && !IsTaken(taken, series, date)) {
+            AddDot(dots, date, color);
+          }
         }
       }
     }
@@ -766,6 +816,22 @@ void Store::Remove(const std::wstring& uid, bool isTask) {
                                : "SELECT remote_id IS NOT NULL FROM events WHERE uid = ?")) {
       stmt->Bind(1, uid);
       if (stmt->Step()) sent = stmt->Int(0) != 0;
+    }
+
+    // A series goes with the occurrences Google keeps apart from it: Google deletes them along
+    // with the series, and here a moved one would otherwise stay behind on its new day.
+    if (!isTask) {
+      constexpr const char* kSeriesOf =
+          "(SELECT COALESCE(remote_id, replace(lower(uid), '-', '')) FROM events WHERE uid = ?1)";
+      for (const std::string sql :
+           {std::string("DELETE FROM pending_ops WHERE uid IN "
+                        "(SELECT uid FROM events WHERE series_id = ") + kSeriesOf + ")",
+            std::string("DELETE FROM events WHERE series_id = ") + kSeriesOf}) {
+        if (std::optional<Stmt> stmt = db_.Prepare(sql)) {
+          stmt->Bind(1, uid);
+          stmt->Step();
+        }
+      }
     }
 
     bool ok = false;

@@ -11,7 +11,10 @@
 // FREQ DAILY/WEEKLY/MONTHLY/YEARLY with INTERVAL, BYDAY (plain weekdays), COUNT and UNTIL.
 // Anything else -- BYDAY=1MO, BYMONTHDAY, BYSETPOS -- is not guessed at: the event stays on its
 // first day, which is exactly what it did before this file existed.
-// ponytail: no EXDATE and no moved instances; they arrive when one occurrence can be edited.
+//
+// A recurrence is Google's list kept one line per line: the RRULE and any EXDATE next to it.
+// An occurrence moved or cancelled at Google is not in here; it is a row of its own in the cache
+// (events.series_id and original_day, schema v4), and the store skips its day.
 
 #include <string>
 #include <string_view>
@@ -21,7 +24,8 @@
 namespace agenda {
 
 // `rule` with or without its "RRULE:" prefix; both shapes are in the cache, the parser's and
-// Google's. `start` is the day the series begins on.
+// Google's, and with its EXDATE lines, which take their days away. `start` is the day the series
+// begins on.
 bool OccursOn(std::string_view rule, Date start, Date day);
 
 // The five answers the detail panel offers, and "Custom" for any rule that is not one of them

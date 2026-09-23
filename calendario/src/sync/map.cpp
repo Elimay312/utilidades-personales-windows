@@ -224,6 +224,12 @@ std::optional<EventRow> ReadEvent(const nlohmann::json& event) {
   row.etag = Str(event, "etag");
   row.updatedAt = ParseInstant(Str(event, "updated")).value_or(0);
   row.cancelled = Str(event, "status") == "cancelled";
+  // An occurrence of a series that Google keeps apart. Read before the cancellation returns,
+  // because a cancelled occurrence is exactly the one that needs to say which day it took away.
+  row.seriesId = Str(event, "recurringEventId");
+  if (const auto original = event.find("originalStartTime"); original != event.end()) {
+    if (const std::optional<Wall> wall = ReadStamp(*original)) row.originalDay = wall->day;
+  }
   // A cancellation is a tombstone: an id, a status and nothing else. Asking it for a start day
   // would refuse the one message that says the event is gone.
   if (row.cancelled) return row;
@@ -259,15 +265,11 @@ std::optional<EventRow> ReadEvent(const nlohmann::json& event) {
   }
 
   if (const auto found = event.find("recurrence"); found != event.end() && found->is_array()) {
-    // Only the RRULE. EXDATE and RDATE are dropped, which is honest while nothing expands a
-    // repetition anyway (CLAUDE.md: stored, not unfolded).
-    for (const nlohmann::json& rule : *found) {
-      if (!rule.is_string()) continue;
-      const std::string text = rule.get<std::string>();
-      if (text.starts_with("RRULE")) {
-        row.recurrence = text;
-        break;
-      }
+    // Every line, one per line: the RRULE and the EXDATEs that take days away from it.
+    for (const nlohmann::json& line : *found) {
+      if (!line.is_string()) continue;
+      if (!row.recurrence.empty()) row.recurrence += '\n';
+      row.recurrence += line.get<std::string>();
     }
   }
   return row;
@@ -364,7 +366,19 @@ nlohmann::json WriteEvent(const EventRow& row, std::string_view id, unsigned edi
   // list is how "Nunca" stops a series.
   if (creating || (edits & kEditRecurrence)) {
     if (!row.recurrence.empty()) {
-      body["recurrence"] = nlohmann::json::array({RruleLine(row.recurrence)});
+      nlohmann::json lines = nlohmann::json::array();
+      std::string_view rest = row.recurrence;
+      while (!rest.empty()) {
+        const size_t newline = rest.find('\n');
+        const std::string_view line = rest.substr(0, newline);
+        rest = newline == std::string_view::npos ? std::string_view{} : rest.substr(newline + 1);
+        if (line.empty()) continue;
+        // The parser writes the rule bare; EXDATE and RDATE lines already say what they are.
+        lines.push_back(line.starts_with("EXDATE") || line.starts_with("RDATE")
+                            ? std::string(line)
+                            : RruleLine(line));
+      }
+      body["recurrence"] = std::move(lines);
     } else if (!creating) {
       body["recurrence"] = nlohmann::json::array();
     }

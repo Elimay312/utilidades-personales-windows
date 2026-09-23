@@ -515,7 +515,7 @@ PowerShell conviene lanzarlo con `Start-Process ... -Wait` si hace falta esperar
   calendarios, el estado de sincronización y la cola de operaciones pendientes de subir.
   Las horas se guardan como **reloj de pared local** —un día y un minuto de ese día—, que
   es lo que guarda también Google Calendar. Desde la 1.0.0 guarda también los recordatorios
-  (esquema v3). Se crea sola la primera vez y se migra con
+  (esquema v3), y después las repeticiones que Google aparta de su serie (esquema v4). Se crea sola la primera vez y se migra con
   `PRAGMA user_version`; una base escrita por una versión más nueva de Agenda no se toca.
 - Token de Google: `%LOCALAPPDATA%\Agenda\token.bin`, el *refresh token* cifrado con
   **DPAPI**. Va atado a la cuenta de Windows: copiarlo a otro equipo o a otro usuario no sirve
@@ -604,8 +604,10 @@ Dos límites que conviene saber:
   local mientras el día no cambie, pero en el móvil esa tarea no tendrá hora.
 - **Las repeticiones se despliegan** en los días en que caen: diarias, semanales (con sus
   días), mensuales y anuales, con intervalo, número de veces o fecha final. Lo que Agenda no
-  sabe leer —«el primer martes de cada mes»— se queda en su primer día, y las excepciones que
-  se hagan en Google a una sola repetición todavía no se reflejan aquí.
+  sabe leer —«el primer martes de cada mes»— se queda en su primer día. Lo que se haga en
+  Google a una sola repetición sí llega: una que se movió aparece en su día nuevo y no en el
+  viejo, y una que se borró desaparece. Desde Agenda, en cambio, todavía no se puede tocar una
+  sola: arrastrar o borrar afecta a la serie entera.
 
 ## Preguntas frecuentes
 

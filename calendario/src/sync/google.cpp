@@ -128,9 +128,46 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
     }
   }
 
+  if (row->cancelled && !row->seriesId.empty() && !row->originalDay.empty()) {
+    // One occurrence of a series cancelled at Google. It is kept, as a tombstone that says which
+    // day the series lost: deleting it would leave the series drawing that day again.
+    if (!uid.empty()) DropQueued(db, uid);
+    std::optional<Stmt> stmt =
+        uid.empty()
+            ? db.Prepare(
+                  "INSERT INTO events (calendar_id, title, start_day, end_day, remote_id, etag, "
+                  "                    updated_at, deleted_at, series_id, original_day, uid) "
+                  "VALUES (?1, '', ?5, ?5, ?2, ?3, ?4, ?6, ?7, ?5, ?8)")
+            : db.Prepare(
+                  "UPDATE events SET etag = ?3, updated_at = ?4, deleted_at = ?6, "
+                  "  series_id = ?7, original_day = ?5 WHERE uid = ?8");
+    if (!stmt) return;
+    stmt->Bind(1, calendarId);
+    stmt->Bind(2, row->remoteId);
+    stmt->Bind(3, row->etag);
+    stmt->Bind(4, row->updatedAt);
+    stmt->Bind(5, row->originalDay);
+    stmt->Bind(6, NowSeconds());
+    stmt->Bind(7, row->seriesId);
+    stmt->Bind(8, uid.empty() ? NewUid() : uid);
+    stmt->Step();
+    return;
+  }
+
   if (row->cancelled) {
     // Deleted at Google is deleted here, row and queue together. A tombstone is for a deletion
-    // of ours that still has to go up; this one has already happened at both ends.
+    // of ours that still has to go up; this one has already happened at both ends. A series
+    // takes the occurrences Google kept apart from it along.
+    if (std::optional<Stmt> stmt = db.Prepare(
+            "DELETE FROM pending_ops WHERE uid IN "
+            "  (SELECT uid FROM events WHERE series_id = ?)")) {
+      stmt->Bind(1, row->remoteId);
+      stmt->Step();
+    }
+    if (std::optional<Stmt> stmt = db.Prepare("DELETE FROM events WHERE series_id = ?")) {
+      stmt->Bind(1, row->remoteId);
+      stmt->Step();
+    }
     if (uid.empty()) return;
     if (std::optional<Stmt> stmt = db.Prepare("DELETE FROM events WHERE uid = ?")) {
       stmt->Bind(1, uid);
@@ -146,8 +183,8 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
     std::optional<Stmt> stmt = db.Prepare(
         "INSERT INTO events (uid, calendar_id, title, notes, start_day, start_min, end_day, "
         "                    end_min, recurrence, remote_id, etag, updated_at, location, "
-        "                    reminders) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        "                    reminders, series_id, original_day) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''))");
     if (!stmt) return;
     stmt->Bind(1, uid);
     stmt->Bind(2, calendarId);
@@ -163,6 +200,8 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
     stmt->Bind(12, row->updatedAt);
     stmt->Bind(13, row->location);
     BindReminders(*stmt, 14, row->reminders);
+    stmt->Bind(15, row->seriesId);
+    stmt->Bind(16, row->originalDay);
     stmt->Step();
     return;
   }
@@ -176,14 +215,19 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
   //
   // The reminders ride along whoever wins too: Agenda never edits them, so Google's are always
   // the right ones, and a tie on updated_at must not keep a stale list.
+  //
+  // Which series an occurrence belongs to is Google's bookkeeping as well.
   if (std::optional<Stmt> stmt = db.Prepare(
           "UPDATE events SET etag = ?, remote_id = ?, reminders = ?, "
-          "  location = CASE WHEN location = '' THEN ? ELSE location END WHERE uid = ?")) {
+          "  location = CASE WHEN location = '' THEN ? ELSE location END, "
+          "  series_id = NULLIF(?, ''), original_day = NULLIF(?, '') WHERE uid = ?")) {
     stmt->Bind(1, row->etag);
     stmt->Bind(2, row->remoteId);
     BindReminders(*stmt, 3, row->reminders);
     stmt->Bind(4, row->location);
-    stmt->Bind(5, uid);
+    stmt->Bind(5, row->seriesId);
+    stmt->Bind(6, row->originalDay);
+    stmt->Bind(7, uid);
     stmt->Step();
   }
 

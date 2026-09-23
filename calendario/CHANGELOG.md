@@ -23,6 +23,13 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Corregido
 
+- **Una repetición movida en Google salía dos veces.** Mover o editar una sola ocurrencia de
+  una serie en la web la dejaba en su día nuevo y también en el viejo, y una borrada allí
+  seguía aquí. Ahora Agenda guarda esas ocurrencias apartadas con su serie y el día que
+  tenían, y la serie se salta ese día en la lista, en la semana, en los puntos del mes y en los
+  recordatorios. También se leen los `EXDATE` de la regla, que antes se tiraban. Esquema v4
+  (dos columnas en `events`); la migración vuelve a bajar los calendarios una vez para traer
+  las excepciones que ya existían.
 - **Un evento creado a última hora nunca avisaba.** Con un recordatorio de 30 minutos, algo a
   las 16:05 apuntado a las 16:00 ya había perdido su aviso al nacer. Ahora, si todos sus
   recordatorios pasaron antes de escribirlo, avisa una vez al empezar.

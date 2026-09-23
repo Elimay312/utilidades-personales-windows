@@ -54,7 +54,11 @@ struct EventRow {
   std::optional<int> startMin;  // empty means all day
   std::string endDay;           // INCLUSIVE: Google's exclusive end already had its day taken off
   std::optional<int> endMin;
-  std::string recurrence;      // the first RRULE, stored and not expanded
+  std::string recurrence;      // Google's list one per line: the RRULE and its EXDATEs
+  // An occurrence Google keeps apart from its series -- moved, edited or cancelled on its own:
+  // the series' id at Google (`recurringEventId`) and the day it had (`originalStartTime`).
+  std::string seriesId;
+  std::string originalDay;
   // Minutes before the start, "10,60", of the notification reminders; nullopt is Google's
   // useDefault -- the calendar's own list -- and an empty string is "no reminders at all".
   std::optional<std::string> reminders;
@@ -135,8 +139,9 @@ std::optional<TaskRow> ReadTask(const nlohmann::json& task);
 // `edits` is what the queued operation says changed beyond the times and the title
 // (kEditLocation, kEditRecurrence in data/model.h). A modification only mentions the location
 // when it has one or when it was emptied on purpose, and the repetition only when it was
-// edited: Agenda keeps the RRULE and not the EXDATEs, so sending the rule with every move would
-// bring back the occurrences somebody deleted on the web. A creation sends whatever it has.
+// edited: an occurrence deleted on the web is a separate item and not an EXDATE, so sending the
+// rule with every move could still bring it back. A creation sends whatever it has, and the
+// recurrence always goes as every line it has, EXDATEs included.
 nlohmann::json WriteEvent(const EventRow& row, std::string_view id, unsigned edits = 0);
 
 // The rule as Google takes it: with its "RRULE:" in front. The parser writes it without one,

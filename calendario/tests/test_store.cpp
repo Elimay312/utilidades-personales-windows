@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <string>
@@ -265,6 +266,12 @@ TEST_CASE("a repeating event shows on every day its rule lands on, and puts dots
   CHECK(dots.size() == 3);
 }
 
+// What schema v4 added, taken away again, to build a cache the way an older build left it.
+constexpr const char* kUndoV4 =
+    "DROP INDEX events_by_series; "
+    "ALTER TABLE events DROP COLUMN series_id; "
+    "ALTER TABLE events DROP COLUMN original_day;";
+
 TEST_CASE("v1 caches migrate to v2 and keep what they had") {
   const std::filesystem::path file = ScratchFile();
   Erase(file);
@@ -276,10 +283,11 @@ TEST_CASE("v1 caches migrate to v2 and keep what they had") {
     store.Drain();
   }
   {
-    // Put the file back the way a phase 5 build left it: the v2 and v3 columns gone, the stamp
-    // at 1.
+    // Put the file back the way a phase 5 build left it: the v2, v3 and v4 columns gone, the
+    // stamp at 1.
     Db db;
     REQUIRE(db.Open(file));
+    REQUIRE(db.Exec(kUndoV4));
     REQUIRE(db.Exec("ALTER TABLE events DROP COLUMN reminders; "
                     "ALTER TABLE calendars DROP COLUMN reminders; "
                     "ALTER TABLE events DROP COLUMN location; "
@@ -313,6 +321,7 @@ TEST_CASE("v2 caches migrate to v3, learn the reminders and download everything 
     // A phase 6 cache: no reminder columns, and a sync token the next pass would carry on from.
     Db db;
     REQUIRE(db.Open(file));
+    REQUIRE(db.Exec(kUndoV4));
     REQUIRE(db.Exec("ALTER TABLE events DROP COLUMN reminders; "
                     "ALTER TABLE calendars DROP COLUMN reminders; "
                     "UPDATE sync_state SET sync_token = 'CPDAlvWDx70CEPDAlvWDx70CGAU=';"));
@@ -329,6 +338,81 @@ TEST_CASE("v2 caches migrate to v3, learn the reminders and download everything 
     CHECK(CountRows(store.db(), "SELECT COUNT(*) FROM sync_state WHERE sync_token != ''") == 0);
   }
   Erase(file);
+}
+
+TEST_CASE("v3 caches migrate to v4 and download the exceptions once more") {
+  const std::filesystem::path file = ScratchFile();
+  Erase(file);
+  {
+    Store store;
+    REQUIRE(store.Open(file));
+    store.Create(EventAt(L"Dentista", Day(2026, 9, 23), 17 * 60, 18 * 60));
+    store.Drain();
+  }
+  {
+    // A 1.0.0 cache: no series columns, and a sync token that would skip what is already there.
+    Db db;
+    REQUIRE(db.Open(file));
+    REQUIRE(db.Exec(kUndoV4));
+    REQUIRE(db.Exec("UPDATE sync_state SET sync_token = 'CPDAlvWDx70CEPDAlvWDx70CGAU=';"));
+    REQUIRE(db.SetUserVersion(3));
+  }
+  {
+    Store store;
+    REQUIRE(store.Open(file));
+    CHECK(store.db().UserVersion() == kSchemaVersion);
+    CHECK(CountRows(store.db(), "SELECT COUNT(*) FROM events WHERE series_id IS NULL") == 1);
+    CHECK(CountRows(store.db(), "SELECT COUNT(*) FROM sync_state WHERE sync_token != ''") == 0);
+    CHECK(store.ItemsForDay(Day(2026, 9, 23), false).size() == 1);
+  }
+  Erase(file);
+}
+
+TEST_CASE("an occurrence Google moved or cancelled leaves its day in the series") {
+  Open store;
+  // Every Monday from the 28th, gone up to Google as 'serie1'.
+  Draft draft = EventAt(L"Gym", Day(2026, 9, 28), 7 * 60, 8 * 60);
+  draft.recurrence = L"FREQ=WEEKLY;BYDAY=MO";
+  const std::wstring uid = store->Create(draft).uid;
+  store.settle();
+  REQUIRE(store->db().Exec("UPDATE events SET remote_id = 'serie1'"));
+  // Google keeps two occurrences apart: the 5th moved to Tuesday the 6th, the 12th cancelled.
+  REQUIRE(store->db().Exec(
+      "INSERT INTO events (uid, calendar_id, title, start_day, start_min, end_day, end_min, "
+      "                    remote_id, updated_at, series_id, original_day) "
+      "VALUES ('movida', 'local', 'Gym', '2026-10-06', 420, '2026-10-06', 480, "
+      "        'serie1_20261005', 1, 'serie1', '2026-10-05');"
+      "INSERT INTO events (uid, calendar_id, title, start_day, end_day, remote_id, updated_at, "
+      "                    deleted_at, series_id, original_day) "
+      "VALUES ('cancelada', 'local', '', '2026-10-12', '2026-10-12', 'serie1_20261012', 1, 1, "
+      "        'serie1', '2026-10-12');"));
+
+  CHECK(store->ItemsForDay(Day(2026, 10, 5), false).empty());
+  const std::vector<DayItem> tuesday = store->ItemsForDay(Day(2026, 10, 6), false);
+  REQUIRE(tuesday.size() == 1);
+  CHECK(tuesday[0].uid == L"movida");
+  CHECK(store->ItemsForDay(Day(2026, 10, 12), false).empty());
+  CHECK(store->ItemsForDay(Day(2026, 10, 19), false).size() == 1);
+
+  // Dots: the 28th, the 6th instead of the 5th, nothing on the 12th, the 19th.
+  const std::vector<DayDot> dots = store->DotsForRange(Day(2026, 9, 28), Day(2026, 10, 19));
+  REQUIRE(dots.size() == 3);
+  const auto has = [&](Date date) {
+    return std::any_of(dots.begin(), dots.end(),
+                       [&](const DayDot& dot) { return dot.date == date; });
+  };
+  CHECK(has(Day(2026, 10, 6)));
+  CHECK(has(Day(2026, 10, 19)));
+  CHECK_FALSE(has(Day(2026, 10, 5)));
+
+  // The reminder of the cancelled Monday does not ring; the local calendar reminds at 6:50.
+  const long long due = WallMinute(Day(2026, 10, 12), 6 * 60 + 50);
+  CHECK(store->DueReminders(due - 1, due).empty());
+
+  // And deleting the series takes the occurrences Google kept apart with it.
+  store->Remove(uid, false);
+  store.settle();
+  CHECK(CountRows(store->db(), "SELECT COUNT(*) FROM events WHERE series_id = 'serie1'") == 0);
 }
 
 TEST_CASE("a reminder falls due once, at its minute, and not before or after") {

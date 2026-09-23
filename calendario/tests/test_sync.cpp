@@ -169,13 +169,50 @@ TEST_CASE("a missing summary is a title and not an empty card") {
   REQUIRE(row->title == "(sin título)");
 }
 
-TEST_CASE("only the RRULE is kept out of the recurrence list") {
+TEST_CASE("the whole recurrence list is kept, EXDATEs included, and goes back up whole") {
   nlohmann::json event = Timed("2026-09-23T17:00:00Z", "2026-09-23T18:00:00Z");
   event["recurrence"] = nlohmann::json::array(
       {"EXDATE;TZID=America/Bogota:20261001T120000", "RRULE:FREQ=WEEKLY;BYDAY=MO"});
   const std::optional<EventRow> row = ReadEvent(event);
   REQUIRE(row.has_value());
-  REQUIRE(row->recurrence == "RRULE:FREQ=WEEKLY;BYDAY=MO");
+  REQUIRE(row->recurrence ==
+          "EXDATE;TZID=America/Bogota:20261001T120000\nRRULE:FREQ=WEEKLY;BYDAY=MO");
+
+  const nlohmann::json body = WriteEvent(*row, "", kEditRecurrence);
+  CHECK(body["recurrence"] == event["recurrence"]);
+}
+
+TEST_CASE("a bare rule next to an EXDATE still goes up with its RRULE:") {
+  EventRow row = *ReadEvent(AllDay("2026-09-23", "2026-09-24"));
+  row.recurrence = "FREQ=DAILY\nEXDATE;VALUE=DATE:20260925";
+  const nlohmann::json body = WriteEvent(row, "", kEditRecurrence);
+  CHECK(body["recurrence"] ==
+        nlohmann::json::array({"RRULE:FREQ=DAILY", "EXDATE;VALUE=DATE:20260925"}));
+}
+
+TEST_CASE("an occurrence Google keeps apart says its series and the day it had") {
+  nlohmann::json moved = Timed("2026-10-06T12:00:00Z", "2026-10-06T13:00:00Z");
+  moved["id"] = "serie1_20261005T120000Z";
+  moved["recurringEventId"] = "serie1";
+  moved["originalStartTime"] = {{"dateTime", "2026-10-05T12:00:00Z"}};
+  const std::optional<EventRow> row = ReadEvent(moved);
+  REQUIRE(row.has_value());
+  CHECK(row->seriesId == "serie1");
+  CHECK(row->originalDay == "2026-10-05");
+
+  // Cancelled, it is still worth reading: it is what says the series lost that day.
+  const nlohmann::json cancelled = {{"id", "serie1_20261012"},
+                                    {"status", "cancelled"},
+                                    {"recurringEventId", "serie1"},
+                                    {"originalStartTime", {{"date", "2026-10-12"}}}};
+  const std::optional<EventRow> gone = ReadEvent(cancelled);
+  REQUIRE(gone.has_value());
+  CHECK(gone->cancelled);
+  CHECK(gone->seriesId == "serie1");
+  CHECK(gone->originalDay == "2026-10-12");
+
+  // An ordinary event belongs to no series.
+  CHECK(ReadEvent(AllDay("2026-09-23", "2026-09-24"))->seriesId.empty());
 }
 
 TEST_CASE("a row with no recurrence says nothing about recurrence") {

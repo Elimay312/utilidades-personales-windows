@@ -93,3 +93,33 @@ TEST_CASE("a weekly series dragged to another day repeats on the new day") {
         L"RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=4");
   CHECK(MoveRuleTo(L"RRULE:FREQ=DAILY", thursday) == L"RRULE:FREQ=DAILY");
 }
+
+TEST_CASE("an EXDATE takes its day away, in the shapes Google and imports write it") {
+  const Date monday = Day(2026, 9, 21);
+  const char* rule =
+      "RRULE:FREQ=WEEKLY;BYDAY=MO\n"
+      "EXDATE;TZID=America/Bogota:20260928T070000,20261012T070000";
+  CHECK_FALSE(OccursOn(rule, monday, Day(2026, 9, 28)));
+  CHECK(OccursOn(rule, monday, Day(2026, 10, 5)));
+  CHECK_FALSE(OccursOn(rule, monday, Day(2026, 10, 12)));
+  // An all-day series, with the lines the other way round, and the first day excluded.
+  const char* allDay = "EXDATE;VALUE=DATE:20260921\r\nFREQ=DAILY";
+  CHECK_FALSE(OccursOn(allDay, monday, monday));
+  CHECK(OccursOn(allDay, monday, Day(2026, 9, 22)));
+}
+
+TEST_CASE("an EXDATE does not give its occurrence back to COUNT") {
+  // Three Mondays counted, the 28th excluded: the 21st and 5 October happen, the 12th does not.
+  const char* rule = "RRULE:FREQ=WEEKLY;COUNT=3\nEXDATE:20260928";
+  const Date monday = Day(2026, 9, 21);
+  CHECK(OccursOn(rule, monday, Day(2026, 10, 5)));
+  CHECK_FALSE(OccursOn(rule, monday, Day(2026, 10, 12)));
+}
+
+TEST_CASE("the panel and a drag read the RRULE line and keep the EXDATEs") {
+  const std::wstring rule = L"RRULE:FREQ=WEEKLY;BYDAY=MO\nEXDATE:20260928";
+  CHECK(RepeatOf(rule) == Repeat::Weekly);
+  CHECK(MoveRuleTo(rule, Day(2026, 9, 24)) == L"RRULE:FREQ=WEEKLY;BYDAY=TH\nEXDATE:20260928");
+  CHECK(MoveRuleTo(L"EXDATE:20260928\nRRULE:FREQ=WEEKLY;BYDAY=MO", Day(2026, 9, 24)) ==
+        L"EXDATE:20260928\nRRULE:FREQ=WEEKLY;BYDAY=TH");
+}

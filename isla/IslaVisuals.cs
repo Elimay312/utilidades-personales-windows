@@ -38,6 +38,7 @@ internal enum Zona
     Siguiente,
     Barra,
     App,
+    Pomodoro,
 }
 
 /// <summary>
@@ -94,7 +95,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
     // --- colocacion del contenido, en unidades logicas sobre el panel abierto -------
     private const float Margen = 16f;
     private const float CaratulaLado = 92f;
-    private const string GlifoNota = ""; // MusicNote, Segoe Fluent Icons
+    private const string GlifoNota = "\uEC4F"; // MusicNote, Segoe Fluent Icons
     private const float NotaPx = 34f;
     private const float CaratulaRadio = 10f;
     private const float TextoX = 124f;
@@ -142,6 +143,12 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private const string GlifoSiguiente = "\uE101";
     private const string GlifoPlay = "\uE102";
     private const string GlifoPausa = "\uE103";
+    private const string GlifoReloj = "\uE916"; // Stopwatch
+
+    // El pomodoro en el panel abierto: el hueco libre a la izquierda de los botones.
+    private const float PomPx = 12f;
+    private const float PomAncho = 96f;
+    private const float PomBarraY = BotonCy + 10f;
 
     private const uint D3D11SdkVersion = 7;
 
@@ -177,6 +184,12 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private ContainerVisual _cajaTitulo;
     private SpriteVisual _caratula;
     private SpriteVisual _notaCaratula;
+    private ContainerVisual _pomodoro;
+    private SpriteVisual _pomGlifo;
+    private SpriteVisual _pomTexto;
+    private SpriteVisual _pomRelleno;
+    private readonly SpriteVisual _brasaPomodoro;
+    private bool _hayPomodoro;
     private SpriteVisual _rotTitulo;
     private SpriteVisual _rotArtista;
     private SpriteVisual _rotApp;
@@ -315,6 +328,14 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _contenido = Contenido();
         _compacto = FilaCompacta();
 
+        // El pomodoro en la brasa: la linea se va vaciando segun pasa. Blanco tenue sobre el
+        // negro, del ancho de la brasa y escalado en X desde la izquierda; se apaga en cuanto
+        // la pastilla crece, que ahi ya lo cuenta el texto.
+        _brasaPomodoro = _compositor.CreateSpriteVisual();
+        _brasaPomodoro.Brush = _compositor.CreateColorBrush(Color.FromArgb(120, 255, 255, 255));
+        _brasaPomodoro.IsVisible = false;
+        _panel.Children.InsertAtTop(_brasaPomodoro);
+
         // Borde interior de 1 px. Sin el, un panel oscuro parece un agujero en la
         // pantalla; con el, parece iluminado. Es lo mas barato que cambia la lectura.
         // Geometria propia, no la del clip: asi no hay que suponer que una geometria se
@@ -406,6 +427,10 @@ internal sealed unsafe class IslaVisuals : IDisposable
         // El titular entra pronto y se va cuando entra la ficha entera.
         string pleno = Rampa(PlenoDesde, PlenoRango);
         Expresion(_compacto, "Opacity", $"{Rampa(CompactoDesde, CompactoRango)} * (1 - ({pleno}))");
+
+        // La brasa del pomodoro: del tamano de la caja y solo mientras es brasa.
+        Expresion(_brasaPomodoro, "Size", "P.Size");
+        Expresion(_brasaPomodoro, "Opacity", $"1 - Clamp((P.Size.Y - {F(S(5f))}) / {F(S(6f))}, 0, 1)");
 
         // El contenido entra con la misma rampa y ademas crece un poco. Escalar desde
         // el centro del panel -- que tambien se esta moviendo -- es lo que hace que
@@ -650,6 +675,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// superior izquierda, asi que no hace falta ninguna expresion para colocarlas.
     /// </summary>
     [MemberNotNull(nameof(_onda), nameof(_cajaTitulo), nameof(_caratula), nameof(_notaCaratula),
+                   nameof(_pomodoro), nameof(_pomGlifo), nameof(_pomTexto), nameof(_pomRelleno),
                    nameof(_rotTitulo), nameof(_rotArtista), nameof(_rotApp),
                    nameof(_barra), nameof(_relleno), nameof(_rotPasado), nameof(_rotTotal),
                    nameof(_botAnterior), nameof(_botPlay), nameof(_botSiguiente))]
@@ -737,6 +763,23 @@ internal sealed unsafe class IslaVisuals : IDisposable
         _botAnterior = Hueco(Vector2.Zero, raiz);
         _botPlay = Hueco(Vector2.Zero, raiz);
         _botSiguiente = Hueco(Vector2.Zero, raiz);
+
+        // El pomodoro: reloj, tiempo y una barra de 2 px que se vacia. Oculto sin pomodoro.
+        _pomodoro = _compositor.CreateContainerVisual();
+        _pomodoro.IsVisible = false;
+        raiz.Children.InsertAtTop(_pomodoro);
+        _pomGlifo = Hueco(Vector2.Zero, _pomodoro);
+        _pomTexto = Hueco(Vector2.Zero, _pomodoro);
+        SpriteVisual pomSurco = _compositor.CreateSpriteVisual();
+        pomSurco.Size = new Vector2(S(PomAncho), S(2f));
+        pomSurco.Offset = new Vector3(S(Margen), S(PomBarraY), 0);
+        pomSurco.Brush = _compositor.CreateColorBrush(Color.FromArgb(46, 255, 255, 255));
+        _pomodoro.Children.InsertAtTop(pomSurco);
+        _pomRelleno = _compositor.CreateSpriteVisual();
+        _pomRelleno.Size = pomSurco.Size;
+        _pomRelleno.Offset = pomSurco.Offset;
+        _pomRelleno.Brush = _compositor.CreateColorBrush(Color.FromArgb(200, 255, 255, 255));
+        _pomodoro.Children.InsertAtTop(_pomRelleno);
 
         return raiz;
     }
@@ -1099,6 +1142,29 @@ internal sealed unsafe class IslaVisuals : IDisposable
 
     private bool _hayOtras;
 
+    /// <summary>
+    /// El pomodoro, en el panel y en la brasa. <paramref name="texto"/> nulo lo apaga;
+    /// <paramref name="fraccion"/> es lo que QUEDA, de 1 a 0.
+    /// </summary>
+    public void Pomodoro(string? texto, float fraccion, bool pausa)
+    {
+        _hayPomodoro = texto is not null;
+        _pomodoro.IsVisible = _hayPomodoro;
+        _brasaPomodoro.IsVisible = _hayPomodoro;
+        if (texto is null) return;
+
+        fraccion = Math.Clamp(fraccion, 0f, 1f);
+        _pomRelleno.Scale = new Vector3(fraccion, 1f, 1f);
+        _brasaPomodoro.Scale = new Vector3(fraccion, 1f, 1f);
+
+        // Centrados en la linea de los botones, un poco por encima para dejar sitio a la barra.
+        float cy = S(BotonCy - 3f);
+        Rotular(_pomGlifo, pausa ? GlifoPausa : GlifoReloj, PomPx, false, pausa ? 0.5f : 0.8f, iconos: true);
+        _pomGlifo.Offset = new Vector3(S(Margen), cy - _pomGlifo.Size.Y * 0.5f, 0);
+        Rotular(_pomTexto, texto, PomPx, true, pausa ? 0.5f : 0.92f);
+        _pomTexto.Offset = new Vector3(S(Margen) + _pomGlifo.Size.X + S(4f), cy - _pomTexto.Size.Y * 0.5f, 0);
+    }
+
     /// <summary>Los dos relojes de los extremos de la barra. Solo al cambiar de cancion.</summary>
     public void Tiempos(TimeSpan pasado, TimeSpan total)
     {
@@ -1168,6 +1234,11 @@ internal sealed unsafe class IslaVisuals : IDisposable
         if (p.X >= S(BarraX - 6f) && p.X <= S(BarraX + BarraAncho + 6f)
             && p.Y >= S(BarraY - 9f) && p.Y <= S(BarraY + BarraAlto + 9f))
             return Zona.Barra;
+
+        // El pomodoro, a la izquierda de los botones: un clic lo pausa o lo reanuda.
+        if (_hayPomodoro && p.X >= S(Margen - 6f) && p.X <= S(Margen + PomAncho + 6f)
+            && Math.Abs(p.Y - S(BotonCy)) <= S(GolpeLado * 0.5f))
+            return Zona.Pomodoro;
 
         // El nombre de la app, solo si hay otra sesion a la que pasar. Todo el ancho de su
         // linea y algo de alto: el texto mide 10 px.

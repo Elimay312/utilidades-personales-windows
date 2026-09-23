@@ -86,15 +86,51 @@ internal static partial class Avisos
     /// </summary>
     public static void Responder(long numero, string boton)
     {
+        Action<string>? local;
         lock (Cerrojo)
         {
-            foreach ((AvisoApp aviso, TaskCompletionSource<string> respuesta) in Esperando)
+            if (Locales.Remove(numero, out local))
             {
-                if (aviso.Numero != numero) continue;
-                if (aviso.Pid != 0) PInvoke.AllowSetForegroundWindow(aviso.Pid);
-                respuesta.TrySetResult(boton);
+                Esperando.RemoveAll(e => e.Aviso.Numero == numero);
+            }
+            else
+            {
+                foreach ((AvisoApp aviso, TaskCompletionSource<string> respuesta) in Esperando)
+                {
+                    if (aviso.Numero != numero) continue;
+                    if (aviso.Pid != 0) PInvoke.AllowSetForegroundWindow(aviso.Pid);
+                    respuesta.TrySetResult(boton);
+                }
             }
         }
+
+        // Fuera del cerrojo: lo que haga el boton puede volver a entrar aqui (el pomodoro de
+        // "Otro" puede acabar dejando otro aviso).
+        if (local is null) return;
+        Despertar();
+        local(boton);
+    }
+
+    // Los avisos de la propia isla -- hoy, el final del pomodoro --. El mismo buzon y la misma
+    // tarjeta, sin tuberia ni nadie al otro lado: el boton pulsado se entrega a quien lo creo,
+    // en el hilo de UI, porque Responder se llama justo despues del clic.
+    private static readonly Dictionary<long, Action<string>> Locales = [];
+
+    /// <summary>
+    /// Deja un aviso propio. Falso si el buzon esta lleno, y entonces toca avisar de otra forma.
+    /// </summary>
+    public static bool Local(string titulo, string linea, uint color, IReadOnlyList<Boton> botones,
+                             Action<string> alPulsar)
+    {
+        AvisoApp aviso = new(Interlocked.Increment(ref _siguiente), "Isla", titulo, linea, color, botones);
+        lock (Cerrojo)
+        {
+            if (Esperando.Count >= MaxEsperando) return false;
+            Esperando.Add((aviso, new TaskCompletionSource<string>()));
+            Locales[aviso.Numero] = alPulsar;
+        }
+        Despertar();
+        return true;
     }
 
     private static void Despertar()

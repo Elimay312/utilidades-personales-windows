@@ -220,6 +220,11 @@ internal sealed unsafe class IslaWindow : IDisposable
     private DateTime _finPomodoro;
     private bool _hayPomodoro;
     private int _segundoPomodoro = -1;
+    // Lo que dura entero, para la barra que se vacia.
+    private TimeSpan _largoPomodoro;
+    // Lo que quedaba al pausarlo; nulo mientras corre.
+    private TimeSpan? _pausaPomodoro;
+    private bool _esDescanso;
     /// <summary>
     /// El ultimo porcentaje ANUNCIADO, no el ultimo leido. Sirve para no repetir el
     /// mismo aviso: COM avisa de cualquier cambio del escalar, y dos escalares distintos
@@ -620,6 +625,9 @@ internal sealed unsafe class IslaWindow : IDisposable
         // con el raton, y un pomodoro que se muere por pasear el raton no sirve de nada.
         bool pomodoro = _instancia?._hayPomodoro ?? false;
         DateTime finPomodoro = _instancia?._finPomodoro ?? default;
+        TimeSpan largoPomodoro = _instancia?._largoPomodoro ?? default;
+        TimeSpan? pausaPomodoro = _instancia?._pausaPomodoro;
+        bool descanso = _instancia?._esDescanso ?? false;
 
         // Y lo que YA se anuncio. Sin esto la isla renace con _sonando en null, Medios
         // se vuelve a enganchar, OnMedios cree que la cancion es nueva y asoma: cada
@@ -646,20 +654,26 @@ internal sealed unsafe class IslaWindow : IDisposable
         // dentro del bucle de mensajes, asi que el mensaje se procesa despues de volver.
         _instancia!._sonando = sonando;
 
-        if (pomodoro && finPomodoro > DateTime.UtcNow) _instancia.RetomarPomodoro(finPomodoro);
+        if (pomodoro && (pausaPomodoro is not null || finPomodoro > DateTime.UtcNow))
+            _instancia.RetomarPomodoro(finPomodoro, largoPomodoro, pausaPomodoro, descanso);
 
         Console.WriteLine($"[isla] rehecha en {reloj.ElapsedMilliseconds} ms");
     }
 
     /// <summary>
     /// Vuelve a colgar un pomodoro que ya estaba corriendo antes de la mudanza. No
-    /// reinicia nada: se conserva la hora de fin, que es lo unico que lo define.
+    /// reinicia nada: se conserva la hora de fin, o lo que quedaba si estaba en pausa.
     /// </summary>
-    private void RetomarPomodoro(DateTime fin)
+    private void RetomarPomodoro(DateTime fin, TimeSpan largo, TimeSpan? pausa, bool descanso)
     {
         _hayPomodoro = true;
         _finPomodoro = fin;
+        _largoPomodoro = largo;
+        _pausaPomodoro = pausa;
+        _esDescanso = descanso;
         _segundoPomodoro = -1;
+        PintarPomodoro();
+        Console.WriteLine($"[isla] pomodoro retomado{(pausa is null ? "" : " en pausa")}, quedan {QuedaPomodoro():mm\\:ss}");
         Ensenar(true);
         Asomar();
     }
@@ -1013,9 +1027,9 @@ internal sealed unsafe class IslaWindow : IDisposable
 
         if (_hayPomodoro)
         {
-            TimeSpan queda = _finPomodoro - DateTime.UtcNow;
-            if (queda < TimeSpan.Zero) queda = TimeSpan.Zero;
-            return new Aviso($"Pomodoro   {queda:mm\\:ss}", false);
+            string que = _esDescanso ? "Descanso" : "Pomodoro";
+            string pausa = _pausaPomodoro is null ? "" : "   ·   en pausa";
+            return new Aviso($"{que}   {QuedaPomodoro():mm\\:ss}{pausa}", false);
         }
 
         Cancion? c = Medios.Ultima;
@@ -1143,15 +1157,99 @@ internal sealed unsafe class IslaWindow : IDisposable
         if (_hayPomodoro)
         {
             _hayPomodoro = false;
-            Avisar("Pomodoro cancelado");
+            PintarPomodoro();
+            Avisar(_esDescanso ? "Descanso cancelado" : "Pomodoro cancelado");
             return;
         }
 
+        EmpezarPomodoro(TimeSpan.FromMinutes(_config.PomodoroMinutos), descanso: false);
+    }
+
+    private void EmpezarPomodoro(TimeSpan largo, bool descanso)
+    {
         _hayPomodoro = true;
-        _finPomodoro = DateTime.UtcNow + TimeSpan.FromMinutes(_config.PomodoroMinutos);
+        _largoPomodoro = largo;
+        _finPomodoro = DateTime.UtcNow + largo;
+        _pausaPomodoro = null;
+        _esDescanso = descanso;
         _segundoPomodoro = -1;
+        PintarPomodoro();
         Ensenar(true);
         Asomar();
+    }
+
+    /// <summary>Lo que queda: congelado si esta en pausa, y nunca negativo.</summary>
+    private TimeSpan QuedaPomodoro()
+    {
+        TimeSpan q = _pausaPomodoro ?? _finPomodoro - DateTime.UtcNow;
+        return q < TimeSpan.Zero ? TimeSpan.Zero : q;
+    }
+
+    /// <summary>Clic en el pomodoro del panel: lo para o lo vuelve a poner en marcha.</summary>
+    private void AlternarPausa()
+    {
+        if (!_hayPomodoro) return;
+        if (_pausaPomodoro is TimeSpan quedaba)
+        {
+            _finPomodoro = DateTime.UtcNow + quedaba;
+            _pausaPomodoro = null;
+        }
+        else
+        {
+            _pausaPomodoro = QuedaPomodoro();
+        }
+        _segundoPomodoro = -1;
+        PintarPomodoro();
+        RefrescarTitular();
+        Console.WriteLine(_pausaPomodoro is null ? "[isla] pomodoro: sigue" : "[isla] pomodoro: en pausa");
+    }
+
+    /// <summary>El panel y la brasa. El titular va aparte, por RefrescarTitular.</summary>
+    private void PintarPomodoro()
+    {
+        if (!_hayPomodoro) { _visuals.Pomodoro(null, 0f, false); return; }
+        TimeSpan q = QuedaPomodoro();
+        bool pausa = _pausaPomodoro is not null;
+        _visuals.Pomodoro(
+            pausa ? $"{q:mm\\:ss}  pausa" : $"{q:mm\\:ss}",
+            _largoPomodoro > TimeSpan.Zero ? (float)(q / _largoPomodoro) : 0f,
+            pausa);
+    }
+
+    private const int MinutosDescanso = 5;
+    private const uint ColorPomodoro = 0xE5533D;
+
+    /// <summary>
+    /// Se acabo. En vez de un asomo de 4 s que se pierde si no miras, una tarjeta que espera,
+    /// como las de Agenda, con lo siguiente que toca. Si el buzon esta lleno, el asomo de siempre.
+    /// </summary>
+    private void TerminarPomodoro()
+    {
+        bool eraDescanso = _esDescanso;
+        _hayPomodoro = false;
+        PintarPomodoro();
+        Console.WriteLine(eraDescanso ? "[isla] descanso terminado" : "[isla] pomodoro terminado");
+
+        // Por _instancia y no por this: la tarjeta sobrevive a rehacer la ventana y esta
+        // instancia no.
+        Action<string> alPulsar = id => _instancia?.AlPulsarPomodoro(id);
+        bool puesto = eraDescanso
+            ? Avisos.Local("Descanso terminado", "A trabajar otra vez", ColorPomodoro,
+                [new("pomodoro", "Pomodoro"), new("listo", "Listo")], alPulsar)
+            : Avisos.Local("Pomodoro terminado", $"{_config.PomodoroMinutos} min seguidos", ColorPomodoro,
+                [new("descanso", $"Descanso {MinutosDescanso} min"), new("otro", "Otro"), new("listo", "Listo")], alPulsar);
+        if (!puesto) Avisar(eraDescanso ? "Descanso terminado" : "Pomodoro terminado");
+    }
+
+    private void AlPulsarPomodoro(string id)
+    {
+        Console.WriteLine($"[isla] pomodoro: {id}");
+        switch (id)
+        {
+            case "descanso": EmpezarPomodoro(TimeSpan.FromMinutes(MinutosDescanso), descanso: true); break;
+            case "otro":
+            case "pomodoro": EmpezarPomodoro(TimeSpan.FromMinutes(_config.PomodoroMinutos), descanso: false); break;
+        }
     }
 
     /// <summary>
@@ -1176,13 +1274,13 @@ internal sealed unsafe class IslaWindow : IDisposable
             if (Medios.Ultima is { } c) _visuals.LineaApp(c);
         }
 
-        if (_hayPomodoro)
+        // En pausa no corre nada: ni caduca ni se repinta.
+        if (_hayPomodoro && _pausaPomodoro is null)
         {
             TimeSpan queda = _finPomodoro - ahora;
             if (queda <= TimeSpan.Zero)
             {
-                _hayPomodoro = false;
-                Avisar("Pomodoro terminado");
+                TerminarPomodoro();
             }
             else
             {
@@ -1191,6 +1289,7 @@ internal sealed unsafe class IslaWindow : IDisposable
                 {
                     _segundoPomodoro = segundo;
                     RefrescarTitular();
+                    PintarPomodoro();
                 }
             }
         }
@@ -1483,6 +1582,7 @@ internal sealed unsafe class IslaWindow : IDisposable
             case Zona.Siguiente: Medios.Siguiente(); break;
             case Zona.PlayPausa: Medios.Alternar(); break;
             case Zona.App: Medios.Rotar(); break;
+            case Zona.Pomodoro: AlternarPausa(); break;
 
             case Zona.Barra:
                 _arrastrando = true;

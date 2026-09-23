@@ -117,13 +117,15 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
 ```
 src/
   main.cpp       mutex, ventana de mensajes, atajo, bucle
-  core/          config, log, paths, hr, autostart, i18n (de calendario/src/core)
-  ui/            panel_window, theme, paint, layout, spring, snapshot, controls
-  model/         PanelState: el esquema único que pinta la UI
-  system/        audio, policy_config, brightness, display_ids, radios,
+  core/          config, log, paths, hr, i18n (de calendario/src/core), hotkey.h (de
+                 calendario/src/app), options (--monitor, --render-snapshot, --theme)
+  model/         state.h: PanelState, el esquema único; sample.cpp: los datos de ejemplo
+  ui/            panel_window (ventana y composición), panel_view (el dibujo), layout (todos
+                 los rectángulos, puro), theme, paint, glyphs, snapshot
+  system/        (desde la fase 3) audio, policy_config, brightness, display_ids, radios,
                  nightlight_blob, nightlight, apps, worker
-tests/           doctest
-assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8), .rc, icono
+tests/           doctest: hotkey, options, layout
+assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
 ```
 
 ### Reglas de arquitectura
@@ -150,7 +152,24 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8), .rc, icono
    - `OnDefaultDeviceChanged` pone una bandera y avisa por mensaje.
    - El hilo de la interfaz suelta el endpoint y vuelve a registrarse.
    - Es lo que midió el HUD (`hud/CHANGELOG.md`) y el patrón está en `isla/Audio.cs:151-156`.
-6. **Errores como valores**, mostrados dentro del panel. Nunca un `MessageBox`.
+6. **Errores como valores**, mostrados dentro del panel. Nunca un `MessageBox`. El sitio es
+   `PanelState::notice`: una línea, en dos renglones si hace falta, al pie del panel.
+
+### Decisiones de la fase 1
+
+- **El alto del panel sale de su contenido.** El ancho es fijo, de 344 DIP; cerrado mide 392 DIP
+  de alto. Abrir una tarjeta hace crecer la ventana hacia arriba desde la esquina. Una ventana
+  del alto máximo con zonas transparentes también recibiría los clics en esas zonas.
+- **El porcentaje de un deslizador va en la cabecera de su tarjeta**, a la izquierda del
+  chevron. Dentro de la barra tendría que cambiar de color según dónde cae el relleno.
+- **Una pantalla sin DDC/CI conserva su fila,** con «Sin control de brillo» en el sitio de la
+  barra. Si desapareciera, parecería una pantalla que no se ha detectado.
+- **Las capturas usan siempre el acento `#0A84FF`,** y la app el de Windows (`DWM\AccentColor`,
+  solo lectura). Un PNG commiteado no puede cambiar de color según la máquina.
+- **`panel.json` no se recarga en caliente.** Los cambios entran al reiniciar. Se añade
+  cuando haya algo que se cambie a menudo.
+- **`small` es una macro de `rpcndr.h`** (`#define small char`). La fuente de 11 se llama
+  `caption`.
 
 ## Convenciones
 
@@ -207,7 +226,7 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8), .rc, icono
 ## Fases
 
 - [x] **0. Documentos antes del código:** este archivo, `SEGURIDAD.md`, `auditar.ps1` y el plan.
-- [ ] **1. Esqueleto con datos falsos:**
+- [x] **1. Esqueleto con datos falsos:**
   - CMake y presets;
   - lo copiado de Agenda: core, atajo, monitor y DPI, tema, ventana;
   - `PanelState` completo;
@@ -252,8 +271,12 @@ cmake --preset debug && cmake --build --preset debug
 ctest --preset debug
 build\debug\Panel.exe --monitor=3
 build\debug\Panel.exe --render-snapshot=panel --out=docs\img\panel.png
+build\debug\Panel.exe --render-snapshot=panel-brillo --out=docs\img\panel-brillo.png
+build\debug\Panel.exe --render-snapshot=panel-volumen --out=docs\img\panel-volumen.png
+build\debug\Panel.exe --render-snapshot=panel --theme=light --out=docs\img\panel-claro.png
+build\debug\Panel.exe --render-snapshot=panel --theme=contrast --out=docs\img\panel-contraste.png
 powershell -NoProfile -ExecutionPolicy Bypass -File auditar.ps1
 ```
 
-Si CMake no puede descargar las dependencias por falta de certificados, define antes
-`CURL_CA_BUNDLE`, como hace `calendario/empaquetar.ps1`.
+El `cmake` de WinLibs que hay en el PATH no trae certificados, así que `CMakeLists.txt` usa el
+almacén de certificados de Git para Windows. Si no lo encuentra, define antes `CURL_CA_BUNDLE`.

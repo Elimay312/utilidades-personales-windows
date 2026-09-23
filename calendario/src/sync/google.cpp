@@ -814,6 +814,21 @@ bool GoogleSync::PullEvents(const std::wstring& auth, const std::string& calenda
     if (pageToken.empty()) break;
   }
 
+  // Tombstones of occurrences whose series is gone. Deleting a series at Google also sends every
+  // occurrence it kept apart, cancelled, after the series itself, so they land with nothing to
+  // take a day from. Swept once the whole calendar is in and not item by item: a series can
+  // arrive on a later page than its occurrences. One queued for upload is still the user's.
+  store_.Run([&] {
+    if (std::optional<Stmt> stmt = store_.db().Prepare(
+            "DELETE FROM events WHERE calendar_id = ? AND series_id IS NOT NULL "
+            "  AND deleted_at IS NOT NULL AND uid NOT IN (SELECT uid FROM pending_ops) "
+            "  AND series_id NOT IN (SELECT COALESCE(remote_id, replace(lower(uid), '-', '')) "
+            "                        FROM events WHERE series_id IS NULL)")) {
+      stmt->Bind(1, calendarId);
+      stmt->Step();
+    }
+  });
+
   // Written only once the last page is in. Saving it halfway would mean the next pass asks for
   // the difference since a point that was never reached, and the missing middle never arrives.
   if (!nextToken.empty()) {

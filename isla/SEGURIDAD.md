@@ -233,8 +233,15 @@ saber de quién es un proceso y escribir en algo que no es suyo.
 - **La lista solo existe con el mezclador abierto.** Se lee al abrirlo y una vez por segundo
   mientras sigue abierto, con el reloj que el panel ya tenía, y se suelta al cerrarlo. No va a
   disco, ni al log, ni sobrevive a la isla recogida. Es la única lista de la isla.
-- **Del proceso, el nombre y nada más.** Ni icono, ni ventana, ni ruta, ni línea de comandos,
-  ni memoria. Si el nombre no se puede leer, esa sesión no se enseña.
+- **Del proceso, el nombre y su icono, y nada más.** Ni ventana, ni línea de comandos, ni
+  memoria. Si el nombre no se puede leer, esa sesión no se enseña. La ruta del exe se usa por
+  dentro para pedir el icono y no se pinta ni se guarda.
+- **El icono es el que Windows enseña en el Explorador**: `StorageFile.GetThumbnailAsync` sobre
+  el exe, decodificado con el mismo `BitmapDecoder` que la carátula. No se abre el ejecutable
+  a mano ni se leen sus recursos. Vive en memoria mientras el mezclador está abierto y se
+  suelta con la lista (enmienda del 23-09-2026, a petición: con más sitio, el nombre solo
+  se quedaba corto). Si Windows no lo da —las apps de la Store viven en una carpeta sin
+  acceso—, la fila va sin icono.
 - **Solo se escribe detrás de un gesto tuyo** sobre la fila de esa app: clic, arrastre o
   rueda. Solo su nivel: ni silencio, ni canales (`IChannelAudioVolume` fuera), ni moverla de
   dispositivo. Nunca desde un temporizador.

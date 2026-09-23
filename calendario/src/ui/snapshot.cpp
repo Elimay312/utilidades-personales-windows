@@ -10,6 +10,7 @@
 #include "core/dates.h"
 #include "core/hr.h"
 #include "core/log.h"
+#include "core/text.h"
 #include "ui/app_layout.h"
 #include "ui/app_view.h"
 #include "ui/layout.h"
@@ -43,11 +44,37 @@ constexpr RECT kSnapshotWork{0, 0, 1920, 1032};
 
 AppView ViewFor(std::wstring_view view) {
   if (view == L"app-semana" || view == L"app-detalle" || view == L"app-arrastre" ||
-      view == L"app-borrar" || view == L"app-repeticion") {
+      view == L"app-borrar" || view == L"app-repeticion" || view == L"app-buscar") {
     return AppView::Week;
   }
   if (view == L"app-mes") return AppView::Month;
   return AppView::Day;
+}
+
+// What Store::Search would find in the sample week: the two weeks around the snapshot's day,
+// each event once, on its first day from today on.
+std::vector<DayItem> SampleSearch(std::wstring_view query) {
+  std::vector<DayItem> found;
+  const std::wstring needle = Folded(query);
+  if (needle.find_first_not_of(L' ') == std::wstring::npos) return found;
+  for (int offset = -7; offset <= 7; ++offset) {
+    const Date day = AddDays(kSnapshotToday, offset);
+    for (DayItem item : detail::SampleAppDay(day)) {
+      if (Folded(item.title).find(needle) == std::wstring::npos) continue;
+      const bool seen = std::any_of(found.begin(), found.end(),
+                                    [&](const DayItem& other) { return other.uid == item.uid; });
+      if (seen || (offset < 0 && item.repeats)) continue;
+      item.occurrence = day;
+      found.push_back(item);
+    }
+  }
+  std::stable_sort(found.begin(), found.end(), [](const DayItem& a, const DayItem& b) {
+    const bool aAhead = a.occurrence >= kSnapshotToday;
+    const bool bAhead = b.occurrence >= kSnapshotToday;
+    if (aAhead != bAhead) return aAhead;
+    return aAhead ? a.occurrence < b.occurrence : a.occurrence > b.occurrence;
+  });
+  return found;
 }
 
 }  // namespace
@@ -100,9 +127,15 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
     model.toast = T(L"Creado · Deshacer", L"Created · Undo");
     model.toastT = 1.0f;
   }
+  const bool search = view == L"popup-buscar" || view == L"app-buscar";
+  if (search && text.empty()) text = L"?con";
   if (!text.empty()) {
     model.input.Insert(text);
-    model.preview = nlp::ParseInput(text, nlp::Now{kSnapshotToday, kSnapshotMinute});
+    if (Searching(model)) {
+      model.results = SampleSearch(SearchQuery(model));
+    } else {
+      model.preview = nlp::ParseInput(text, nlp::Now{kSnapshotToday, kSnapshotMinute});
+    }
   }
 
   // The app: the popup's layout is still the sidebar, and the app is laid out at its design

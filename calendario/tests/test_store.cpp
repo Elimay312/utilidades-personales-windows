@@ -461,6 +461,45 @@ TEST_CASE("solo este: one occurrence moved or deleted here leaves the rest of th
   CHECK(store->ItemsForDay(Day(2026, 10, 6), false).empty());
 }
 
+TEST_CASE("search finds titles, places and notes without caring about accents or capitals") {
+  Open store;
+  const Date today = Day(2026, 9, 23);
+  store->Create(EventAt(L"Reunión con Ana", Day(2026, 9, 25), 9 * 60, 10 * 60));
+  store->Create(EventAt(L"Reunion vieja", Day(2026, 9, 1), 9 * 60, 10 * 60));
+  Draft gym = EventAt(L"Gym", Day(2026, 9, 7), 7 * 60, 8 * 60);
+  gym.recurrence = L"FREQ=WEEKLY;BYDAY=MO";
+  store->Create(gym);
+  Draft task;
+  task.isTask = true;
+  task.title = L"Preparar la REUNIÓN";
+  store->Create(task);
+  const DayItem gone = store->Create(EventAt(L"Reunión borrada", Day(2026, 9, 24), 0, 60));
+  store.settle();
+  store->Remove(gone.uid, false);
+  store.settle();
+
+  // What is ahead first and soonest first -- the task with no date stands on today -- then what
+  // has gone by. The deleted one is nowhere.
+  const std::vector<DayItem> found = store->Search(L"  reunion ", today, 10);
+  REQUIRE(found.size() == 3);
+  CHECK(found[0].title == L"Preparar la REUNIÓN");
+  CHECK(found[0].isTask);
+  CHECK(found[0].occurrence == today);
+  CHECK(found[1].title == L"Reunión con Ana");
+  CHECK(found[1].occurrence == Day(2026, 9, 25));
+  CHECK(found[2].title == L"Reunion vieja");
+
+  // A series is found on its next occurrence, not on the day it began.
+  const std::vector<DayItem> series = store->Search(L"GYM", today, 10);
+  REQUIRE(series.size() == 1);
+  CHECK(series[0].occurrence == Day(2026, 9, 28));
+  CHECK(series[0].repeats);
+
+  CHECK(store->Search(L"", today, 10).empty());
+  CHECK(store->Search(L"dentista", today, 10).empty());
+  CHECK(store->Search(L"reunion", today, 2).size() == 2);
+}
+
 TEST_CASE("a reminder falls due once, at its minute, and not before or after") {
   Open store;
   const Date day = Day(2026, 9, 23);

@@ -4,32 +4,14 @@
 #include <format>
 #include <initializer_list>
 
+#include "core/text.h"
+
 namespace agenda::nlp {
 namespace {
 
 using std::chrono::sys_days;
 
 constexpr int kMinutesPerDay = 24 * 60;
-
-// Every character folds to exactly one character and none of them ever disappear, so an index
-// into the folded text is the same index in the original. That is what lets a span point back
-// at what the user actually typed, accents and capitals and all.
-//
-// Written as escapes and not as letters on purpose: this file is UTF-8 and compiles with
-// /utf-8, and an escape survives any tool that decides to save it as something else.
-wchar_t Fold(wchar_t c) {
-  if (c >= L'A' && c <= L'Z') return static_cast<wchar_t>(c - L'A' + L'a');
-  switch (c) {
-    case L'Á': case L'á': return L'a';
-    case L'É': case L'é': return L'e';
-    case L'Í': case L'í': return L'i';
-    case L'Ó': case L'ó': return L'o';
-    case L'Ú': case L'ú':
-    case L'Ü': case L'ü': return L'u';
-    case L'Ñ': case L'ñ': return L'n';
-    default: return c;
-  }
-}
 
 struct Token {
   size_t offset = 0;
@@ -790,9 +772,7 @@ std::wstring RepeatLabel(const std::wstring& rule) {
 ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes) {
   ParsedInput out;
 
-  std::wstring folded;
-  folded.reserve(text.size());
-  for (wchar_t c : text) folded.push_back(Fold(c));
+  std::wstring folded = Folded(text);
 
   const PrefixHit prefix = ReadPrefix(folded);
   if (prefix.kind) out.spans.push_back(prefix.span);

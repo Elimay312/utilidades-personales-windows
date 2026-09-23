@@ -110,6 +110,7 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - Si el texto trae una hora, se crea un **evento** de 60 min por defecto.
   - Si no trae hora, se crea una **tarea**.
   - El prefijo `t:` o `!` fuerza que sea tarea. El prefijo `e:` fuerza que sea evento.
+  - El prefijo `?` no se parsea: es una búsqueda (fase 10, `Store::Search`, `Searching` en `popup_view.h`). Ctrl+F lo pone. Los resultados se apilan junto a la tarjeta de la vista previa, sobre un fondo opaco: hacia arriba en el popup (hasta 4, por encima del mes) y hacia abajo en la app (hasta 6). El plegado sin acentos es uno solo, `core/text.h`, y lo usan el parser y la búsqueda.
 - La caché local es la fuente de verdad para la interfaz. La sincronización ocurre en segundo plano con `syncToken` en eventos y `updatedMin` en tareas. En conflictos gana el cambio más reciente, y cada conflicto se registra en el log.
 - **`calendars.is_primary` significa «aquí cae lo que se crea»**, no «es el primary de Google». Se siembra con el primary en la primera conexión y a partir de ahí la mueve el submenú de la bandeja. Es la desviación que evitó inventar un almacén de ajustes para una elección que se hace una vez.
 - **La sincronización corre en su propio hilo, no en la cola del `Store`**, aunque `store.h` diera eso por hecho en la fase 4. Esa cola lleva también las escrituras del popup, y una petición de veinte segundos por delante dejaría una creación sin escribir veinte segundos. Lo que sí pasa por el `Store` es cada escritura en SQLite, con `Store::Run`: una conexión y un escritor. Dos conexiones habrían sido peor, porque en SQLite las transacciones son de la conexión y no del hilo.
@@ -211,6 +212,8 @@ build\debug\Agenda.exe --render-snapshot=app-detalle --out=docs\img\app-detalle.
 build\debug\Agenda.exe --render-snapshot=app-arrastre --out=docs\img\app-arrastre.png
 build\debug\Agenda.exe --render-snapshot=app-borrar --out=docs\img\app-borrar.png
 build\debug\Agenda.exe --render-snapshot=app-repeticion --out=docs\img\app-repeticion.png
+build\debug\Agenda.exe --render-snapshot=popup-buscar --out=docs\img\popup-buscar.png
+build\debug\Agenda.exe --render-snapshot=app-buscar --out=docs\img\app-buscar.png
 build\debug\Agenda.exe --render-snapshot=configuracion --theme=light --out=docs\img\configuracion-claro.png
 build\debug\Agenda.exe --render-snapshot=popup --theme=contrast --out=docs\img\popup-contraste.png
 powershell -NoProfile -ExecutionPolicy Bypass -File empaquetar.ps1   # build\release\Instalar-Agenda.exe

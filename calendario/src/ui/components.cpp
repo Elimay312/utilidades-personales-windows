@@ -303,11 +303,121 @@ void DrawToast(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme
              brush, Align::Center);
 }
 
+namespace {
+
+// "Hoy · 17:00", "25 Oct", "3 Ene 2027": when a result happens, in the words the preview uses.
+std::wstring ResultWhen(const DayItem& item, Date today) {
+  const int delta = static_cast<int>(
+      (std::chrono::sys_days{item.occurrence} - std::chrono::sys_days{today}).count());
+  std::wstring when;
+  if (delta == 0) {
+    when = T(L"Hoy", L"Today");
+  } else if (delta == 1) {
+    when = T(L"Mañana", L"Tomorrow");
+  } else if (delta == -1) {
+    when = T(L"Ayer", L"Yesterday");
+  } else {
+    when = std::format(L"{} {}", static_cast<unsigned>(item.occurrence.day()),
+                       MonthName(item.occurrence.month()).substr(0, 3));
+    if (item.occurrence.year() != today.year()) {
+      when += std::format(L" {}", static_cast<int>(item.occurrence.year()));
+    }
+  }
+  if (item.startMin) {
+    when += std::format(L" · {:02}:{:02}", *item.startMin / 60, *item.startMin % 60);
+  }
+  return when;
+}
+
+void DrawSearchResults(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                       const PanelLayout& layout, ID2D1SolidColorBrush* brush,
+                       const PopupModel& model) {
+  const float type = layout.type;
+  const int shown = SearchRowsShown(layout, model);
+  if (shown == 0) return;
+  // One backdrop under the card and the rows, so what they cover does not show between them.
+  const D2D1_RECT_F card = layout.preview();
+  const D2D1_RECT_F last = SearchRow(layout, shown - 1);
+  const float around = std::round(layout.gap / 2.0f);
+  const D2D1_RECT_F backdrop{card.left - around, (std::min)(card.top, last.top) - around,
+                             card.right + around, (std::max)(card.bottom, last.bottom) + around};
+  brush->SetColor(theme.panelOpaque);
+  FillRound(target, backdrop, layout.cardRadius + around, brush);
+  brush->SetColor(theme.border);
+  StrokeRound(target, backdrop, layout.cardRadius + around, brush, 1.0f);
+  for (int i = 0; i < shown; ++i) {
+    const DayItem& item = model.results[static_cast<size_t>(i)];
+    const D2D1_RECT_F row = SearchRow(layout, i);
+    const bool picked = i == model.resultPick;
+    brush->SetColor(theme.surface);
+    FillRound(target, row, layout.cardRadius, brush);
+    if (picked) {
+      brush->SetColor(theme.highContrast ? theme.accent : theme.hover);
+      if (theme.highContrast) {
+        StrokeRound(target, Inset(row, 1.0f), layout.cardRadius, brush, 2.0f);
+      } else {
+        FillRound(target, row, layout.cardRadius, brush);
+      }
+    } else if (theme.highContrast) {
+      brush->SetColor(theme.border);
+      StrokeRound(target, row, layout.cardRadius, brush, 1.0f);
+    }
+    // The bar of the calendar it belongs to, as on every card.
+    target->PushAxisAlignedClip(
+        D2D1_RECT_F{row.left, row.top, row.left + layout.barWidth, row.bottom},
+        D2D1_ANTIALIAS_MODE_ALIASED);
+    brush->SetColor(Rgb(item.color));
+    FillRound(target, row, layout.cardRadius, brush);
+    target->PopAxisAlignedClip();
+
+    const float left = row.left + kCardTextLeftDip * type;
+    const float whenWidth = std::round(92.0f * type);
+    brush->SetColor(theme.textSecondary);
+    DrawTextIn(target, fonts.label.Get(), ResultWhen(item, model.today),
+               D2D1_RECT_F{left, row.top, left + whenWidth, row.bottom}, brush);
+    brush->SetColor(item.isTask && item.done ? theme.textSecondary : theme.textPrimary);
+    DrawTextIn(target, fonts.event.Get(), item.title,
+               D2D1_RECT_F{left + whenWidth, row.top, row.right - kCardRightPadDip * type,
+                           row.bottom},
+               brush);
+  }
+}
+
+}  // namespace
+
 void DrawPreviewCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                      const PanelLayout& layout, ID2D1SolidColorBrush* brush,
                      const PopupModel& model) {
   const D2D1_RECT_F rect = layout.preview();
   const float type = layout.type;
+
+  // A search says what it found instead of what Enter would create.
+  if (Searching(model)) {
+    // The rows and their backdrop first, then the card on top of them.
+    DrawSearchResults(target, fonts, theme, layout, brush, model);
+    brush->SetColor(theme.surface);
+    FillRound(target, rect, layout.cardRadius, brush);
+    std::wstring said;
+    const size_t count = model.results.size();
+    if (SearchQuery(model).find_first_not_of(L' ') == std::wstring_view::npos) {
+      said = T(L"Escribe qué buscar", L"Type what to look for");
+    } else if (count == 0) {
+      said = T(L"Sin resultados", L"No results");
+    } else if (model.moreResults) {
+      said = std::format(L"{} {} {}", T(L"Más de", L"More than"), count,
+                         T(L"resultados", L"results"));
+    } else if (count == 1) {
+      said = T(L"1 resultado", L"1 result");
+    } else {
+      said = std::format(L"{} {}", count, T(L"resultados", L"results"));
+    }
+    brush->SetColor(count == 0 ? theme.textSecondary : theme.textPrimary);
+    DrawTextIn(target, fonts.event.Get(), L"\U0001F50D " + said,
+               D2D1_RECT_F{rect.left + kCardTextLeftDip * type, rect.top,
+                           rect.right - kCardRightPadDip * type, rect.bottom},
+               brush);
+    return;
+  }
 
   brush->SetColor(theme.surface);
   FillRound(target, rect, layout.cardRadius, brush);

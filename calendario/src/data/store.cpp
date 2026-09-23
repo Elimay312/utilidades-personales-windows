@@ -5,11 +5,13 @@
 #include <algorithm>
 #include <chrono>
 #include <format>
+#include <initializer_list>
 #include <unordered_set>
 #include <utility>
 
 #include "core/log.h"
 #include "core/recurrence.h"
+#include "core/text.h"
 #include "data/schema.h"
 
 namespace agenda {
@@ -485,6 +487,86 @@ std::optional<EventDetail> Store::Event(const std::wstring& uid) {
   out.endDay = *end;
   out.endMin = stmt->OptInt(8);
   return out;
+}
+
+std::vector<DayItem> Store::Search(std::wstring_view query, Date today, size_t limit) {
+  std::vector<DayItem> found;
+  while (!query.empty() && query.front() == L' ') query.remove_prefix(1);
+  while (!query.empty() && query.back() == L' ') query.remove_suffix(1);
+  const std::wstring needle = Folded(query);
+  if (!db_.IsOpen() || needle.empty()) return found;
+  const auto matches = [&needle](std::initializer_list<std::wstring> fields) {
+    for (const std::wstring& field : fields) {
+      if (Folded(field).find(needle) != std::wstring::npos) return true;
+    }
+    return false;
+  };
+
+  // ponytail: every row is read and folded here, on the interface thread like the day's list; a
+  // folded column with an index if an agenda ever grows to where typing feels it.
+  constexpr int kLookAheadDays = 400;
+  const Date horizon = AddDays(today, kLookAheadDays);
+  const std::unordered_set<std::string> taken = TakenDays(db_, DayKey(today), DayKey(horizon));
+  if (std::optional<Stmt> stmt = db_.Prepare(
+          "SELECT e.uid, e.title, e.location, e.notes, e.start_day, e.start_min, e.end_min, "
+          "       e.recurrence, c.color, COALESCE(e.remote_id, replace(lower(e.uid), '-', '')) "
+          "FROM events e JOIN calendars c ON c.id = e.calendar_id "
+          "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0")) {
+    while (stmt->Step()) {
+      if (!matches({stmt->Wide(1), stmt->Wide(2), stmt->Wide(3)})) continue;
+      const std::optional<Date> start = ParseDayKey(stmt->Text(4));
+      if (!start) continue;
+      DayItem item;
+      item.uid = stmt->Wide(0);
+      item.title = stmt->Wide(1);
+      item.startMin = stmt->OptInt(5);
+      item.endMin = stmt->OptInt(6);
+      item.color = static_cast<std::uint32_t>(stmt->Int(8));
+      item.occurrence = *start;
+      const std::string rule = stmt->Text(7);
+      item.repeats = !rule.empty();
+      // A series is found on its next occurrence, which is the one anybody searching for it
+      // is after; one that has run out stays on its first day, among what has gone by.
+      if (item.repeats) {
+        for (Date day = (std::max)(*start, today); day <= horizon; day = AddDays(day, 1)) {
+          if (OccursOn(rule, *start, day) && !IsTaken(taken, stmt->Text(9), day)) {
+            item.occurrence = day;
+            break;
+          }
+        }
+      }
+      found.push_back(std::move(item));
+    }
+  }
+  if (std::optional<Stmt> stmt = db_.Prepare(
+          "SELECT t.uid, t.title, t.notes, t.due_day, t.due_min, t.done_at, c.color "
+          "FROM tasks t JOIN calendars c ON c.id = t.list_id "
+          "WHERE t.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0")) {
+    while (stmt->Step()) {
+      if (!matches({stmt->Wide(1), stmt->Wide(2)})) continue;
+      DayItem item;
+      item.isTask = true;
+      item.uid = stmt->Wide(0);
+      item.title = stmt->Wide(1);
+      item.startMin = stmt->OptInt(4);
+      item.done = !stmt->IsNull(5);
+      item.color = static_cast<std::uint32_t>(stmt->Int(6));
+      item.occurrence = stmt->IsNull(3) ? today : ParseDayKey(stmt->Text(3)).value_or(today);
+      found.push_back(std::move(item));
+    }
+  }
+
+  std::sort(found.begin(), found.end(), [today](const DayItem& a, const DayItem& b) {
+    const bool aAhead = a.occurrence >= today;
+    const bool bAhead = b.occurrence >= today;
+    if (aAhead != bAhead) return aAhead;
+    if (a.occurrence != b.occurrence) {
+      return aAhead ? a.occurrence < b.occurrence : a.occurrence > b.occurrence;
+    }
+    return EarlierThan(a, b);
+  });
+  if (found.size() > limit) found.resize(limit);
+  return found;
 }
 
 int Store::PendingOpCount() {

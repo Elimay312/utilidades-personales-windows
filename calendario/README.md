@@ -245,8 +245,10 @@ monitor, aunque tenga otra escala; al contraerse cae en la esquina del monitor d
 | `Espacio` | En una tarea, la marca o la desmarca |
 | `Enter` | En una tarjeta, abre la app con ese evento en el panel de detalle |
 | `Ctrl+Enter` | Abre la app en el día seleccionado |
+| `Ctrl+F` | Buscar (pone `?` delante del campo) |
+| `↑` `↓`, `Enter` | Buscando, eligen un resultado y lo abren |
 | `Ctrl+,` | Configuración |
-| `Esc` | Cierra el popup |
+| `Esc` | Cierra el popup; buscando, borra la búsqueda |
 
 **En la app**
 
@@ -265,6 +267,7 @@ monitor, aunque tenga otra escala; al contraerse cae en la esquina del monitor d
 | `Espacio` | En un calendario, lo muestra u oculta; en una tarea sin fecha, la marca |
 | `Enter` | En una tarea sin fecha, la convierte en un evento de una hora a la siguiente hora en punto |
 | `Ctrl+K` | Escribir en el campo; `Enter` crea, como en el popup |
+| `Ctrl+F` | Buscar, como en el popup |
 | `Supr` | Borra el evento seleccionado, después de preguntar (`Supr` otra vez confirma) |
 | `Ctrl+Z` | Deshace lo último, mientras el aviso está en pantalla |
 | `Ctrl+,` | Configuración |
@@ -431,7 +434,23 @@ Lo que entiende:
 - **Repetición:** `cada lunes`, `todos los días` (`every monday`, `every day`), que se guardan
   como una regla RRULE.
 - **Prefijos:** `t:` o `!` al principio obligan a que sea una tarea; `e:` obliga a que sea un
-  evento.
+  evento. `?` no crea nada: **busca** (ver abajo).
+
+### Buscar
+
+Con `?` delante —o con **Ctrl+F**, que lo pone—, el campo busca en vez de crear: en el título,
+el lugar y las notas de los eventos y en las tareas, sin importar acentos ni mayúsculas. La
+tarjeta dice cuántos hay y los resultados se apilan junto a ella: hacia arriba en el popup,
+por encima del mes, y hacia abajo en la app. Cada uno lleva el color de su calendario y cuándo
+es («Hoy · 10:00», «25 Oct»); una serie sale en su próxima repetición y una tarea sin fecha, en
+hoy. Primero lo que está por venir, lo más cercano antes, y después lo pasado.
+
+`↑` `↓` o el ratón eligen, y `Enter` o un clic abren la app en ese día con el evento en el
+panel de detalle. `Esc` borra la búsqueda sin cerrar nada.
+
+| En el popup | En la app |
+|---|---|
+| ![Buscar en el popup](docs/img/popup-buscar.png) | ![Buscar en la app](docs/img/app-buscar.png) |
 
 Las reglas cuando la frase no lo dice todo:
 

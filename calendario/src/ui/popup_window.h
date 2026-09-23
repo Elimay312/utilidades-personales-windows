@@ -148,6 +148,11 @@ class PopupWindow final : public A11ySource {
   // The preview is asking a.m. or p.m. (nlp::ParsedInput::otherMinute), and the answer.
   bool AskingMeridiem() const;
   void FlipMeridiem();
+  // Search (phase 10): Ctrl+F puts a "?" in front of the capsule; the results under the pointer
+  // or the arrows open with Enter or a click.
+  void StartSearch();
+  int SearchRowAt(float x, float y) const;
+  void OpenResult();
   // Ctrl+Z while the notice is up: takes back a creation, a deletion or a task made into an
   // event, whichever the notice is about.
   void Undo();

@@ -30,6 +30,12 @@ struct PopupModel {
   // capsule and the rest of it becomes the preview card above.
   nlp::ParsedInput preview;
 
+  // Search (phase 10): while the capsule starts with "?", what it found -- each as its card,
+  // dated on the day it stands for -- and the one the arrows and the pointer are on.
+  std::vector<DayItem> results;
+  int resultPick = 0;
+  bool moreResults = false;  // the search stopped at kSearchLimit and there was more
+
   // What the day list paints and which days of the grid carry a dot. The window fills both
   // from the store; drawing never touches SQLite, because this same DrawPopup is what the
   // offscreen snapshot calls.
@@ -93,10 +99,54 @@ inline bool ShowingToast(const PopupModel& model) {
   return !ShowingPreview(model) && model.toastT > 0.0f && !model.toast.empty();
 }
 
+// A "?" in front turns the capsule into a search: what follows it is looked for instead of
+// created. Enter opens the result instead of writing anything down.
+inline bool Searching(const PopupModel& model) {
+  return !model.input.empty() && model.input.text().front() == L'?';
+}
+inline std::wstring_view SearchQuery(const PopupModel& model) {
+  return std::wstring_view(model.input.text()).substr(1);
+}
+
 // Where the day's cards land. Asked from one place so the drawing and the click cannot end up
-// with different answers about how much room the list had.
+// with different answers about how much room the list had. A search takes all of it.
 inline D2D1_RECT_F DayListRect(const PanelLayout& layout, const PopupModel& model) {
-  return DayListRect(layout, ShowingPreview(model) || ShowingToast(model));
+  D2D1_RECT_F list = DayListRect(layout, ShowingPreview(model) || ShowingToast(model));
+  if (Searching(model)) list.bottom = list.top;
+  return list;
+}
+
+// The results stack against the preview card, one per row the size of the card: upwards in the
+// popup, over the list and the last weeks of the month, and downwards in the app, over the
+// timeline -- a drop-down, on a backdrop of its own. The first result is always the one next to
+// the card, nearest to what was typed.
+inline constexpr int kSearchRowsInApp = 6;
+inline constexpr size_t kSearchLimit = 20;
+inline constexpr int kSearchRowsInPopup = 4;
+
+inline float SearchStride(const PanelLayout& layout) {
+  return layout.previewHeight + std::round(layout.gap / 2.0f);
+}
+
+inline D2D1_RECT_F SearchRow(const PanelLayout& layout, int index) {
+  const D2D1_RECT_F card = layout.preview();
+  const float offset = std::round(layout.gap / 2.0f) + static_cast<float>(index) * SearchStride(layout);
+  if (layout.previewBelow) {
+    const float top = card.bottom + offset;
+    return D2D1_RECT_F{card.left, top, card.right, top + layout.previewHeight};
+  }
+  const float bottom = card.top - offset;
+  return D2D1_RECT_F{card.left, bottom - layout.previewHeight, card.right, bottom};
+}
+
+inline int SearchRowsThatFit(const PanelLayout& layout) {
+  if (layout.previewBelow) return kSearchRowsInApp;
+  const float room = layout.preview().top - layout.grid().top;
+  return std::clamp(static_cast<int>(room / SearchStride(layout)), 0, kSearchRowsInPopup);
+}
+
+inline int SearchRowsShown(const PanelLayout& layout, const PopupModel& model) {
+  return (std::min)(SearchRowsThatFit(layout), static_cast<int>(model.results.size()));
 }
 
 // Paints the panel and everything in it: this is the one place the popup is described, so the

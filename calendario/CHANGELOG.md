@@ -9,6 +9,12 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **Buscar.** Con `?` delante del campo, o **Ctrl+F** en el popup y en la app, Agenda busca en
+  vez de crear: título, lugar y notas de eventos y tareas, sin acentos ni mayúsculas. Los
+  resultados se apilan junto a la tarjeta —hacia arriba en el popup, hacia abajo en la app—
+  con su color y cuándo son; una serie sale en su próxima repetición. `↑` `↓` o el ratón
+  eligen, `Enter` o un clic abren la app en ese día con el evento en el detalle, `Esc` borra la
+  búsqueda. Capturas `popup-buscar` y `app-buscar`.
 - **El lenguaje natural entiende más.** Fechas con su mes (`25 de octubre`, `el 25 de oct de
   2027`, `October 25`, `the 3rd of November`) y numéricas, día y mes (`25/10`, `25/10/2027`);
   sin año son la próxima vez que llegue esa fecha. Fechas relativas: `en 2 semanas`, `dentro de

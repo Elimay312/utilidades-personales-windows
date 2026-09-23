@@ -828,8 +828,25 @@ void PopupWindow::Invalidate() {
   // the text. So this one guard is the whole "reparse when it changed" rule.
   if (model_.input.text() != parsed_) {
     parsed_ = model_.input.text();
-    model_.preview = nlp::ParseInput(parsed_, nlp::Now{TodayLocal(), NowMinuteLocal()},
-                                     DefaultMinutes());
+    if (Searching(model_)) {
+      // Nothing is created from a search, so nothing is parsed: the card says what was found.
+      model_.preview = nlp::ParsedInput{};
+      // One more than is shown, to know whether to say "más de 20".
+      model_.results = store_ != nullptr
+                           ? store_->Search(SearchQuery(model_), TodayLocal(), kSearchLimit + 1)
+                           : std::vector<DayItem>{};
+      model_.moreResults = model_.results.size() > kSearchLimit;
+      if (model_.moreResults) model_.results.resize(kSearchLimit);
+      model_.resultPick = 0;
+      if (!SearchQuery(model_).empty()) {
+        a11y_.Announce(std::format(L"{} {}", model_.results.size(),
+                                   T(L"resultados", L"results")));
+      }
+    } else {
+      model_.results.clear();
+      model_.preview = nlp::ParseInput(parsed_, nlp::Now{TodayLocal(), NowMinuteLocal()},
+                                       DefaultMinutes());
+    }
   }
   UpdateRing();
   if (swapChain_) Render();
@@ -856,6 +873,50 @@ void PopupWindow::Reload() {
     model_.dots = store_->DotsForRange(GridStart(from), AddDays(GridStart(to), kGridCells - 1));
   }
   if (InApp()) ReloadApp();
+}
+
+// --- Search (phase 10) ------------------------------------------------------------------------
+
+void PopupWindow::StartSearch() {
+  FocusInput(true);
+  if (!Searching(model_)) {
+    // What was already typed becomes what is looked for: "dentista", then Ctrl+F.
+    model_.input.MoveHome(false);
+    model_.input.Insert(L"?");
+  }
+  model_.input.MoveEnd(false);
+  RestartCaret();
+  Invalidate();
+}
+
+int PopupWindow::SearchRowAt(float x, float y) const {
+  if (!Searching(model_) || mode_ == Mode::Morphing) return -1;
+  const PanelLayout layout = ActiveLayout();
+  const int shown = SearchRowsShown(layout, model_);
+  for (int i = 0; i < shown; ++i) {
+    if (Inside(SearchRow(layout, i), x, y)) return i;
+  }
+  return -1;
+}
+
+void PopupWindow::OpenResult() {
+  const int pick = model_.resultPick;
+  if (pick < 0 || pick >= static_cast<int>(model_.results.size())) return;
+  const DayItem item = model_.results[static_cast<size_t>(pick)];
+  model_.input.Clear();
+  // The app on the day it stands for, with the event open in the panel: the popup has no room
+  // to show more than the card that was already in the list.
+  if (InApp()) {
+    SelectDay(item.occurrence);
+    FocusInput(false);
+  } else {
+    Expand(item.occurrence);
+  }
+  if (!item.isTask) OpenDetailFor(item.uid, item.occurrence);
+  app_.selected = item.uid;
+  RevealSelected();
+  a11y_.Announce(item.title);
+  Invalidate();
 }
 
 bool PopupWindow::AskingMeridiem() const {
@@ -1126,6 +1187,10 @@ void PopupWindow::OnMouseMove(float x, float y) {
     tracking_ = true;
   }
   if (InApp() && OnAppMouseMove(x, y)) StartTicking();
+  if (const int row = SearchRowAt(x, y); row >= 0 && row != model_.resultPick) {
+    model_.resultPick = row;
+    Invalidate();
+  }
 
   // Mid-slide the cell under the pointer belongs to a month that is still moving, so nothing
   // lights up until it lands.
@@ -1141,6 +1206,12 @@ void PopupWindow::OnMouseMove(float x, float y) {
 }
 
 void PopupWindow::OnLeftDown(float x, float y) {
+  // A result is on top of whatever it covers -- the list in the popup, the timeline in the app.
+  if (const int row = SearchRowAt(x, y); row >= 0) {
+    model_.resultPick = row;
+    OpenResult();
+    return;
+  }
   if (InApp() && OnAppLeftDown(x, y)) return;
   if (Inside(layout_.prevArrow(), x, y)) {
     ChangeMonth(-1);
@@ -1211,6 +1282,41 @@ bool PopupWindow::OnKeyDown(WPARAM key) {
   }
   // A Space the zones take is a command; the character it also produces is not typed.
   eatSpace_ = false;
+
+  // Ctrl+F: the capsule, as a search, from anywhere -- the popup or the app.
+  if (control && key == 0x46 && (!InApp() || (app_.scope.text.empty() && app_.confirm.empty() &&
+                                              drag_.kind == DragKind::None))) {
+    StartSearch();
+    return true;
+  }
+  // While searching, the arrows walk the results, Enter opens one and Esc lets go of the search
+  // without closing anything.
+  if (inputFocused_ && Searching(model_) && !control) {
+    const int shown = SearchRowsShown(ActiveLayout(), model_);
+    // The rows grow away from the capsule: upwards in the popup, downwards in the app.
+    const int further = ActiveLayout().previewBelow ? VK_DOWN : VK_UP;
+    switch (key) {
+      case VK_UP:
+      case VK_DOWN:
+        if (shown > 0) {
+          model_.resultPick = std::clamp(
+              model_.resultPick + (static_cast<int>(key) == further ? 1 : -1), 0, shown - 1);
+          a11y_.Announce(model_.results[static_cast<size_t>(model_.resultPick)].title);
+          Invalidate();
+        }
+        return true;
+      case VK_RETURN:
+        OpenResult();
+        return true;
+      case VK_ESCAPE:
+        model_.input.Clear();
+        RestartCaret();
+        Invalidate();
+        return true;
+      default:
+        break;
+    }
+  }
 
   // "a las 5" for Friday could be either half of the day, and the preview asks. Up and down
   // answer while typing: a line of text has no use for them, and the question is right there.

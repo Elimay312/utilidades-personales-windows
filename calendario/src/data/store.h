@@ -60,6 +60,11 @@ class Store {
   std::vector<DayItem> UndatedTasks();
   // One event whole, for the detail panel. Empty when it is gone or never was.
   std::optional<EventDetail> Event(const std::wstring& uid);
+  // Events and tasks whose title, location or notes contain `query`, without caring about
+  // capitals or accents. Each comes as its card, dated on the day it stands for: a series on its
+  // next occurrence from `today`, a task with no date on today. What is still ahead comes first,
+  // soonest first, and then what has gone by, most recent first.
+  std::vector<DayItem> Search(std::wstring_view query, Date today, size_t limit);
   // The reminders that fall due after `from` and up to `to`, both WallMinute. An event's own
   // list, or its calendar's when it has none; a calendar switched off in the sidebar says
   // nothing, like it shows nothing.

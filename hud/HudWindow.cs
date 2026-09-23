@@ -309,12 +309,25 @@ internal sealed unsafe class HudWindow
     /// cambios sin distinguir quien los hizo. No hace falta filtrar: <see cref="Mostrar"/>
     /// ya dejo el estado guardado, asi que al releer sale lo mismo y esto no hace nada.
     /// </para>
+    ///
+    /// <para>
+    /// <b>Lo del Panel no saca la capsula:</b> su deslizador ya ensena el nivel, y la capsula
+    /// saldria encima a cada paso del arrastre. Se guarda igual, para que la siguiente tecla
+    /// parta del nivel de verdad y no del de antes del arrastre. Si la capsula ya estaba en
+    /// pantalla, se pone al dia.
+    /// </para>
     /// </summary>
-    private void Vigilar()
+    private void Vigilar(bool delPanel = false)
     {
         Estado e = LeerVolumen();
         if (!e.Hay) return;
         if (e.Porcentaje == _porcentaje && e.Mudo == _silenciado) return;
+        if (delPanel && !_enPantalla)
+        {
+            _porcentaje = e.Porcentaje;
+            _silenciado = e.Mudo;
+            return;
+        }
 
         Mostrar(e.Porcentaje, e.Mudo);
     }
@@ -550,7 +563,7 @@ internal sealed unsafe class HudWindow
                 return new LRESULT(0);
 
             case WM_APP_VOLUMEN:
-                hud?.Vigilar();
+                hud?.Vigilar(delPanel: wParam.Value == 1);
                 return new LRESULT(0);
 
             case WM_APP_RECARGAR:

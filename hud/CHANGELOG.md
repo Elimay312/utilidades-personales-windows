@@ -1,5 +1,21 @@
 # Changelog
 
+## El deslizador del Panel ya no saca la cápsula
+
+El [Panel](../panel-de-control/README.md) firma cada cambio de volumen que hace con su propio
+GUID de contexto (`{5B0D7C34-8A41-4C2E-9F3A-612D7E94B01C}`), y COM lo entrega en el
+`guidEventContext` del aviso. El HUD lo lee ahí:
+
+- **Si la cápsula está escondida, no sale.** El deslizador del Panel ya enseña el nivel, y la
+  cápsula aparecía a cada paso del arrastre, encima del propio panel.
+- **El nivel se guarda igual.** Así la siguiente tecla parte del valor de verdad, y el squash
+  del tope sigue saliendo solo cuando toca.
+- **Si la cápsula ya estaba en pantalla, se pone al día.**
+
+Sigue sin haber interfaz entre los dos: el HUD solo lee lo que el sistema ya manda. **Medido:**
+la sonda cambió el volumen un 1 % con la firma del Panel y la cápsula no salió. El mismo cambio
+sin firma, como el de cualquier otra app, sí la sacó. El volumen quedó como estaba.
+
 ## La medición del dispositivo se fue a la isla
 
 **Trabajo en colaboración con la [isla](../isla/README.md)**, y lo interesante es lo que

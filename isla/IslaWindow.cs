@@ -833,7 +833,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         // CPU en reposo para redibujar exactamente los mismos pixeles. La posicion no
         // entra en la firma: de eso se encarga Progreso, que es una sola animacion.
         string firma = string.Join('|', c.Titulo, c.Artista, c.App, c.Sonando,
-            c.PuedeAnterior, c.PuedeSiguiente, c.PuedePlayPausa, c.Duracion.Ticks, c.Tinte, c.Arte is null);
+            c.PuedeAnterior, c.PuedeSiguiente, c.PuedePlayPausa, c.Duracion.Ticks, c.Tinte, c.Arte is null, c.Sesiones);
         if (firma != _firma)
         {
             _firma = firma;
@@ -846,7 +846,7 @@ internal sealed unsafe class IslaWindow : IDisposable
             c.Sonando);
 
         if (!otra) return;
-        Console.WriteLine($"[isla] {c.App}: {c.Titulo} - {c.Artista} ({c.Duracion:mm\\:ss})");
+        Console.WriteLine($"[isla] {c.App}: {c.Titulo} - {c.Artista} ({c.Duracion:mm\\:ss}){(c.Sesiones > 1 ? $" [{c.Sesiones} sesiones]" : "")}");
 
         // Cancion nueva: asoma y se vuelve a ir sola. Si el raton ya esta encima no
         // se toca nada, que bastante esta viendo.
@@ -1173,7 +1173,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         if (_finVolumenPanel != default && ahora > _finVolumenPanel)
         {
             _finVolumenPanel = default;
-            if (Medios.Ultima is { } c) _visuals.LineaApp(c.App);
+            if (Medios.Ultima is { } c) _visuals.LineaApp(c);
         }
 
         if (_hayPomodoro)
@@ -1482,6 +1482,7 @@ internal sealed unsafe class IslaWindow : IDisposable
             case Zona.Anterior: Medios.Anterior(); break;
             case Zona.Siguiente: Medios.Siguiente(); break;
             case Zona.PlayPausa: Medios.Alternar(); break;
+            case Zona.App: Medios.Rotar(); break;
 
             case Zona.Barra:
                 _arrastrando = true;

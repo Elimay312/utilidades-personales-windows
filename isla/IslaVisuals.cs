@@ -37,6 +37,7 @@ internal enum Zona
     PlayPausa,
     Siguiente,
     Barra,
+    App,
 }
 
 /// <summary>
@@ -1055,7 +1056,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
     {
         Rotular(_rotTitulo, c.Titulo, TituloPx, true, 1f);
         Rotular(_rotArtista, Cabe(c.Artista, S(TituloAncho), S(ArtistaPx), grueso: false), ArtistaPx, false, 0.62f);
-        LineaApp(c.App);
+        LineaApp(c);
         Marquesina(_rotTitulo, _cajaTitulo.Size.X);
 
         CompositionBrush? arteVieja = _caratula.Brush;
@@ -1083,6 +1084,20 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// </summary>
     public void LineaApp(string s)
         => Rotular(_rotApp, Cabe(s, S(AppAncho), S(AppPx), grueso: false), AppPx, false, 0.38f);
+
+    /// <summary>
+    /// El nombre de la app; con mas de una sesion, entre flechas y un poco mas claro, porque
+    /// entonces es un boton (ver <see cref="Zona.App"/>).
+    /// </summary>
+    public void LineaApp(Cancion c)
+    {
+        _hayOtras = c.Sesiones > 1;
+        if (!_hayOtras) { LineaApp(c.App); return; }
+        string app = Cabe(c.App, S(AppAncho - 28f), S(AppPx), grueso: false);
+        Rotular(_rotApp, $"‹  {app}  ›", AppPx, false, 0.62f);
+    }
+
+    private bool _hayOtras;
 
     /// <summary>Los dos relojes de los extremos de la barra. Solo al cambiar de cancion.</summary>
     public void Tiempos(TimeSpan pasado, TimeSpan total)
@@ -1153,6 +1168,12 @@ internal sealed unsafe class IslaVisuals : IDisposable
         if (p.X >= S(BarraX - 6f) && p.X <= S(BarraX + BarraAncho + 6f)
             && p.Y >= S(BarraY - 9f) && p.Y <= S(BarraY + BarraAlto + 9f))
             return Zona.Barra;
+
+        // El nombre de la app, solo si hay otra sesion a la que pasar. Todo el ancho de su
+        // linea y algo de alto: el texto mide 10 px.
+        if (_hayOtras && p.X >= S(TextoX - 4f) && p.X <= S(TextoX + AppAncho)
+            && p.Y >= S(AppY - 5f) && p.Y <= S(AppY + AppPx + 7f))
+            return Zona.App;
 
         return Zona.Nada;
     }

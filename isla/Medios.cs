@@ -22,7 +22,8 @@ internal sealed record Cancion(
     bool PuedeAnterior,
     bool PuedeSiguiente,
     bool PuedePlayPausa,
-    uint Tinte);
+    uint Tinte,
+    int Sesiones);
 
 /// <summary>
 /// El puente con el canal de medios de Windows (SEGURIDAD.md §3.1 y §3.2).
@@ -54,6 +55,13 @@ internal static class Medios
     private static GlobalSystemMediaTransportControlsSession? _sesion;
     private static HWND _ventana;
     private static uint _mensaje;
+
+    // La sesion que elegiste con un clic en el nombre de la app (SEGURIDAD.md s.3.1,
+    // enmienda del 23-09-2026). Solo su AUMID, que es lo que ya se pinta, y solo mientras
+    // exista: si esa app cierra su sesion, vuelve a mandar la que elige Windows.
+    private static string? _elegida;
+    // Cuantas sesiones hay, para dibujar el < > solo si hay a donde ir. La cuenta, no la lista.
+    private static int _sesiones;
 
     private static readonly object Candado = new();
     private static Cancion? _ultima;
@@ -114,10 +122,72 @@ internal static class Medios
     }
 
     /// <summary>Se suscribe a la sesion que manda ahora y se da de baja de la anterior.</summary>
-    private static async Task Enganchar()
-    {
-        GlobalSystemMediaTransportControlsSession? nueva = _gestor?.GetCurrentSession();
+    private static async Task Enganchar() => await Enganchar(Cual());
 
+    /// <summary>
+    /// La que toca ensenar: la que elegiste, si sigue ahi, o la que elige Windows. La lista se
+    /// pide, se mira y se suelta aqui mismo; solo sale de aqui cuantas hay.
+    /// </summary>
+    private static GlobalSystemMediaTransportControlsSession? Cual()
+    {
+        if (_gestor is null) return null;
+
+        IReadOnlyList<GlobalSystemMediaTransportControlsSession> todas = _gestor.GetSessions();
+        _sesiones = todas.Count;
+
+        if (_elegida is not null)
+        {
+            // Dos pestanas del navegador comparten AUMID: si la que se ensena sigue viva y es
+            // de la app elegida, se queda esa y no la primera que coincida.
+            GlobalSystemMediaTransportControlsSession? misma = null;
+            foreach (GlobalSystemMediaTransportControlsSession s in todas)
+            {
+                if (s.SourceAppUserModelId != _elegida) continue;
+                if (ReferenceEquals(s, _sesion)) return s;
+                misma ??= s;
+            }
+            if (misma is not null) return misma;
+            _elegida = null;
+        }
+
+        return _gestor.GetCurrentSession();
+    }
+
+    /// <summary>
+    /// Clic en el nombre de la app: pasa a la sesion siguiente. Detras de un clic y nunca de
+    /// un temporizador, como los mandos (SEGURIDAD.md s.3.2).
+    /// </summary>
+    public static void Rotar() => _ = Task.Run(async () =>
+    {
+        try
+        {
+            if (_gestor is null) return;
+            IReadOnlyList<GlobalSystemMediaTransportControlsSession> todas = _gestor.GetSessions();
+            if (todas.Count < 2) return;
+
+            // Por referencia, que distingue dos pestanas del mismo navegador; si WinRT dio
+            // otro envoltorio para la misma sesion, por AUMID.
+            int i = 0;
+            while (i < todas.Count && !ReferenceEquals(todas[i], _sesion)) i++;
+            if (i == todas.Count)
+            {
+                i = 0;
+                while (i < todas.Count && todas[i].SourceAppUserModelId != _sesion?.SourceAppUserModelId) i++;
+            }
+            GlobalSystemMediaTransportControlsSession siguiente = todas[(i + 1) % todas.Count];
+
+            _elegida = siguiente.SourceAppUserModelId;
+            _sesiones = todas.Count;
+            await Enganchar(siguiente);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[isla] rotando sesion: {ex.Message}");
+        }
+    });
+
+    private static async Task Enganchar(GlobalSystemMediaTransportControlsSession? nueva)
+    {
         if (!ReferenceEquals(nueva, _sesion))
         {
             if (_sesion is not null)
@@ -198,7 +268,8 @@ internal static class Medios
                 mandos.IsPreviousEnabled,
                 mandos.IsNextEnabled,
                 mandos.IsPlayEnabled || mandos.IsPauseEnabled,
-                _tinte));
+                _tinte,
+                _sesiones));
         }
         catch (Exception ex)
         {

@@ -139,6 +139,7 @@ bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view
   brightness_.Start(hwnd_, worker_);
   radios_.Start(hwnd_, worker_);
   wifi_.Start(hwnd_, worker_);
+  night_.Start(hwnd_, worker_);
   brightnessNotify_ = RegisterBrightnessNotification(hwnd_);
   if (brightnessNotify_ == nullptr) LogError(L"panel: no brightness notifications, Fn keys will not show");
   Place(work);
@@ -431,6 +432,7 @@ void PanelWindow::Shutdown() {
   if (brightnessNotify_ != nullptr) UnregisterPowerSettingNotification(brightnessNotify_);
   brightnessNotify_ = nullptr;
   // The connections are let go on the worker's thread, then the worker ends.
+  night_.Stop();
   wifi_.Stop();
   radios_.Stop();
   brightness_.Stop();
@@ -479,6 +481,13 @@ void PanelWindow::TakeWifi() {
   state_.wifi.networks = std::move(snapshot.networks);
   state_.wifi.scanning = snapshot.scanning;
   state_.wifi.locationDenied = snapshot.denied;
+  if (!snapshot.problem.empty()) SetNotice(std::move(snapshot.problem));
+}
+
+void PanelWindow::TakeNight() {
+  NightLight::Snapshot snapshot = night_.Current();
+  if (!snapshot.known) return;
+  state_.night = snapshot.state;
   if (!snapshot.problem.empty()) SetNotice(std::move(snapshot.problem));
 }
 
@@ -763,7 +772,11 @@ void PanelWindow::Activate(Target target) {
         if (!state_.bluetooth.on) state_.bluetooth.connected = 0;
         radios_.SetBluetooth(state_.bluetooth.on);
       }
-      if (target.index == 2 && state_.night.supported) state_.night.on = !state_.night.on;
+      if (target.index == 2 && state_.night.supported) {
+        // Windows watches the value and warms the screen; the notice of the change confirms it.
+        state_.night.on = !state_.night.on;
+        night_.Set(state_.night.on);
+      }
       // Index 3, settings: not wired to anything yet. The press shows; nothing happens.
       break;
     case Part::TileChevron:
@@ -1112,6 +1125,11 @@ LRESULT PanelWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
 
     case kFrameMessage:
       OnFrame();
+      return 0;
+
+    case kNightMessage:
+      TakeNight();
+      if (visible_) Render();
       return 0;
 
     case kWifiMessage:

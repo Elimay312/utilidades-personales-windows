@@ -267,7 +267,9 @@ clave y aplica los cambios.
    posteriores.
 4. **Las claves `…perdevice`** que aparecen en Windows 11 26200 se **leen** en la fase 6
    para saber si mandan sobre la de por defecto. No se escriben sin una enmienda que diga qué
-   se midió.
+   se midió. *Medido en la fase 6 (23-09-2026, 26200):* basta con escribir el estado de la clave
+   por defecto. Windows lo aplicó (el usuario vio la pantalla calentarse) y no tocó las
+   `…perdevice`, cuyo estado sigue vacío. No se escriben.
 5. **Todo el código que escribe está en `system/nightlight.cpp`.** El codificador, en
    `system/nightlight_blob.cpp`, es una función pura con tests sobre blobs reales.
 

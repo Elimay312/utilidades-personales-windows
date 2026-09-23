@@ -6,6 +6,34 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
 
 ### Añadido
 
+- **Fase 6: la luz nocturna de verdad.**
+  - **`system/nightlight_blob.cpp`:** un lector y escritor Bond CompactBinary v1, puro, que
+    conserva byte a byte cada campo que no entiende. Lee el sobre de CloudStore y dentro el
+    estado (el campo 0 presente quiere decir encendida) y el horario (activado o no, horas fijas
+    o de la puesta al amanecer, inicio y fin). El formato está documentado por
+    kvnxiao/win-nightlight-cli.
+  - **`system/nightlight.cpp`:** es el único que toca el registro para esto.
+    - Lee los dos valores y vigila sus cambios con `RegNotifyChangeKeyValue` y una espera del
+      pool de Windows, sin hilo propio. Así el tile sigue al interruptor de Windows.
+    - **Solo escribe el valor del estado**, releído justo antes. Si no hace la ida y vuelta
+      exacta, no escribe y el tile dice «No compatible».
+    - La primera vez guarda el original en `%LOCALAPPDATA%\Panel\luz-nocturna.bak`, y solo esa
+      vez.
+  - **El tile:** enciende y apaga. Debajo dice «Encendida», «Hasta 07:00», la hora a la que se
+    enciende sola o «Apagada».
+  - **Auditoría:** la regla 2.5 deja de estar pendiente y da «bien». Por primera vez sale
+    **TODO LIMPIO** sin reglas pendientes.
+  - **Pruebas:** 5 casos nuevos con los cuatro blobs reales de esta máquina y el ejemplo
+    documentado: ida y vuelta exacta, lectura, encender y apagar, y rechazar un blob raro. 43 en
+    total.
+  - **Probado en este equipo:**
+    - encender desde el panel añade exactamente `10 00` al blob interno, y apagar lo devuelve a
+      la forma original;
+    - el usuario vio la pantalla calentarse;
+    - un cambio escrito desde fuera llega al tile en los dos sentidos;
+    - las claves `…perdevice` no cambian, y ya consta en `SEGURIDAD.md` §2.5.
+  - **Al terminar,** la luz nocturna quedó apagada, como estaba.
+
 - **Fase 5b-3: los dispositivos Bluetooth de verdad.**
   - **Los dos `DeviceWatcher` siguen ahora a los emparejados**, con su nombre, si están
     conectados (`System.Devices.Aep.IsConnected`) y su clase. La clase sale del Class of Device

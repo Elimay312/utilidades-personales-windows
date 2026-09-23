@@ -38,7 +38,9 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
     conectan solos al encenderlos. «Añadir un dispositivo» abre la pantalla de Windows, que es
     quien empareja.
 - **Luz nocturna.** El interruptor de siempre. Debajo, a qué hora se enciende sola, si tiene
-  horario.
+  horario. Windows no tiene API para ella: el panel escribe el mismo valor del registro que su
+  interruptor. Antes de tocarlo por primera vez guarda una copia en
+  `%LOCALAPPDATA%\Panel\luz-nocturna.bak`, y si el valor no tiene la forma conocida no lo toca.
 - **Configuración.** Todavía no hace nada. Algún día abrirá los ajustes de las otras
   utilidades.
 - **Brillo.** Controla la pantalla donde se abrió el panel. El chevron despliega una barra

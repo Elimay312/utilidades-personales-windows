@@ -57,6 +57,8 @@ add_executable(Panel WIN32
   src/model/sample.cpp
   src/system/audio.cpp
   src/system/brightness.cpp
+  src/system/nightlight.cpp
+  src/system/nightlight_blob.cpp
   src/system/bt_audio.cpp
   src/system/radios.cpp
   src/system/wifi.cpp
@@ -90,12 +92,14 @@ add_executable(panel_tests
   tests/test_controls.cpp
   tests/test_hotkey.cpp
   tests/test_layout.cpp
+  tests/test_nightlight.cpp
   tests/test_options.cpp
   tests/test_radios.cpp
   tests/test_wifi.cpp
   tests/test_worker.cpp
   src/core/log.cpp
   src/core/options.cpp
+  src/system/nightlight_blob.cpp
   src/system/worker.cpp)
 target_include_directories(panel_tests PRIVATE src)
 target_compile_options(panel_tests PRIVATE ${PANEL_WARNINGS})

@@ -131,8 +131,8 @@ src/
                  brightness (WMI del portátil y el aviso de Windows), radios (Wi-Fi,
                  Bluetooth, SSID; el único archivo con C++/WinRT), wifi (las redes de
                  alrededor y conectar a una guardada; el único con WlanAPI), bt_audio
-                 (conectar y desconectar audio Bluetooth; el único con IOCTL); llegarán display_ids,
-                 nightlight_blob, nightlight y apps
+                 (conectar y desconectar audio Bluetooth; el único con IOCTL), nightlight_blob
+                 (el códec Bond, puro) y nightlight (el registro); llegarán display_ids y apps
 tests/           doctest: hotkey, options, layout, controls
 assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
 ```
@@ -336,6 +336,23 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   pulsar. Desconectar cambia la salida de audio del usuario: comprueba al final que vuelve a
   «Auriculares».
 
+### Decisiones de la fase 6
+
+- **El códec es genérico** (`cb::Struct`, un campo con su id, su tipo y sus bytes). Así lo que no
+  entiende pasa intacto, y «ida y vuelta exacta» significa algo. Solo se cambian el campo 0 del
+  estado y las dos marcas de tiempo, la del sobre y el campo 20.
+- **Encender** es añadir el campo 0 como `int32` 0 (`10 00`), y el formato dice que lo que cuenta
+  es que esté, no su valor. Apagar es quitarlo.
+- **Vigilar sin hilo propio:** `RegNotifyChangeKeyValue` asíncrono sobre un evento de reinicio
+  automático, más `RegisterWaitForSingleObject`. El aviso llega al pool, que pasa la lectura al
+  hilo de trabajo, y este vuelve a armarlo. Tiene que ser siempre el mismo hilo: la notificación
+  muere con el hilo que la pidió.
+- **La copia de seguridad se escribe una sola vez:** una segunda guardaría la escritura del propio
+  panel, que no es lo que nadie querría recuperar.
+- **Probar sin el interruptor de Windows:** escribir desde una sonda el blob que el panel ya
+  escribió es lo mismo que hace el interruptor. Lo que la captura no ve es el color de la
+  pantalla, porque el filtro no sale en `CopyFromScreen`. Eso lo confirma el usuario.
+
 - **Pendiente para la fase 8:** si el HUD está en marcha, arrastrar el deslizador del panel
   saca también su cápsula. La solución es que el HUD ignore `kPanelVolumeContext`, y toca
   otro proyecto.
@@ -443,7 +460,7 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
     muelle que las otras. El `PanelState` actual no tiene sitio para las listas: habrá que
     añadir `wifi.networks[]` y `bluetooth.devices[]`, que es añadir campos, no cambiar los que
     hay.
-- [ ] **6. Luz nocturna:**
+- [x] **6. Luz nocturna:**
   - el blob, con tests sobre los datos reales de esta máquina; solo se escribe el valor del
     estado, nunca el del horario;
   - la copia de seguridad;

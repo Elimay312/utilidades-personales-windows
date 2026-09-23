@@ -75,8 +75,10 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
 | Brillo de monitores externos | DDC/CI por `dxva2`, en el hilo de trabajo y con un intervalo mínimo entre escrituras |
 | Emparejar monitores | `QueryDisplayConfig` para obtener el ID de instancia, que se compara con el `InstanceName` de WMI (el método de Monitorian) |
 | Wi-Fi y Bluetooth, encender y apagar | `Windows.Devices.Radios` |
-| SSID | `NetworkInformation` y `GetConnectedSsid()`. **Nunca WlanAPI**, que pide la ubicación |
-| Dispositivos Bluetooth conectados | Dos `DeviceWatcher`, uno clásico y otro LE, sin contar dos veces el mismo dispositivo por su dirección |
+| SSID | `NetworkInformation` y `GetConnectedSsid()`, sin permiso de ubicación |
+| Redes de alrededor y conectar a una guardada (5b-2) | WlanAPI (`WlanScan`, `WlanGetAvailableNetworkList`, `WlanConnect` con perfil), solo en `system/wifi.cpp` y solo con la tarjeta de Wi-Fi abierta: pide la ubicación |
+| Dispositivos Bluetooth (5b-3) | Dos `DeviceWatcher` de emparejados, uno clásico y otro LE, con `IsConnected` y la clase; una fila por dirección |
+| Conectar o desconectar audio Bluetooth (5b-3) | `KSPROPERTY_ONESHOT_RECONNECT`/`DISCONNECT` por `IOCTL_KS_PROPERTY`, solo en `system/bt_audio.cpp` |
 | Luz nocturna | Blob CloudStore del registro, formato Bond CompactBinary (sin API pública) |
 | Utilidades | Toolhelp para saber cuáles corren, `CreateProcessW` para arrancar y Restart Manager para cerrar |
 

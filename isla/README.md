@@ -35,7 +35,7 @@ Las reglas que lo garantizan están en [SEGURIDAD.md](SEGURIDAD.md) y se comprue
 
 ## 1. Qué hace
 
-La isla tiene cuatro estados y solo enseña uno a la vez. Con un aviso de otra app esperando
+La isla tiene cinco estados y solo enseña uno a la vez. Con un aviso de otra app esperando
 hay además **una segunda isla**, la del aviso, que se cuenta [más abajo](#avisos-de-otras-apps-el-buzón).
 
 | Estado | Cuándo | Tamaño | Clics |
@@ -44,8 +44,9 @@ hay además **una segunda isla**, la del aviso, que se cuenta [más abajo](#avis
 | **Brasa** | hay sesión, en reposo | 140 × 5, pegada al borde | **ninguno** |
 | **Asomada** | cambió la canción, saltó un aviso, corre un pomodoro | 320 × 56 | ninguno |
 | **Abierta** | ratón quieto en el borde, o `Ctrl+Alt+I` | 380 × 180, despegada 10 px | los suyos |
+| **Mezclador** | clic en la onda con la abierta | 380 de ancho, crece con las apps (hasta 10 filas, 440 de alto) | los suyos |
 
-**En reposo no roba ni un clic.** La ventana mide 520 × 260 pero `SetWindowRgn` la recorta
+**En reposo no roba ni un clic.** La ventana mide 520 × 470 pero `SetWindowRgn` la recorta
 a lo que se está dibujando: recogida son 140 × 5 px, así que las pestañas del navegador
 siguen siendo del navegador. Y para abrirse hay que **quedarse** 240 ms en la franja:
 cruzar el borde de camino al botón de cerrar no la despierta.
@@ -211,7 +212,7 @@ ventana con `CreateWindowEx`, se atiende su propio `WndProc` y se bombea su prop
 
 **1. El morph son tres muelles, y lo demás son expresiones.**
 
-La ventana mide 520 × 260 y **nunca se redimensiona**: la pastilla es un visual dentro de
+La ventana mide 520 × 470 y **nunca se redimensiona**: la pastilla es un visual dentro de
 ella. Tres `SpringNaturalMotionAnimation` mueven la caja —`Size`, `CornerRadius` y el
 `Offset.Y` del grupo, que es el despegue— y seis `ExpressionAnimation` derivan de su alto
 en vivo todo lo demás: el material, el borde, el titular, el contenido y su escala.
@@ -268,10 +269,10 @@ junto—. Ahora avisa COM, que no cuesta nada y no llega medio segundo tarde.
 |---|---|
 | `Program.cs` | Punto de entrada, instancia única, y el vigilante de `isla.json`. |
 | `IslaWindow.cs` | La ventana, su `WndProc`, los estados de las dos islas y la región. El fichero grande. |
-| `IslaVisuals.cs` | El árbol de composición: la caja, el titular, la ficha, la onda, y la isla del aviso con su burbuja y su tarjeta. |
-| `Medios.cs` | El puente con el canal de medios de Windows. |
-| `Audio.cs` | El pico, el nivel y el nombre del dispositivo de salida. Solo lectura, y por evento. |
-| `Avisos.cs` | El buzón: la tubería, su ACL, y la validación de cada aviso que entra. |
+| `IslaVisuals.cs` | El árbol de composición: la caja, el titular, la ficha, la onda, el mezclador, la sombra, y la isla del aviso con su burbuja y su tarjeta. |
+| `Medios.cs` | El puente con el canal de medios de Windows: la sesión elegida, la carátula (con reintento) y los iconos del mezclador. |
+| `Audio.cs` | El pico, el nivel y el nombre del dispositivo de salida, por evento. Escribe el nivel general con la rueda y el de cada app desde el mezclador, siempre detrás de un gesto. |
+| `Avisos.cs` | El buzón: la tubería, su ACL, y la validación de cada aviso que entra. También los avisos propios (el final del pomodoro). |
 | `Texto.cs` | DirectWrite. Un formato por tamaño físico y peso. |
 | `Config.cs` | `isla.json` y el autoarranque. |
 | `NativeMethods.txt` | **La lista cerrada de P/Invokes.** Si no está aquí, no compila. |
@@ -391,9 +392,10 @@ lee `GetCursorPos` entre muestras antes de culpar al código.
 
 ## 8. Lo que falta
 
-- **La sombra solo existe con el panel abierto.** Su máscara es la pastilla de 380×180
-  hecha a mano; un nine-grid que sirviera para cualquier tamaño no pinta nada como máscara
-  de `DropShadow`. Brasa y asomada no llevan sombra.
+- **La sombra solo existe con el panel abierto o el mezclador.** Su máscara es la pastilla
+  hecha a mano al alto exacto de la caja, y se rehace cuando el mezclador cambia de filas; un
+  nine-grid que sirviera para cualquier tamaño no pinta nada como máscara de `DropShadow`.
+  Brasa y asomada no llevan sombra.
 - **El mezclador enseña diez apps como mucho.** La ventana creció a 470 de alto para que quepan
   (la región recorta lo que no se dibuja, así que no quita clics); con más, las que no suenan
   se quedan fuera. El techo es un scroll. Nombre del exe e icono, el que da el Explorador.

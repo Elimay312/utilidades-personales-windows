@@ -127,7 +127,8 @@ src/
   system/        audio (Core Audio y la lista de salidas), policy_config (la única API no
                  documentada, en un solo archivo), worker (el hilo para lo que bloquea),
                  brightness (WMI del portátil y el aviso de Windows), radios (Wi-Fi,
-                 Bluetooth, SSID; el único archivo con C++/WinRT); llegarán display_ids,
+                 Bluetooth, SSID; el único archivo con C++/WinRT), wifi (las redes de
+                 alrededor y conectar a una guardada; el único con WlanAPI); llegarán display_ids,
                  nightlight_blob, nightlight y apps
 tests/           doctest: hotkey, options, layout, controls
 assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
@@ -301,6 +302,18 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   probablemente por su rueda. Con el atajo de verdad esto no pasa. Las sondas esconden el
   panel en cuanto acaban de mirar.
 
+### Decisiones de la fase 5b-2
+
+- **WlanAPI y no `WiFiAdapter` de WinRT:** las funciones responden al momento, dicen qué redes
+  tienen perfil (`WLAN_AVAILABLE_NETWORK_HAS_PROFILE`) y cuál está conectada, y conectar con un
+  perfil es una llamada. El precio de la ubicación es el mismo por las dos vías.
+- **`wanted_` corta toda lectura** con la tarjeta plegada o el panel escondido, aunque llegue
+  un aviso de una búsqueda que haya hecho otro programa.
+- **Cómo se comprueba la ubicación:** `HKCU\...\CapabilityAccessManager\ConsentStore\location  NonPackaged\<ruta del exe>` guarda `LastUsedTimeStart`/`Stop`. Solo debe moverse al desplegar
+  la tarjeta de Wi-Fi.
+- **Las filas se ordenan** poniendo primero la conectada, luego las guardadas, luego por señal y
+  luego por nombre. Así lo que se puede pulsar sin contraseña queda arriba.
+
 - **Pendiente para la fase 8:** si el HUD está en marcha, arrastrar el deslizador del panel
   saca también su cápsula. La solución es que el HUD ignore `kPanelVolumeContext`, y toca
   otro proyecto.
@@ -387,7 +400,7 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   (`KSPROPERTY_ONESHOT_RECONNECT`/`DISCONNECT`), y «buscar» abre la pantalla de Windows. Va en
   tres pasos:
   - [x] **5b-1:** el morph con listas de ejemplo;
-  - [ ] **5b-2:** el Wi-Fi real, con su enmienda antes;
+  - [x] **5b-2:** el Wi-Fi real, con su enmienda antes;
   - [ ] **5b-3:** el Bluetooth real, con su enmienda antes.
 
   El planteamiento de partida: una flecha

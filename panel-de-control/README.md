@@ -27,8 +27,12 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
 
 - **Wi-Fi y Bluetooth.** Se encienden y apagan con un clic. Debajo, la red a la que estás
   conectado y cuántos dispositivos lo están. La flecha de su derecha convierte el tile en una
-  tarjeta con las redes o los dispositivos. Por ahora la lista es de ejemplo: las reales llegan
-  en las fases 5b-2 y 5b-3.
+  tarjeta:
+  - **Wi-Fi:** las redes de alrededor, con su señal. Un clic en una red guardada conecta, y una
+    nueva abre la lista de Windows, que es quien pide la contraseña. **Buscar redes usa el
+    permiso de ubicación** (así lo exige Windows 11 desde 24H2), y solo mientras la tarjeta
+    está abierta.
+  - **Bluetooth:** por ahora, una lista de ejemplo; la real llega en la fase 5b-3.
 - **Luz nocturna.** El interruptor de siempre. Debajo, a qué hora se enciende sola, si tiene
   horario.
 - **Configuración.** Todavía no hace nada. Algún día abrirá los ajustes de las otras

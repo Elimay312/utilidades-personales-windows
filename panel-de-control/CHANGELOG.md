@@ -6,6 +6,30 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
 
 ### Añadido
 
+- **Fase 5b-2: las redes Wi-Fi de verdad.**
+  - **Al desplegar la tarjeta de Wi-Fi se buscan las redes de alrededor** con WlanAPI
+    (`system/wifi.cpp`, en el hilo de trabajo). Primero sale lo que Windows ya sabe y después se
+    pide una búsqueda nueva. El aviso de búsqueda terminada llega por la fuente ACM y vuelve a
+    leer la lista.
+  - **Una fila por red** (`MergeNetworks`, con pruebas): Windows lista dos veces una red
+    guardada y deja sin nombre las ocultas. Van primero la que está en uso, luego las
+    guardadas, luego por señal. La señal se pasa a las barras de Windows (`BarsFromQuality`).
+  - **Un clic en una red guardada** conecta con `WlanConnect` y su perfil. **Una red nueva**, o
+    el pie «Más redes en Windows», abre la lista de Windows (`ms-availablenetworks:`), porque la
+    contraseña es cosa de Windows. El panel no crea, no cambia y no borra perfiles.
+  - **Ubicación:** la búsqueda empieza con la tarjeta y se para al plegarla o al esconder el
+    panel. Sin permiso de ubicación, la tarjeta lo dice en una línea.
+  - La enmienda a `SEGURIDAD.md` §1.2, §1.6 y §2.6 va en su propio commit, antes que el código,
+    con una regla de auditoría por cada corte. Se probó cada una con código que la incumple.
+  - **Pruebas:** 3 casos nuevos, 36 en total.
+  - **Probado en este equipo:**
+    - la tarjeta lista las redes reales, con «CM-AUTOS-5G» arriba como conectada;
+    - Windows no enseñó ningún aviso, porque la ubicación ya está permitida para las apps de
+      escritorio. Anotó el uso del panel solo en el momento de desplegar;
+    - con el panel escondido no volvió a usarla.
+  - **Sin probar:** cambiar a otra red guardada. De las 9 redes guardadas, la única al alcance
+    era la que ya estaba en uso.
+
 - **Fase 5b-1: Wi-Fi y Bluetooth se despliegan con un morph, todavía con listas de ejemplo.**
   - **La franja «›»:** los tiles de Wi-Fi y Bluetooth llevan una franja a la derecha. El clic en
     el tile sigue encendiendo y apagando, y la franja despliega. Las dos franjas son paradas del

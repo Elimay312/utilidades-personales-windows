@@ -16,6 +16,7 @@
 #include "system/audio.h"
 #include "system/brightness.h"
 #include "system/radios.h"
+#include "system/wifi.h"
 #include "system/worker.h"
 #include "ui/controls.h"
 #include "ui/layout.h"
@@ -91,6 +92,8 @@ class PanelWindow {
   void ReadAudio();
   void TakeBrightness();
   void TakeRadios();
+  void TakeWifi();
+  void OpenWindowsNetworks();
   bool OpenSettingsFor(Target target);
   void BrightnessFromWindows(float level);
 
@@ -121,6 +124,7 @@ class PanelWindow {
   Worker worker_;
   Brightness brightness_;
   Radios radios_;
+  Wifi wifi_;
   HPOWERNOTIFY brightnessNotify_ = nullptr;
   // When the panel last wrote the brightness. Windows' notice of each write arrives a moment
   // later, and during a drag an old one would pull the slider back; for a short while after a

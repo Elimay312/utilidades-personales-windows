@@ -101,6 +101,8 @@ bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view
   // empty until the worker has looked.
   state_ = SampleState();
   state_.displays.clear();
+  // The networks are real since 5b-2, and only listed while the Wi-Fi card is open.
+  state_.wifi.networks.clear();
   if (!fonts_.Create()) LogError(L"panel: DirectWrite is unavailable, opening without text");
 
   WNDCLASSEXW windowClass{};
@@ -130,6 +132,7 @@ bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view
   worker_.Start();
   brightness_.Start(hwnd_, worker_);
   radios_.Start(hwnd_, worker_);
+  wifi_.Start(hwnd_, worker_);
   brightnessNotify_ = RegisterBrightnessNotification(hwnd_);
   if (brightnessNotify_ == nullptr) LogError(L"panel: no brightness notifications, Fn keys will not show");
   Place(work);
@@ -391,6 +394,8 @@ void PanelWindow::Show() {
 void PanelWindow::Hide() {
   if (hwnd_ == nullptr || !visible_) return;
   visible_ = false;
+  // Hidden, the panel never looks for networks (SEGURIDAD.md 1.2), open card or not.
+  wifi_.StopScanning();
   if (!dragging_.empty()) {
     dragging_ = Target{};
     ReleaseCapture();
@@ -420,6 +425,7 @@ void PanelWindow::Shutdown() {
   if (brightnessNotify_ != nullptr) UnregisterPowerSettingNotification(brightnessNotify_);
   brightnessNotify_ = nullptr;
   // The connections are let go on the worker's thread, then the worker ends.
+  wifi_.Stop();
   radios_.Stop();
   brightness_.Stop();
   worker_.Stop();
@@ -457,6 +463,24 @@ void PanelWindow::TakeRadios() {
   state_.wifi = snapshot.wifi;
   state_.bluetooth = snapshot.bluetooth;
   if (!snapshot.problem.empty()) SetNotice(std::move(snapshot.problem));
+}
+
+void PanelWindow::TakeWifi() {
+  Wifi::Snapshot snapshot = wifi_.Current();
+  state_.wifi.networks = std::move(snapshot.networks);
+  state_.wifi.scanning = snapshot.scanning;
+  state_.wifi.locationDenied = snapshot.denied;
+  if (!snapshot.problem.empty()) SetNotice(std::move(snapshot.problem));
+}
+
+void PanelWindow::OpenWindowsNetworks() {
+  // What the panel leaves to Windows: a network that wants a password, or all of them. The
+  // URI is written out whole (SEGURIDAD.md 1.6, amended in 5b-2).
+  const HINSTANCE opened = ShellExecuteW(nullptr, L"open", L"ms-availablenetworks:", nullptr, nullptr, SW_SHOWNORMAL);
+  if (reinterpret_cast<INT_PTR>(opened) <= 32) {
+    LogError(L"panel: could not open Windows' network list (error {})", reinterpret_cast<INT_PTR>(opened));
+  }
+  Hide();
 }
 
 bool PanelWindow::OpenSettingsFor(Target target) {
@@ -734,20 +758,25 @@ void PanelWindow::Activate(Target target) {
       Activate(Target{Part::Tile, static_cast<size_t>(OpenModuleTile())});
       break;
     case Part::ModuleRow:
-      // Phase 5b-1: only the made-up lists change. 5b-2 connects to the network; 5b-3 connects
-      // or disconnects the audio device.
       if (OpenModuleTile() == 0 && target.index < state_.wifi.networks.size()) {
-        for (size_t i = 0; i < state_.wifi.networks.size(); ++i) {
-          state_.wifi.networks[i].connected = i == target.index;
+        const WifiNetwork& network = state_.wifi.networks[target.index];
+        if (network.connected) break;
+        if (network.saved) {
+          // Windows says when it is done; the list is read again then and the row says so.
+          wifi_.Connect(network.ssid);
+        } else {
+          // A network Windows has no profile for wants a password, which is Windows' to ask.
+          OpenWindowsNetworks();
         }
-        state_.wifi.ssid = state_.wifi.networks[target.index].ssid;
       } else if (OpenModuleTile() == 1 && target.index < state_.bluetooth.devices.size()) {
+        // 5b-3: connect or disconnect the audio device. Until then, the made-up list.
         BluetoothDevice& device = state_.bluetooth.devices[target.index];
         device.connected = !device.connected;
       }
       break;
     case Part::ModuleFooter:
-      // 5b-2 and 5b-3 open Windows' own list and add-a-device screen, with their amendment.
+      if (OpenModuleTile() == 0) OpenWindowsNetworks();
+      // 5b-3 opens Windows' add-a-device screen, with its amendment.
       break;
     case Part::BrightnessHeader:
       if (CanUnfold(state_.displays.size()) || brightnessGoal_) ToggleCard(brightnessGoal_);
@@ -873,6 +902,11 @@ void PanelWindow::OpenModule(int tile) {
   if (tile < 0 || tile > 1 || OpenModuleTile() >= 0) return;
   if (view_.open.wifi > 0.0f || view_.open.bluetooth > 0.0f) return;  // the other still folding
   (tile == 0 ? wifiGoal_ : bluetoothGoal_) = true;
+  if (tile == 0) {
+    // Looking starts with the card, and only then (SEGURIDAD.md 1.2).
+    state_.wifi.scanning = true;
+    wifi_.Scan();
+  }
   StartAnimating();
 }
 
@@ -880,6 +914,7 @@ void PanelWindow::CloseModule() {
   const int tile = OpenModuleTile();
   if (tile < 0) return;
   wifiGoal_ = bluetoothGoal_ = false;
+  if (tile == 0) wifi_.StopScanning();
   // The keyboard goes back to the strip it opened from.
   if (view_.focus.part == Part::ModuleHeader || view_.focus.part == Part::ModuleSwitch ||
       view_.focus.part == Part::ModuleRow || view_.focus.part == Part::ModuleFooter) {
@@ -1056,6 +1091,15 @@ LRESULT PanelWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
 
     case kFrameMessage:
       OnFrame();
+      return 0;
+
+    case kWifiMessage:
+      TakeWifi();
+      if (visible_) {
+        Relayout();
+        UpdateHot();
+        Render();
+      }
       return 0;
 
     case kRadiosMessage:

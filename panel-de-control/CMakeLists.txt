@@ -58,6 +58,7 @@ add_executable(Panel WIN32
   src/system/audio.cpp
   src/system/brightness.cpp
   src/system/radios.cpp
+  src/system/wifi.cpp
   src/system/worker.cpp
   src/ui/paint.cpp
   src/ui/panel_view.cpp
@@ -72,7 +73,9 @@ target_compile_definitions(Panel PRIVATE ${PANEL_DEFINES})
 target_link_libraries(Panel PRIVATE nlohmann_json::nlohmann_json
   d2d1 d3d11 dxgi dcomp dwmapi dwrite windowscodecs shcore wbemuuid
   # windowsapp: WinRT, for Windows.Devices.Radios, DeviceWatcher and NetworkInformation.
-  windowsapp)
+  windowsapp
+  # wlanapi: the networks around, only while the Wi-Fi card is open (SEGURIDAD.md 1.2).
+  wlanapi)
 # The manifest (PerMonitorV2, asInvoker) comes in through panel.rc.
 target_link_options(Panel PRIVATE /MANIFEST:NO)
 
@@ -85,6 +88,7 @@ add_executable(panel_tests
   tests/test_layout.cpp
   tests/test_options.cpp
   tests/test_radios.cpp
+  tests/test_wifi.cpp
   tests/test_worker.cpp
   src/core/log.cpp
   src/core/options.cpp

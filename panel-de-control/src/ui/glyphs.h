@@ -19,6 +19,13 @@ inline constexpr wchar_t kLaptop = 0xE7F8;
 inline constexpr wchar_t kChevronRight = 0xE76C;
 inline constexpr wchar_t kChevronDown = 0xE70D;
 inline constexpr wchar_t kCheck = 0xE73E;
+inline constexpr wchar_t kLock = 0xE72E;
+inline constexpr wchar_t kOpenElsewhere = 0xE8A7;  // "this opens Windows' own"
+inline constexpr wchar_t kKeyboard = 0xE765;
+inline constexpr wchar_t kMouse = 0xE962;
+
+// The signal of a Wi-Fi network, by bars: none, one, two, three, full.
+inline constexpr wchar_t kWifiBars[] = {0xE871, 0xE872, 0xE873, 0xE874, 0xE701};
 
 // The utilities row.
 inline constexpr wchar_t kDock = 0xE8A9;       // a grid of apps

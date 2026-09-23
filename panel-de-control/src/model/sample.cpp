@@ -7,7 +7,18 @@ namespace panel {
 PanelState SampleState() {
   PanelState state;
   state.wifi = {true, true, L"Casa_5G"};
+  state.wifi.networks = {
+      {L"Casa_5G", 4, true, true, true},
+      {L"Casa_2.4", 3, true, true, false},
+      {L"Oficina", 2, true, false, false},
+      {L"Cafe Libre", 1, false, false, false},
+  };
   state.bluetooth = {true, true, 2};
+  state.bluetooth.devices = {
+      {L"a", L"Auriculares", BluetoothDevice::Kind::Audio, true},
+      {L"b", L"Teclado", BluetoothDevice::Kind::Keyboard, true},
+      {L"c", L"Altavoz de la sala", BluetoothDevice::Kind::Audio, false},
+  };
   state.night = {true, false, true, 21 * 60, 7 * 60};
 
   state.displays = {

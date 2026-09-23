@@ -26,6 +26,11 @@ struct Fonts {
 
 constexpr float Lerp(float from, float to, float t) { return from + (to - from) * t; }
 
+constexpr D2D1_COLOR_F Mix(const D2D1_COLOR_F& from, const D2D1_COLOR_F& to, float t) {
+  return D2D1_COLOR_F{Lerp(from.r, to.r, t), Lerp(from.g, to.g, t), Lerp(from.b, to.b, t),
+                      Lerp(from.a, to.a, t)};
+}
+
 constexpr D2D1_COLOR_F Fade(const D2D1_COLOR_F& color, float alpha) {
   return D2D1_COLOR_F{color.r, color.g, color.b, color.a * alpha};
 }

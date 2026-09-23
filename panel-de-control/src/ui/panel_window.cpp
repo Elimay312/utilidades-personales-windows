@@ -36,6 +36,12 @@ constexpr float kInkSeconds = 0.120f;
 constexpr float kPressInSeconds = 0.060f;
 constexpr float kPressOutSeconds = 0.120f;
 
+// A tile morphing into a card travels a lot further than a card unfolds, so its spring is
+// longer; a hair less damped, so the shape arrives with a settle and not a stop. Tuned like
+// every other: by the period, with the app in front (CLAUDE.md, movement).
+constexpr float kMorphPeriodSeconds = 0.32f;
+constexpr float kMorphDamping = 0.82f;
+
 constexpr float kStep = 0.02f;      // arrows and one notch of the wheel
 constexpr float kPageStep = 0.10f;  // Page Up and Page Down
 
@@ -88,6 +94,8 @@ bool PanelWindow::Create(HINSTANCE instance, HMONITOR monitor, std::wstring_view
   monitor_ = monitor;
   themeChoice_ = theme;
   theme_ = ResolveTheme(themeChoice_);
+  wifiSpring_.period = bluetoothSpring_.period = kMorphPeriodSeconds;
+  wifiSpring_.damping = bluetoothSpring_.damping = kMorphDamping;
   // Made-up data until each later phase replaces one part of it with the real thing. The volume
   // and its outputs are real since phase 3, the laptop's brightness since 4a; the screens start
   // empty until the worker has looked.
@@ -256,8 +264,12 @@ void PanelWindow::Relayout() {
   // (Agenda's expansion does the same). It comes back to the window's size once at rest.
   SIZE want = size_;
   if (animating_) {
-    const PanelLayout goal =
-        MakeLayout(Expanded{brightnessGoal_ ? 1.0f : 0.0f, audioGoal_ ? 1.0f : 0.0f}, state_);
+    // The larger of where it is going and where it is: a card closing while another opens.
+    const Expanded goals = Goals();
+    const PanelLayout goal = MakeLayout(
+        Expanded{std::max(goals.brightness, view_.open.brightness), std::max(goals.audio, view_.open.audio),
+                 std::max(goals.wifi, view_.open.wifi), std::max(goals.bluetooth, view_.open.bluetooth)},
+        state_);
     const RECT goalRect = PlaceRect(work_, goal.size(), dpi_);
     want.cy = std::max(want.cy, goalRect.bottom - goalRect.top);
   }
@@ -348,9 +360,11 @@ void PanelWindow::Show() {
   if (!WorkArea(TargetMonitor(monitor_), work)) return;
   // It always opens the same way: cards closed, nothing hovered, no keyboard ring.
   view_ = ViewState{};
-  brightnessGoal_ = audioGoal_ = false;
+  brightnessGoal_ = audioGoal_ = wifiGoal_ = bluetoothGoal_ = false;
   brightnessSpring_.Snap(0.0f);
   audioSpring_.Snap(0.0f);
+  wifiSpring_.Snap(0.0f);
+  bluetoothSpring_.Snap(0.0f);
   hover_ = pressed_ = dragging_ = Target{};
   const Theme theme = ResolveTheme(themeChoice_);
   const bool flipped = theme.light != theme_.light;
@@ -435,6 +449,11 @@ void PanelWindow::TakeBrightness() {
 void PanelWindow::TakeRadios() {
   Radios::Snapshot snapshot = radios_.Current();
   if (!snapshot.known) return;
+  // The lists are not the radios' yet (phase 5b-2 and 5b-3): until then, keep the ones there are.
+  snapshot.wifi.networks = std::move(state_.wifi.networks);
+  snapshot.wifi.scanning = state_.wifi.scanning;
+  snapshot.wifi.locationDenied = state_.wifi.locationDenied;
+  snapshot.bluetooth.devices = std::move(state_.bluetooth.devices);
   state_.wifi = snapshot.wifi;
   state_.bluetooth = snapshot.bluetooth;
   if (!snapshot.problem.empty()) SetNotice(std::move(snapshot.problem));
@@ -633,6 +652,11 @@ bool PanelWindow::OnKey(WPARAM key) {
 
   switch (key) {
     case VK_ESCAPE:
+      // Layer by layer, like Agenda: an open Wi-Fi or Bluetooth card first, then the panel.
+      if (OpenModuleTile() >= 0) {
+        CloseModule();
+        break;
+      }
       Hide();
       return true;
     case VK_TAB:
@@ -661,6 +685,12 @@ bool PanelWindow::OnKey(WPARAM key) {
     case VK_SPACE:
     case VK_RETURN:
       if (focus.empty()) return false;
+      // Unfolding from the keyboard puts the keyboard inside the card it opened.
+      if (focus.part == Part::TileChevron) {
+        OpenModule(static_cast<int>(focus.index));
+        focus = Target{Part::ModuleHeader};
+        break;
+      }
       // On the volume slider, Space is the mute button it carries at its left end.
       Activate(focus.part == Part::VolumeSlider ? Target{Part::Mute} : focus);
       break;
@@ -692,6 +722,32 @@ void PanelWindow::Activate(Target target) {
       }
       if (target.index == 2 && state_.night.supported) state_.night.on = !state_.night.on;
       // Index 3, settings: not wired to anything yet. The press shows; nothing happens.
+      break;
+    case Part::TileChevron:
+      OpenModule(static_cast<int>(target.index));
+      break;
+    case Part::ModuleHeader:
+      CloseModule();
+      break;
+    case Part::ModuleSwitch:
+      // The same as a click on the tile it came from: the radio, for real (phase 5).
+      Activate(Target{Part::Tile, static_cast<size_t>(OpenModuleTile())});
+      break;
+    case Part::ModuleRow:
+      // Phase 5b-1: only the made-up lists change. 5b-2 connects to the network; 5b-3 connects
+      // or disconnects the audio device.
+      if (OpenModuleTile() == 0 && target.index < state_.wifi.networks.size()) {
+        for (size_t i = 0; i < state_.wifi.networks.size(); ++i) {
+          state_.wifi.networks[i].connected = i == target.index;
+        }
+        state_.wifi.ssid = state_.wifi.networks[target.index].ssid;
+      } else if (OpenModuleTile() == 1 && target.index < state_.bluetooth.devices.size()) {
+        BluetoothDevice& device = state_.bluetooth.devices[target.index];
+        device.connected = !device.connected;
+      }
+      break;
+    case Part::ModuleFooter:
+      // 5b-2 and 5b-3 open Windows' own list and add-a-device screen, with their amendment.
       break;
     case Part::BrightnessHeader:
       if (CanUnfold(state_.displays.size()) || brightnessGoal_) ToggleCard(brightnessGoal_);
@@ -801,6 +857,37 @@ void PanelWindow::SetSliderLevel(Target target, float level) {
 
 void PanelWindow::Nudge(Target target, float by) { SetSliderLevel(target, SliderLevel(target) + by); }
 
+int PanelWindow::OpenModuleTile() const {
+  if (wifiGoal_) return 0;
+  if (bluetoothGoal_) return 1;
+  return -1;
+}
+
+Expanded PanelWindow::Goals() const {
+  return Expanded{brightnessGoal_ ? 1.0f : 0.0f, audioGoal_ ? 1.0f : 0.0f, wifiGoal_ ? 1.0f : 0.0f,
+                  bluetoothGoal_ ? 1.0f : 0.0f};
+}
+
+void PanelWindow::OpenModule(int tile) {
+  // Only from the tile grid, which only shows while no card is: never two at once.
+  if (tile < 0 || tile > 1 || OpenModuleTile() >= 0) return;
+  if (view_.open.wifi > 0.0f || view_.open.bluetooth > 0.0f) return;  // the other still folding
+  (tile == 0 ? wifiGoal_ : bluetoothGoal_) = true;
+  StartAnimating();
+}
+
+void PanelWindow::CloseModule() {
+  const int tile = OpenModuleTile();
+  if (tile < 0) return;
+  wifiGoal_ = bluetoothGoal_ = false;
+  // The keyboard goes back to the strip it opened from.
+  if (view_.focus.part == Part::ModuleHeader || view_.focus.part == Part::ModuleSwitch ||
+      view_.focus.part == Part::ModuleRow || view_.focus.part == Part::ModuleFooter) {
+    view_.focus = Target{Part::TileChevron, static_cast<size_t>(tile)};
+  }
+  StartAnimating();
+}
+
 void PanelWindow::KeepFocusValid() {
   // A row that is folding away takes the keyboard back to its card's header, which is where
   // the key that folded it was.
@@ -834,7 +921,9 @@ void PanelWindow::StartAnimating() {
     // No movement: every fade and every card lands where it is going, now.
     brightnessSpring_.Snap(brightnessGoal_ ? 1.0f : 0.0f);
     audioSpring_.Snap(audioGoal_ ? 1.0f : 0.0f);
-    view_.open = Expanded{brightnessSpring_.x, audioSpring_.x};
+    wifiSpring_.Snap(wifiGoal_ ? 1.0f : 0.0f);
+    bluetoothSpring_.Snap(bluetoothGoal_ ? 1.0f : 0.0f);
+    view_.open = Expanded{brightnessSpring_.x, audioSpring_.x, wifiSpring_.x, bluetoothSpring_.x};
     StepInks(1000.0f);
     Relayout();
     return;
@@ -872,8 +961,12 @@ void PanelWindow::OnFrame() {
 
   bool moving = brightnessSpring_.Step(seconds, brightnessGoal_ ? 1.0f : 0.0f);
   moving |= audioSpring_.Step(seconds, audioGoal_ ? 1.0f : 0.0f);
-  const Expanded open{std::max(0.0f, brightnessSpring_.x), std::max(0.0f, audioSpring_.x)};
-  const bool resized = open.brightness != view_.open.brightness || open.audio != view_.open.audio;
+  moving |= wifiSpring_.Step(seconds, wifiGoal_ ? 1.0f : 0.0f);
+  moving |= bluetoothSpring_.Step(seconds, bluetoothGoal_ ? 1.0f : 0.0f);
+  const Expanded open{std::max(0.0f, brightnessSpring_.x), std::max(0.0f, audioSpring_.x),
+                      std::max(0.0f, wifiSpring_.x), std::max(0.0f, bluetoothSpring_.x)};
+  const bool resized = open.brightness != view_.open.brightness || open.audio != view_.open.audio ||
+                       open.wifi != view_.open.wifi || open.bluetooth != view_.open.bluetooth;
   view_.open = open;
   moving |= StepInks(seconds);
 

@@ -25,6 +25,12 @@ enum class Part {
   Mute,              // the glyph at the left end of the volume slider
   Output,            // index is the output
   App,               // index is the utility
+  // Phase 5b: Wi-Fi and Bluetooth unfold into a card of their own.
+  TileChevron,       // index 0 or 1: the strip at the tile's right end that unfolds it
+  ModuleHeader,      // the open card's title line: folds it back
+  ModuleSwitch,      // the radio's switch in that line
+  ModuleRow,         // index is the network or the device
+  ModuleFooter,      // "more in Windows": the list Windows has, or its add-a-device screen
 };
 
 struct Target {
@@ -101,15 +107,57 @@ inline D2D1_RECT_F RectOf(const PanelLayout& layout, Target target) {
                                                      : D2D1_RECT_F{};
     case Part::App:
       return target.index < layout.apps.size() ? layout.apps[target.index] : D2D1_RECT_F{};
+    case Part::TileChevron:
+      return target.index < layout.tileChevrons.size() ? layout.tileChevrons[target.index]
+                                                       : D2D1_RECT_F{};
+    case Part::ModuleHeader:
+      return layout.module.header;
+    case Part::ModuleSwitch:
+      return layout.module.toggle;
+    case Part::ModuleRow:
+      return target.index < layout.module.rows.size() ? layout.module.rows[target.index]
+                                                      : D2D1_RECT_F{};
+    case Part::ModuleFooter:
+      return layout.module.footer;
     case Part::None:
     default:
       return D2D1_RECT_F{};
   }
 }
 
+// How many rows of the open card are things you can pick, and not the one line saying why
+// there is nothing: the radio is off, or nothing was found.
+inline size_t ModuleItems(const PanelLayout& layout, const PanelState& state) {
+  const ModuleLayout& module = layout.module;
+  if (module.tile < 0) return 0;
+  const bool on = module.tile == 0 ? state.wifi.on : state.bluetooth.on;
+  const size_t items = module.tile == 0 ? state.wifi.networks.size() : state.bluetooth.devices.size();
+  return on ? std::min(items, module.rows.size()) : 0;
+}
+
 inline Target HitTest(const PanelLayout& layout, const PanelState& state, float x, float y) {
-  for (size_t i = 0; i < layout.tiles.size(); ++i) {
-    if (Inside(layout.tiles[i], x, y)) return {Part::Tile, i};
+  const ModuleLayout& module = layout.module;
+  if (module.tile >= 0) {
+    // While a tile is a card, or on its way, the other tiles are fading under it and are not
+    // there for the mouse. Inside the card, only what it shows whole.
+    if (!Inside(module.card, x, y)) {
+      if (y < module.card.bottom + kGapDip) return {};
+    } else {
+      if (Shown(module.toggle, module.card) && Inside(module.toggle, x, y)) return {Part::ModuleSwitch};
+      if (Inside(module.header, x, y)) return {Part::ModuleHeader};
+      for (size_t i = 0; i < ModuleItems(layout, state); ++i) {
+        if (Shown(module.rows[i], module.card) && Inside(module.rows[i], x, y)) return {Part::ModuleRow, i};
+      }
+      if (Shown(module.footer, module.card) && Inside(module.footer, x, y)) return {Part::ModuleFooter};
+      return {};
+    }
+  } else {
+    for (size_t i = 0; i < layout.tileChevrons.size(); ++i) {
+      if (Inside(layout.tileChevrons[i], x, y)) return {Part::TileChevron, i};
+    }
+    for (size_t i = 0; i < layout.tiles.size(); ++i) {
+      if (Inside(layout.tiles[i], x, y)) return {Part::Tile, i};
+    }
   }
   if (Inside(layout.brightnessHeader, x, y)) return {Part::BrightnessHeader};
   if (!layout.displayRows.empty()) {
@@ -140,7 +188,21 @@ inline Target HitTest(const PanelLayout& layout, const PanelState& state, float 
 // mutes, so the keyboard reaches it without a stop of its own.
 inline std::vector<Target> FocusOrder(const PanelLayout& layout, const PanelState& state) {
   std::vector<Target> order;
-  for (size_t i = 0; i < layout.tiles.size(); ++i) order.push_back({Part::Tile, i});
+  const ModuleLayout& module = layout.module;
+  if (module.tile >= 0) {
+    // An open card stands in for the whole tile grid.
+    order.push_back({Part::ModuleHeader});
+    if (Shown(module.toggle, module.card)) order.push_back({Part::ModuleSwitch});
+    for (size_t i = 0; i < ModuleItems(layout, state); ++i) {
+      if (Shown(module.rows[i], module.card)) order.push_back({Part::ModuleRow, i});
+    }
+    if (Shown(module.footer, module.card)) order.push_back({Part::ModuleFooter});
+  } else {
+    for (size_t i = 0; i < layout.tiles.size(); ++i) {
+      order.push_back({Part::Tile, i});
+      if (i < layout.tileChevrons.size()) order.push_back({Part::TileChevron, i});
+    }
+  }
   // A header is a stop only when it unfolds something; otherwise Tab would land on a title.
   if (CanUnfold(state.displays.size())) order.push_back({Part::BrightnessHeader});
   if (!layout.displayRows.empty()) {

@@ -61,6 +61,16 @@ std::wstring NightSubtitle(const NightLightState& night) {
   return night.scheduled ? Clock(night.fromMinute) : std::wstring(T(L"Apagada", L"Off"));
 }
 
+// What a tile says, gathered once so the grid and a morphing tile draw the same thing.
+struct TileInfo {
+  wchar_t glyph = 0;
+  std::wstring title;
+  std::wstring subtitle;
+  bool on = false;
+  bool enabled = true;
+  bool chevron = false;  // Wi-Fi and Bluetooth unfold
+};
+
 // Scales what is drawn inside it around `center`, on top of whatever transform was there (the
 // snapshot's margin, for one), and puts that transform back when it goes.
 class Sink {
@@ -98,32 +108,62 @@ struct Painter {
     FillRound(target, rect, radius, With(Fade(theme.hover, hover)));
   }
 
-  void Tile(size_t index, const D2D1_RECT_F& rect, wchar_t glyph, std::wstring_view title,
-            std::wstring_view subtitle, bool on, bool enabled) const {
-    const Target self{Part::Tile, index};
-    const Sink sink(target, Middle(rect), view.Press(self));
-    const float dim = enabled ? 1.0f : 0.45f;
-    FillRound(target, rect, kRadiusCard, With(Fade(on ? theme.accent : theme.surface, dim)));
-    if (theme.highContrast && !on) StrokeRound(target, rect, kRadiusCard, With(theme.border));
-    Wash(rect, kRadiusCard, view.Hover(self));
+  D2D1_COLOR_F TileFill(const TileInfo& info) const {
+    return Fade(info.on ? theme.accent : theme.surface, info.enabled ? 1.0f : 0.45f);
+  }
 
+  // Everything on a tile but its background: the disc, the two lines and, on Wi-Fi and
+  // Bluetooth, the strip at the right end that unfolds them. Drawn apart from the background
+  // because a morphing tile carries its face along while the background becomes a card's.
+  void TileFace(size_t index, const D2D1_RECT_F& rect, const TileInfo& info) const {
+    const float dim = info.enabled ? 1.0f : 0.45f;
+    const bool on = info.on;
     // On: a white disc with the glyph in the accent, like the wireframe's dot. Off: a quiet
     // disc and the glyph in the text colour.
     const D2D1_POINT_2F center = Point(rect.left + 12.0f + kTileCircleDip / 2.0f, MidY(rect));
     FillCircle(target, center, kTileCircleDip / 2.0f,
                With(Fade(on ? theme.onAccent : theme.track, dim)));
-    DrawGlyph(target, fonts.icon.Get(), glyph, center,
+    DrawGlyph(target, fonts.icon.Get(), info.glyph, center,
               With(Fade(on ? theme.accent : theme.textPrimary, dim)));
 
     const float textLeft = center.x + kTileCircleDip / 2.0f + 10.0f;
+    const float textRight = rect.right - (info.chevron ? kTileChevronDip : 10.0f);
     const D2D1_COLOR_F primary = on ? theme.onAccent : theme.textPrimary;
     const D2D1_COLOR_F secondary = on ? Fade(theme.onAccent, 0.8f) : theme.textSecondary;
-    DrawTextIn(target, fonts.title.Get(), title,
-               D2D1_RECT_F{textLeft, center.y - 17.0f, rect.right - 10.0f, center.y},
-               With(Fade(primary, dim)));
-    DrawTextIn(target, fonts.caption.Get(), subtitle,
-               D2D1_RECT_F{textLeft, center.y + 1.0f, rect.right - 10.0f, center.y + 16.0f},
+    DrawTextIn(target, fonts.title.Get(), info.title,
+               D2D1_RECT_F{textLeft, center.y - 17.0f, textRight, center.y}, With(Fade(primary, dim)));
+    DrawTextIn(target, fonts.caption.Get(), info.subtitle,
+               D2D1_RECT_F{textLeft, center.y + 1.0f, textRight, center.y + 16.0f},
                With(Fade(secondary, dim)));
+
+    if (!info.chevron) return;
+    // The strip: a hairline, then the chevron, with a wash of its own. It is a second button in
+    // the tile, and has to look like one without shouting.
+    const D2D1_RECT_F strip{rect.right - kTileChevronDip, rect.top, rect.right, rect.bottom};
+    Wash(Inset(strip, 4.0f, 6.0f), kWashRadiusDip, view.Hover(Target{Part::TileChevron, index}));
+    target->FillRectangle(D2D1_RECT_F{strip.left, rect.top + 16.0f, strip.left + 1.0f, rect.bottom - 16.0f},
+                          With(on ? Fade(theme.onAccent, 0.3f) : theme.border));
+    DrawGlyph(target, fonts.iconSmall.Get(), glyph::kChevronRight, Middle(strip),
+              With(Fade(on ? theme.onAccent : theme.textSecondary, dim)));
+  }
+
+  void Tile(size_t index, const D2D1_RECT_F& rect, const TileInfo& info) const {
+    const Target self{Part::Tile, index};
+    const Sink sink(target, Middle(rect), view.Press(self));
+    FillRound(target, rect, kRadiusCard, With(TileFill(info)));
+    if (theme.highContrast && !info.on) StrokeRound(target, rect, kRadiusCard, With(theme.border));
+    Wash(rect, kRadiusCard, view.Hover(self));
+    TileFace(index, rect, info);
+  }
+
+  // The radio's switch in an open card's header: Agenda's, 44 by 24.
+  void Switch(const D2D1_RECT_F& rect, bool on) const {
+    const float radius = (rect.bottom - rect.top) / 2.0f;
+    FillRound(target, rect, radius, With(on ? theme.accent : theme.track));
+    if (theme.highContrast || !on) StrokeRound(target, rect, radius, With(theme.border));
+    const float knob = radius - 3.0f;
+    const float x = on ? rect.right - radius : rect.left + radius;
+    FillCircle(target, Point(x, MidY(rect)), knob, With(on ? theme.onAccent : theme.textSecondary));
   }
 
   void Card(const D2D1_RECT_F& rect) const {
@@ -343,6 +383,138 @@ void DrawApps(const Painter& p, const PanelLayout& layout, const PanelState& sta
   }
 }
 
+std::wstring ModuleMessage(int tile, const PanelState& state) {
+  if (tile == 0) {
+    if (!state.wifi.on) return std::wstring(T(L"El Wi-Fi está apagado", L"Wi-Fi is off"));
+    if (state.wifi.locationDenied) {
+      return std::wstring(T(L"Sin permiso de ubicación, Windows no deja buscar redes",
+                            L"Without location access, Windows does not let networks be listed"));
+    }
+    if (state.wifi.scanning) return std::wstring(T(L"Buscando redes…", L"Looking for networks…"));
+    return std::wstring(T(L"No hay redes a la vista", L"No networks in sight"));
+  }
+  if (!state.bluetooth.on) return std::wstring(T(L"El Bluetooth está apagado", L"Bluetooth is off"));
+  return std::wstring(T(L"No hay dispositivos emparejados", L"No paired devices"));
+}
+
+// A tile becoming a card (phase 5b), or the card it became. Three things cross at once:
+//  - the shape: from the tile's rectangle to the grid's full width (the layout moves it), and
+//    from the tile's colour to a card's, done by 60 % of the way;
+//  - the tile's face rides the shape's top left corner and is gone by 40 %;
+//  - the card's content comes in over the last 55 %, riding the same corner and clipped to the
+//    shape, so a card still growing from the right shows the start of its lines, not their ends.
+// Between 40 and 45 % only the shape shows, which is what reads as one thing changing.
+void DrawModule(Painter& p, const PanelLayout& layout, const PanelState& state,
+                const TileInfo& info) {
+  const ModuleLayout& m = layout.module;
+  const float t = Unit(m.t);
+  const D2D1_RECT_F& tile = layout.tiles[static_cast<size_t>(m.tile)];
+  FillRound(p.target, m.card, kRadiusCard, p.With(Mix(p.TileFill(info), p.theme.surface, Unit(t / 0.6f))));
+  if (p.theme.highContrast) StrokeRound(p.target, m.card, kRadiusCard, p.With(p.theme.border));
+
+  const float face = Unit(1.0f - t / 0.4f);
+  if (face > 0.0f) {
+    D2D1_MATRIX_3X2_F saved{};
+    p.target->GetTransform(&saved);
+    p.target->SetTransform(D2D1::Matrix3x2F::Translation(m.card.left - tile.left, m.card.top - tile.top) * saved);
+    p.alpha = face;
+    p.TileFace(static_cast<size_t>(m.tile), tile, info);
+    p.target->SetTransform(saved);
+  }
+
+  const float content = Unit((t - 0.45f) / 0.55f);
+  if (content > 0.0f) {
+    p.target->PushAxisAlignedClip(m.card, D2D1_ANTIALIAS_MODE_ALIASED);
+    D2D1_MATRIX_3X2_F riding{};
+    p.target->GetTransform(&riding);
+    // Laid out where it will be; drawn where the shape's left edge is now (the grid's left edge
+    // is the first tile's).
+    p.target->SetTransform(D2D1::Matrix3x2F::Translation(m.card.left - layout.tiles[0].left, 0.0f) * riding);
+    p.alpha = content;
+    const ViewState& view = p.view;
+    const bool wifi = m.tile == 0;
+    const bool on = wifi ? state.wifi.on : state.bluetooth.on;
+
+    // Header: the chevron, turned down, says it folds back; then the title; the switch at the end.
+    const D2D1_RECT_F& header = m.header;
+    p.Wash(D2D1_RECT_F{header.left - 6.0f, header.top - 2.0f, m.toggle.left - 8.0f, header.bottom + 2.0f},
+           kWashRadiusDip, view.Hover(Target{Part::ModuleHeader}));
+    const D2D1_POINT_2F pivot = Point(header.left + 8.0f, MidY(header));
+    D2D1_MATRIX_3X2_F saved{};
+    p.target->GetTransform(&saved);
+    p.target->SetTransform(D2D1::Matrix3x2F::Rotation(90.0f, pivot) * saved);
+    DrawGlyph(p.target, p.fonts.iconSmall.Get(), glyph::kChevronRight, pivot, p.With(p.theme.textSecondary));
+    p.target->SetTransform(saved);
+    DrawTextIn(p.target, p.fonts.title.Get(), info.title,
+               D2D1_RECT_F{header.left + 24.0f, header.top, m.toggle.left - 12.0f, header.bottom},
+               p.With(p.theme.textPrimary));
+    p.Switch(m.toggle, on);
+
+    // The rows: networks or devices, or the one line that says why there are none.
+    const size_t items = ModuleItems(layout, state);
+    if (items == 0 && !m.rows.empty()) {
+      DrawTextIn(p.target, p.fonts.caption.Get(), ModuleMessage(m.tile, state), Inset(m.rows[0], 14.0f, 0.0f),
+                 p.With(p.theme.textSecondary));
+    }
+    for (size_t i = 0; i < items; ++i) {
+      const D2D1_RECT_F& row = m.rows[i];
+      const float mid = MidY(row);
+      p.Wash(row, kWashRadiusDip, view.Hover(Target{Part::ModuleRow, i}));
+      wchar_t icon = 0;
+      std::wstring_view name;
+      bool connected = false;
+      bool locked = false;
+      if (wifi) {
+        const WifiNetwork& network = state.wifi.networks[i];
+        icon = glyph::kWifiBars[std::clamp(network.bars, 0, 4)];
+        name = network.ssid;
+        connected = network.connected;
+        locked = network.secured;
+      } else {
+        const BluetoothDevice& device = state.bluetooth.devices[i];
+        switch (device.kind) {
+          case BluetoothDevice::Kind::Audio: icon = glyph::kHeadphones; break;
+          case BluetoothDevice::Kind::Keyboard: icon = glyph::kKeyboard; break;
+          case BluetoothDevice::Kind::Mouse: icon = glyph::kMouse; break;
+          default: icon = glyph::kBluetooth; break;
+        }
+        name = device.name;
+        connected = device.connected;
+      }
+      DrawGlyph(p.target, p.fonts.icon.Get(), icon, Point(row.left + 18.0f, mid), p.With(p.theme.textPrimary));
+      const float right = row.right - (locked ? 34.0f : 12.0f);
+      // The one in use says so in words and in weight, not only with a colour.
+      DrawTextIn(p.target, (connected ? p.fonts.title : p.fonts.body).Get(), name,
+                 D2D1_RECT_F{row.left + 40.0f, row.top, right - (connected ? 76.0f : 0.0f), row.bottom},
+                 p.With(p.theme.textPrimary));
+      if (connected) {
+        DrawTextIn(p.target, p.fonts.caption.Get(), T(L"Conectado", L"Connected"),
+                   D2D1_RECT_F{right - 76.0f, row.top, right, row.bottom}, p.With(p.theme.accent), Align::Right);
+      }
+      if (locked) {
+        DrawGlyph(p.target, p.fonts.iconSmall.Get(), glyph::kLock, Point(row.right - 18.0f, mid),
+                  p.With(p.theme.textSecondary));
+      }
+    }
+
+    // The footer: what the panel leaves to Windows, said as such.
+    const D2D1_RECT_F& footer = m.footer;
+    p.target->FillRectangle(D2D1_RECT_F{footer.left + 10.0f, footer.top, footer.right - 10.0f, footer.top + 1.0f},
+                            p.With(p.theme.border));
+    p.Wash(Inset(footer, 0.0f, 2.0f), kWashRadiusDip, view.Hover(Target{Part::ModuleFooter}));
+    DrawGlyph(p.target, p.fonts.iconSmall.Get(), glyph::kOpenElsewhere, Point(footer.left + 18.0f, MidY(footer)),
+              p.With(p.theme.accent));
+    DrawTextIn(p.target, p.fonts.body.Get(),
+               wifi ? T(L"Más redes en Windows", L"More networks in Windows")
+                    : T(L"Añadir un dispositivo", L"Add a device"),
+               D2D1_RECT_F{footer.left + 40.0f, footer.top, footer.right - 12.0f, footer.bottom},
+               p.With(p.theme.accent));
+    p.target->SetTransform(riding);
+    p.target->PopAxisAlignedClip();
+  }
+  p.alpha = 1.0f;
+}
+
 // The keyboard's ring: 2 DIP in the text colour, 3 DIP outside what has the focus, with that
 // thing's radius plus the gap so it follows its shape (Agenda's ring, calendario/CLAUDE.md).
 void DrawFocus(const Painter& p, const PanelLayout& layout) {
@@ -366,6 +538,19 @@ void DrawFocus(const Painter& p, const PanelLayout& layout) {
       radius = kWashRadiusDip;
       break;
     case Part::Output:
+    case Part::ModuleRow:
+    case Part::ModuleFooter:
+      radius = kWashRadiusDip;
+      break;
+    case Part::TileChevron:
+      rect = Inset(rect, 4.0f, 6.0f);
+      radius = kWashRadiusDip;
+      break;
+    case Part::ModuleSwitch:
+      radius = kSwitchHeightDip / 2.0f;
+      break;
+    case Part::ModuleHeader:
+      rect = D2D1_RECT_F{rect.left - 6.0f, rect.top - 2.0f, layout.module.toggle.left - 8.0f, rect.bottom + 2.0f};
       radius = kWashRadiusDip;
       break;
     default:
@@ -396,15 +581,25 @@ void DrawPanel(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme
   if (!fonts.ok()) return;  // no text formats means an empty panel, not a crash
 
   Painter p{target, fonts, theme, brush.Get(), view};
-  p.Tile(0, layout.tiles[0], glyph::kWifi, L"Wi-Fi", WifiSubtitle(state.wifi), state.wifi.on,
-         state.wifi.available);
-  p.Tile(1, layout.tiles[1], glyph::kBluetooth, L"Bluetooth", BluetoothSubtitle(state.bluetooth),
-         state.bluetooth.on, state.bluetooth.available);
-  p.Tile(2, layout.tiles[2], glyph::kMoon, T(L"Luz nocturna", L"Night light"),
-         NightSubtitle(state.night), state.night.on, state.night.supported);
-  // Settings: not wired to anything yet (CLAUDE.md), and honest about it.
-  p.Tile(3, layout.tiles[3], glyph::kSettings, T(L"Configuración", L"Settings"),
-         T(L"Próximamente", L"Coming soon"), false, true);
+  const TileInfo tiles[4] = {
+      {glyph::kWifi, L"Wi-Fi", WifiSubtitle(state.wifi), state.wifi.on, state.wifi.available, true},
+      {glyph::kBluetooth, L"Bluetooth", BluetoothSubtitle(state.bluetooth), state.bluetooth.on,
+       state.bluetooth.available, true},
+      {glyph::kMoon, std::wstring(T(L"Luz nocturna", L"Night light")), NightSubtitle(state.night),
+       state.night.on, state.night.supported, false},
+      // Settings: not wired to anything yet (CLAUDE.md), and honest about it.
+      {glyph::kSettings, std::wstring(T(L"Configuración", L"Settings")),
+       std::wstring(T(L"Próximamente", L"Coming soon")), false, true, false},
+  };
+  const ModuleLayout& module = layout.module;
+  for (size_t i = 0; i < 4; ++i) {
+    if (static_cast<int>(i) == module.tile) continue;
+    // The other tiles fade under the card that is taking their place; gone by halfway.
+    p.alpha = module.tile < 0 ? 1.0f : Unit(1.0f - 2.0f * module.t);
+    if (p.alpha > 0.0f) p.Tile(i, layout.tiles[i], tiles[i]);
+  }
+  p.alpha = 1.0f;
+  if (module.tile >= 0) DrawModule(p, layout, state, tiles[module.tile]);
 
   DrawBrightness(p, layout, state);
   DrawAudio(p, layout, state);

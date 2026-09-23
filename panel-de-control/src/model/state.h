@@ -9,16 +9,39 @@
 
 namespace panel {
 
+// One network in the unfolded Wi-Fi card (phase 5b).
+struct WifiNetwork {
+  std::wstring ssid;
+  int bars = 0;           // 0..4, the signal as Windows draws it
+  bool secured = true;
+  bool saved = false;     // Windows has its profile: connecting needs no password
+  bool connected = false;
+};
+
 struct WifiState {
   bool available = true;  // there is a Wi-Fi radio at all
   bool on = false;
   std::wstring ssid;      // empty when on but not connected
+  // Added in phase 5b, only filled while the card is unfolded.
+  std::vector<WifiNetwork> networks;
+  bool scanning = false;
+  bool locationDenied = false;  // the user said no: the card says why it lists nothing
+};
+
+// One paired device in the unfolded Bluetooth card (phase 5b).
+struct BluetoothDevice {
+  enum class Kind { Audio, Keyboard, Mouse, Other };
+  std::wstring id;
+  std::wstring name;
+  Kind kind = Kind::Other;
+  bool connected = false;
 };
 
 struct BluetoothState {
   bool available = true;
   bool on = false;
   int connected = 0;      // classic and LE together, each device counted once
+  std::vector<BluetoothDevice> devices;  // phase 5b: the paired ones
 };
 
 struct NightLightState {

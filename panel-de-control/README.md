@@ -19,14 +19,16 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
 > plan está en
 > [`docs/superpowers/plans/2026-09-23-panel-de-control.md`](docs/superpowers/plans/2026-09-23-panel-de-control.md).
 
-| Brillo desplegado | Volumen desplegado | Tema claro |
-|---|---|---|
-| ![](docs/img/panel-brillo.png) | ![](docs/img/panel-volumen.png) | ![](docs/img/panel-claro.png) |
+| Wi-Fi desplegado | Bluetooth, a mitad del morph | Brillo desplegado | Tema claro |
+|---|---|---|---|
+| ![](docs/img/panel-wifi.png) | ![](docs/img/panel-morph.png) | ![](docs/img/panel-brillo.png) | ![](docs/img/panel-claro.png) |
 
 ## Qué hay
 
 - **Wi-Fi y Bluetooth.** Se encienden y apagan con un clic. Debajo, la red a la que estás
-  conectado y cuántos dispositivos lo están.
+  conectado y cuántos dispositivos lo están. La flecha de su derecha convierte el tile en una
+  tarjeta con las redes o los dispositivos. Por ahora la lista es de ejemplo: las reales llegan
+  en las fases 5b-2 y 5b-3.
 - **Luz nocturna.** El interruptor de siempre. Debajo, a qué hora se enciende sola, si tiene
   horario.
 - **Configuración.** Todavía no hace nada. Algún día abrirá los ajustes de las otras
@@ -97,8 +99,8 @@ build\debug\Panel.exe --render-snapshot=panel --out=docs\img\panel.png
 powershell -NoProfile -ExecutionPolicy Bypass -File auditar.ps1
 ```
 
-Las vistas de `--render-snapshot` son `panel`, `panel-brillo`, `panel-volumen` y
-`panel-estados`. La última enseña a la vez el hover, el anillo de foco y la tarjeta de brillo a
+Las vistas de `--render-snapshot` son `panel`, `panel-brillo`, `panel-volumen`,
+`panel-estados`, `panel-wifi`, `panel-bluetooth` y `panel-morph`. La última enseña a la vez el hover, el anillo de foco y la tarjeta de brillo a
 medio abrir. `--theme` acepta `dark`, `light` y `contrast`.
 
 ## Seguridad

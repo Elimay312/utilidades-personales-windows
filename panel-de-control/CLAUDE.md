@@ -282,6 +282,25 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   podría llamar a `Publish` mientras se suelta `State`. Solo puede pasar al salir del proceso;
   si aparece en un volcado, hay que esperar al `Stopped` de los watchers.
 
+### Decisiones de la fase 5b-1
+
+- **Una sola tarjeta de Wi-Fi o Bluetooth a la vez.** Con una abierta, los tiles no están: no
+  se puede pulsar la otra franja. Con eso, la geometría solo tiene que resolver un morph.
+- **El layout pone el contenido de la tarjeta donde acabará**, y `module.card` es la forma de
+  este fotograma. El dibujo mueve el contenido con el borde izquierdo de la forma y lo recorta
+  con ella. Es el mismo patrón que las filas de las otras tarjetas.
+- **Ritmo del morph** (`panel_view.cpp`, `DrawModule`): el color se cruza hasta el 60 %, la cara
+  del tile se va antes del 40 % y el contenido entra desde el 45 %. Se afina con el periodo
+  (`kMorphPeriodSeconds`) y con estos tres cortes, juzgando con la app delante.
+- **Mientras no llegan las listas reales,** `TakeRadios` conserva las de ejemplo al tomar el
+  estado de las radios.
+- **Lección de la prueba: no dejar el panel abierto sin foco en la pantalla del usuario.**
+  Abierto con un `WM_HOTKEY` posteado, no es la ventana activa y no se esconde al hacer clic
+  fuera. Y Windows manda la rueda a la ventana que queda debajo del cursor, no a la que tiene el
+  foco. Durante unos 40 s de medición el brillo y el volumen del usuario acabaron al 0 %,
+  probablemente por su rueda. Con el atajo de verdad esto no pasa. Las sondas esconden el
+  panel en cuanto acaban de mirar.
+
 - **Pendiente para la fase 8:** si el HUD está en marcha, arrastrar el deslizador del panel
   saca también su cápsula. La solución es que el HUD ignore `kPanelVolumeContext`, y toca
   otro proyecto.
@@ -362,7 +381,16 @@ assets/          manifiesto (PerMonitorV2, asInvoker, UTF-8) y .rc
   - un deslizador por pantalla;
   - volver a enumerar con `WM_DISPLAYCHANGE`.
 - [x] **5. Wi-Fi y Bluetooth:** Radios, SSID sin ubicación y `DeviceWatcher`s.
-- [ ] **5b. Desplegar Wi-Fi y Bluetooth** (lo pidió el usuario en la fase 5). Una flecha
+- [ ] **5b. Desplegar Wi-Fi y Bluetooth** (lo pidió el usuario en la fase 5). Decidido: Wi-Fi
+  con la opción A (buscar pidiendo la ubicación; las redes nuevas con contraseña se dejan a la
+  lista de Windows). Bluetooth: los emparejados, conectar y desconectar los de audio
+  (`KSPROPERTY_ONESHOT_RECONNECT`/`DISCONNECT`), y «buscar» abre la pantalla de Windows. Va en
+  tres pasos:
+  - [x] **5b-1:** el morph con listas de ejemplo;
+  - [ ] **5b-2:** el Wi-Fi real, con su enmienda antes;
+  - [ ] **5b-3:** el Bluetooth real, con su enmienda antes.
+
+  El planteamiento de partida: una flecha
   en cada uno de los dos tiles. El clic en el tile sigue siendo encender y apagar; la flecha
   despliega una tarjeta debajo:
   - **Wi-Fi:** las redes que hay alrededor para cambiar de una a otra, y buscar. **Choca con

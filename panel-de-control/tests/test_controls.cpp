@@ -42,6 +42,9 @@ TEST_CASE("the mouse finds what is drawn where it points") {
   const PanelState state = Sample();
   const PanelLayout closed = MakeLayout(Expanded{}, state);
   for (size_t i = 0; i < 4; ++i) CHECK(HitAt(closed, state, closed.tiles[i]) == Target{Part::Tile, i});
+  // The strip at the right end of Wi-Fi and Bluetooth unfolds them instead of switching them.
+  CHECK(HitAt(closed, state, closed.tileChevrons[0]) == Target{Part::TileChevron, 0});
+  CHECK(HitAt(closed, state, closed.tileChevrons[1]) == Target{Part::TileChevron, 1});
   CHECK(HitAt(closed, state, closed.brightnessHeader) == Target{Part::BrightnessHeader});
   CHECK(HitAt(closed, state, closed.brightnessSlider) == Target{Part::BrightnessSlider});
   CHECK(HitAt(closed, state, closed.audioSlider) == Target{Part::VolumeSlider});
@@ -74,7 +77,8 @@ TEST_CASE("Tab walks everything in reading order and wraps") {
   const PanelLayout closed = MakeLayout(Expanded{}, state);
   const std::vector<Target> order = FocusOrder(closed, state);
   const std::vector<Target> expected{
-      {Part::Tile, 0},        {Part::Tile, 1},    {Part::Tile, 2}, {Part::Tile, 3},
+      {Part::Tile, 0},        {Part::TileChevron, 0}, {Part::Tile, 1}, {Part::TileChevron, 1},
+      {Part::Tile, 2},        {Part::Tile, 3},
       {Part::BrightnessHeader}, {Part::BrightnessSlider}, {Part::AudioHeader},
       {Part::VolumeSlider},   {Part::App, 0}};
   CHECK(order == expected);
@@ -116,4 +120,64 @@ TEST_CASE("the spring reaches its target, stops there, and can be turned around 
   back.Step(1.0f / 60.0f, 0.0f);
   CHECK(back.x > 0.0f);
   CHECK(std::abs(back.x - before) < 0.1f);
+}
+
+namespace {
+
+PanelState WithLists() {
+  PanelState state = Sample();
+  state.wifi.on = true;
+  state.wifi.networks.resize(4);
+  state.bluetooth.on = true;
+  state.bluetooth.devices.resize(9);  // more than fit: the card shows six
+  return state;
+}
+
+}  // namespace
+
+TEST_CASE("a tile becomes a card: from its own place to the grid's full width") {
+  const PanelState state = WithLists();
+  const PanelLayout closed = MakeLayout(Expanded{}, state);
+  const PanelLayout half = MakeLayout(Expanded{0.0f, 0.0f, 0.0f, 0.5f}, state);
+  const PanelLayout open = MakeLayout(Expanded{0.0f, 0.0f, 0.0f, 1.0f}, state);
+
+  REQUIRE(open.module.tile == 1);
+  CHECK(open.module.card.left == doctest::Approx(closed.tiles[0].left));
+  CHECK(open.module.card.right == doctest::Approx(closed.tiles[1].right));
+  CHECK(open.module.card.top == doctest::Approx(closed.tiles[0].top));
+  CHECK(open.module.rows.size() == kModuleMaxRows);
+  // Halfway, halfway: the Bluetooth tile grows to the left, and everything below moves down by
+  // half of what the card adds to the grid.
+  CHECK(half.module.card.left ==
+        doctest::Approx((closed.tiles[1].left + open.module.card.left) / 2.0f));
+  CHECK(half.brightnessCard.top - closed.brightnessCard.top ==
+        doctest::Approx((open.brightnessCard.top - closed.brightnessCard.top) / 2.0f));
+  CHECK(open.height - closed.height ==
+        doctest::Approx(open.brightnessCard.top - closed.brightnessCard.top));
+}
+
+TEST_CASE("with a card open, only the card answers where the tiles were") {
+  const PanelState state = WithLists();
+  const PanelLayout open = MakeLayout(Expanded{0.0f, 0.0f, 1.0f, 0.0f}, state);
+  REQUIRE(open.module.tile == 0);
+  CHECK(HitAt(open, state, open.module.toggle) == Target{Part::ModuleSwitch});
+  CHECK(HitAt(open, state, open.module.rows[0]) == Target{Part::ModuleRow, 0});
+  CHECK(HitAt(open, state, open.module.rows[3]) == Target{Part::ModuleRow, 3});
+  CHECK(HitAt(open, state, open.module.footer) == Target{Part::ModuleFooter});
+  // Four networks: the fifth row does not exist.
+  CHECK(open.module.rows.size() == 4);
+
+  const std::vector<Target> order = FocusOrder(open, state);
+  CHECK(order.front() == Target{Part::ModuleHeader});
+  CHECK(std::count(order.begin(), order.end(), Target{Part::Tile, 2}) == 0);
+  CHECK(std::count(order.begin(), order.end(), Target{Part::ModuleRow, 3}) == 1);
+}
+
+TEST_CASE("a card whose radio is off has one line, saying so, and nothing to pick") {
+  PanelState state = WithLists();
+  state.wifi.on = false;
+  const PanelLayout open = MakeLayout(Expanded{0.0f, 0.0f, 1.0f, 0.0f}, state);
+  CHECK(open.module.rows.size() == 1);
+  CHECK(ModuleItems(open, state) == 0);
+  CHECK(HitAt(open, state, open.module.rows[0]).empty());
 }

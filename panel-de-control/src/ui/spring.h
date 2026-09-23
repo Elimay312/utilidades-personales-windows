@@ -15,7 +15,8 @@
 namespace panel {
 
 struct Spring {
-  // Tuned with the app in front, not with a number (CLAUDE.md, movement).
+  // Tuned with the app in front, not with a number (CLAUDE.md, movement). The cards unfold on
+  // these; a tile morphing into a card travels further and gets a longer one (panel_window.cpp).
   static constexpr float kPeriodSeconds = 0.25f;
   static constexpr float kDampingRatio = 0.85f;
   static constexpr float kMaxStep = 1.0f / 30.0f;  // a longer gap is a hitch, not time passing
@@ -23,16 +24,18 @@ struct Spring {
 
   float x = 0.0f;
   float v = 0.0f;
+  float period = kPeriodSeconds;
+  float damping = kDampingRatio;
 
   // Advances `seconds` towards `target`. False once it has arrived and stopped; from then on x
   // is exactly the target, so the last frame lands on the pixel it was aimed at.
   bool Step(float seconds, float target) {
-    constexpr float omega = 2.0f * std::numbers::pi_v<float> / kPeriodSeconds;
-    constexpr float stiffness = omega * omega;
-    constexpr float damping = 2.0f * kDampingRatio * omega;
+    const float omega = 2.0f * std::numbers::pi_v<float> / period;
+    const float stiffness = omega * omega;
+    const float friction = 2.0f * damping * omega;
     const float dt = std::clamp(seconds, 0.0f, kMaxStep) / static_cast<float>(kSubsteps);
     for (int i = 0; i < kSubsteps; ++i) {
-      v += (-stiffness * (x - target) - damping * v) * dt;
+      v += (-stiffness * (x - target) - friction * v) * dt;
       x += v * dt;
     }
     if (std::fabs(x - target) < 1e-3f && std::fabs(v) < 1e-2f) {

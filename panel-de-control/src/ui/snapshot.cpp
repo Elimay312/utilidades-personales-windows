@@ -85,6 +85,13 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme,
     viewState.inks = {Ink{Target{Part::Tile, 3}, 1.0f, 1.0f}, Ink{Target{Part::Mute}, 1.0f, 0.0f}};
     viewState.focus = Target{Part::VolumeSlider};
     viewState.focusVisible = true;
+  } else if (view == L"panel-wifi") {
+    viewState.open.wifi = 1.0f;
+    viewState.inks = {Ink{Target{Part::ModuleRow, 1}, 1.0f, 0.0f}};
+  } else if (view == L"panel-bluetooth") {
+    viewState.open.bluetooth = 1.0f;
+  } else if (view == L"panel-morph") {
+    viewState.open.bluetooth = 0.5f;
   }
 
   const PanelLayout layout = MakeLayout(viewState.open, state);

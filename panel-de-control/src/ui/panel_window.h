@@ -79,6 +79,10 @@ class PanelWindow {
   bool OnKey(WPARAM key);
   void Activate(Target target);
   void ToggleCard(bool& goal);
+  void OpenModule(int tile);
+  void CloseModule();
+  int OpenModuleTile() const;
+  Expanded Goals() const;
   float SliderLevel(Target target) const;
   void SetSliderLevel(Target target, float level);
   void Nudge(Target target, float by);
@@ -134,6 +138,11 @@ class PanelWindow {
   bool audioGoal_ = false;
   Spring brightnessSpring_;
   Spring audioSpring_;
+  // Phase 5b: Wi-Fi and Bluetooth morph into cards; at most one goal is ever true.
+  bool wifiGoal_ = false;
+  bool bluetoothGoal_ = false;
+  Spring wifiSpring_;
+  Spring bluetoothSpring_;
   FrameClock clock_;
   bool animating_ = false;
   std::chrono::steady_clock::time_point lastFrame_{};

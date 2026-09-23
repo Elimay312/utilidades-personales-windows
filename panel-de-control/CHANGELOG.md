@@ -6,6 +6,39 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
 
 ### Añadido
 
+- **Fase 5b-1: Wi-Fi y Bluetooth se despliegan con un morph, todavía con listas de ejemplo.**
+  - **La franja «›»:** los tiles de Wi-Fi y Bluetooth llevan una franja a la derecha. El clic en
+    el tile sigue encendiendo y apagando, y la franja despliega. Las dos franjas son paradas del
+    Tab.
+  - **El morph:** el tile se convierte en una tarjeta a todo el ancho, con un muelle de 320 ms
+    de periodo y amortiguación 0,82.
+    - Posición y tamaño van a la vez. El tile de Bluetooth, que está a la derecha, crece hacia
+      la izquierda.
+    - El color del tile pasa al de tarjeta antes del 60 % del recorrido.
+    - La cara del tile viaja pegada a la esquina de la forma y se va antes del 40 %.
+    - El contenido de la tarjeta entra desde el 45 %, pegado a la misma esquina y recortado por
+      la forma. Así una tarjeta que aún crece enseña el principio de cada línea, no el final.
+    - Los otros tres tiles se funden debajo antes de la mitad. Lo que hay más abajo se desliza, y
+      el panel crece hacia arriba desde la esquina.
+  - **La tarjeta:**
+    - una cabecera con el chevron hacia abajo, que la pliega;
+    - el interruptor de la radio, que funciona de verdad;
+    - hasta seis redes (con su señal, el candado y «Conectado») o dispositivos (auriculares,
+      teclado, ratón);
+    - un pie que dice lo que se deja a Windows: «Más redes en Windows» o «Añadir un
+      dispositivo»;
+    - sin nada que listar, una línea dice por qué: la radio está apagada, no hay permiso de
+      ubicación, se está buscando o no hay nada.
+  - **`Esc` va por capas,** como en Agenda: primero pliega la tarjeta y después esconde el panel.
+  - **Esquema:** `PanelState` gana `wifi.networks[]`, `wifi.scanning`,
+    `wifi.locationDenied` y `bluetooth.devices[]`. Solo se añaden campos; no cambia ninguno de
+    los que había.
+  - **Vistas nuevas** en `--render-snapshot`: `panel-wifi`, `panel-bluetooth` y `panel-morph`.
+  - **Pruebas:** 3 casos nuevos para el recorrido del morph, qué responde con una tarjeta
+    abierta y la tarjeta con la radio apagada. 33 en total.
+  - **Medido en vivo al 125 %:** la ventana pasa de 490 a 616 px con un píxel de rebote, en 29
+    fotogramas de 16,1 ms, y cuesta 1,3 ms dibujar cada uno.
+
 - **Fase 5: Wi-Fi y Bluetooth.**
   - **Los dos tiles encienden y apagan su radio de verdad** con `Windows.Devices.Radios`.
     `RequestAccessAsync` se pide una vez; en esta máquina contesta «Allowed», sin preguntar

@@ -76,6 +76,8 @@ target_compile_options(Panel PRIVATE ${PANEL_WARNINGS})
 target_compile_definitions(Panel PRIVATE ${PANEL_DEFINES})
 target_link_libraries(Panel PRIVATE nlohmann_json::nlohmann_json
   d2d1 d3d11 dxgi dcomp dwmapi dwrite windowscodecs shcore wbemuuid
+  # dxva2: DDC/CI, the external monitors' brightness (SEGURIDAD.md 2.4).
+  dxva2
   # windowsapp: WinRT, for Windows.Devices.Radios, DeviceWatcher and NetworkInformation.
   windowsapp
   # wlanapi: the networks around, only while the Wi-Fi card is open (SEGURIDAD.md 1.2).
@@ -92,6 +94,7 @@ add_executable(panel_tests
   tests/test_audio.cpp
   tests/test_bt_audio.cpp
   tests/test_controls.cpp
+  tests/test_display_ids.cpp
   tests/test_hotkey.cpp
   tests/test_layout.cpp
   tests/test_nightlight.cpp

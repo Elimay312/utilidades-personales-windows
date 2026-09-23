@@ -1,12 +1,18 @@
 #include "system/brightness.h"
 
+#include <highlevelmonitorconfigurationapi.h>
 #include <oleauto.h>
+#include <physicalmonitorenumerationapi.h>
 
 #include <algorithm>
 #include <cmath>
+#include <format>
+#include <map>
+#include <thread>
 
 #include "core/hr.h"
 #include "core/log.h"
+#include "system/display_ids.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -53,6 +59,92 @@ std::wstring Text(IWbemClassObject* object, const wchar_t* name) {
   return out;
 }
 
+// SEGURIDAD.md 2.4: fixed, not a panel.json key, so nobody can set it to 0.
+constexpr auto kDdcInterval = std::chrono::milliseconds(100);
+
+// What DisplayConfig says about each active monitor, and where GDI put it on the desktop.
+struct Path {
+  Brightness::Screen screen;
+  long technology = 0;
+  HMONITOR monitor = nullptr;
+  LONG left = 0;
+};
+
+// The HMONITOR behind each GDI name, and its left edge for the order of the rows.
+using MonitorsByName = std::map<std::wstring, std::pair<HMONITOR, LONG>>;
+
+BOOL CALLBACK CollectMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM context) {
+  MONITORINFOEXW info{};
+  info.cbSize = sizeof(info);
+  if (GetMonitorInfoW(monitor, &info)) {
+    (*reinterpret_cast<MonitorsByName*>(context))[info.szDevice] = {monitor, info.rcMonitor.left};
+  }
+  return TRUE;
+}
+
+std::vector<Path> ActivePaths() {
+  std::vector<Path> found;
+  UINT32 pathCount = 0;
+  UINT32 modeCount = 0;
+  if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount) != ERROR_SUCCESS) {
+    return found;
+  }
+  std::vector<DISPLAYCONFIG_PATH_INFO> paths(pathCount);
+  std::vector<DISPLAYCONFIG_MODE_INFO> modes(modeCount);
+  if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &pathCount, paths.data(), &modeCount, modes.data(),
+                         nullptr) != ERROR_SUCCESS) {
+    LogError(L"brightness: QueryDisplayConfig failed");
+    return found;
+  }
+  paths.resize(pathCount);
+  for (const DISPLAYCONFIG_PATH_INFO& info : paths) {
+    DISPLAYCONFIG_SOURCE_DEVICE_NAME source{};
+    source.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+    source.header.size = sizeof(source);
+    source.header.adapterId = info.sourceInfo.adapterId;
+    source.header.id = info.sourceInfo.id;
+    DISPLAYCONFIG_TARGET_DEVICE_NAME target{};
+    target.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+    target.header.size = sizeof(target);
+    target.header.adapterId = info.targetInfo.adapterId;
+    target.header.id = info.targetInfo.id;
+    if (DisplayConfigGetDeviceInfo(&source.header) != ERROR_SUCCESS ||
+        DisplayConfigGetDeviceInfo(&target.header) != ERROR_SUCCESS) {
+      continue;
+    }
+    Path path;
+    path.screen.device = source.viewGdiDeviceName;
+    path.screen.id = InstanceFromDevicePath(target.monitorDevicePath);
+    path.screen.name = target.monitorFriendlyDeviceName;
+    path.technology = static_cast<long>(info.targetInfo.outputTechnology);
+    found.push_back(std::move(path));
+  }
+
+  MonitorsByName monitors;
+  EnumDisplayMonitors(nullptr, nullptr, &CollectMonitor, reinterpret_cast<LPARAM>(&monitors));
+  for (Path& path : found) {
+    if (const auto at = monitors.find(path.screen.device); at != monitors.end()) {
+      path.monitor = at->second.first;
+      path.left = at->second.second;
+    }
+  }
+  std::stable_sort(found.begin(), found.end(), [](const Path& a, const Path& b) { return a.left < b.left; });
+  return found;
+}
+
+// A DDC/CI brightness read: the test for "can this monitor be driven" (SEGURIDAD.md 2.4,
+// amended in 4b). A monitor that does not answer fails it in about a millisecond.
+bool ReadDdcLevel(HANDLE handle, DWORD* min, DWORD* max, float* level) {
+  DWORD low = 0;
+  DWORD current = 0;
+  DWORD high = 0;
+  if (!GetMonitorBrightness(handle, &low, &current, &high) || high <= low) return false;
+  *min = low;
+  *max = high;
+  *level = static_cast<float>(std::clamp(current, low, high) - low) / static_cast<float>(high - low);
+  return true;
+}
+
 }  // namespace
 
 HPOWERNOTIFY RegisterBrightnessNotification(HWND window) {
@@ -75,31 +167,158 @@ float BrightnessFromPowerBroadcast(WPARAM wparam, LPARAM lparam) {
 void Brightness::Start(HWND window, Worker& worker) {
   window_ = window;
   worker_ = &worker;
-  worker_->Post({}, [this] { Connect(); });
+  worker_->Post({}, [this] {
+    Connect();
+    Look();
+  });
 }
 
 void Brightness::Stop() {
   if (worker_ == nullptr) return;
   worker_->Post({}, [this] {
+    ReleaseMonitors();
     services_.Reset();
     methodsPath_.clear();
   });
   worker_ = nullptr;
 }
 
-void Brightness::Set(float level) {
+void Brightness::Enumerate() {
   if (worker_ == nullptr) return;
-  worker_->Post("brightness-internal", [this, level] { Write(level); });
+  worker_->Post("brightness-look", [this] { Look(); });
 }
 
-Brightness::Internal Brightness::Current() const {
+void Brightness::Reread() {
+  if (worker_ == nullptr) return;
+  worker_->Post("brightness-reread", [this] { ReadDdc(); });
+}
+
+void Brightness::Set(const std::wstring& id, float level) {
+  if (worker_ == nullptr) return;
+  // One key per screen: dragging one slider never drops a pending write to another.
+  std::string key = "brightness-";
+  for (const wchar_t c : id) key.push_back(static_cast<char>(c));
+  worker_->Post(std::move(key), [this, id, level] { Write(id, level); });
+}
+
+Brightness::Snapshot Brightness::Current() const {
   std::lock_guard lock(mutex_);
   return current_;
 }
 
+void Brightness::Publish(const std::vector<Screen>& screens) {
+  {
+    std::lock_guard lock(mutex_);
+    current_.known = true;
+    current_.screens = screens;
+  }
+  PostMessageW(window_, kBrightnessMessage, 0, 0);
+}
+
+void Brightness::ReleaseMonitors() {
+  for (Ddc& ddc : ddc_) {
+    if (!ddc.open) continue;
+    PHYSICAL_MONITOR monitor{};
+    monitor.hPhysicalMonitor = ddc.handle;
+    DestroyPhysicalMonitors(1, &monitor);
+  }
+  ddc_.clear();
+  screens_.clear();
+}
+
+void Brightness::Look() {
+  ReleaseMonitors();
+  // The laptop's level again: the Fn keys moved it while nobody was looking at WMI.
+  float wmiLevel = -1.0f;
+  if (services_ && !wmiInstance_.empty()) {
+    const ComPtr<IWbemClassObject> panel = First(
+        services_.Get(), L"SELECT CurrentBrightness FROM WmiMonitorBrightness WHERE Active = TRUE");
+    VARIANT value;
+    VariantInit(&value);
+    if (panel && SUCCEEDED(panel->Get(L"CurrentBrightness", 0, &value, nullptr, nullptr)) &&
+        value.vt == VT_UI1) {
+      wmiLevel = static_cast<float>(value.bVal) / 100.0f;
+    }
+    VariantClear(&value);
+  }
+
+  for (Path& path : ActivePaths()) {
+    Screen screen = std::move(path.screen);
+    Ddc ddc;
+    const bool wmi = SameInstance(screen.id, wmiInstance_);
+    screen.internal = wmi || IsInternalOutput(path.technology);
+    if (wmi) {
+      screen.reachable = wmiLevel >= 0.0f;
+      screen.level = std::max(wmiLevel, 0.0f);
+    } else if (!screen.internal && path.monitor != nullptr) {
+      // ponytail: the first physical monitor of each HMONITOR; a cloned pair shares one
+      // HMONITOR and only its first gets a slider. Walk the array if that setup shows up.
+      DWORD count = 0;
+      if (GetNumberOfPhysicalMonitorsFromHMONITOR(path.monitor, &count) && count > 0) {
+        std::vector<PHYSICAL_MONITOR> physical(count);
+        if (GetPhysicalMonitorsFromHMONITOR(path.monitor, count, physical.data())) {
+          if (count > 1) DestroyPhysicalMonitors(count - 1, physical.data() + 1);
+          if (ReadDdcLevel(physical[0].hPhysicalMonitor, &ddc.min, &ddc.max, &screen.level)) {
+            ddc.handle = physical[0].hPhysicalMonitor;
+            ddc.open = true;
+            screen.reachable = true;
+          } else {
+            DestroyPhysicalMonitors(1, physical.data());
+          }
+        }
+      }
+    }
+    LogInfo(L"brightness: {} {} '{}' {}{}", screen.device, screen.id, screen.name,
+            screen.internal ? L"internal" : L"external",
+            screen.reachable ? std::format(L" at {:.0f} %", screen.level * 100.0f) : std::wstring(L", no control"));
+    screens_.push_back(std::move(screen));
+    ddc_.push_back(ddc);
+  }
+  Publish(screens_);
+}
+
+void Brightness::ReadDdc() {
+  bool changed = false;
+  for (size_t i = 0; i < screens_.size(); ++i) {
+    if (!ddc_[i].open) continue;
+    float level = 0.0f;
+    if (ReadDdcLevel(ddc_[i].handle, &ddc_[i].min, &ddc_[i].max, &level) && level != screens_[i].level) {
+      screens_[i].level = level;
+      changed = true;
+    }
+  }
+  if (changed) Publish(screens_);
+}
+
+void Brightness::Write(const std::wstring& id, float level) {
+  const auto at = std::find_if(screens_.begin(), screens_.end(),
+                               [&id](const Screen& screen) { return screen.id == id; });
+  if (at == screens_.end() || !at->reachable) return;
+  level = std::clamp(level, 0.0f, 1.0f);
+  if (SameInstance(id, wmiInstance_)) {
+    WriteWmi(level);
+    return;
+  }
+  Ddc& ddc = ddc_[static_cast<size_t>(at - screens_.begin())];
+  if (!ddc.open) return;
+  // SEGURIDAD.md 2.4: at most once per interval. The worker keeps only the latest pending value
+  // per screen, so waiting here drops the ones in between, and the last one is always written.
+  const auto since = std::chrono::steady_clock::now() - ddc.written;
+  if (since < kDdcInterval) std::this_thread::sleep_for(kDdcInterval - since);
+  const DWORD value = ddc.min + static_cast<DWORD>(std::lround(level * static_cast<float>(ddc.max - ddc.min)));
+  ddc.written = std::chrono::steady_clock::now();
+  if (!SetMonitorBrightness(ddc.handle, value)) {
+    LogError(L"brightness: SetMonitorBrightness({}, {}) failed with error {}", id, value, GetLastError());
+    // The window takes back the last level that did get written.
+    Publish(screens_);
+    return;
+  }
+  at->level = level;
+  std::lock_guard lock(mutex_);
+  current_.screens = screens_;
+}
+
 void Brightness::Connect() {
-  Internal found;
-  found.known = true;
 
   ComPtr<IWbemLocator> locator;
   if (!Failed(CoCreateInstance(CLSID_WbemLocator, nullptr, CLSCTX_INPROC_SERVER,
@@ -119,35 +338,15 @@ void Brightness::Connect() {
     const ComPtr<IWbemClassObject> methods = First(
         services_.Get(), L"SELECT * FROM WmiMonitorBrightnessMethods WHERE Active = TRUE");
     if (panel && methods) {
-      VARIANT value;
-      VariantInit(&value);
-      if (SUCCEEDED(panel->Get(L"CurrentBrightness", 0, &value, nullptr, nullptr)) &&
-          value.vt == VT_UI1) {
-        found.present = true;
-        found.level = static_cast<float>(value.bVal) / 100.0f;
-      }
-      VariantClear(&value);
-      found.instance = Text(panel.Get(), L"InstanceName");
       // "DISPLAY\AUO7EAD\5&f094e1b&0&UID4355_0": the _0 is WMI's own suffix, not the device's.
-      if (found.instance.size() > 2 && found.instance.ends_with(L"_0")) {
-        found.instance.resize(found.instance.size() - 2);
-      }
+      wmiInstance_ = InstanceFromWmi(Text(panel.Get(), L"InstanceName"));
       methodsPath_ = Text(methods.Get(), L"__PATH");
     }
   }
-  if (found.present) {
-    LogInfo(L"brightness: internal panel {} at {:.0f} %", found.instance, found.level * 100.0f);
-  } else {
-    LogInfo(L"brightness: no internal panel WMI can drive");
-  }
-  {
-    std::lock_guard lock(mutex_);
-    current_ = found;
-  }
-  PostMessageW(window_, kBrightnessMessage, 0, 0);
+  if (wmiInstance_.empty()) LogInfo(L"brightness: no internal panel WMI can drive");
 }
 
-void Brightness::Write(float level) {
+void Brightness::WriteWmi(float level) {
   if (!services_ || methodsPath_.empty()) return;
   ComPtr<IWbemClassObject> methodsClass;
   ComPtr<IWbemClassObject> signature;
@@ -168,7 +367,7 @@ void Brightness::Write(float level) {
   VARIANT brightness;
   VariantInit(&brightness);
   brightness.vt = VT_UI1;
-  brightness.bVal = static_cast<BYTE>(std::lround(std::clamp(level, 0.0f, 1.0f) * 100.0f));
+  brightness.bVal = static_cast<BYTE>(std::lround(level * 100.0f));
   in->Put(L"Timeout", 0, &timeout, 0);
   in->Put(L"Brightness", 0, &brightness, 0);
 
@@ -177,11 +376,14 @@ void Brightness::Write(float level) {
   if (Failed(written, L"WmiSetBrightness")) {
     // The window takes back the last level that did get written, so the slider does not stay
     // somewhere the panel is not.
-    PostMessageW(window_, kBrightnessMessage, 0, 0);
+    Publish(screens_);
     return;
   }
+  for (Screen& screen : screens_) {
+    if (SameInstance(screen.id, wmiInstance_)) screen.level = static_cast<float>(brightness.bVal) / 100.0f;
+  }
   std::lock_guard lock(mutex_);
-  current_.level = static_cast<float>(brightness.bVal) / 100.0f;
+  current_.screens = screens_;
 }
 
 }  // namespace panel

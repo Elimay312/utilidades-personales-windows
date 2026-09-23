@@ -388,6 +388,10 @@ void PanelWindow::Show() {
   if (flipped) ApplyDwmAttributes();
   // Which utilities are running: one look per opening, never polled (SEGURIDAD.md 2.7).
   apps_.Refresh();
+  // The card talks about the screen it opens on, and an external monitor's own buttons change
+  // its brightness without telling anyone: one DDC/CI read per opening (SEGURIDAD.md 2.4).
+  MarkHere();
+  brightness_.Reread();
   // Hidden, the panel ignores the audio's notifications; it reads once here instead. A change
   // of device while it was hidden is already flagged, and this read acts on it.
   ReadAudio();
@@ -449,23 +453,54 @@ void PanelWindow::Shutdown() {
 }
 
 void PanelWindow::TakeBrightness() {
-  const Brightness::Internal internal = brightness_.Current();
-  if (!internal.known) return;
-  state_.displays.clear();
-  if (internal.present) {
-    DisplayState display;
-    display.name = std::wstring(T(L"Portátil", L"Laptop"));
-    display.id = internal.instance;
-    display.level = internal.level;
-    display.internal = true;
-    display.reachable = true;
-    // 4a: the only screen with a slider is the laptop's, so it is the one the card talks about.
-    // 4b decides this by the monitor the panel opened on.
-    display.here = true;
-    state_.displays.push_back(std::move(display));
+  const Brightness::Snapshot snapshot = brightness_.Current();
+  if (!snapshot.known) return;
+  // A slider being dragged keeps the pointer's level: a read that was already on its way
+  // would pull it back for a frame.
+  std::wstring dragged;
+  if (dragging_.part == Part::BrightnessSlider || dragging_.part == Part::DisplaySlider) {
+    const size_t index = dragging_.part == Part::DisplaySlider
+                             ? dragging_.index
+                             : static_cast<size_t>(HereDisplay(state_) - state_.displays.data());
+    if (index < state_.displays.size()) dragged = state_.displays[index].id;
   }
+  std::vector<DisplayState> displays;
+  for (const Brightness::Screen& screen : snapshot.screens) {
+    DisplayState display;
+    display.device = screen.device;
+    display.id = screen.id;
+    display.internal = screen.internal;
+    display.reachable = screen.reachable;
+    display.level = screen.level;
+    if (screen.internal) {
+      display.name = std::wstring(T(L"Portátil", L"Laptop"));
+    } else if (!screen.name.empty()) {
+      display.name = screen.name;
+    } else {
+      // No EDID name: "Pantalla 2", after \\.\DISPLAY2, the number Windows' settings show.
+      const size_t digits = screen.device.find_last_not_of(L"0123456789") + 1;
+      display.name = std::wstring(T(L"Pantalla ", L"Display ")) + screen.device.substr(digits);
+    }
+    if (!dragged.empty() && display.id == dragged) {
+      for (const DisplayState& old : state_.displays) {
+        if (old.id == dragged) display.level = old.level;
+      }
+    }
+    displays.push_back(std::move(display));
+  }
+  state_.displays = std::move(displays);
+  MarkHere();
   if (!CanUnfold(state_.displays.size()) && brightnessGoal_) ToggleCard(brightnessGoal_);
   KeepFocusValid();
+}
+
+void PanelWindow::MarkHere() {
+  MONITORINFOEXW info{};
+  info.cbSize = sizeof(info);
+  const bool known = GetMonitorInfoW(TargetMonitor(monitor_), &info) != FALSE;
+  for (DisplayState& display : state_.displays) {
+    display.here = known && display.device == info.szDevice;
+  }
 }
 
 void PanelWindow::TakeRadios() {
@@ -910,12 +945,10 @@ void PanelWindow::SetSliderLevel(Target target, float level) {
                                                   : static_cast<size_t>(here - state_.displays.data()));
       if (index >= state_.displays.size()) return;
       DisplayState& display = state_.displays[index];
-      if (display.level == level) return;
+      if (display.level == level || !display.reachable) return;
       display.level = level;
-      if (display.internal) {
-        brightness_.Set(level);
-        brightnessWritten_ = std::chrono::steady_clock::now();
-      }
+      brightness_.Set(display.id, level);
+      if (display.internal) brightnessWritten_ = std::chrono::steady_clock::now();
       break;
     }
     case Part::VolumeSlider: {
@@ -1253,6 +1286,8 @@ LRESULT PanelWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       break;
 
     case WM_DISPLAYCHANGE:
+      // A monitor plugged in or out: the rows follow (phase 4b), then the panel itself.
+      brightness_.Enumerate();
       FollowMonitor();
       break;
 

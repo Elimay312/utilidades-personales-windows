@@ -6,9 +6,9 @@ Bluetooth, luz nocturna, brillo, volumen y un interruptor para cada utilidad de 
 
 ![El panel](docs/img/panel.png)
 
-> **Estado: fase 8 de 8, la entrega.** Todo lo del panel es de verdad: volumen y salidas,
-> brillo del portátil, Wi-Fi y Bluetooth con sus listas, luz nocturna y utilidades. Falta la
-> fase 4b, los monitores externos, que espera a probarse con las tres pantallas. El plan está en
+> **Estado: terminado, las 8 fases.** Todo lo del panel es de verdad: volumen y salidas, el
+> brillo de cada pantalla, Wi-Fi y Bluetooth con sus listas, luz nocturna y utilidades. El plan
+> está en
 > [`docs/superpowers/plans/2026-09-23-panel-de-control.md`](docs/superpowers/plans/2026-09-23-panel-de-control.md).
 
 | Wi-Fi desplegado | Bluetooth, a mitad del morph | Brillo desplegado | Tema claro |
@@ -51,9 +51,12 @@ el panel abierto y quieto, unos 14 MB y tampoco gasta CPU. Tarda 17–30 ms en a
 - **Configuración.** Todavía no hace nada. Algún día abrirá los ajustes de las otras
   utilidades.
 - **Brillo.** Controla la pantalla donde se abrió el panel. El chevron despliega una barra
-  por pantalla:
+  por pantalla, en el orden en que están en el escritorio:
   - el portátil, por WMI;
-  - los monitores externos, por DDC/CI.
+  - los monitores externos, por DDC/CI. El panel relee su brillo cada vez que se abre, porque
+    los botones del monitor lo cambian sin avisar. Un monitor que no contesta por DDC/CI (muchos
+    portátiles por USB-C) sale con «Sin control de brillo».
+  - Al conectar o desconectar una pantalla, las filas se rehacen solas.
 - **Volumen.** Controla la salida actual, que aparece por su nombre. El chevron despliega las
   salidas para elegir otra.
 - **Utilidades.** Dock, Isla, HUD, QuickLook, Lanzador y Agenda: un punto verde marca las que

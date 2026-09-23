@@ -132,8 +132,8 @@ src/
                  Bluetooth, SSID; el único archivo con C++/WinRT), wifi (las redes de
                  alrededor y conectar a una guardada; el único con WlanAPI), bt_audio
                  (conectar y desconectar audio Bluetooth; el único con IOCTL), nightlight_blob
-                 (el códec Bond, puro), nightlight (el registro) y apps (la fila de
-                 utilidades); llegará display_ids
+                 (el códec Bond, puro), nightlight (el registro), apps (la fila de
+                 utilidades) y display_ids (qué monitor es cuál, puro)
   installer/     Instalar-Panel.exe, el de Agenda sin TerminateProcess ni cmd (SEGURIDAD §2.8)
 tests/           doctest: hotkey, options, layout, controls
 assets/          manifiestos del Panel y del instalador, y .rc
@@ -264,6 +264,27 @@ assets/          manifiestos del Panel y del instalador, y .rc
   `root/WMI`, guarda el valor del principio y lo repone en un `finally`. Las teclas Fn en sí no
   se pueden pulsar desde una sonda. Lo que se prueba es el aviso, con un cambio hecho desde
   fuera por WMI, que llega por el mismo camino.
+
+### Decisiones de la fase 4b
+
+- **Sin `GetMonitorCapabilities`:** en el LG tardó 4,9 s, y bloquearía el hilo de trabajo al
+  arrancar y con cada `WM_DISPLAYCHANGE`. La prueba es leer el brillo (62–67 ms), y se
+  escribe solo a un monitor cuya lectura funcionó (enmienda §2.4).
+- **El handle de un monitor físico puede ser 0,** y es válido. `dxva2` los numera desde 0 en
+  cada proceso. Se usa una marca `open`, nunca «el handle no es nulo».
+- **El intervalo de 100 ms se aplica en el hilo de trabajo:** la escritura espera lo que falte.
+  La cola ya guarda solo el último valor por pantalla (una clave por ID), así que al soltar
+  siempre se escribe el final.
+- **Orden de las filas:** por el borde izquierdo de cada pantalla en el escritorio. En casa
+  sale LG, Portátil y ARZOPA.
+- **Nombre:** «Portátil» para la interna; para las demás, el nombre del EDID
+  (`monitorFriendlyDeviceName`), o «Pantalla N» si no lo tiene.
+- **`DisplayState::device`** (`\\.\DISPLAYn`) es un campo añadido, no un cambio de forma. Con él
+  la ventana sabe en qué pantalla se abre.
+- **Probar:** con `--monitor=3`, la tarjeta habla del LG. Una sonda escribe y lee el brillo por
+  DDC/CI desde fuera, para comprobar el monitor y para simular sus botones. No se probó que la
+  tarjeta cerrada hable del portátil o del ARZOPA al abrir el panel en ellos: habría que abrirlo
+  en las pantallas de trabajo del usuario.
 
 ### Decisiones de la fase 5
 
@@ -462,7 +483,7 @@ assets/          manifiestos del Panel y del instalador, y .rc
   endpoint caducado.
 - [x] **3b. Elegir la salida de audio:** `EnumAudioEndpoints` e `IPolicyConfig`.
 - [x] **4a. Brillo del portátil:** WMI y su evento de cambio.
-- [ ] **4b. Monitores externos:**
+- [x] **4b. Monitores externos:**
   - DDC/CI;
   - emparejar cada monitor con su ID;
   - un deslizador por pantalla;

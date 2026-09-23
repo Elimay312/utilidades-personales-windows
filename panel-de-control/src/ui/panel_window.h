@@ -94,6 +94,8 @@ class PanelWindow {
   void UpdateHot();
   void ReadAudio();
   void TakeBrightness();
+  // Marks the display the panel opens on: the card talks about that one.
+  void MarkHere();
   void TakeRadios();
   void TakeWifi();
   void TakeNight();

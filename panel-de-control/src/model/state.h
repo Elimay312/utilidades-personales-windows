@@ -60,6 +60,7 @@ struct DisplayState {
   bool internal = false;   // WMI when true, DDC/CI when false
   bool reachable = true;   // false: no brightness control on this one
   bool here = false;       // the monitor the panel opened on
+  std::wstring device;     // \\.\DISPLAYn, to tell which one that is (phase 4b)
 };
 
 struct AudioOutput {

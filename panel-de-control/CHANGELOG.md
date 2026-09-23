@@ -6,6 +6,38 @@ Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/), versiones S
 
 ### Añadido
 
+- **Fase 4b: el brillo de cada pantalla**, probado con las tres del escritorio del usuario: el
+  portátil (DISPLAY1, WMI), un ARZOPA por USB-C (DISPLAY2, sin DDC/CI) y un LG ULTRAWIDE por
+  HDMI (DISPLAY3, DDC/CI).
+  - **Una fila por pantalla,** de izquierda a derecha como están en el escritorio, con el nombre
+    que da su EDID. La tarjeta cerrada habla de la pantalla donde se abre el panel.
+  - **Qué monitor es cuál:** `QueryDisplayConfig` da la ruta de cada uno, y `display_ids.h`, puro y
+    con tests, la convierte en el ID de instancia que usa WMI. Es el método de Monitorian.
+  - **DDC/CI** (`dxva2`), en el hilo de trabajo:
+    - se lee el brillo al arrancar, con cada `WM_DISPLAYCHANGE` y en cada apertura;
+    - al arrastrar, como mucho una escritura cada 100 ms, siempre el último valor.
+  - **Enmienda §2.4 de `SEGURIDAD.md`,** en su propio commit antes que el código:
+    - la prueba de si un monitor tiene DDC/CI es leer su brillo, y no pedir sus capacidades.
+      `GetMonitorCapabilities` tardó 4,9 s en el LG, y leer el brillo, 62–67 ms;
+    - el intervalo queda fijo en 100 ms;
+    - `dxva2` solo se usa en `brightness.cpp`.
+
+    La auditoría lo comprueba, y se probó con código que la incumple.
+  - **Un fallo encontrado en la prueba:** `dxva2` numera los handles de los monitores físicos
+    desde 0 en cada proceso. El LG, el primero que se pedía, recibía el 0, y el código lo tomaba
+    por «sin monitor». Todas las escrituras se perdían sin dar ningún error. Ahora una marca propia
+    dice si el handle está abierto.
+  - **Medido en el LG:**
+    - un arrastre de 15 pasos en medio segundo hizo 6 escrituras, separadas 108–109 ms, y la
+      última fue el valor final (46 %);
+    - un cambio hecho desde fuera (80 %) salió en el panel al abrirlo;
+    - `Fin` lo devolvió al 100 %;
+    - `WM_DISPLAYCHANGE` volvió a enumerar las tres pantallas.
+  - **Probado también el portátil,** con el código nuevo: bajó a 98 % y volvió al 100 %.
+  - **El brillo quedó como estaba:** el LG y el portátil, al 100 %.
+  - **Sin cambios en el dibujo:** la interfaz ya pintaba una fila por pantalla desde la fase 1,
+    y las capturas salen iguales byte a byte.
+
 - **Fase 8: la entrega.**
   - **`Instalar-Panel.exe`,** el instalador de Agenda adaptado. Es un solo archivo con Panel.exe
     dentro, instala por usuario en `%LOCALAPPDATA%\Programs\Panel` y se deja a sí mismo como

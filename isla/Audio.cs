@@ -8,7 +8,7 @@ using Windows.Win32.UI.Shell.PropertiesSystem;
 namespace Isla;
 
 /// <summary>Una fila del mezclador: de quien es, como se llama su exe, a que nivel esta.</summary>
-internal sealed record AppAudio(uint Pid, string Nombre, float Nivel, bool Activa);
+internal sealed record AppAudio(uint Pid, string Nombre, float Nivel, bool Activa, string Ruta = "");
 
 /// <summary>
 /// Lo que la isla saca de la SALIDA de audio (SEGURIDAD.md §3.3): dos numeros y un
@@ -235,13 +235,15 @@ internal static unsafe class Audio
                 if (estado == AudioSessionState.AudioSessionStateExpired) continue;
                 if (apps.Exists(a => a.Pid == pid)) continue;
 
-                string? nombre = control.IsSystemSoundsSession().Value == 0 ? "Sistema" : IslaWindow.NombreExe(pid);
+                bool sistema = control.IsSystemSoundsSession().Value == 0;
+                string? ruta = sistema ? null : IslaWindow.RutaExe(pid);
+                string? nombre = sistema ? "Sistema" : ruta is null ? null : Path.GetFileNameWithoutExtension(ruta);
                 if (nombre is null) continue;
                 // brave.exe es Brave: la mayuscula y nada mas, que el nombre es el del exe.
                 nombre = char.ToUpperInvariant(nombre[0]) + nombre[1..];
 
                 ((ISimpleAudioVolume)control).GetMasterVolume(out float nivel);
-                apps.Add(new AppAudio(pid, nombre, nivel, estado == AudioSessionState.AudioSessionStateActive));
+                apps.Add(new AppAudio(pid, nombre, nivel, estado == AudioSessionState.AudioSessionStateActive, ruta ?? ""));
             }
         }
         catch

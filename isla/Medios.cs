@@ -1,6 +1,8 @@
 using Windows.Foundation;
 using Windows.Graphics.Imaging;
 using Windows.Media.Control;
+using Windows.Storage;
+using Windows.Storage.FileProperties;
 using Windows.Storage.Streams;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -281,7 +283,7 @@ internal static class Medios
     /// La caratula que trae la propia sesion, decodificada a BGRA premultiplicado.
     /// SEGURIDAD.md regla 7: no se busca ninguna en internet ni en disco.
     /// </summary>
-    private static async Task<byte[]?> Arte(IRandomAccessStreamReference? referencia)
+    private static async Task<byte[]?> Arte(IRandomAccessStreamReference? referencia, int lado = ArteLado)
     {
         if (referencia is null) return null;
 
@@ -298,9 +300,9 @@ internal static class Medios
             uint alto = decodificador.PixelHeight;
             if (ancho == 0 || alto == 0) return null;
 
-            double factor = ArteLado / (double)Math.Min(ancho, alto);
-            uint sw = (uint)Math.Max(ArteLado, Math.Round(ancho * factor));
-            uint sh = (uint)Math.Max(ArteLado, Math.Round(alto * factor));
+            double factor = lado / (double)Math.Min(ancho, alto);
+            uint sw = (uint)Math.Max(lado, Math.Round(ancho * factor));
+            uint sh = (uint)Math.Max(lado, Math.Round(alto * factor));
 
             BitmapTransform escala = new()
             {
@@ -310,10 +312,10 @@ internal static class Medios
                 // Bounds se aplica DESPUES de escalar, asi que esto es el recorte.
                 Bounds = new BitmapBounds
                 {
-                    X = (sw - ArteLado) / 2,
-                    Y = (sh - ArteLado) / 2,
-                    Width = ArteLado,
-                    Height = ArteLado,
+                    X = (sw - (uint)lado) / 2,
+                    Y = (sh - (uint)lado) / 2,
+                    Width = (uint)lado,
+                    Height = (uint)lado,
                 },
             };
 
@@ -394,6 +396,39 @@ internal static class Medios
             => (byte)Math.Clamp(gris + (canal - gris) * 2.6f, 0f, 255f);
 
         return ((uint)Realza(mr, gris) << 16) | ((uint)Realza(mg, gris) << 8) | Realza(mb, gris);
+    }
+
+    /// <summary>Lado al que se decodifica el icono de una app del mezclador: 20 logicos al 200 %.</summary>
+    public const int IconoLado = 48;
+
+    /// <summary>
+    /// El icono de un exe, el que Windows ensena en el Explorador, en BGRA de IconoLado. Para el
+    /// mezclador (SEGURIDAD.md s.3.3): no se abre el exe a mano ni se leen sus recursos. Null si
+    /// Windows no lo da, que es lo normal con las apps de la Store.
+    /// </summary>
+    /// <summary>Lo pide en el pool y, si llega, lo deja en <paramref name="destino"/> y avisa a la ventana.</summary>
+    public static void PedirIcono(string rutaExe, IDictionary<string, byte[]?> destino, HWND ventana, uint mensaje)
+        => _ = Task.Run(async () =>
+        {
+            byte[]? icono = await Icono(rutaExe);
+            if (icono is null) return;
+            destino[rutaExe] = icono;
+            PInvoke.PostMessage(ventana, mensaje, default, default);
+        });
+
+    private static async Task<byte[]?> Icono(string rutaExe)
+    {
+        try
+        {
+            StorageFile exe = await StorageFile.GetFileFromPathAsync(rutaExe);
+            using StorageItemThumbnail icono = await exe.GetThumbnailAsync(ThumbnailMode.SingleItem, IconoLado);
+            if (icono is null) return null;
+            return await Arte(RandomAccessStreamReference.CreateFromStream(icono), IconoLado);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>

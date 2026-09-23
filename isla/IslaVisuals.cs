@@ -151,7 +151,9 @@ internal sealed unsafe class IslaVisuals : IDisposable
 
     // El mezclador. Las filas empiezan en FilaY0 y miden FilaAlto (IslaWindow.Medidas).
     private const float MezclaCabeceraY = 14f;
-    private const float NombreAncho = 104f;
+    private const float IconoLado = 20f;
+    private const float NombreX = Margen + IconoLado + 8f;
+    private const float NombreAncho = 80f;
     private const float CarrilX = 130f;
     private const float CarrilAncho = 186f;
     private const float PctDerecha = 364f;
@@ -202,6 +204,9 @@ internal sealed unsafe class IslaVisuals : IDisposable
     private SpriteVisual _mezclaCabecera;
     private readonly ContainerVisual[] _filas = new ContainerVisual[IslaWindow.MaxFilas];
     private readonly SpriteVisual[] _filaNombre = new SpriteVisual[IslaWindow.MaxFilas];
+    private readonly SpriteVisual[] _filaIcono = new SpriteVisual[IslaWindow.MaxFilas];
+    // La ruta cuyo icono lleva cada fila, para no rehacer la superficie en cada refresco.
+    private readonly string?[] _filaIconoDe = new string?[IslaWindow.MaxFilas];
     private readonly SpriteVisual[] _filaRelleno = new SpriteVisual[IslaWindow.MaxFilas];
     private readonly SpriteVisual[] _filaPct = new SpriteVisual[IslaWindow.MaxFilas];
     // Lo ultimo pintado en cada fila: los textos solo se rehacen si cambian.
@@ -1237,6 +1242,17 @@ internal sealed unsafe class IslaVisuals : IDisposable
             _filas[i] = fila;
 
             _filaNombre[i] = Hueco(Vector2.Zero, fila);
+
+            // El icono de la app, redondeado como la miniatura. Sin icono, el cuadrado gris.
+            _filaIcono[i] = _compositor.CreateSpriteVisual();
+            _filaIcono[i].Size = new Vector2(S(IconoLado), S(IconoLado));
+            _filaIcono[i].Offset = new Vector3(S(Margen), S((IslaWindow.FilaAlto - IconoLado) * 0.5f), 0);
+            CompositionRoundedRectangleGeometry marcoIcono = _compositor.CreateRoundedRectangleGeometry();
+            marcoIcono.Size = _filaIcono[i].Size;
+            marcoIcono.CornerRadius = new Vector2(S(5f), S(5f));
+            _filaIcono[i].Clip = _compositor.CreateGeometricClip(marcoIcono);
+            _filaIcono[i].Brush = _grisCaratula;
+            fila.Children.InsertAtTop(_filaIcono[i]);
             _filaPct[i] = Hueco(Vector2.Zero, fila);
 
             // El carril, como la barra de progreso: surco y un relleno que escala en X.
@@ -1266,7 +1282,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
     /// Pinta las filas. El nivel se mueve siempre; los textos solo si cambiaron, que esto
     /// se llama cada segundo con el mezclador abierto y en cada paso de un arrastre.
     /// </summary>
-    public void Mezcla(IReadOnlyList<AppAudio> apps)
+    public void Mezcla(IReadOnlyList<AppAudio> apps, IReadOnlyDictionary<string, byte[]?> iconos)
     {
         float centro = S(IslaWindow.FilaAlto * 0.5f);
         for (int i = 0; i < IslaWindow.MaxFilas; i++)
@@ -1276,6 +1292,20 @@ internal sealed unsafe class IslaVisuals : IDisposable
             if (!hay) { _filaPintada[i] = string.Empty; continue; }
 
             AppAudio a = apps[i];
+
+            // El icono, si ya llego y es otro que el que habia.
+            byte[]? icono = a.Ruta.Length > 0 && iconos.TryGetValue(a.Ruta, out byte[]? b) ? b : null;
+            string? de = icono is null ? null : a.Ruta;
+            if (de != _filaIconoDe[i])
+            {
+                _filaIconoDe[i] = de;
+                CompositionBrush? viejo = _filaIcono[i].Brush;
+                _filaIcono[i].Brush = icono is null
+                    ? _grisCaratula
+                    : PincelBgra(icono, Medios.IconoLado, Medios.IconoLado, S(IconoLado), S(IconoLado));
+                Soltar(viejo);
+            }
+
             int pct = (int)Math.Round(a.Nivel * 100);
             _filaRelleno[i].Scale = new Vector3(Math.Clamp(a.Nivel, 0f, 1f), 1f, 1f);
 
@@ -1284,7 +1314,7 @@ internal sealed unsafe class IslaVisuals : IDisposable
             _filaPintada[i] = firma;
 
             Rotular(_filaNombre[i], Cabe(a.Nombre, S(NombreAncho), S(PomPx), grueso: false), PomPx, false, a.Activa ? 0.92f : 0.5f);
-            _filaNombre[i].Offset = new Vector3(S(Margen), centro - _filaNombre[i].Size.Y * 0.5f, 0);
+            _filaNombre[i].Offset = new Vector3(S(NombreX), centro - _filaNombre[i].Size.Y * 0.5f, 0);
             Rotular(_filaPct[i], $"{pct} %", TiempoPx, false, 0.62f);
             _filaPct[i].Offset = new Vector3(S(PctDerecha) - _filaPct[i].Size.X, centro - _filaPct[i].Size.Y * 0.5f, 0);
         }

@@ -38,7 +38,9 @@ internal sealed unsafe class IslaWindow : IDisposable
     // ella y todo el morph vive en el compositor. Redimensionar la ventana a 60 fps
     // desde el hilo de UI es justo lo que se quiere evitar.
     private const int LogicalWindowWidth = 520;
-    private const int LogicalWindowHeight = 260;
+    // 470 y no 260: el mezclador crece hasta 10 filas. Lo que no se dibuja lo recorta la
+    // region, asi que una ventana mas alta no le quita ni un clic a nadie.
+    private const int LogicalWindowHeight = 470;
 
     // Zona caliente cuando la isla esta recogida. Deliberadamente baja: el borde
     // superior de Windows esta vivo (pestanas del navegador) y no queremos invitarnos.
@@ -148,6 +150,8 @@ internal sealed unsafe class IslaWindow : IDisposable
 
     /// <summary>El buzon cambio: llego un aviso de otra app, o se fue uno (SEGURIDAD.md s.3.7).</summary>
     private const uint WM_APP_AVISO = 0x8006;
+    // WM_APP + 7. Ha llegado el icono de una app del mezclador, pedido en el pool.
+    private const uint WM_APP_ICONO = 0x8007;
 
     /// <summary>
     /// Lo que se queda asomado un aviso de otra app antes de recogerse en su burbuja. Mas que
@@ -516,6 +520,10 @@ internal sealed unsafe class IslaWindow : IDisposable
 
             case WM_APP_DISPOSITIVO:
                 isla?.OnDispositivo();
+                return new LRESULT(0);
+
+            case WM_APP_ICONO:
+                isla?.OnIcono();
                 return new LRESULT(0);
 
             case WM_APP_AVISO:
@@ -1482,6 +1490,10 @@ internal sealed unsafe class IslaWindow : IDisposable
     /// usan la pantalla completa (s.3.5) y el mezclador (s.3.3): solo el nombre, nunca la ruta.
     /// </summary>
     internal static string? NombreExe(uint pid)
+        => RutaExe(pid) is string ruta ? Path.GetFileNameWithoutExtension(ruta) : null;
+
+    /// <summary>La ruta del exe, solo para pedir su icono en el mezclador. Nunca se pinta.</summary>
+    internal static string? RutaExe(uint pid)
     {
         try
         {
@@ -1496,8 +1508,7 @@ internal sealed unsafe class IslaWindow : IDisposable
                 || largo == 0)
                 return null;
 
-            ReadOnlySpan<char> ruta = buffer[..(int)largo];
-            return Path.GetFileNameWithoutExtension(ruta).ToString();
+            return new string(buffer[..(int)largo]);
         }
         catch
         {
@@ -1544,7 +1555,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         // El mezclador es la abierta con la onda pulsada; si la isla se recoge, se olvida y su
         // lista se suelta (SEGURIDAD.md s.3.3: solo existe con el mezclador abierto).
         if (efectivo == Estado.Abierta && _apps is not null) efectivo = Estado.Mezclador;
-        else if (efectivo != Estado.Abierta) _apps = null;
+        else if (efectivo != Estado.Abierta) { _apps = null; _iconos.Clear(); }
         if (efectivo == _actual) return;
 
         bool abriendo = efectivo > _actual;
@@ -1707,11 +1718,32 @@ internal sealed unsafe class IslaWindow : IDisposable
     // La fila cuyo carril se esta arrastrando, o -1.
     private int _filaArrastre = -1;
 
+    // Los iconos del mezclador, por ruta del exe. Null es pedido y aun no llegado (o que Windows
+    // no lo da). Se vacia con la lista, al cerrar.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]?> _iconos = new();
+
+    /// <summary>Pide al pool los iconos que falten; cada uno avisa al llegar.</summary>
+    private void PedirIconos()
+    {
+        if (_apps is null) return;
+        foreach (AppAudio a in _apps)
+        {
+            if (a.Ruta.Length == 0 || !_iconos.TryAdd(a.Ruta, null)) continue;
+            Medios.PedirIcono(a.Ruta, _iconos, _hwnd, WM_APP_ICONO);
+        }
+    }
+
+    private void OnIcono()
+    {
+        if (_apps is not null) _visuals.Mezcla(_apps, _iconos);
+    }
+
     private void AbrirMezclador()
     {
         _apps = [.. Audio.Apps()];
         FilasMezclador = Math.Clamp(_apps.Count, 1, MaxFilas);
-        _visuals.Mezcla(_apps);
+        _visuals.Mezcla(_apps, _iconos);
+        PedirIconos();
         Console.WriteLine($"[isla] mezclador: {_apps.Count} apps");
         Aplicar();
     }
@@ -1719,6 +1751,7 @@ internal sealed unsafe class IslaWindow : IDisposable
     private void CerrarMezclador()
     {
         _apps = null;
+        _iconos.Clear();
         _filaArrastre = -1;
         Aplicar();
     }
@@ -1728,7 +1761,8 @@ internal sealed unsafe class IslaWindow : IDisposable
     {
         if (_apps is null || _filaArrastre >= 0) return;
         _apps = [.. Audio.Apps()];
-        _visuals.Mezcla(_apps);
+        _visuals.Mezcla(_apps, _iconos);
+        PedirIconos();
 
         int filas = Math.Clamp(_apps.Count, 1, MaxFilas);
         if (filas == FilasMezclador) return;
@@ -1747,7 +1781,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         nivel = Math.Clamp(nivel, 0f, 1f);
         Audio.AjustarApp(_apps[fila].Pid, nivel);
         _apps[fila] = _apps[fila] with { Nivel = nivel };
-        _visuals.Mezcla(_apps);
+        _visuals.Mezcla(_apps, _iconos);
     }
 
     private void OnArrastrar(LPARAM lParam)
@@ -1867,10 +1901,10 @@ internal sealed unsafe class IslaWindow : IDisposable
         _ => (380f, 180f, 28f, 10f),
     };
 
-    // El mezclador crece con las apps que hay. Cinco filas son 260 de alto: lo que cabe en la
-    // ventana despegada 10. ponytail: con mas de cinco apps sobran las ultimas; el techo es
-    // un scroll.
-    public const int MaxFilas = 5;
+    // El mezclador crece con las apps que hay. Diez filas son 440 de alto, que caben en la
+    // ventana de 470 despegada 10. ponytail: con mas de diez sobran las ultimas, que son las que
+    // no suenan; el techo es un scroll.
+    public const int MaxFilas = 10;
     public const float FilaY0 = 52f;
     public const float FilaAlto = 38f;
     public static int FilasMezclador = 1;

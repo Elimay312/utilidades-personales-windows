@@ -21,6 +21,9 @@ Todo lo que hay. Falta probarlo en otros equipos y con otras aplicaciones de mú
   lo que dice Windows: clic al 50 % → 0,50; una muesca de rueda → 0,52. Es la enmienda más
   grande de `SEGURIDAD.md` (§3.3): la lista solo existe con el mezclador abierto, del proceso
   solo se lee el nombre del exe, y solo se escribe detrás de un gesto.
+- **El mezclador se expande hasta diez filas y lleva el icono de cada app**, el mismo que da
+  el Explorador (también el de Spotify de la Store). Probado con once sesiones: diez filas
+  enteras y la undécima fuera.
 - **`Spotify`, no `SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify`.** El nombre sale de lo que
   va tras el `!` del AUMID, sin buscar nada.
 

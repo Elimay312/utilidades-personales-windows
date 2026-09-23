@@ -394,9 +394,9 @@ lee `GetCursorPos` entre muestras antes de culpar al código.
 - **La sombra solo existe con el panel abierto.** Su máscara es la pastilla de 380×180
   hecha a mano; un nine-grid que sirviera para cualquier tamaño no pinta nada como máscara
   de `DropShadow`. Brasa y asomada no llevan sombra.
-- **El mezclador enseña cinco apps como mucho.** Es lo que cabe en la ventana; con más, las
-  que no suenan se quedan fuera. El techo es un scroll. Los nombres son los del ejecutable
-  (`Brave`, `Wallpaper64`), sin icono: leer iconos de procesos ajenos es otra puerta.
+- **El mezclador enseña diez apps como mucho.** La ventana creció a 470 de alto para que quepan
+  (la región recorta lo que no se dibuja, así que no quita clics); con más, las que no suenan
+  se quedan fuera. El techo es un scroll. Nombre del exe e icono, el que da el Explorador.
 - **La carátula de la canción anterior.** Si el navegador cambia el título antes que la
   miniatura, la primera lectura puede traer la carátula vieja, y como ya hay una se da por
   buena. El reintento solo cubre el caso de que no llegue ninguna.

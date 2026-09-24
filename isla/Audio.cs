@@ -208,8 +208,9 @@ internal static unsafe class Audio
     }
 
     /// <summary>
-    /// La rueda sobre el panel abierto: <paramref name="pasos"/> del 2 % arriba o abajo,
-    /// acotado a [0, 1]. Se lee, se suma y se escribe; no hay nivel guardado que reponer.
+    /// La rueda sobre el panel abierto: <paramref name="pasos"/> del 1 % arriba o abajo,
+    /// redondeado al 1 % y acotado a [0, 1]. Se lee, se suma y se escribe; no hay nivel
+    /// guardado que reponer, asi que lo que cambien las teclas se respeta.
     /// En el hilo de UI, como Volumen(): el endpoint se abrio aqui y es una llamada corta.
     /// </summary>
     public static void Ajustar(int pasos)
@@ -218,7 +219,7 @@ internal static unsafe class Audio
         {
             IAudioEndpointVolume v = AbrirVolumen();
             v.GetMasterVolumeLevelScalar(out float nivel);
-            v.SetMasterVolumeLevelScalar(Math.Clamp(nivel + pasos * 0.02f, 0f, 1f), null);
+            v.SetMasterVolumeLevelScalar(Math.Clamp(MathF.Round((nivel + pasos * 0.01f) * 100f) / 100f, 0f, 1f), null);
         }
         catch
         {

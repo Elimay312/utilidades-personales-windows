@@ -1693,12 +1693,13 @@ internal sealed unsafe class IslaWindow : IDisposable
     }
 
     /// <summary>
-    /// La rueda, SOLO con el panel abierto (SEGURIDAD.md s.3.3). Cada muesca es un 2 %.
+    /// La rueda, SOLO con el panel abierto (SEGURIDAD.md s.3.3). Cada muesca es un 2 %; el
+    /// touchpad va en pasos de 1 % proporcionales a su delta (ver Rueda).
     /// Sin tocar nada mas: el numero lo ensena OnVolumen, que avisa COM.
     /// </summary>
     private void OnRueda(short delta, LPARAM lParam)
     {
-        int pasos = delta / 120;
+        int pasos = _rueda.Pasos(delta);
         if (pasos == 0) return;
 
         // En el mezclador, sobre una fila, la rueda es de esa app. La rueda llega con el punto
@@ -1707,7 +1708,7 @@ internal sealed unsafe class IslaWindow : IDisposable
         {
             Vector2 enPantalla = Punto(lParam);
             (int fila, _) = _visuals.GolpeFila(_visuals.EnPanel(new Vector2(enPantalla.X - _x, enPantalla.Y - _y), _w));
-            if (fila >= 0 && fila < _apps.Count) { PonerNivel(fila, _apps[fila].Nivel + pasos * 0.02f); return; }
+            if (fila >= 0 && fila < _apps.Count) { PonerNivel(fila, _apps[fila].Nivel + pasos * 0.01f); return; }
         }
 
         if (_actual < Estado.Abierta) return;
@@ -1719,6 +1720,8 @@ internal sealed unsafe class IslaWindow : IDisposable
     // La lista de apps con audio. Existe SOLO con el mezclador abierto: nula es cerrado, y
     // Aplicar la suelta en cuanto la isla deja de estar abierta.
     private List<AppAudio>? _apps;
+    // Los deltas de la rueda y del touchpad, pasados a puntos de %. Solo guarda el decimal.
+    private readonly Rueda _rueda = new();
     // La fila cuyo carril se esta arrastrando, o -1.
     private int _filaArrastre = -1;
 

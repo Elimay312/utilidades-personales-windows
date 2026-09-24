@@ -64,6 +64,10 @@ Lo que hay ahora en `main`. Se está probando en varios equipos antes de darlo p
 
 ### Arreglado
 
+- **Cambiar de pantallas ya no puede dejar el dock a 0 ppp y tumbarlo.** Con el monitor
+  ya desaparecido, `GetDpiForMonitor` falla sin escribir y el DPI quedaba en 0; la curva
+  pasaba a radio 0 y la expresión a `Infinity`. Dos caídas en el visor (22 y 24 sep).
+  Ahora se conserva el último DPI bueno.
 - **Un clic derecho a la derecha del último icono ya no cierra el dock.** Componía el
   texto «Quitar …» con el índice -1 aunque no hubiera icono debajo, y el dock moría con
   `ArgumentOutOfRange`. Reproducido con mensajes: de caerse a seguir vivo.

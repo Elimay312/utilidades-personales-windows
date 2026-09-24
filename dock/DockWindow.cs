@@ -580,8 +580,13 @@ internal sealed unsafe class DockWindow : IDisposable
         MONITORINFO info = new() { cbSize = (uint)sizeof(MONITORINFO) };
         PInvoke.GetMonitorInfo(_monitor, &info);
 
-        PInvoke.GetDpiForMonitor(_monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out uint dpiX, out _);
-        _dpi = dpiX;
+        // Si el monitor ya no existe —un WM_DPICHANGED mientras se enchufa o desenchufa
+        // una pantalla— la llamada falla con 0x80070006 y no escribe nada: dpiX se
+        // queda en 0, el radio de la curva en 0 y 1/radio en Infinity, que Composition
+        // rechaza como identificador y el dock caía. Se sigue con el último bueno hasta
+        // que la reconstrucción de pantallas ponga el monitor nuevo.
+        if (PInvoke.GetDpiForMonitor(_monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out uint dpiX, out _).Succeeded)
+            _dpi = dpiX;
 
         // La ventana ocupa TODO el ancho del monitor, no solo el del dock.
         //

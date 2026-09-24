@@ -109,14 +109,13 @@ TEST_CASE("Cada vista deja entrar a los suyos") {
     CHECK_FALSE(App::InLens(focus, App::Lens::NeedsDecision));
 }
 
-TEST_CASE("Un repositorio que ya no está en la cuenta solo sale en Todos") {
+TEST_CASE("Un repositorio que ya no está en la cuenta no sale en ninguna vista") {
     Model::Repo repo = MakeRepo("R9", L"fantasma", "2026-09-20T10:00:00Z");
     repo.goneAt = kNow;
     const App::Entry gone = MakeEntry(std::move(repo), Model::Priority::Focus);
 
-    CHECK(App::InLens(gone, App::Lens::All));
-    // Ni en su grupo de prioridad ni en las vistas que existen para decidir: no se puede
-    // decidir sobre algo que ya no está, y esconderlo del todo perdería sus notas de vista.
+    // Borrado en GitHub es fuera del seguimiento, "Todos" incluida.
+    CHECK_FALSE(App::InLens(gone, App::Lens::All));
     CHECK_FALSE(App::InLens(gone, App::Lens::Focus));
     CHECK_FALSE(App::InLens(gone, App::Lens::ThisWeek));
     CHECK_FALSE(App::InLens(gone, App::Lens::NeedsDecision));

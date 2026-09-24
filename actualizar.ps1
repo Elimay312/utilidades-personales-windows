@@ -135,15 +135,12 @@ $proyectos = @(
            if ($antes -or $nuevo) { Start-Process "$la\Programs\Panel\Panel.exe" } } }
     @{ Nombre = 'proyectos-github'; Exe = "$la\Programs\Brujula\brujula.exe"
        Instalar = { param($nuevo)
+           Msvc
            Ejecutar "$repo\proyectos-github\empaquetar.ps1"
-           # ponytail: su instalador no tiene modo silencioso y pregunta; darle un --silent
-           # como el de Agenda si molesta al iniciar sesion.
-           Start-Process "$repo\proyectos-github\build\Instalador-Brujula.exe" -Wait
-           $hecho = "$la\Programs\Brujula\brujula.exe"
-           if (-not (Test-Path $hecho) -or
-               (Get-FileHash $hecho).Hash -ne (Get-FileHash "$repo\proyectos-github\build\brujula.exe").Hash) {
-               throw 'El instalador de Brujula se cancelo.'
-           } } }
+           $antes = Vivo "$la\Programs\Brujula\brujula.exe"
+           $p = Start-Process "$repo\proyectos-github\build\Instalador-Brujula.exe" '--silent' -Wait -PassThru
+           if ($p.ExitCode -ne 0) { throw "Instalador-Brujula salio con codigo $($p.ExitCode)." }
+           if ($antes -or $nuevo) { Start-Process "$la\Programs\Brujula\brujula.exe" } } }
     @{ Nombre = 'rayo-file-manager'; Exe = "$la\Programs\Rayo\rayo.exe"
        Instalar = { param($nuevo)
            Msvc

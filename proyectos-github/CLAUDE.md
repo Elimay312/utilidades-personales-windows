@@ -237,6 +237,26 @@ Al terminar una fase: marcarla aquí, anotar decisiones abajo y hacer commit.
 
 ## Decisiones y notas
 
+### Arreglos del 24 de septiembre de 2026
+
+**Maximizada, la ✕ no cerraba si se pulsaba en la esquina de la pantalla.** El hit-test
+contestaba `HTCLOSE`, pero los tres botones se los dejábamos a `DefWindowProc`, y al soltar
+vuelve a mirar con su idea de dónde está la ✕ del sistema, que no es la nuestra en los
+bordes. Ahora `Shell::Window` se come el `WM_NCLBUTTONDOWN` de los botones y manda el
+`SC_…` al soltar sobre el mismo botón. Comprobado con clics reales: la esquina, el centro,
+maximizar/restaurar y minimizar.
+
+**El acceso directo se llamaba «BrÃºjula».** `fs::path(...) / "Brújula.lnk"` era una cadena
+estrecha: con `/utf-8` son bytes UTF-8 y `fs::path` los lee con la página de códigos ANSI.
+Con `L"..."` sale bien. La ú no era el problema; cualquier cadena estrecha con acentos que
+acabe en una ruta lo es.
+
+**Modo silencioso (`--silent`) en el instalador y dependencia de compilación.** `Instalador-Brujula.exe`
+admite `--silent` para instalar o actualizar sin cuadros de diálogo (cerrando la instancia en
+ejecución si la hay), alineándose con Agenda y Panel para `actualizar.ps1`. En `CMakeLists.txt`,
+`installer.rc` gana `OBJECT_DEPENDS` sobre `brujula.exe` para que el instalador se reenlace
+automáticamente siempre que cambie el ejecutable principal incrustado.
+
 ### Después de la fase 8 — 22 de septiembre de 2026
 
 Usando la revisión semanal con la aplicación delante, y las tres cosas que salieron de ahí
@@ -883,10 +903,10 @@ primer arranque, cuando los 109 están sin clasificar y cualquier otra saldría 
 —tecla y estado de mayúsculas— para la distribución activa. Escrita a mano, la tecla
 habría funcionado en la máquina de quien la escribió y en ninguna otra.
 
-**Un repositorio con `gone_at` solo aparece en «Todos», y marcado.** No se esconde del
-todo porque sus notas siguen existiendo y hay que poder llegar a ellas; no sale en las
-demás porque una lista que existe para decidir no puede tener dentro cosas sobre las que
-ya no se puede decidir.
+**Un repositorio con `gone_at` no aparece en ninguna vista, «Todos» incluida.** Al
+principio salía en «Todos», marcado; el 24 de septiembre se borraron 74 repositorios de la
+cuenta y seguían ahí, que no es lo que significa borrarlos. La fila y sus notas se quedan
+en SQLite —la sincronización no borra— y si el repositorio vuelve, vuelve con ellas.
 
 **«Sin clasificar» no lleva píldora.** No es una prioridad, es la falta de una. Ponerle
 etiqueta significa escribir «Sin clasificar» ciento nueve veces en la primera pantalla que

@@ -164,11 +164,10 @@ bool Matches(const Entry& entry, const std::vector<std::wstring>& terms) {
 }
 
 bool InLens(const Entry& entry, Lens lens) {
-    // Un repositorio que dejó de aparecer en la cuenta solo se ve en "Todos", y ahí sale
-    // marcado. No se esconde del todo porque sus notas siguen existiendo y hay que poder
-    // llegar a ellas; no sale en las demás porque una lista de decisiones no puede tener
-    // dentro cosas sobre las que ya no se puede decidir.
-    if (entry.repo.goneAt.has_value()) return lens == Lens::All;
+    // Un repositorio que dejó de aparecer en la cuenta no sale en ninguna vista, "Todos"
+    // incluida: borrarlo en GitHub es sacarlo del seguimiento. La fila y sus notas se quedan
+    // en SQLite —la sincronización no borra— y si vuelve a aparecer, vuelve con ellas.
+    if (entry.repo.goneAt.has_value()) return false;
 
     switch (lens) {
     case Lens::Focus:         return entry.local.priority == Model::Priority::Focus;

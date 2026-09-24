@@ -286,6 +286,7 @@ set_target_properties(brujula_installer PROPERTIES
   OUTPUT_NAME "Instalador-Brujula"
 )
 add_dependencies(brujula_installer brujula)
+set_property(SOURCE src/installer/installer.rc PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/brujula.exe")
 target_compile_options(brujula_installer PRIVATE ${BRUJULA_FLAGS})
 target_compile_definitions(brujula_installer PRIVATE ${BRUJULA_DEFS})
 target_link_libraries(brujula_installer PRIVATE

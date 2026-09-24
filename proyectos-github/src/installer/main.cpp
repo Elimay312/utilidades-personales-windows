@@ -46,17 +46,19 @@ static int ShowModernDialog(
     return buttonClicked;
 }
 
-static void HandleUninstall() {
-    int confirm = ShowModernDialog(
-        nullptr,
-        L"Desinstalar Brújula",
-        L"¿Deseas desinstalar Brújula de tu equipo?",
-        L"Se eliminarán el ejecutable, los accesos directos y las asociaciones de protocolo.",
-        TDCBF_YES_BUTTON | TDCBF_NO_BUTTON,
-        TD_WARNING_ICON
-    );
+static int HandleUninstall(bool silent = false) {
+    if (!silent) {
+        int confirm = ShowModernDialog(
+            nullptr,
+            L"Desinstalar Brújula",
+            L"¿Deseas desinstalar Brújula de tu equipo?",
+            L"Se eliminarán el ejecutable, los accesos directos y las asociaciones de protocolo.",
+            TDCBF_YES_BUTTON | TDCBF_NO_BUTTON,
+            TD_WARNING_ICON
+        );
 
-    if (confirm != IDYES) return;
+        if (confirm != IDYES) return 0;
+    }
 
     if (IsBrujulaRunning()) {
         CloseBrujulaProcesses();
@@ -71,20 +73,22 @@ static void HandleUninstall() {
     UnregisterUninstall();
 
     // 3. Consultar sobre datos locales
-    int removeData = ShowModernDialog(
-        nullptr,
-        L"Datos de trabajo",
-        L"¿Deseas conservar tu historial y notas locales?",
-        L"Tus repositorios, notas y configuraciones se encuentran en %LOCALAPPDATA%\\Brujula.\n\nElige 'Sí' para conservarlos o 'No' para eliminarlos por completo.",
-        TDCBF_YES_BUTTON | TDCBF_NO_BUTTON,
-        TD_INFORMATION_ICON
-    );
+    if (!silent) {
+        int removeData = ShowModernDialog(
+            nullptr,
+            L"Datos de trabajo",
+            L"¿Deseas conservar tu historial y notas locales?",
+            L"Tus repositorios, notas y configuraciones se encuentran en %LOCALAPPDATA%\\Brujula.\n\nElige 'Sí' para conservarlos o 'No' para eliminarlos por completo.",
+            TDCBF_YES_BUTTON | TDCBF_NO_BUTTON,
+            TD_INFORMATION_ICON
+        );
 
-    if (removeData == IDNO) {
-        wchar_t buf[MAX_PATH];
-        if (GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH) > 0) {
-            fs::path dataPath = fs::path(buf) / "Brujula";
-            RemoveDirectoryRecursive(dataPath.wstring());
+        if (removeData == IDNO) {
+            wchar_t buf[MAX_PATH];
+            if (GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH) > 0) {
+                fs::path dataPath = fs::path(buf) / "Brujula";
+                RemoveDirectoryRecursive(dataPath.wstring());
+            }
         }
     }
 
@@ -94,61 +98,70 @@ static void HandleUninstall() {
 
     ShellExecuteW(nullptr, L"open", L"cmd.exe", cmd.c_str(), nullptr, SW_HIDE);
 
-    ShowModernDialog(
-        nullptr,
-        L"Desinstalación completada",
-        L"Brújula se ha desinstalado correctamente",
-        L"Gracias por usar Brújula.",
-        TDCBF_OK_BUTTON,
-        TD_INFORMATION_ICON
-    );
+    if (!silent) {
+        ShowModernDialog(
+            nullptr,
+            L"Desinstalación completada",
+            L"Brújula se ha desinstalado correctamente",
+            L"Gracias por usar Brújula.",
+            TDCBF_OK_BUTTON,
+            TD_INFORMATION_ICON
+        );
+    }
+    return 0;
 }
 
-static void HandleInstall() {
+static int HandleInstall(bool silent = false) {
     std::wstring installDir = GetInstallDir();
 
-    std::wstring msg = L"Brújula es un priorizador de repositorios de GitHub para Windows 11 con diseño de alta calidad.\n\n"
-                       L"Ruta de instalación:\n" + installDir + L"\n\n"
-                       L"¿Deseas continuar con la instalación?";
+    if (!silent) {
+        std::wstring msg = L"Brújula es un priorizador de repositorios de GitHub para Windows 11 con diseño de alta calidad.\n\n"
+                           L"Ruta de instalación:\n" + installDir + L"\n\n"
+                           L"¿Deseas continuar con la instalación?";
 
-    int welcome = ShowModernDialog(
-        nullptr,
-        L"Instalador de Brújula v" BRUJULA_VERSION_WSTR,
-        L"Instalar Brújula en tu equipo",
-        msg,
-        TDCBF_YES_BUTTON | TDCBF_CANCEL_BUTTON,
-        TD_INFORMATION_ICON
-    );
-
-    if (welcome != IDYES) return;
-
-    if (IsBrujulaRunning()) {
-        int closeProc = ShowModernDialog(
+        int welcome = ShowModernDialog(
             nullptr,
-            L"Brújula está en ejecución",
-            L"Se ha detectado una instancia de Brújula abierta",
-            L"Es necesario cerrarla para actualizar los archivos. ¿Deseas cerrarla ahora?",
+            L"Instalador de Brújula v" BRUJULA_VERSION_WSTR,
+            L"Instalar Brújula en tu equipo",
+            msg,
             TDCBF_YES_BUTTON | TDCBF_CANCEL_BUTTON,
-            TD_WARNING_ICON
+            TD_INFORMATION_ICON
         );
 
-        if (closeProc != IDYES) return;
+        if (welcome != IDYES) return 0;
+    }
+
+    if (IsBrujulaRunning()) {
+        if (!silent) {
+            int closeProc = ShowModernDialog(
+                nullptr,
+                L"Brújula está en ejecución",
+                L"Se ha detectado una instancia de Brújula abierta",
+                L"Es necesario cerrarla para actualizar los archivos. ¿Deseas cerrarla ahora?",
+                TDCBF_YES_BUTTON | TDCBF_CANCEL_BUTTON,
+                TD_WARNING_ICON
+            );
+
+            if (closeProc != IDYES) return 0;
+        }
 
         if (!CloseBrujulaProcesses()) {
-            ShowModernDialog(
-                nullptr,
-                L"Error",
-                L"No se pudo cerrar la instancia en ejecución",
-                L"Por favor, cierra Brújula manualmente antes de continuar.",
-                TDCBF_OK_BUTTON,
-                TD_ERROR_ICON
-            );
-            return;
+            if (!silent) {
+                ShowModernDialog(
+                    nullptr,
+                    L"Error",
+                    L"No se pudo cerrar la instancia en ejecución",
+                    L"Por favor, cierra Brújula manualmente antes de continuar.",
+                    TDCBF_OK_BUTTON,
+                    TD_ERROR_ICON
+                );
+            }
+            return 1;
         }
     }
 
     // Comprobar GitHub CLI
-    if (!IsGhInstalled()) {
+    if (!silent && !IsGhInstalled()) {
         int installGh = ShowModernDialog(
             nullptr,
             L"Herramienta recomendada: GitHub CLI",
@@ -167,15 +180,17 @@ static void HandleInstall() {
     // 1. Extraer brujula.exe
     std::wstring exePath = GetExePath();
     if (!ExtractEmbeddedExe(exePath)) {
-        ShowModernDialog(
-            nullptr,
-            L"Error de instalación",
-            L"No se pudo extraer el ejecutable principal",
-            L"Asegúrate de tener permisos en " + installDir,
-            TDCBF_OK_BUTTON,
-            TD_ERROR_ICON
-        );
-        return;
+        if (!silent) {
+            ShowModernDialog(
+                nullptr,
+                L"Error de instalación",
+                L"No se pudo extraer el ejecutable principal",
+                L"Asegúrate de tener permisos en " + installDir,
+                TDCBF_OK_BUTTON,
+                TD_ERROR_ICON
+            );
+        }
+        return 1;
     }
 
     // 2. Copiar instalador como desinstalador
@@ -190,30 +205,33 @@ static void HandleInstall() {
     RegisterUninstall(installDir, GetUninstallerPath());
 
     // 5. Pantalla final
-    int finish = ShowModernDialog(
-        nullptr,
-        L"Instalación completada",
-        L"¡Brújula está lista para usarse!",
-        L"Se han creado los accesos directos en el Menú Inicio y en tu Escritorio.\n\n¿Deseas iniciar Brújula ahora?",
-        TDCBF_YES_BUTTON | TDCBF_NO_BUTTON,
-        TD_INFORMATION_ICON
-    );
+    if (!silent) {
+        int finish = ShowModernDialog(
+            nullptr,
+            L"Instalación completada",
+            L"¡Brújula está lista para usarse!",
+            L"Se han creado los accesos directos en el Menú Inicio y en tu Escritorio.\n\n¿Deseas iniciar Brújula ahora?",
+            TDCBF_YES_BUTTON | TDCBF_NO_BUTTON,
+            TD_INFORMATION_ICON
+        );
 
-    if (finish == IDYES) {
-        LaunchBrujula();
+        if (finish == IDYES) {
+            LaunchBrujula();
+        }
     }
+
+    return 0;
 }
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR pCmdLine, int) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     std::wstring cmdLine(pCmdLine ? pCmdLine : L"");
-    if (cmdLine.find(L"--uninstall") != std::wstring::npos) {
-        HandleUninstall();
-    } else {
-        HandleInstall();
-    }
+    bool uninstall = cmdLine.find(L"--uninstall") != std::wstring::npos;
+    bool silent = cmdLine.find(L"--silent") != std::wstring::npos;
+
+    int exitCode = uninstall ? HandleUninstall(silent) : HandleInstall(silent);
 
     CoUninitialize();
-    return 0;
+    return exitCode;
 }

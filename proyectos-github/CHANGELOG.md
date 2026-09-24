@@ -10,6 +10,30 @@ lo dice.
 
 ## Sin publicar
 
+### Arreglos del 24 de septiembre de 2026
+
+- **Maximizada, la ✕ no cerraba si se pulsaba en la esquina de la pantalla.** El hit-test
+  contestaba `HTCLOSE`, pero los tres botones se los dejábamos a `DefWindowProc`, y al soltar
+  vuelve a mirar con su idea de dónde está la ✕ del sistema, que no es la nuestra en los
+  bordes. Ahora `Shell::Window` se come el `WM_NCLBUTTONDOWN` de los botones y manda el
+  `SC_…` al soltar sobre el mismo botón (`SC_CLOSE`, `SC_MINIMIZE`, `SC_MAXIMIZE`/`SC_RESTORE`).
+  Comprobado con clics reales: la esquina, el centro, maximizar/restaurar y minimizar. Soltar
+  fuera cancela como en cualquier ventana nativa.
+- **El acceso directo se llamaba «BrÃºjula».** `fs::path(...) / "Brújula.lnk"` era una cadena
+  estrecha: con `/utf-8` son bytes UTF-8 y `fs::path` los lee con la página de códigos ANSI.
+  Con `L"..."` sale bien tanto en el menú Inicio como en el Escritorio.
+- **Un repositorio con `gone_at` no aparece en ninguna vista, «Todos» incluida.** Al
+  principio salía en «Todos», marcado; al borrar 74 repositorios de la cuenta seguían ahí,
+  que no es lo que significa borrarlos de GitHub. La fila y sus notas se quedan en SQLite —la
+  sincronización no borra— y si el repositorio vuelve a aparecer, vuelve con ellas. Prueba
+  unitaria actualizada en `state_test.cpp`.
+- **Modo silencioso (`--silent`) en el instalador autónomo.** `Instalador-Brujula.exe` acepta
+  `--silent` para instalar y actualizar sin mostrar cuadros de diálogo, cerrando instancias
+  previas automáticamente si estaban abiertas y registrando `QuietUninstallString`. En
+  `actualizar.ps1` se elimina la consulta interactiva y se integra con `-PassThru`, igual que
+  Agenda y Panel. `CMakeLists.txt` enlaza la dependencia de objeto para que `installer.rc`
+  siempre incruste el `brujula.exe` más reciente.
+
 ### Fase 8 — Pulido final y rendimiento
 
 El movimiento se volvió a afinar, y esta vez contra el número correcto. Se arregló el

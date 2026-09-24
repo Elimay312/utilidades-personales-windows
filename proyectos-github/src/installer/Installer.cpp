@@ -43,12 +43,12 @@ std::wstring GetUninstallerPath() {
 
 std::wstring GetStartMenuShortcutPath() {
     std::wstring programs = GetKnownFolder(FOLDERID_Programs);
-    return (fs::path(programs) / "Brújula.lnk").wstring();
+    return (fs::path(programs) / L"Brújula.lnk").wstring();
 }
 
 std::wstring GetDesktopShortcutPath() {
     std::wstring desktop = GetKnownFolder(FOLDERID_Desktop);
-    return (fs::path(desktop) / "Brújula.lnk").wstring();
+    return (fs::path(desktop) / L"Brújula.lnk").wstring();
 }
 
 bool IsBrujulaRunning() {
@@ -257,6 +257,7 @@ bool RegisterUninstall(const std::wstring& targetDir, const std::wstring& uninst
     ok &= SetRegistryString(HKEY_CURRENT_USER, key, L"Publisher", L"Brújula");
     ok &= SetRegistryString(HKEY_CURRENT_USER, key, L"InstallLocation", targetDir);
     ok &= SetRegistryString(HKEY_CURRENT_USER, key, L"UninstallString", uninstCmd);
+    ok &= SetRegistryString(HKEY_CURRENT_USER, key, L"QuietUninstallString", uninstCmd + L" --silent");
     ok &= SetRegistryDword(HKEY_CURRENT_USER, key, L"NoModify", 1);
     ok &= SetRegistryDword(HKEY_CURRENT_USER, key, L"NoRepair", 1);
     return ok;

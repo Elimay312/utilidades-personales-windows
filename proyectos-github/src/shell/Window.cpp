@@ -333,15 +333,28 @@ LRESULT Window::Proc(UINT message, WPARAM wparam, LPARAM lparam) {
     case WM_NCLBUTTONDOWN: {
         const Caption::Zone zone = FromHitTest(wparam);
         if (zone != Caption::Zone::Client) SetCaptionState(zone, zone);
-        // Y se deja pasar: minimizar, maximizar y cerrar los ejecuta DefWindowProc con el
-        // comportamiento nativo entero —incluido soltar fuera para cancelar—, que es
-        // justo lo que pide la fase. Nosotros solo dibujamos.
+        // Los tres botones los ejecutamos nosotros, al soltar. DefWindowProc, al soltar,
+        // vuelve a mirar dónde cae el puntero con SU idea de dónde está la ✕ del sistema, y
+        // con la barra propia no coinciden en los bordes: maximizada, el clic en la esquina
+        // de la pantalla —el que se hace sin apuntar— no cerraba. Medido con un clic real.
+        if (zone != Caption::Zone::Client) return 0;
         break;
     }
 
-    case WM_NCLBUTTONUP:
+    case WM_NCLBUTTONUP: {
+        const Caption::Zone zone = FromHitTest(wparam);
+        const Caption::Zone pressed = m_pressed;
         SetCaptionState(m_hovered, Caption::Zone::Client);
+        // Soltar fuera del botón pulsado cancela, como en una ventana normal.
+        if (zone != Caption::Zone::Client && zone == pressed) {
+            WPARAM command = SC_CLOSE;
+            if (zone == Caption::Zone::Minimize) command = SC_MINIMIZE;
+            if (zone == Caption::Zone::Maximize) command = IsZoomed(m_hwnd) ? SC_RESTORE : SC_MAXIMIZE;
+            PostMessageW(m_hwnd, WM_SYSCOMMAND, command, 0);
+            return 0;
+        }
         break;
+    }
 
     case WM_MOUSEMOVE:
         // Entrar al cliente apaga cualquier resalte de la barra de título.

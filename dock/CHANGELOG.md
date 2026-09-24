@@ -64,6 +64,10 @@ Lo que hay ahora en `main`. Se está probando en varios equipos antes de darlo p
 
 ### Arreglado
 
+- **Un icono ya no se despega solo al pasar el ratón.** Si el botón se soltaba fuera del
+  dock antes del umbral de arrastre, la pulsación quedaba viva: al volver, el icono seguía
+  al cursor sin botón —70 px encima del vecino, medido con mensajes— y el siguiente clic lo
+  dejaba reordenado o quitado. Ahora un movimiento sin botón la cancela: de 70 px a 0.
 - **Un juego de Steam recién instalado ya no espera a reiniciar el dock.** La caché
   guardaba también los fallos y para siempre; ahora el «no está instalado» caduca a los
   30 s y el acierto se queda.

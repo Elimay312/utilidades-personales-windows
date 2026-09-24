@@ -92,6 +92,7 @@ internal sealed unsafe class DockWindow : IDisposable
     private const uint WM_MOUSEMOVE = 0x0200;
     private const uint WM_LBUTTONDOWN = 0x0201;
     private const uint WM_LBUTTONUP = 0x0202;
+    private const nuint MK_LBUTTON = 0x0001;
     private const uint WM_CAPTURECHANGED = 0x0215;
     private const uint WM_RBUTTONUP = 0x0205;
     private const uint WM_MBUTTONUP = 0x0208;
@@ -904,7 +905,7 @@ internal sealed unsafe class DockWindow : IDisposable
                 return new LRESULT(0);
 
             case WM_MOUSEMOVE:
-                self?.OnMouseMove(lParam);
+                self?.OnMouseMove(wParam, lParam);
                 return new LRESULT(0);
 
             case WM_MOUSELEAVE:
@@ -1672,7 +1673,7 @@ internal sealed unsafe class DockWindow : IDisposable
 
     private static short HiWord(LPARAM lParam) => (short)((lParam.Value >> 16) & 0xFFFF);
 
-    private void OnMouseMove(LPARAM lParam)
+    private void OnMouseMove(WPARAM wParam, LPARAM lParam)
     {
         if (!_trackingMouse)
         {
@@ -1735,7 +1736,17 @@ internal sealed unsafe class DockWindow : IDisposable
         // está donde dice la curva y la etiqueta se quedaría señalando al hueco.
         _visuals.SetLabel(_dragging || _hidden ? -1 : _visuals.HitTest(_lastRest));
 
-        if (_pressedIndex >= 0) OnDragMove(LoWord(lParam), HiWord(lParam));
+        if (_pressedIndex < 0) return;
+
+        // Sin el botón pulsado no hay arrastre, digan lo que digan los campos. Antes de
+        // capturar, un botón soltado FUERA del dock —pulsar un icono y salir tirando
+        // hacia arriba antes del umbral— no nos manda WM_LBUTTONUP, y la pulsación se
+        // quedaba viva: al volver a pasar por encima el icono se despegaba solo y el
+        // siguiente clic lo soltaba reordenado, o fuera de la barra y quitado. Medido
+        // con mensajes: LBUTTONDOWN y luego MOUSEMOVE sin MK_LBUTTON movía el icono 70 px.
+        if ((wParam.Value & MK_LBUTTON) == 0) { CancelDrag(); return; }
+
+        OnDragMove(LoWord(lParam), HiWord(lParam));
     }
 
     /// <summary>

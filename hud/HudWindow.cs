@@ -149,11 +149,22 @@ internal sealed unsafe class HudWindow
                 //
                 // Eso ahorra la region entera: SetWindowRgn tambien recorta el DIBUJO,
                 // asi que habria que acordarse de que cubra el squash del tope.
+                //
+                // NOREDIRECTIONBITMAP: LAYERED trae una superficie de redireccion GDI que
+                // nadie pinta. Casi siempre no se ve, pero cuando DWM rehace sus
+                // superficies -- cerrar la tapa, el escritorio seguro de un UAC -- vuelve
+                // NEGRA OPACA y sale un cuadro negro del tamano de la ventana alrededor de
+                // la capsula. Sin superficie no hay nada que se vuelva negro. Medido con
+                // la bandera puesta: SetLayeredWindowAttributes sigue devolviendo true, la
+                // esquina de la ventana deja ver lo de detras y WindowFromPoint sobre la
+                // capsula sigue dando la ventana de detras. Es la misma correccion que el
+                // lanzador y proyectos-github.
                 WINDOW_EX_STYLE.WS_EX_NOACTIVATE
                     | WINDOW_EX_STYLE.WS_EX_TOOLWINDOW
                     | WINDOW_EX_STYLE.WS_EX_TOPMOST
                     | WINDOW_EX_STYLE.WS_EX_LAYERED
-                    | WINDOW_EX_STYLE.WS_EX_TRANSPARENT,
+                    | WINDOW_EX_STYLE.WS_EX_TRANSPARENT
+                    | WINDOW_EX_STYLE.WS_EX_NOREDIRECTIONBITMAP,
                 new PCWSTR(clase), new PCWSTR(titulo),
                 // Sin WS_VISIBLE: nace escondida y se ensena cuando haga falta.
                 WINDOW_STYLE.WS_POPUP,

@@ -64,6 +64,10 @@ Lo que hay ahora en `main`. Se está probando en varios equipos antes de darlo p
 
 ### Arreglado
 
+- **Cerrar una app con el botón pulsado sobre el dock ya no lo tumba.** La barra encogía
+  por debajo de la pulsación y el primer movimiento hacía `RemoveAt(-1)`. Dos caídas en el
+  visor (19 y 20 sep); reproducido con mensajes y una ventana de prueba: de caerse a
+  seguir vivo. La lista nueva ahora la cambia el hilo de UI, y cancela la pulsación.
 - **Cambiar de pantallas ya no puede dejar el dock a 0 ppp y tumbarlo.** Con el monitor
   ya desaparecido, `GetDpiForMonitor` falla sin escribir y el DPI quedaba en 0; la curva
   pasaba a radio 0 y la expresión a `Infinity`. Dos caídas en el visor (22 y 24 sep).

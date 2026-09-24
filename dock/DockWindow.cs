@@ -262,6 +262,13 @@ internal sealed unsafe class DockWindow : IDisposable
     private List<(DockApp App, IconBitmap? Icon)> _loaded = [];
 
     /// <summary>
+    /// Lo que acaba de cargar el hilo de fondo, esperando a que el de UI lo cambie por
+    /// <c>_loaded</c> en <c>OnIconsReady</c>. Cambiarlo desde el fondo dejaba un rato
+    /// en el que los índices de la barra dibujada apuntaban a una lista que ya era otra.
+    /// </summary>
+    private List<(DockApp App, IconBitmap? Icon)>? _incoming;
+
+    /// <summary>
     /// Apps abiertas que no están ancladas. No se guardan en ningún sitio: se calculan
     /// del inventario y desaparecen al cerrar la app.
     /// </summary>
@@ -722,13 +729,26 @@ internal sealed unsafe class DockWindow : IDisposable
                 }
             }
 
-            _loaded = loaded;
+            Volatile.Write(ref _incoming, loaded);
             PInvoke.PostMessage(hwnd, WM_APP_ICONS_READY, default, default);
         });
     }
 
     private void OnIconsReady()
     {
+        if (Interlocked.Exchange(ref _incoming, null) is { } fresh)
+        {
+            // Una pulsación hecha sobre la barra vieja no significa nada en la nueva:
+            // si una app se cerraba con el botón pulsado, la barra encogía y el índice
+            // pulsado quedaba fuera de la lista. Medido: RemoveAt(-1) en OnDragMove y
+            // el dock caído, igual que las caídas del 19 y el 20 en el visor. Se
+            // cancela ANTES de cambiar la lista, que CancelDrag recorre los iconos viejos.
+            bool captured = _dragging;
+            CancelDrag();
+            if (captured) PInvoke.ReleaseCapture();
+            _loaded = fresh;
+        }
+
         if (_visuals is null) return;
 
         _curve = CurveFor([.. _loaded.Select(entry => entry.App)]);

@@ -206,8 +206,10 @@ predeterminado que ya se lee.
 - **Solo la rueda del ratón sobre el panel abierto.** Ni brasa ni asomada: hay que haber
   desplegado la isla, estar encima y girar. Es lo mismo que la rueda sobre el icono de
   volumen de la barra de tareas.
-- **Pasos del 2 %**, acotado a [0, 1]. Se lee, se suma y se escribe: no hay ningún nivel
-  guardado que se reponga.
+- **Pasos del 1 %**, proporcionales al delta (una muesca de rueda sigue siendo un 2 %; el
+  touchpad, la mitad por unidad de delta), acotado a [0, 1]. Se lee, se suma y se escribe: no
+  hay ningún nivel guardado que se reponga. Lo único que se guarda es el decimal del delta, y
+  se olvida tras 400 ms sin eventos, mirado en el evento siguiente.
 - **Nunca desde un temporizador**, igual que los mandos de §3.2.
 - **Solo el nivel maestro.** Ni silencio, ni balance, ni otro dispositivo. `IPolicyConfig`
   sigue fuera. El volumen por app tiene su propia enmienda, justo debajo.

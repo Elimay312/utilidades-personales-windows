@@ -151,8 +151,8 @@ abrirse.** Todo pasa en el sitio.
    eso el paso es configurable.
 2. **El HUD no se come los clics.** Ni siquiera encima de la cápsula. Los vecinos usan
    `SetWindowRgn` porque la isla midió que `WS_EX_TRANSPARENT` a secas no basta; aquí se
-   volvió a medir **con `WS_EX_LAYERED` puesto** y entonces sí funciona, sin region y sin
-   perder el dibujo de Composition.
+   volvió a medir **con `WS_EX_LAYERED` y `WS_EX_NOREDIRECTIONBITMAP` puestos** y entonces sí funciona: sin region, sin
+   perder el dibujo de Composition y sin que el marco se vuelva negro opaco al cerrar la tapa o entrar a UAC.
 3. **El alcance lo vigila la auditoría.** El brillo se cayó midiendo, y con él WMI y la segunda
    dependencia. `auditar.ps1` falla si reaparece `WmiMonitor`, `System.Management` o
    `ManagementObject`: un alcance que no se comprueba se vuelve a ensanchar solo.

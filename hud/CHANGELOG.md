@@ -1,5 +1,16 @@
 # Changelog
 
+## Sin superficie de redirección: el cuadro negro ya no sale (24 de septiembre de 2026)
+
+`WS_EX_LAYERED` traía consigo una superficie de redirección GDI que nadie pinta. La mayor parte del tiempo permanecía transparente, pero cuando DWM rehace sus superficies —al cerrar la tapa del portátil o entrar al escritorio seguro de un cuadro UAC— volvía **negra opaca** y salía un cuadro negro del tamaño exacto de la ventana alrededor de la cápsula.
+
+Se añade `WS_EX_NOREDIRECTIONBITMAP` a la creación de la ventana (`HudWindow.cs`). Sin superficie de redirección no hay nada que pueda volverse negro. **Medido:**
+- `SetLayeredWindowAttributes` sigue devolviendo `true`.
+- La esquina de la ventana deja ver el fondo de detrás (`(40,44,52)`).
+- `WindowFromPoint` sobre la cápsula sigue devolviendo la ventana de detrás (los clics pasan limpios).
+
+Es la misma corrección que usan el lanzador y proyectos-github.
+
 ## El deslizador del Panel ya no saca la cápsula
 
 El [Panel](../panel-de-control/README.md) firma cada cambio de volumen que hace con su propio

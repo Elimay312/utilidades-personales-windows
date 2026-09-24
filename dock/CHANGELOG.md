@@ -64,6 +64,9 @@ Lo que hay ahora en `main`. Se está probando en varios equipos antes de darlo p
 
 ### Arreglado
 
+- **Un clic derecho a la derecha del último icono ya no cierra el dock.** Componía el
+  texto «Quitar …» con el índice -1 aunque no hubiera icono debajo, y el dock moría con
+  `ArgumentOutOfRange`. Reproducido con mensajes: de caerse a seguir vivo.
 - **Un icono ya no se despega solo al pasar el ratón.** Si el botón se soltaba fuera del
   dock antes del umbral de arrastre, la pulsación quedaba viva: al volver, el icono seguía
   al cursor sin botón —70 px encima del vecino, medido con mensajes— y el siguiente clic lo

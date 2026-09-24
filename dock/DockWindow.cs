@@ -1802,8 +1802,11 @@ internal sealed unsafe class DockWindow : IDisposable
         }
 
         // Una app que solo está abierta no se puede "quitar": se ancla.
-        string accion = sobreIcono && EsExtra(_loaded[index].App)
-            ? $"Anclar '{_loaded[index].App.Name}' al dock"
+        // Fuera de un icono no hay acción, y no se puede ni componer el texto: a la
+        // derecha del último, Invert satura en RestWidth y el índice es -1. Medido: un
+        // clic derecho ahí tumbaba el dock con ArgumentOutOfRange.
+        string accion = !sobreIcono ? ""
+            : EsExtra(_loaded[index].App) ? $"Anclar '{_loaded[index].App.Name}' al dock"
             : $"Quitar '{_loaded[index].App.Name}' del dock";
 
         string[] items = sobreIcono

@@ -60,7 +60,7 @@ cruzar el borde de camino al botón de cerrar no la despierta.
 | `Ctrl+Alt+T` | Arranca un pomodoro. Otra vez lo cancela. Mientras corre, la brasa se va vaciando y el panel abierto lo enseña a la izquierda de los botones |
 | Clic en el pomodoro del panel | Lo pausa; otro clic lo reanuda. La pausa sobrevive a mudarse de pantalla |
 | Acaba un pomodoro | Sale una tarjeta que espera: **Descanso 5 min**, **Otro** o **Listo** |
-| Rueda sobre el panel abierto | Sube o baja el volumen un 2 % por muesca, y el número sale en la línea de la app |
+| Rueda sobre el panel abierto | Sube o baja el volumen un 2 % por muesca, y el número sale en la línea de la app. Con el touchpad va al 1 %, proporcional a lo que deslizas: dedos arriba, más volumen. La sensibilidad está arriba de `Rueda.cs` |
 | Clic en `‹ App ›` | Con más de una sesión de medios (Spotify y Brave a la vez), pasa a la siguiente |
 | Clic en la onda (las cuatro barras) | El panel se transforma en el **mezclador**: una fila por app con audio, con su nivel. Clic o arrastre en el carril, o la rueda sobre la fila, cambian el volumen de esa app. `‹ Volumen por app` vuelve a la ficha |
 | Clic derecho | Menú con **Abrir isla.json** y **Salir** |

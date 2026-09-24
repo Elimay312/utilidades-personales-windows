@@ -13,6 +13,19 @@ está en el mensaje de su commit.
 
 Todo lo que hay. Falta probarlo en otros equipos y con otras aplicaciones de música.
 
+### Cambiado: el touchpad ajusta el volumen fino
+
+- **La rueda y el touchpad van proporcionales al delta** (`Rueda.cs`). Antes era `delta / 120`
+  entero: el touchpad perdía los deltas pequeños y con los grandes un gesto corto se llevaba
+  medio volumen. Ahora se acumula el decimal y se aplica en pasos del 1 %.
+- **Una muesca de rueda sigue siendo un 2 %;** el touchpad, la mitad por unidad de delta, y
+  dedos arriba sube, como la rueda. Se distingue por el delta: si no es múltiplo de 120, es
+  touchpad.
+- **El decimal se olvida tras 400 ms sin eventos,** mirado en el evento siguiente, sin
+  temporizador. Nunca se guarda un nivel: se lee, se suma y se escribe, así que lo que
+  cambien las teclas se respeta.
+- **Vale también para las filas del mezclador.** Enmienda en `SEGURIDAD.md` §3.3.
+
 ### Cambiado: el deslizador del Panel no hace asomar la isla
 
 - **El [Panel](../panel-de-control/README.md) firma sus cambios de volumen** con su GUID de

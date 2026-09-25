@@ -64,6 +64,10 @@ Lo que hay ahora en `main`. Se está probando en varios equipos antes de darlo p
 
 ### Arreglado
 
+- **Reiniciar explorer ya no deja al dock fuera de la lista de appbars.** El shell la
+  vaciaba y el dock no se enteraba, así que dejaba de recibir `ABN_FULLSCREENAPP`. Ahora
+  vuelve a registrarse con `TaskbarCreated`: tras un reinicio de explorer, de 0 a 3 de
+  las 3 ventanas siguen registradas, y la barra de tareas no muestra ningún aviso.
 - **Cerrar una app con el botón pulsado sobre el dock ya no lo tumba.** La barra encogía
   por debajo de la pulsación y el primer movimiento hacía `RemoveAt(-1)`. Dos caídas en el
   visor (19 y 20 sep); reproducido con mensajes y una ventana de prueba: de caerse a

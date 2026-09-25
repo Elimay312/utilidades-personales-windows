@@ -44,6 +44,7 @@ internal sealed unsafe class AppBar : IDisposable
     public const nuint ABN_FULLSCREENAPP = 0x0000002;
 
     private readonly HWND _hwnd;
+    private readonly uint _callbackMessage;
     private bool _registered;
 
     /// <summary>
@@ -53,9 +54,20 @@ internal sealed unsafe class AppBar : IDisposable
     public AppBar(HWND hwnd, uint callbackMessage)
     {
         _hwnd = hwnd;
+        _callbackMessage = callbackMessage;
+        Register();
+    }
 
+    /// <summary>
+    /// La lista de appbars vive dentro de explorer.exe. Si se reinicia, la lista
+    /// vuelve vacía y nadie avisa a las appbars de que ya no lo son: medido, las tres
+    /// ventanas del dock pasan de registradas a no registradas. Por eso hay que llamar
+    /// a esto otra vez al recibir <c>TaskbarCreated</c>.
+    /// </summary>
+    public void Register()
+    {
         APPBARDATA data = Data();
-        data.uCallbackMessage = callbackMessage;
+        data.uCallbackMessage = _callbackMessage;
 
         _registered = PInvoke.SHAppBarMessage(ABM_NEW, ref data) != 0;
         if (!_registered) Console.WriteLine("[appbar] ABM_NEW rechazado");

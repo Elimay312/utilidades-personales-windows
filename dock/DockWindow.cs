@@ -219,6 +219,9 @@ internal sealed unsafe class DockWindow : IDisposable
     /// </summary>
     private static uint _shellHookMessage;
 
+    /// <summary>Id de "TaskbarCreated", el aviso de que explorer se ha reiniciado.</summary>
+    private static uint _taskbarCreatedMessage;
+
     /// <summary>Quién tiene el registro. Uno por proceso basta: los avisos son los mismos.</summary>
     private static HWND _shellHookOwner;
 
@@ -536,6 +539,14 @@ internal sealed unsafe class DockWindow : IDisposable
         // nos avisa. Cuando otro proceso se inserta por encima, a nosotros no llega
         // ningún mensaje y nos quedamos hundidos para siempre.
         PInvoke.SetTimer(_hwnd, TopmostTimerId, WatchdogMs, null);
+
+        if (_taskbarCreatedMessage == 0)
+        {
+            fixed (char* name = "TaskbarCreated")
+            {
+                _taskbarCreatedMessage = PInvoke.RegisterWindowMessage(new PCWSTR(name));
+            }
+        }
 
         _appBar = new AppBar(_hwnd, WM_APP_APPBAR);
         ReserveAppBarSpace();
@@ -1043,6 +1054,16 @@ internal sealed unsafe class DockWindow : IDisposable
         if (_shellHookMessage != 0 && msg == _shellHookMessage)
         {
             OnShellHook((nuint)wParam.Value);
+            return new LRESULT(0);
+        }
+
+        // Explorer se reinició y nuestra alta de appbar murió con él. Llega a las
+        // tres ventanas, y cada una es su propia appbar.
+        if (_taskbarCreatedMessage != 0 && msg == _taskbarCreatedMessage && self?._appBar is { } appBar)
+        {
+            appBar.Register();
+            self.ReserveAppBarSpace();
+            Console.WriteLine($"[appbar] {self._device} registrada otra vez tras reiniciarse explorer");
             return new LRESULT(0);
         }
 

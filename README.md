@@ -12,7 +12,7 @@ reunidas en este repositorio para poder clonarlas y probarlas en otro equipo.
 | Proyecto | Qué es | Estado |
 |---|---|---|
 | [`calendario/`](calendario/README.md) | **Agenda**: un calendario en C++ que sale con un atajo en el monitor del ratón; escribes `mañana 5pm dentista` y lo crea, sincronizado con Google Calendar y Tasks. | 1.0.0, con instalador. |
-| [`dock/`](dock/README.md) | Un dock estilo macOS: magnificación, efecto genio, uno por pantalla, miniaturas de ventanas. | En uso diario. Falta pulir rendimiento. |
+| [`dock/`](dock/README.md) | Un dock estilo macOS: magnificación, efecto genio, uno por pantalla, miniaturas de ventanas. | En reescritura a C++ para sustituir a la barra de tareas. El de C# sigue en uso diario (tag `dock-csharp-final`). |
 | [`hud/`](hud/README.md) | El aviso de volumen, rehecho: cápsula de cristal abajo y centrada, que se transforma en vez de ir y venir. Las teclas son suyas, así que el recuadro gris de Windows no sale. | Terminado. Funciona en tres pantallas y sigue al dispositivo de salida. |
 | [`isla/`](isla/README.md) | Una isla dinámica en el borde superior de la pantalla en la que estés trabajando: qué suena, de quién, cuánto queda, y poder pausarlo. Más pomodoro, batería y volumen —con el número y por qué altavoces sale—, y los recordatorios de Agenda en su propia burbuja. | Funcionando (dos islas: principal y avisos). Falta probarla en otros equipos. |
 | [`lanzador/`](lanzador/README.md) | `Alt+Espacio` y escribes: aplicaciones, ficheros (vía Everything), prefijos web, sitios del sistema y cuentas, ordenados por lo que más abres. | Funcionando. Falta usarlo unos días. |
@@ -159,7 +159,10 @@ enseñarlo. Si el Panel no está, no hay firma y todo sigue igual.
 
 ## Sobre las reglas de seguridad
 
-**`dock/SEGURIDAD.md` es del dock y solo del dock.** No es una norma de la casa.
+**`dock/SEGURIDAD.md` era del dock y solo del dock.** No es una norma de la casa. El dock lo
+retiró al pasar a C++: sustituir a la barra de tareas necesita justo lo que prohibía
+(hooks de eventos, miniaturas DWM, ocultar la barra de explorer). Sigue en el tag
+`dock-csharp-final`.
 
 Lo que sí merece la pena copiar es el *método*, porque funcionó:
 

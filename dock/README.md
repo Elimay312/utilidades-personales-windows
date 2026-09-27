@@ -4,10 +4,23 @@ Un dock estilo macOS para Windows 11. Se esconde solo, magnifica los iconos al p
 encima, se traga las ventanas con efecto genio al minimizarlas, y hay uno por pantalla con
 sus propias apps.
 
+> **En reescritura a C++.** El dock pasa a C++ y a sustituir a la barra de tareas de
+> Windows: explorer sigue como shell, pero su barra se oculta y el dock recoge la bandeja,
+> el reloj y un botón de Inicio que abre el Lanzador. Hasta que el de C++ lo iguale, el de
+> uso diario es el de C#: vive en `legacy/` (fuera de git) y entero en el tag
+> `dock-csharp-final`. **Todo lo que sigue describe esa versión de C#**, y es la lista de
+> paridad que el de C++ tiene que cumplir. `SEGURIDAD.md` y `auditar.ps1` se retiraron: lo
+> que prohibían (miniaturas DWM, hooks de eventos, ocultar la barra) es justo lo que hace
+> falta para sustituirla.
+>
+> Fases: F0 limpieza · F1 sondas de riesgo (pila de dibujo, genio con miniaturas DWM,
+> bandeja, ocultar la barra) · F2 esqueleto · F3 composición · F4 iconos y lupa · F5 config
+> e inventario · F6 interacción · F7 genio nuevo · F8 instalador y cambio al de C++ ·
+> F9 poderes de la barra · F10 sustituir la barra.
+
 El referente visual es MyDockFinder. **La arquitectura no**: MyDockFinder carga un driver
-de kernel y por eso Defender lo marca. Este corre 100% en modo usuario, sin elevación, sin
-red y sin nada instalado en el sistema. Las reglas que lo garantizan están en
-[SEGURIDAD.md](SEGURIDAD.md) y se comprueban con `auditar.ps1`.
+de kernel y por eso Defender lo marca. Este corre 100% en modo usuario, sin elevación y sin
+red.
 
 Lo que ha ido cambiando está en [CHANGELOG.md](CHANGELOG.md). Si vas a tocar el código,
 las convenciones están en [CLAUDE.md](CLAUDE.md).

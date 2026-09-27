@@ -70,7 +70,7 @@ function Dotnet10 {
     foreach ($d in 'dotnet', $propio) {
         try { if ((& $d --list-sdks) -like '10.*') { return $d } } catch { }
     }
-    Ejecutar (Join-Path $repo 'dock\preparar.ps1')   # SDK al perfil, sin administrador
+    Ejecutar (Join-Path $repo 'lanzador\preparar.ps1')   # SDK al perfil, sin administrador
     $env:DOTNET_ROOT = Split-Path $propio
     return $propio
 }
@@ -102,8 +102,9 @@ function Msvc {
 }
 
 $proyectos = @(
-    @{ Nombre = 'dock'; Exe = "$la\Dock\app\Dock.exe"
-       Instalar = { param($nuevo) Ejecutar "$repo\dock\instalar.ps1" (SinAutoArranque "$la\Dock\dock.json" 'autoStart') } }
+    # El dock se esta reescribiendo en C++ y el de C# ya no esta en el repo (tag
+    # dock-csharp-final). Vuelve aqui con el patron de Agenda cuando tenga instalador;
+    # hasta entonces el que ya este instalado en cada equipo sigue funcionando.
     @{ Nombre = 'isla'; Exe = "$la\Isla\app\Isla.exe"
        Instalar = { param($nuevo) Ejecutar "$repo\isla\instalar.ps1" (SinAutoArranque "$la\Isla\isla.json" 'autoArranque') } }
     @{ Nombre = 'lanzador'; Exe = "$la\Lanzador\app\Lanzador.exe"

@@ -1,7 +1,7 @@
 # Seguridad de Brújula
 
 Este documento es de Brújula y solo de Brújula. No es una norma de la casa, igual que
-`dock/SEGURIDAD.md` no lo era: un dock mueve ventanas y un lanzador lee el menú Inicio,
+el del dock no lo era (retirado al pasar a C++): un dock mueve ventanas y un lanzador lee el menú Inicio,
 y ninguno de los dos se parece a lo que hace esto.
 
 Lo que hace esto es **hablar con la cuenta de GitHub del autor**, que es de trabajo, con

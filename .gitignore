@@ -7,3 +7,4 @@ build-debug/
 *.suo
 .claude/
 .superpowers/
+dock/legacy/

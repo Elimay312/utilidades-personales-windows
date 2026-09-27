@@ -11,7 +11,26 @@ está en el mensaje de su commit.
 
 ## Sin publicar
 
-Lo que hay ahora en `main`. Se está probando en varios equipos antes de darlo por bueno.
+La reescritura en C++. Hasta que iguale al de C#, el de uso diario es el de la sección de
+abajo.
+
+### Cambiado
+
+- **El dock de C# sale del repo**: pasa a `legacy/` (ignorada por git) y queda entero en el
+  tag `dock-csharp-final`. Lo que se midió antes de decidirlo: 46 MB privados al arrancar,
+  una meseta nativa de ~62 MB que en C++ sería igual, y 107 MB comprometidos por el GC a
+  las 20 h con solo 19 MB vivos. Cada genio o miniatura copiaba la ventana entera 3-4
+  veces, de 8 a 11 MB por copia, porque las miniaturas DWM estaban prohibidas.
+- **Fuera `SEGURIDAD.md`, `auditar.ps1` y `NativeMethods.txt`**, sin sustituto. Sustituir a
+  la barra de tareas necesita justo lo que prohibían: miniaturas DWM, hooks de eventos y
+  ocultar la barra de explorer.
+- **`actualizar.ps1` ya no instala el dock** hasta que el de C++ tenga instalador, y el
+  SDK de .NET de hud, quicklook y renombrar sale ahora del `preparar.ps1` del lanzador.
+
+## C#: la última versión (tag `dock-csharp-final`)
+
+Lo que había en `main` antes de la reescritura. Se estaba probando en varios equipos antes
+de darlo por bueno.
 
 ### Añadido
 

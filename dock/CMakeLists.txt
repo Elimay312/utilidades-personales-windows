@@ -51,10 +51,12 @@ add_executable(Dock WIN32
   src/model/config.cpp
   src/system/appbar.cpp
   src/ui/dock_window.cpp
+  src/ui/visuals.cpp
   assets/dock.rc)
 target_include_directories(Dock PRIVATE src)
 target_compile_options(Dock PRIVATE ${DOCK_WARNINGS})
 target_compile_definitions(Dock PRIVATE ${DOCK_DEFINES})
-target_link_libraries(Dock PRIVATE nlohmann_json::nlohmann_json shcore dwmapi)
+# windowsapp y CoreMessaging: Windows.UI.Composition vía C++/WinRT y su DispatcherQueue.
+target_link_libraries(Dock PRIVATE nlohmann_json::nlohmann_json shcore dwmapi windowsapp CoreMessaging)
 # El manifiesto (PerMonitorV2, asInvoker) entra por dock.rc.
 target_link_options(Dock PRIVATE /MANIFEST:NO)

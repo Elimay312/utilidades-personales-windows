@@ -2,10 +2,12 @@
 
 #include <windows.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "model/config.h"
+#include "ui/visuals.h"
 
 namespace dock {
 
@@ -55,11 +57,13 @@ class DockWindow {
   Monitor monitor_;
   DockConfig config_;
   HWND hwnd_ = nullptr;
+  std::unique_ptr<Visuals> visuals_;
   UINT dpi_ = 96;
   int width_ = 0;
   int height_ = 0;
   bool registered_ = false;
   bool revealed_ = false;
+  bool sliding_ = false;  // bajando: la región espera a que termine
   bool hovering_ = false;
   bool fullscreen_ = false;
   std::vector<RECT> region_;

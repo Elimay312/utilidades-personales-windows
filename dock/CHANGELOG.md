@@ -23,6 +23,10 @@ abajo.
   pasa de 1080 a 1000. Tras reiniciar explorer las tres appbars vuelven a registrarse
   (~5,6 s, lo que tarda explorer en difundir `TaskbarCreated`).
 - **`--config=<ruta>`** para arrancar con otro `dock.json` sin tocar el del usuario.
+- **La barra de acrílico en C++**: Windows.UI.Composition con un Compositor para todo el
+  proceso, esquinas redondeadas recortadas en el compositor y tinte blanco. Esconder la
+  desliza hacia abajo con un muelle (amortiguado 1,0, 70 ms) y la región se encoge 150 ms
+  después, cuando ya ha bajado. **2,4 MB privados y 5 hilos** con las tres pantallas.
 
 ### Arreglado
 

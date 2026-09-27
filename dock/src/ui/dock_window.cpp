@@ -17,6 +17,7 @@ constexpr wchar_t kClassName[] = L"DockWindowClass";
 
 constexpr UINT_PTR kWatchdogTimer = 1;
 constexpr UINT_PTR kHideTimer = 2;
+constexpr UINT_PTR kSlideTimer = 3;
 
 // Medidas lógicas, a 96 ppp.
 constexpr float kPadding = 12;
@@ -31,6 +32,9 @@ constexpr float kRadiusInSlots = 1.75f;
 // red para lo que no avisa.
 constexpr UINT kWatchdogMs = 1000;
 constexpr UINT kHideDelayMs = 450;
+// El muelle de 70 ms está al 99,9% a los 100 ms: la región se encoge después, porque
+// también recorta el dibujo y encogerla antes hacía desaparecer la barra en vez de bajarla.
+constexpr UINT kSlideSettleMs = 150;
 
 // ponytail: sin iconos todavía (F4), la barra mide como 8 huecos. Se va con la curva real.
 constexpr int kPlaceholderSlots = 8;
@@ -51,7 +55,9 @@ DockWindow::~DockWindow() {
   if (!hwnd_) return;
   KillTimer(hwnd_, kWatchdogTimer);
   KillTimer(hwnd_, kHideTimer);
+  KillTimer(hwnd_, kSlideTimer);
   if (registered_) AppBarRemove(hwnd_);
+  visuals_.reset();  // el target de Composition antes que su ventana
   DestroyWindow(hwnd_);
 }
 
@@ -82,6 +88,12 @@ bool DockWindow::Create() {
     LogError(L"[dock] CreateWindowExW falló: {}", GetLastError());
     return false;
   }
+  try {
+    visuals_ = std::make_unique<Visuals>(hwnd_);
+  } catch (const winrt::hresult_error& e) {
+    LogError(L"[dock] {}: Composition falló ({:#010x})", monitor_.device, static_cast<unsigned>(e.code().value));
+    return false;
+  }
 
   registered_ = AppBarRegister(hwnd_);
   Reposition();
@@ -95,6 +107,7 @@ bool DockWindow::Create() {
   GetWindowRect(hwnd_, &window);
   OffsetRect(&bar, window.left, window.top);
   revealed_ = !config_.autoHide || PtInRect(&bar, cursor);
+  visuals_->Slide(!revealed_, /*instant=*/true);
   ApplyRegion();
 
   // Antes de enseñarla: esperando al vigilante, el dock tapaba un segundo el vídeo a
@@ -135,6 +148,11 @@ void DockWindow::Reposition() {
     bottom -= Px(kBottomMargin);
   }
   SetWindowPos(hwnd_, HWND_TOPMOST, monitor_.work.left, bottom - height_, width_, height_, SWP_NOACTIVATE);
+
+  // ponytail: ancho en reposo de los huecos de relleno; en F4 lo lleva una expresión.
+  const float slot = static_cast<float>(config_.iconSize + config_.iconSpacing);
+  visuals_->LayoutBar(static_cast<float>(width_), static_cast<float>(height_),
+                      static_cast<float>(Px(kPlaceholderSlots * slot + 2 * kPadding)), static_cast<float>(barHeight));
 }
 
 RECT DockWindow::BarRect(bool tall) const {
@@ -151,7 +169,7 @@ void DockWindow::ApplyRegion() {
   // La región es lo único que deja pasar el ratón a otros procesos (HTTRANSPARENT no
   // atraviesa procesos) y además recorta el dibujo: tiene que cubrir todo lo que se pinte.
   std::vector<RECT> rects;
-  if (revealed_) rects.push_back(BarRect(hovering_));
+  if (revealed_ || sliding_) rects.push_back(BarRect(hovering_));
   if (config_.autoHide) rects.push_back(RECT{0, height_ - Px(kRevealStrip), width_, height_});
   if (Same(rects, region_)) return;
   region_ = rects;
@@ -168,14 +186,20 @@ void DockWindow::ApplyRegion() {
 void DockWindow::Reveal() {
   if (revealed_) return;
   revealed_ = true;
+  sliding_ = false;
+  KillTimer(hwnd_, kSlideTimer);
+  // La región crece ANTES de subir: si no, la barra sube recortada.
   ApplyRegion();
+  visuals_->Slide(false, false);
   LogTrace(L"[visible] {}", monitor_.device);
 }
 
 void DockWindow::Hide() {
   if (!revealed_ || !config_.autoHide) return;
   revealed_ = false;
-  ApplyRegion();
+  sliding_ = true;
+  visuals_->Slide(true, false);
+  SetTimer(hwnd_, kSlideTimer, kSlideSettleMs, nullptr);
   LogTrace(L"[escondido] {}", monitor_.device);
 }
 
@@ -293,6 +317,10 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       } else if (wparam == kHideTimer) {
         KillTimer(hwnd_, kHideTimer);
         if (!hovering_) Hide();
+      } else if (wparam == kSlideTimer) {
+        KillTimer(hwnd_, kSlideTimer);
+        sliding_ = false;
+        ApplyRegion();
       }
       return 0;
 

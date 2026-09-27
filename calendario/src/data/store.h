@@ -60,6 +60,9 @@ class Store {
   std::vector<DayItem> UndatedTasks();
   // One event whole, for the detail panel. Empty when it is gone or never was.
   std::optional<EventDetail> Event(const std::wstring& uid);
+  // Everybody the agenda has seen on a guest list, most recent first, once each and never this
+  // account: what "con Ana" is looked up in (phase 13). Names and addresses as Google has them.
+  std::vector<std::pair<std::wstring, std::wstring>> KnownPeople();
   // Events and tasks whose title, location or notes contain `query`, without caring about
   // capitals or accents. Each comes as its card, dated on the day it stands for: a series on its
   // next occurrence from `today`, a task with no date on today. What is still ahead comes first,

@@ -5,6 +5,7 @@
 #include <initializer_list>
 
 #include "core/text.h"
+#include "core/zones.h"
 
 namespace agenda::nlp {
 namespace {
@@ -717,6 +718,40 @@ PrefixHit ReadPrefix(std::wstring& folded) {
   return PrefixHit{kind, Span{i, length, SpanKind::Prefix}};
 }
 
+// --- Phase 13: guests, places and zones -----------------------------------------------------
+
+bool EndsAddress(wchar_t c) {
+  return c == L' ' || c == L'\t' || c == L',' || c == L';' || c == L'(' || c == L')' ||
+         c == L'<' || c == L'>';
+}
+
+// Every e-mail address in the text, found before tokenising because the tokenizer splits at the
+// '@'. Each is blanked out of the folded copy, like the prefix, so no rule reads it again.
+std::vector<Span> ReadAddresses(std::wstring_view text, std::wstring& folded,
+                                std::vector<Person>& out) {
+  std::vector<Span> spans;
+  for (size_t at = text.find(L'@'); at != std::wstring_view::npos; at = text.find(L'@', at + 1)) {
+    if (at == 0 || EndsAddress(text[at - 1])) continue;  // "@ Oficina" is a place, not this
+    size_t from = at;
+    while (from > 0 && !EndsAddress(text[from - 1])) --from;
+    size_t to = at + 1;
+    while (to < text.size() && !EndsAddress(text[to])) ++to;
+    while (to > at + 1 && (text[to - 1] == L'.' || text[to - 1] == L':')) --to;
+    const std::wstring_view address = text.substr(from, to - from);
+    const std::wstring_view domain = address.substr(at - from + 1);
+    if (domain.find(L'.') == std::wstring_view::npos || domain.find(L'@') != std::wstring_view::npos ||
+        domain.front() == L'.' || domain.back() == L'.') {
+      continue;
+    }
+    out.push_back(Person{L"", std::wstring(address)});
+    for (size_t k = from; k < to; ++k) folded[k] = L' ';
+    spans.push_back(Span{from, to - from, SpanKind::Person});
+    at = to;
+    if (at >= text.size()) break;
+  }
+  return spans;
+}
+
 // Whatever no rule claimed, with the runs of whitespace squeezed back together. Because every
 // recogniser swallows its own connecting words, dropping the spans is all it takes.
 std::wstring BuildTitle(std::wstring_view original, const std::vector<Span>& spans) {
@@ -769,16 +804,35 @@ std::wstring RepeatLabel(const std::wstring& rule) {
 
 }  // namespace
 
-ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes) {
+ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes,
+                       const std::vector<Person>& people) {
   ParsedInput out;
 
   std::wstring folded = Folded(text);
 
   const PrefixHit prefix = ReadPrefix(folded);
   if (prefix.kind) out.spans.push_back(prefix.span);
+  const size_t addressSpans = out.spans.size();
+  for (const Span& span : ReadAddresses(text, folded, out.attendees)) out.spans.push_back(span);
 
   const std::vector<Token> tokens = Tokenize(folded);
   std::vector<bool> used(tokens.size(), false);
+  std::vector<std::wstring_view> words;
+  for (const Token& token : tokens) words.push_back(token.text);
+
+  // "con ana@x.com", "y luis@x.com": the word that joins an address goes with it.
+  for (size_t s = addressSpans; s < out.spans.size(); ++s) {
+    Span& span = out.spans[s];
+    for (size_t k = tokens.size(); k-- > 0;) {
+      if (tokens[k].offset + tokens[k].length > span.offset) continue;
+      if (!used[k] && AtAny(tokens, k, {L"con", L"with", L"y", L"and"})) {
+        used[k] = true;
+        span.length += span.offset - tokens[k].offset;
+        span.offset = tokens[k].offset;
+      }
+      break;
+    }
+  }
 
   const auto take = [&](size_t from, size_t to, SpanKind kind) {
     for (size_t k = from; k < to; ++k) used[k] = true;
@@ -811,11 +865,87 @@ ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes) {
   if (!duration || !duration->startMinute) time = FindTime(tokens, used);
   if (time) take(time->from, time->to, SpanKind::Time);
 
+  // The zone the hour was said in: "hora de Madrid", "Madrid time", or a place right behind
+  // the hour, "3pm Madrid", "9am EST". A place anywhere else is where it happens, not when.
+  {
+    const auto free = [&](size_t from, size_t count) {
+      return from + count <= tokens.size() && RangeFree(used, from, from + count);
+    };
+    size_t count = 0;
+    for (size_t i = 0; i + 2 < tokens.size() && out.timeZone.empty(); ++i) {
+      if (!AtAny(tokens, i, {L"hora", L"horario"}) || !AtAny(tokens, i + 1, {L"de", L"en"})) continue;
+      const ZoneInfo* zone = ZoneAt(words, i + 2, count);
+      if (zone != nullptr && free(i, 2 + count)) {
+        out.timeZone = zone->iana;
+        take(i, i + 2 + count, SpanKind::Zone);
+      }
+    }
+    for (size_t i = 0; i < tokens.size() && out.timeZone.empty(); ++i) {
+      const ZoneInfo* zone = ZoneAt(words, i, count);
+      if (zone != nullptr && At(tokens, i + count, L"time") && free(i, count + 1)) {
+        out.timeZone = zone->iana;
+        take(i, i + count + 1, SpanKind::Zone);
+      }
+    }
+    const size_t after = duration && duration->startMinute ? duration->to : (time ? time->to : 0);
+    if (out.timeZone.empty() && after > 0) {
+      const ZoneInfo* zone = ZoneAt(words, after, count);
+      if (zone != nullptr && free(after, count)) {
+        out.timeZone = zone->iana;
+        take(after, after + count, SpanKind::Zone);
+      }
+    }
+  }
+
   std::optional<DateHit> date;
   for (size_t i = 0; i < tokens.size() && !date; ++i) {
     if (!used[i]) date = ReadDateAt(tokens, used, folded, now, i);
   }
   if (date) take(date->from, date->to, SpanKind::Date);
+
+  // "con Ana y Luis": names the agenda has seen on a guest list before. A name it has never
+  // seen stays in the title, because inviting somebody means knowing where to write to them.
+  const auto personAt = [&](size_t at, size_t& count) -> const Person* {
+    const Person* best = nullptr;
+    count = 0;
+    for (const Person& person : people) {
+      if (person.name.empty() || person.email.empty()) continue;
+      const std::wstring name = Folded(person.name);
+      // The whole name, or only its first word.
+      for (const bool whole : {true, false}) {
+        size_t matched = 0;
+        std::wstring_view rest = name;
+        while (!rest.empty() && at + matched < tokens.size()) {
+          const size_t space = rest.find(L' ');
+          if (tokens[at + matched].text != rest.substr(0, space)) break;
+          ++matched;
+          rest = space == std::wstring_view::npos || !whole ? std::wstring_view{}
+                                                             : rest.substr(space + 1);
+        }
+        if (rest.empty() && matched > count && RangeFree(used, at, at + matched)) {
+          best = &person;
+          count = matched;
+        }
+      }
+    }
+    return best;
+  };
+  for (size_t i = 0; i + 1 < tokens.size(); ++i) {
+    if (used[i] || !AtAny(tokens, i, {L"con", L"with"})) continue;
+    size_t count = 0;
+    const Person* first = personAt(i + 1, count);
+    if (first == nullptr) continue;
+    out.attendees.push_back(*first);
+    size_t end = i + 1 + count;
+    while (end < tokens.size() && !used[end] && AtAny(tokens, end, {L"y", L"and"})) {
+      const Person* next = personAt(end + 1, count);
+      if (next == nullptr) break;
+      out.attendees.push_back(*next);
+      end += 1 + count;
+    }
+    take(i, end, SpanKind::Person);
+    i = end - 1;
+  }
 
   int minute = duration && duration->startMinute ? *duration->startMinute
                                                  : (time ? time->minute : kNoTime);
@@ -832,6 +962,62 @@ ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes) {
   }
 
   out.kind = prefix.kind ? *prefix.kind : (hasTime ? Kind::Event : Kind::Task);
+
+  // Guests, places and zones belong to an event with an hour: a task has nowhere to keep them,
+  // and a zone means nothing to a day that lasts all day. Their words go back to the title.
+  if (out.kind == Kind::Task || !hasTime) {
+    const bool keepPeople = out.kind == Kind::Event;
+    std::erase_if(out.spans, [keepPeople](const Span& span) {
+      return span.kind == SpanKind::Zone || (!keepPeople && span.kind == SpanKind::Person);
+    });
+    out.timeZone.clear();
+    if (!keepPeople) out.attendees.clear();
+  }
+
+  // The place: "en Crepes", "at Starbucks" -- a capital after the word, so "en equipo" stays in
+  // the title -- or anything after an '@' that is not an address. It runs to the next thing
+  // recognised, or to "con".
+  if (out.kind == Kind::Event) {
+    const auto capital = [](wchar_t c) {
+      return (c >= L'A' && c <= L'Z') || c == L'Á' || c == L'É' || c == L'Í' || c == L'Ó' ||
+             c == L'Ú' || c == L'Ñ';
+    };
+    const auto placeEnd = [&](size_t from) {
+      size_t end = from;
+      while (end < tokens.size() && !used[end] && !AtAny(tokens, end, {L"con", L"with"})) ++end;
+      return end;
+    };
+    for (size_t i = 0; i + 1 < tokens.size() && out.location.empty(); ++i) {
+      if (used[i] || used[i + 1] || !AtAny(tokens, i, {L"en", L"at"})) continue;
+      if (!capital(text[tokens[i + 1].offset])) continue;
+      const size_t end = placeEnd(i + 1);
+      const size_t from = tokens[i + 1].offset;
+      const size_t to = tokens[end - 1].offset + tokens[end - 1].length;
+      out.location = std::wstring(text.substr(from, to - from));
+      take(i, end, SpanKind::Place);
+    }
+    for (size_t at = folded.find(L'@'); at != std::wstring::npos && out.location.empty();
+         at = folded.find(L'@', at + 1)) {
+      size_t first = 0;
+      while (first < tokens.size() && tokens[first].offset < at) ++first;
+      if (first >= tokens.size() || used[first]) continue;
+      const size_t end = placeEnd(first);
+      const size_t to = tokens[end - 1].offset + tokens[end - 1].length;
+      out.location = std::wstring(text.substr(tokens[first].offset, to - tokens[first].offset));
+      for (size_t k = first; k < end; ++k) used[k] = true;
+      out.spans.push_back(Span{at, to - at, SpanKind::Place});
+    }
+  }
+
+  // Somebody typed twice, once by name and once by address, is invited once.
+  std::vector<Person> guests;
+  for (const Person& person : out.attendees) {
+    const bool seen = std::any_of(guests.begin(), guests.end(), [&](const Person& other) {
+      return Folded(other.email) == Folded(person.email);
+    });
+    if (!seen) guests.push_back(person);
+  }
+  out.attendees = std::move(guests);
 
   std::optional<Date> when;
   if (date) {
@@ -915,6 +1101,15 @@ std::wstring PreviewText(const ParsedInput& parsed, Date today) {
 
   if (parsed.recurrence) add(RepeatLabel(*parsed.recurrence));
   add(Capitalised(parsed.title));
+  if (!parsed.location.empty()) add(std::wstring(T(L"en ", L"at ")) + parsed.location);
+  if (!parsed.attendees.empty()) {
+    std::wstring names;
+    for (const Person& person : parsed.attendees) {
+      if (!names.empty()) names += L", ";
+      names += person.name.empty() ? person.email : person.name;
+    }
+    add(std::wstring(T(L"con ", L"with ")) + names);
+  }
   return out;
 }
 

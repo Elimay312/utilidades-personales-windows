@@ -363,6 +363,7 @@ class PopupWindow final : public A11ySource {
   std::function<void()> openSettings_;
   ULONGLONG lastTick_ = 0;
   std::wstring parsed_;  // the text the preview in the model was built from
+  std::vector<nlp::Person> people_;  // who "con Ana" can mean: guests seen before (phase 13)
 
   // The expansion. `spring_.x` is how far it has got, 0 the popup and 1 the app; `goal_` is
   // where it is going. The two rectangles are in physical pixels on this monitor.

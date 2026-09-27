@@ -19,6 +19,11 @@ sigue [SemVer](https://semver.org/lang/es/).
   que se sube a Google. Las tarjetas y los bloques con videollamada llevan una cámara (en el
   popup, un clic en ella une), y el aviso de Windows y el de la Isla traen su botón **Unirse**.
   Captura `app-invitados`.
+- **Invitar, lugar y zona horaria escribiendo** (fase 13.3). `reunión con ana@x.com mañana 3pm`
+  invita (y `con Ana` si Ana ya salió como invitada antes), `almuerzo en Crepes 1pm` o `@
+  Oficina` pone el lugar, y `3pm hora de Madrid`, `3pm Madrid` o `9am EST` escriben la hora en
+  otra zona. La vista previa dice siempre, pequeño a la derecha, en qué zona está la hora
+  («Colombia», o «España · 08:00 aquí»). Captura `popup-zona`.
 
 - **Varias cuentas de Google** (fase 12.3). La configuración tiene una sección **Cuentas de
   Google** con **Añadir…** otra cuenta, **Reconectar…** la que perdió el permiso y una tarjeta

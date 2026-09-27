@@ -429,6 +429,9 @@ lo que queda sin pintar es el título. Encima aparece una tarjeta con lo que se 
 | `reunión 3-5pm` | 📅 Hoy · 15:00–17:00 · Reunión |
 | `dentista en 2 semanas` | ☑ Tarea · 6 Oct · Dentista |
 | `a las 3 llamada por una hora y media` | 📅 Hoy · 15:00–16:30 · Llamada |
+| `almuerzo en Crepes mañana 1pm` | 📅 Mañana · 13:00–14:00 · Almuerzo · en Crepes |
+| `reunión con ana@x.com mañana 3pm` | 📅 Mañana · 15:00–16:00 · Reunión · con ana@x.com |
+| `llamada 3pm hora de Madrid` | 📅 … · 15:00–16:00 · Llamada — y a la derecha «España · 08:00 aquí» |
 
 Una frase que se repite guarda su regla y el evento sale **en cada día en que cae**: `gym cada
 lunes 7am` aparece todos los lunes desde el primero.
@@ -454,6 +457,20 @@ Lo que entiende:
   como una regla RRULE.
 - **Prefijos:** `t:` o `!` al principio obligan a que sea una tarea; `e:` obliga a que sea un
   evento. `?` no crea nada: **busca** (ver abajo).
+- **Invitados** (solo eventos con hora): cualquier correo, `con ana@x.com y luis@x.com`, y
+  `con Ana` o `con Ana y Luis` si esa persona ya salió como invitada en algún evento tuyo (si
+  no, el nombre se queda en el título). Google les manda la invitación.
+- **Lugar:** `en` o `at` seguido de una palabra con **mayúscula** (`en Crepes`, `at
+  Starbucks`), o `@ Oficina 3`. Llega hasta lo siguiente que se reconozca o hasta `con`. Con
+  minúscula (`reunión en equipo`) se queda en el título.
+- **Zona horaria:** la tarjeta siempre dice, pequeña y a la derecha, en qué zona está la hora:
+  la de este equipo por su país («Colombia»). Si la frase nombra otra —`hora de Madrid`,
+  `Madrid time`, o el lugar justo detrás de la hora: `3pm Madrid`, `9am EST`—, se usa esa, la
+  tarjeta dice «España · 08:00 aquí» y el evento se guarda a las 8 de aquí y sube a Google con
+  la zona de Madrid. Unas sesenta ciudades y países, en español y en inglés, y las siglas EST,
+  CST, MST, PST, CET, UTC, GMT, IST y JST.
+
+![Una hora escrita en otra zona](docs/img/popup-zona.png)
 
 ### Buscar
 

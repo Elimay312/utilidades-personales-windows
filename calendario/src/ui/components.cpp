@@ -487,6 +487,25 @@ void DrawPreviewCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme&
     }
   }
 
+  // Which clock the hour is on, small and quiet at the right end, so nobody has to wonder.
+  if (!model.zoneNote.empty() && fonts.ok()) {
+    Microsoft::WRL::ComPtr<IDWriteTextLayout> measure;
+    DWRITE_TEXT_METRICS metrics{};
+    if (SUCCEEDED(fonts.factory->CreateTextLayout(
+            model.zoneNote.c_str(), static_cast<UINT32>(model.zoneNote.size()), fonts.label.Get(),
+            4096.0f, rect.bottom - rect.top, &measure)) &&
+        SUCCEEDED(measure->GetMetrics(&metrics))) {
+      // Never more than half the card: the title is what the card is for.
+      const float width = (std::min)(std::ceil(metrics.widthIncludingTrailingWhitespace),
+                                     (textRight - rect.left) / 2.0f);
+      brush->SetColor(theme.textSecondary);
+      DrawTextIn(target, fonts.label.Get(), model.zoneNote,
+                 D2D1_RECT_F{textRight - width, rect.top, textRight, rect.bottom}, brush,
+                 Align::Right);
+      textRight -= width + layout.gap;
+    }
+  }
+
   brush->SetColor(theme.textPrimary);
   DrawTextIn(target, fonts.event.Get(), nlp::PreviewText(model.preview, model.today),
              D2D1_RECT_F{rect.left + kCardTextLeftDip * type, rect.top, textRight, rect.bottom},

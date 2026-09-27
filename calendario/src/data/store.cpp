@@ -500,6 +500,24 @@ std::optional<EventDetail> Store::Event(const std::wstring& uid) {
   return out;
 }
 
+std::vector<std::pair<std::wstring, std::wstring>> Store::KnownPeople() {
+  std::vector<std::pair<std::wstring, std::wstring>> out;
+  if (!db_.IsOpen()) return out;
+  // ponytail: read on every Reload; a table of its own if guest lists ever number thousands.
+  std::optional<Stmt> stmt = db_.Prepare(
+      "SELECT attendees FROM events WHERE attendees != '' AND deleted_at IS NULL "
+      "ORDER BY updated_at DESC LIMIT 400");
+  if (!stmt) return out;
+  std::unordered_set<std::string> seen;
+  while (stmt->Step()) {
+    for (const Attendee& guest : sync::ReadAttendees(stmt->Text(0))) {
+      if (guest.self || guest.name.empty() || !seen.insert(guest.email).second) continue;
+      out.emplace_back(guest.name, ToWide(guest.email));
+    }
+  }
+  return out;
+}
+
 std::vector<DayItem> Store::Search(std::wstring_view query, Date today, size_t limit) {
   std::vector<DayItem> found;
   while (!query.empty() && query.front() == L' ') query.remove_prefix(1);

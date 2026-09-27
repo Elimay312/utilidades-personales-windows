@@ -144,7 +144,9 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - `comprar leche` (tarea sin fecha)
   - `t: pagar luz el lunes`
   - `gym cada lunes 7am`
+  - Desde la fase 13.3: `reunión con ana@x.com mañana 3pm`, `café con Ana y Luis` (nombres ya vistos en invitados, `Store::KnownPeople`), `almuerzo en Crepes 1pm` (lugar: `en`/`at` + mayúscula, o `@ X`), `llamada 3pm hora de Madrid`, `call 9am EST`, `3pm Madrid`. Invitados, lugar y zona solo para eventos con hora; si no, sus palabras vuelven al título.
   - Desde la fase 9: `25 de octubre`, `October 25`, `25/10/2027` (día y mes), `en 2 semanas`, `fin de mes`, `este fin de semana`, `3-5pm`, `a las 3 hasta las 5`, `de 3 a 5 de la tarde`, `por 1h30`, `por una hora y media`, `17h30`.
+- **Zonas horarias (fase 13.3).** Una tabla en `src/core/zones.h` (alias plegados → IANA, etiqueta es/en, latitud y longitud) y `ConvertWall` sobre el tzdb de `<chrono>` (la ICU de Windows). El parser no convierte: `ParsedInput.start` es la hora tal cual se escribió y `timeZone` su zona; `CreateFromInput` la pasa a reloj de pared local y guarda la zona en `events.time_zone`. La tarjeta de vista previa enseña siempre la zona a la derecha (`ZoneNote`): «Colombia», o «España · 08:00 aquí».
 - Ambigüedad de horas: "a las 3" o "4:05" sin am/pm (y sin cero delante) pueden ser de mañana o de tarde. Hoy vale la mitad que todavía no ha pasado. Si las dos siguen por delante, o el día es otro, se toma la que cae entre 8:00 y 20:00 y `ParsedInput::otherMinute` lleva la otra: la vista previa pregunta a. m. / p. m. (clic o ↑↓). Si las dos pasaron y no se indicó fecha, mañana. (Cambiado por el usuario tras la 1.0.0: "4:05" se leía como 24 h y caía de madrugada.)
 - Un evento escrito cuando ya pasaron todos sus recordatorios avisa una vez al empezar (`Store::DueReminders`, con `updated_at`).
 
@@ -221,6 +223,7 @@ build\debug\Agenda.exe --render-snapshot=app-repeticion --out=docs\img\app-repet
 build\debug\Agenda.exe --render-snapshot=popup-buscar --out=docs\img\popup-buscar.png
 build\debug\Agenda.exe --render-snapshot=app-buscar --out=docs\img\app-buscar.png
 build\debug\Agenda.exe --render-snapshot=app-invitados --out=docs\img\app-invitados.png
+build\debug\Agenda.exe --render-snapshot=popup "--text=llamada con ana@x.com mañana 3pm hora de Madrid" --out=docs\img\popup-zona.png
 build\debug\Agenda.exe --render-snapshot=configuracion --theme=light --out=docs\img\configuracion-claro.png
 build\debug\Agenda.exe --render-snapshot=popup --theme=contrast --out=docs\img\popup-contraste.png
 powershell -NoProfile -ExecutionPolicy Bypass -File empaquetar.ps1   # build\release\Instalar-Agenda.exe

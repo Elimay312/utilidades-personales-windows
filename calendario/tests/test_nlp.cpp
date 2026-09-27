@@ -3,6 +3,7 @@
 #include <format>
 #include <optional>
 
+#include "core/zones.h"
 #include "nlp/parser.h"
 
 using namespace agenda;
@@ -658,4 +659,133 @@ TEST_CASE("the preview says a rule repeats without spelling out the RRULE") {
 TEST_CASE("a far away date falls back to the day and the month") {
   const nlp::ParsedInput out = nlp::ParseInput(L"el 25 almuerzo", kDay30);
   CHECK(nlp::PreviewText(out, kDay30.date) == L"☑ Tarea · 25 Oct · Almuerzo");
+}
+
+// --- Phase 13: guests, places and zones -------------------------------------------------------
+
+TEST_CASE("an address in the text is a guest, and the word before it goes too") {
+  const nlp::ParsedInput out =
+      nlp::ParseInput(L"reunión con ana@x.com y luis.p@empresa.co mañana 3pm", kTue);
+  CHECK(out.kind == nlp::Kind::Event);
+  REQUIRE(out.attendees.size() == 2);
+  CHECK(out.attendees[0].email == L"ana@x.com");
+  CHECK(out.attendees[1].email == L"luis.p@empresa.co");
+  CHECK(out.title == L"reunión");
+  CHECK(Clock(out.start) == L"15:00");
+}
+
+TEST_CASE("con and a name the agenda has seen invites that person") {
+  const std::vector<nlp::Person> people = {{L"Ana María", L"ana@x.com"},
+                                           {L"Luis", L"luis@x.com"}};
+  nlp::ParsedInput out = nlp::ParseInput(L"café con Ana y Luis mañana 10am", kTue, 60, people);
+  REQUIRE(out.attendees.size() == 2);
+  CHECK(out.attendees[0].email == L"ana@x.com");
+  CHECK(out.attendees[1].email == L"luis@x.com");
+  CHECK(out.title == L"café");
+
+  // The whole name too, and somebody unknown stays in the title.
+  out = nlp::ParseInput(L"almuerzo con Ana María el viernes 1pm", kTue, 60, people);
+  REQUIRE(out.attendees.size() == 1);
+  CHECK(out.title == L"almuerzo");
+  out = nlp::ParseInput(L"almuerzo con Pedro el viernes 1pm", kTue, 60, people);
+  CHECK(out.attendees.empty());
+  CHECK(out.title == L"almuerzo con Pedro");
+
+  // A task has nowhere to keep guests: the words stay where they were.
+  out = nlp::ParseInput(L"llamar con Ana", kTue, 60, people);
+  CHECK(out.kind == nlp::Kind::Task);
+  CHECK(out.attendees.empty());
+  CHECK(out.title == L"llamar con Ana");
+}
+
+TEST_CASE("en and a capital is where it happens") {
+  nlp::ParsedInput out = nlp::ParseInput(L"almuerzo en Crepes 1pm", kTue);
+  CHECK(out.location == L"Crepes");
+  CHECK(out.title == L"almuerzo");
+  CHECK(Clock(out.start) == L"13:00");
+
+  out = nlp::ParseInput(L"cena en Andrés DC mañana 8pm", kTue);
+  CHECK(out.location == L"Andrés DC");
+  CHECK(out.title == L"cena");
+
+  out = nlp::ParseInput(L"demo @ Oficina 3 viernes a las 4pm", kTue);
+  CHECK(out.location == L"Oficina 3");
+  CHECK(out.title == L"demo");
+
+  out = nlp::ParseInput(L"coffee at Starbucks tomorrow 9am", kTue);
+  CHECK(out.location == L"Starbucks");
+  CHECK(out.title == L"coffee");
+
+  // Lower case, a date, or a task: no place.
+  out = nlp::ParseInput(L"reunión en equipo 3pm", kTue);
+  CHECK(out.location.empty());
+  CHECK(out.title == L"reunión en equipo");
+  out = nlp::ParseInput(L"dentista en 2 semanas 9am", kTue);
+  CHECK(out.location.empty());
+  CHECK(When(out.start) == L"2026-10-06");
+  out = nlp::ParseInput(L"comprar pan en Carulla", kTue);
+  CHECK(out.kind == nlp::Kind::Task);
+  CHECK(out.location.empty());
+  CHECK(out.title == L"comprar pan en Carulla");
+}
+
+TEST_CASE("the hour can be said in another zone") {
+  nlp::ParsedInput out = nlp::ParseInput(L"llamada 3pm hora de Madrid", kTue);
+  CHECK(out.timeZone == "Europe/Madrid");
+  CHECK(Clock(out.start) == L"15:00");  // as written: ConvertWall moves it
+  CHECK(out.title == L"llamada");
+
+  out = nlp::ParseInput(L"call 9am EST", kTue);
+  CHECK(out.timeZone == "America/New_York");
+  CHECK(out.title == L"call");
+
+  out = nlp::ParseInput(L"entrevista mañana 3pm Nueva York", kTue);
+  CHECK(out.timeZone == "America/New_York");
+  CHECK(out.title == L"entrevista");
+
+  out = nlp::ParseInput(L"standup 9am London time", kTue);
+  CHECK(out.timeZone == "Europe/London");
+  CHECK(out.title == L"standup");
+
+  // A place that is not right behind the hour is not a zone, and a day with no hour has none.
+  out = nlp::ParseInput(L"vuelo a Madrid mañana 3pm", kTue);
+  CHECK(out.timeZone.empty());
+  CHECK(out.title == L"vuelo a Madrid");
+  out = nlp::ParseInput(L"e: feria hora de Madrid", kTue);
+  CHECK(out.timeZone.empty());
+
+  bool zone = false;
+  for (const nlp::Span& span : nlp::ParseInput(L"3pm Madrid reunión", kTue).spans) {
+    zone = zone || span.kind == nlp::SpanKind::Zone;
+  }
+  CHECK(zone);
+}
+
+TEST_CASE("the preview says where and with whom") {
+  const nlp::ParsedInput out =
+      nlp::ParseInput(L"almuerzo en Crepes con ana@x.com mañana 1pm", kTue);
+  const std::wstring text = nlp::PreviewText(out, kTue.date);
+  CHECK(text.find(L"en Crepes") != std::wstring::npos);
+  CHECK(text.find(L"con ana@x.com") != std::wstring::npos);
+}
+
+TEST_CASE("a wall clock in one zone is read on the wall of another") {
+  // 15:00 in Madrid on a September day (summer time, UTC+2) is 08:00 in Bogota (UTC-5).
+  auto moved = ConvertWall(Ymd(2026, 9, 23), 15 * 60, "Europe/Madrid", "America/Bogota");
+  REQUIRE(moved.has_value());
+  CHECK(moved->first == Ymd(2026, 9, 23));
+  CHECK(moved->second == 8 * 60);
+  // In winter Madrid is an hour closer.
+  moved = ConvertWall(Ymd(2026, 12, 2), 15 * 60, "Europe/Madrid", "America/Bogota");
+  REQUIRE(moved.has_value());
+  CHECK(moved->second == 9 * 60);
+  // And it crosses midnight when it has to.
+  moved = ConvertWall(Ymd(2026, 9, 23), 9 * 60, "Asia/Tokyo", "America/Bogota");
+  REQUIRE(moved.has_value());
+  CHECK(moved->first == Ymd(2026, 9, 22));
+  CHECK(moved->second == 19 * 60);
+  CHECK_FALSE(ConvertWall(Ymd(2026, 9, 23), 0, "Nowhere/Nothing", "America/Bogota"));
+
+  CHECK(ZoneLabel("America/Bogota") == L"Colombia");
+  CHECK(ZoneLabel("America/Argentina/Cordoba") == L"Cordoba");
 }

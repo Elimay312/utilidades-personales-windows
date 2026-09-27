@@ -845,7 +845,8 @@ void PopupWindow::Invalidate() {
     } else {
       model_.results.clear();
       model_.preview = nlp::ParseInput(parsed_, nlp::Now{TodayLocal(), NowMinuteLocal()},
-                                       DefaultMinutes());
+                                       DefaultMinutes(), people_);
+      model_.zoneNote = ZoneNote(model_.preview, LocalZone());
     }
   }
   UpdateRing();
@@ -871,6 +872,8 @@ void PopupWindow::Reload() {
       to = (std::max)(to, model_.slideFrom);
     }
     model_.dots = store_->DotsForRange(GridStart(from), AddDays(GridStart(to), kGridCells - 1));
+    people_.clear();
+    for (auto& [name, email] : store_->KnownPeople()) people_.push_back({name, email});
   }
   if (InApp()) ReloadApp();
 }
@@ -955,6 +958,28 @@ bool PopupWindow::CreateFromInput() {
   if (understood.end) {
     draft.endDay = understood.end->date;
     if (understood.end->minuteOfDay != nlp::kNoTime) draft.endMin = understood.end->minuteOfDay;
+  }
+  // Phase 13. An hour written in another zone lands on this wall's clock, which is what the
+  // cache keeps (CLAUDE.md); the zone goes along so Google shows it where it was written.
+  if (!understood.timeZone.empty() && draft.day && draft.startMin) {
+    const std::string here = LocalZone();
+    const auto start = ConvertWall(*draft.day, *draft.startMin, understood.timeZone, here);
+    const auto end = draft.endDay && draft.endMin
+                         ? ConvertWall(*draft.endDay, *draft.endMin, understood.timeZone, here)
+                         : std::nullopt;
+    if (start) {
+      draft.day = start->first;
+      draft.startMin = start->second;
+      draft.timeZone = understood.timeZone;
+      if (end) {
+        draft.endDay = end->first;
+        draft.endMin = end->second;
+      }
+    }
+  }
+  draft.location = understood.location;
+  for (const nlp::Person& person : understood.attendees) {
+    draft.attendees.push_back(ToUtf8(person.email));
   }
 
   const std::wstring typed = model_.input.text();

@@ -16,7 +16,7 @@ enum class Kind { Task, Event };
 
 // Which rule claimed a stretch of the text. The input paints them all in the accent colour
 // today; keeping the categories apart leaves the door open to telling them apart later.
-enum class SpanKind { Prefix, Date, Time, Duration, Recurrence };
+enum class SpanKind { Prefix, Date, Time, Duration, Recurrence, Person, Place, Zone };
 
 // A recognised stretch of the ORIGINAL text, in UTF-16 code units, so the input can hand it
 // straight to IDWriteTextLayout without translating anything.
@@ -24,6 +24,13 @@ struct Span {
   size_t offset = 0;
   size_t length = 0;
   SpanKind kind = SpanKind::Date;
+};
+
+// Somebody to invite: "ana@x.com" typed as is (no name), or "con Ana" found among the people
+// the agenda has already seen (phase 13).
+struct Person {
+  std::wstring name;
+  std::wstring email;
 };
 
 // Midnight is minute 0, a perfectly good time, so "no time at all" cannot be 0.
@@ -48,6 +55,13 @@ struct ParsedInput {
   // The same hour in the other half of the day, when nothing said which one ("a las 5" for
   // Friday): the preview offers a.m. and p.m. and Flipped swaps them. kNoTime when it is clear.
   int otherMinute = kNoTime;
+  // Phase 13, events only. The guests; the place ("en Crepes", "@ Oficina"); and the zone the
+  // hour was written in ("3pm hora de Madrid") as its IANA name, empty for this machine's.
+  // `start` and `end` are still the clock AS WRITTEN: turning them into this machine's wall
+  // clock is ConvertWall's job (core/zones.h), so the parser never reads the system's zone.
+  std::vector<Person> attendees;
+  std::wstring location;
+  std::string timeZone;
 };
 
 // `parsed` with the start in the other half of the day, and the end moved with it.
@@ -62,7 +76,9 @@ struct Now {
 
 // `defaultMinutes` is how long an event with a time and no length lasts: the settings window
 // moves it, and CLAUDE.md's hour is where it starts.
-ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes = 60);
+// `people` are the guests the agenda has seen before, which is what "con Ana" is looked up in.
+ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes = 60,
+                       const std::vector<Person>& people = {});
 
 // First letter up. It lives here because the preview card uses it to say what will be
 // created, and what gets created has to be what the preview promised -- the window titles its

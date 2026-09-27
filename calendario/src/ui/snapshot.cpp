@@ -136,6 +136,8 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
       model.results = SampleSearch(SearchQuery(model));
     } else {
       model.preview = nlp::ParseInput(text, nlp::Now{kSnapshotToday, kSnapshotMinute});
+      // A fixed zone, like the fixed day: the picture must not change with the machine.
+      model.zoneNote = ZoneNote(model.preview, "America/Bogota");
     }
   }
 

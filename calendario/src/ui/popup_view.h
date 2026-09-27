@@ -2,10 +2,12 @@
 
 #include <d2d1.h>
 
+#include <format>
 #include <string>
 #include <vector>
 
 #include "core/dates.h"
+#include "core/zones.h"
 #include "data/model.h"
 #include "nlp/parser.h"
 #include "ui/layout.h"
@@ -17,6 +19,26 @@ namespace agenda {
 
 // Everything the popup paints from. The window owns one and changes it as the mouse and the
 // keyboard arrive; the snapshot builds one and throws it away. Drawing only ever reads it.
+// The note at the preview card's right end: which zone the hour is on (phase 13). This
+// machine's name for it ("Colombia") or, for an hour said in another zone, that zone and the
+// hour it will be here: "España · 08:00 aquí". Nothing for a task or a day with no hour.
+inline std::wstring ZoneNote(const nlp::ParsedInput& parsed, const std::string& here) {
+  if (parsed.kind != nlp::Kind::Event || !parsed.start || parsed.start->minuteOfDay == nlp::kNoTime)
+    return {};
+  if (parsed.timeZone.empty() || parsed.timeZone == here) return here.empty() ? L"" : ZoneLabel(here);
+  std::wstring note = ZoneLabel(parsed.timeZone);
+  if (const auto moved = ConvertWall(parsed.start->date, parsed.start->minuteOfDay,
+                                     parsed.timeZone, here)) {
+    note += std::format(L" · {:02}:{:02} {}", moved->second / 60, moved->second % 60,
+                        T(L"aquí", L"here"));
+    if (moved->first != parsed.start->date) {
+      note += moved->first > parsed.start->date ? T(L" (+1 día)", L" (+1 day)")
+                                                : T(L" (−1 día)", L" (−1 day)");
+    }
+  }
+  return note;
+}
+
 struct PopupModel {
   Date today{};
   Date selected{};
@@ -29,6 +51,9 @@ struct PopupModel {
   // What the input says right now, reread on every change. Its spans light up inside the
   // capsule and the rest of it becomes the preview card above.
   nlp::ParsedInput preview;
+  // The zone the preview's hour is in, said small at the card's right end: "Colombia", or
+  // "España · 08:00 aquí" when the text named another one (phase 13). Empty for a task.
+  std::wstring zoneNote;
 
   // Search (phase 10): while the capsule starts with "?", what it found -- each as its card,
   // dated on the day it stands for -- and the one the arrows and the pointer are on.

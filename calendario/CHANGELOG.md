@@ -24,6 +24,9 @@ sigue [SemVer](https://semver.org/lang/es/).
   Oficina` pone el lugar, y `3pm hora de Madrid`, `3pm Madrid` o `9am EST` escriben la hora en
   otra zona. La vista previa dice siempre, pequeño a la derecha, en qué zona está la hora
   («Colombia», o «España · 08:00 aquí»). Captura `popup-zona`.
+- **Segunda zona horaria** (fase 13.4). La configuración tiene **Segunda zona horaria**, que
+  añade otra columna de horas en el día y la semana con el nombre de cada zona encima. Un
+  evento escrito en otra zona enseña en el detalle su hora allí. Captura `app-zonas`.
 
 - **Varias cuentas de Google** (fase 12.3). La configuración tiene una sección **Cuentas de
   Google** con **Añadir…** otra cuenta, **Reconectar…** la que perdió el permiso y una tarjeta

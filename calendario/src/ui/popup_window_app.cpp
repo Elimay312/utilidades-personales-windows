@@ -56,7 +56,7 @@ D2D1_SIZE_F PopupWindow::SizeDip() const {
 
 void PopupWindow::Relayout() {
   appLayout_ = MakeAppLayout(SizeDip(), layout_, app_.view, AllDayRows(app_),
-                             EaseOutCubic(app_.detail.t));
+                             EaseOutCubic(app_.detail.t), !app_.secondZone.empty());
 }
 
 TextInput& PopupWindow::FocusedText() {
@@ -110,7 +110,7 @@ void PopupWindow::Expand(Date day) {
     const AppLayout final =
         MakeAppLayout(D2D1_SIZE_F{static_cast<float>(Width(appRect_)) * toDip,
                                   static_cast<float>(Height(appRect_)) * toDip},
-                      layout_, app_.view, AllDayRows(app_));
+                      layout_, app_.view, AllDayRows(app_), 0.0f, !app_.secondZone.empty());
     app_.scroll = InitialScroll(final, day == model_.today, NowMinuteLocal());
     // An app is a window among the others: it stops floating over everything.
     SetWindowPos(hwnd_, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -209,6 +209,11 @@ void PopupWindow::FinishMorph() {
 
 void PopupWindow::ReloadApp() {
   app_.nowMinute = NowMinuteLocal();
+  app_.localZone = LocalZone();
+  // The second column only when it says something: the same zone twice is one column.
+  app_.secondZone = prefs_ != nullptr && prefs_->secondZone != app_.localZone
+                        ? prefs_->secondZone
+                        : std::string();
   app_.first = FirstShown(app_.view, model_.selected);
   app_.days.assign(static_cast<size_t>(ShownDays(app_.view)), {});
   if (store_ != nullptr && store_->IsOpen()) {

@@ -210,6 +210,14 @@ a ti, **Sí / Quizá / No** responde en Google, que se lo cuenta al organizador.
 
 ![Una reunión con invitados](docs/img/app-invitados.png)
 
+**Dos zonas horarias.** En la configuración, **Segunda zona horaria** añade otra columna de
+horas a la izquierda de la línea de tiempo del día y la semana, más tenue y con el nombre de
+cada zona encima (por ejemplo España y Colombia). Un evento escrito en otra zona dice en el
+panel de detalle, junto a la fecha, a qué hora es allí: «España · 15:00–16:00», mientras los
+campos siguen en la hora de este equipo.
+
+![La semana con una segunda zona horaria](docs/img/app-zonas.png)
+
 Borrar no es inmediato: el evento desaparece de la pantalla y se borra de verdad cuando se va
 el aviso de cinco segundos. Deshacer solo lo vuelve a enseñar, así que no se pierde nada de lo
 que Google tiene de él, como los invitados o los recordatorios.
@@ -560,7 +568,8 @@ La app tiene siete vistas más: `app-dia`, `app-semana` y `app-mes`, a su tamañ
 ventana a mitad de la expansión sobre esa área de trabajo entera para poder juzgar cómo se
 reorganiza; y `app-detalle`, `app-arrastre`, `app-borrar` y `app-repeticion`, la semana con el
 panel de detalle abierto, con un evento a medio arrastrar, con la pregunta de borrar y con la de
-«solo este o toda la serie». `app-invitados` abre una reunión con invitados y videollamada. Llevan una semana de
+«solo este o toda la serie». `app-invitados` abre una reunión con invitados y videollamada, y
+`app-zonas` enseña la semana con una segunda columna de horas (Madrid). Llevan una semana de
 ejemplo propia, con solapes, días enteros y una repetición.
 
 | | Tema oscuro | Tema claro |

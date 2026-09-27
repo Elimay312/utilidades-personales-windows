@@ -85,7 +85,7 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - **La barra lateral mide lo mismo que el popup y empieza en su esquina**, así que la cabecera, las iniciales y la rejilla del popup son el mini mes de la app: no se mueven durante la expansión. Debajo, en el hueco de la lista del día, van los calendarios y la bandeja de tareas sin fecha.
   - Todo escala con el `type` del popup: las letras de la app son las del popup (11/12/13/15).
   - Radio de la ventana: 8 DIP (`kRadiusApp`), el de cualquier ventana de Windows 11. Bloques de la línea de tiempo y fichas de día entero: 8 DIP, como las tarjetas, recortado a la mitad de su alto.
-  - Línea de tiempo: 48 DIP por hora, margen de horas de 56, ajuste a 15 min.
+  - Línea de tiempo: 48 DIP por hora, margen de horas de 56, ajuste a 15 min. Con segunda zona (fase 13.4, `secondZone` en `config.local.json`, control de pasos «‹ Madrid ›» en la configuración) el margen mide 120: la otra zona en `textMuted` a la izquierda, la local a la derecha, y sus nombres al pie de la cabecera de días. La conversión se hace con el primer día en pantalla. Las capturas fijan la zona local en `America/Bogota`.
   - Línea de ahora: `#FF5A5F` en oscuro, `#E0393E` en claro (token `now`). Fuerte en la columna de hoy y al 35 % en las demás.
   - Bloques: el color del calendario mezclado con la superficie (26 % en oscuro, 16 % en claro) y la barra de 3 px a la izquierda.
   - La cápsula viaja primero a la derecha y luego arriba (en línea recta cruzaría la rejilla). La lista del día se va en el primer 30 % del camino y la app entra entre el 30 y el 85 %.
@@ -223,6 +223,7 @@ build\debug\Agenda.exe --render-snapshot=app-repeticion --out=docs\img\app-repet
 build\debug\Agenda.exe --render-snapshot=popup-buscar --out=docs\img\popup-buscar.png
 build\debug\Agenda.exe --render-snapshot=app-buscar --out=docs\img\app-buscar.png
 build\debug\Agenda.exe --render-snapshot=app-invitados --out=docs\img\app-invitados.png
+build\debug\Agenda.exe --render-snapshot=app-zonas --out=docs\img\app-zonas.png
 build\debug\Agenda.exe --render-snapshot=popup "--text=llamada con ana@x.com mañana 3pm hora de Madrid" --out=docs\img\popup-zona.png
 build\debug\Agenda.exe --render-snapshot=configuracion --theme=light --out=docs\img\configuracion-claro.png
 build\debug\Agenda.exe --render-snapshot=popup --theme=contrast --out=docs\img\popup-contraste.png

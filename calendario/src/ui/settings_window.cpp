@@ -10,6 +10,7 @@
 #include "core/autostart.h"
 #include "core/hr.h"
 #include "core/log.h"
+#include "core/zones.h"
 #include "data/store.h"
 #include "sync/google.h"
 #include "ui/components.h"
@@ -33,13 +34,28 @@ constexpr float kControlDip = 32.0f;
 constexpr float kInsideDip = 16.0f;  // text and controls from the edge of their card
 constexpr float kFooterDip = 36.0f;
 
-enum Control { kHotkey, kLanguage, kTheme, kStartup, kCalendar, kDuration, kGoogle, kControls };
+enum Control {
+  kHotkey,
+  kLanguage,
+  kTheme,
+  kStartup,
+  kCalendar,
+  kDuration,
+  kSecondZone,  // phase 13: a stepper, "‹ Madrid ›"
+  kGoogle,
+  kControls
+};
 // Under the Google card, one card per account with its "Quitar": their controls come after the
 // fixed ones, kControls + the account's place.
 constexpr int kMaxAccounts = 6;
 constexpr float kAccountButtonDip = 100.0f;
-constexpr int kSectionOf[kControls] = {0, 0, 0, 0, 1, 1, 2};
-constexpr float kControlWidth[kControls] = {180.0f, 200.0f, 264.0f, 44.0f, 220.0f, 300.0f, 140.0f};
+constexpr int kSectionOf[kControls] = {0, 0, 0, 0, 1, 1, 1, 2};
+constexpr float kControlWidth[kControls] = {180.0f, 200.0f, 264.0f, 44.0f,
+                                            220.0f, 300.0f, 220.0f, 140.0f};
+
+// The steppers: one value between two chevrons, and each half of the control steps its way.
+bool IsStepper(int control) { return control == kSecondZone; }
+constexpr int kSecondZoneCount = static_cast<int>(std::size(kSecondZoneChoices)) + 1;
 
 // Ids UIA sees: a control is its index plus one, an option of a segmented one is 100 + ten per
 // control + its position, and an entry of the open calendar list is 200 + its position.
@@ -171,11 +187,22 @@ std::wstring_view Label(int control) {
       return T(L"Calendario por defecto", L"Default calendar");
     case kDuration:
       return T(L"Duración por defecto", L"Default duration");
+    case kSecondZone:
+      return T(L"Segunda zona horaria", L"Second time zone");
     case kGoogle:
       return L"Google Calendar · Google Tasks";
     default:
       return {};
   }
+}
+
+// What the stepper at `index` says: "Ninguna" and then each zone by its place's name.
+std::wstring SecondZoneText(int index) {
+  if (index <= 0) return std::wstring(T(L"Ninguna", L"None"));
+  const std::string_view iana = kSecondZoneChoices[index - 1];
+  // A city is what people say for a zone; a country with one zone is said by its country.
+  if (iana == "Etc/UTC") return L"UTC";
+  return ZoneLabel(iana);
 }
 
 // The name of a key the way ParseHotkey reads it back, or nothing for a key a shortcut cannot
@@ -525,6 +552,11 @@ int SettingsWindow::Selected(int control) const {
         if (kDurationChoices[i] == prefs_->durationMin) return i;
       }
       return 2;
+    case kSecondZone:
+      for (int i = 1; i < kSecondZoneCount; ++i) {
+        if (prefs_->secondZone == kSecondZoneChoices[i - 1]) return i;
+      }
+      return 0;
     default:
       return -1;
   }
@@ -641,6 +673,10 @@ void SettingsWindow::Paint(ID2D1RenderTarget* target) {
         break;
       case kDuration:
         detail = T(L"Con hora y sin duración", L"With a time, no length");
+        break;
+      case kSecondZone:
+        detail = T(L"Otra columna de horas en el día y la semana",
+                   L"Another column of hours in the day and week views");
         break;
       case kGoogle:
         detail = !configured_ ? T(L"Faltan las credenciales: mira docs/google-setup.md",
@@ -766,6 +802,32 @@ void SettingsWindow::Paint(ID2D1RenderTarget* target) {
                          b, 1.5f, rounded.Get());
         target->DrawLine(D2D1_POINT_2F{c0.x, c0.y + 2.0f}, D2D1_POINT_2F{c0.x + 4.0f, c0.y - 2.0f},
                          b, 1.5f, rounded.Get());
+        break;
+      }
+      case kSecondZone: {
+        b->SetColor(theme.panelOpaque);
+        FillRound(target, control, radius, b);
+        if (hover > 0.0f) {
+          b->SetColor(Fade(theme.hover, hover));
+          FillRound(target, control, radius, b);
+        }
+        b->SetColor(theme.border);
+        StrokeRound(target, control, radius, b, 1.0f);
+        const float middle = (control.top + control.bottom) / 2.0f;
+        b->SetColor(theme.textSecondary);
+        for (const bool right : {false, true}) {
+          const float x = right ? control.right - 14.0f : control.left + 14.0f;
+          const float reach = right ? -3.0f : 3.0f;
+          target->DrawLine(D2D1_POINT_2F{x + reach, middle - 5.0f}, D2D1_POINT_2F{x - reach, middle},
+                           b, 1.5f, rounded.Get());
+          target->DrawLine(D2D1_POINT_2F{x - reach, middle}, D2D1_POINT_2F{x + reach, middle + 5.0f},
+                           b, 1.5f, rounded.Get());
+        }
+        b->SetColor(Selected(c) == 0 ? theme.textSecondary : theme.textPrimary);
+        DrawTextIn(target, fonts_.event.Get(), SecondZoneText(Selected(c)),
+                   D2D1_RECT_F{control.left + 28.0f, control.top, control.right - 28.0f,
+                               control.bottom},
+                   b, Align::Center);
         break;
       }
       case kGoogle: {
@@ -1012,6 +1074,7 @@ void SettingsWindow::Activate(int control) {
     case kLanguage:
     case kTheme:
     case kDuration:
+    case kSecondZone:
       Step(control, 1);
       break;
     case kStartup:
@@ -1073,7 +1136,7 @@ void SettingsWindow::Step(int control, int direction) {
     PickCalendar((current + direction + count) % count);
     return;
   }
-  const int count = Options(control);
+  const int count = IsStepper(control) ? kSecondZoneCount : Options(control);
   if (count == 0) return;
   Choose(control, (Selected(control) + direction + count) % count);
 }
@@ -1096,6 +1159,10 @@ void SettingsWindow::Choose(int control, int option) {
     case kDuration:
       prefs_->durationMin = kDurationChoices[option];
       SaveSetting("defaultDuration", prefs_->durationMin);
+      break;
+    case kSecondZone:
+      prefs_->secondZone = option <= 0 ? std::string() : kSecondZoneChoices[option - 1];
+      SaveSetting("secondZone", prefs_->secondZone);
       break;
     default:
       return;
@@ -1137,6 +1204,9 @@ void SettingsWindow::OnLeftDown(float x, float y) {
     for (int i = 0; i < count; ++i) {
       if (Inside(OptionRect(Layout().controls[control], count, i), x, y)) Choose(control, i);
     }
+  } else if (IsStepper(control)) {
+    const D2D1_RECT_F& rect = Layout().controls[control];
+    Step(control, x < (rect.left + rect.right) / 2.0f ? -1 : 1);
   } else if (!(control == kHotkey && capturing_)) {
     Activate(control);
   }
@@ -1199,6 +1269,12 @@ std::vector<A11yNode> SettingsWindow::A11yNodes() {
         for (const CalendarInfo& calendar : calendars_) {
           if (calendar.isDefault) node.name += L": " + calendar.title;
         }
+        node.invokable = true;
+        break;
+      case kSecondZone:
+        // Read out with its value; invoking it steps forward, as the right arrow does.
+        node.type = UIA_ComboBoxControlTypeId;
+        node.name += L": " + SecondZoneText(Selected(c));
         node.invokable = true;
         break;
       case kGoogle:

@@ -96,6 +96,11 @@ Preferences ReadPreferences(const nlohmann::json& config) {
   if (const std::string theme = text("theme"); theme == "dark" || theme == "light") {
     out.theme = std::wstring(theme.begin(), theme.end());
   }
+  // An IANA name has a slash ("Europe/Madrid") or is UTC; anything else is a typo, not a zone.
+  if (const std::string zone = text("secondZone");
+      zone.find('/') != std::string::npos || zone == "UTC") {
+    out.secondZone = zone;
+  }
   return out;
 }
 

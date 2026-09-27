@@ -114,3 +114,11 @@ TEST_CASE("a wall minute and its day go back and forth") {
   const Date old{std::chrono::year{1969}, std::chrono::December, std::chrono::day{31}};
   CHECK(DayOfWall(WallMinute(old, 30)) == old);
 }
+
+TEST_CASE("the second zone is an IANA name or nothing") {
+  CHECK(ReadPreferences(nlohmann::json::object()).secondZone.empty());
+  CHECK(ReadPreferences({{"secondZone", "Europe/Madrid"}}).secondZone == "Europe/Madrid");
+  CHECK(ReadPreferences({{"secondZone", "UTC"}}).secondZone == "UTC");
+  CHECK(ReadPreferences({{"secondZone", "madrid"}}).secondZone.empty());
+  CHECK(ReadPreferences({{"secondZone", 5}}).secondZone.empty());
+}

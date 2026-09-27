@@ -74,6 +74,10 @@ struct AppModel {
   std::vector<DayItem> undated;             // the tray: tasks with no date
   float scroll = 8.0f * 60.0f;              // the minute at the top of the timeline
   int nowMinute = 0;
+  // Phase 13: this machine's zone and the second one the timeline shows, both IANA names. The
+  // second empty is one column of hours, as always.
+  std::string localZone;
+  std::string secondZone;
 
   // Hover, walked like the popup's: the tabs, the collapse button, the period arrows and the
   // calendar rows.

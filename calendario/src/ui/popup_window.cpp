@@ -530,7 +530,10 @@ void PopupWindow::PreferencesChanged() {
   if (flipped) ApplyDwmAttributes();
   // The preview is worded in the language of the moment and lasts as long as the setting says.
   parsed_.assign(1, wchar_t{1});
-  if (InApp()) ReloadApp();
+  if (InApp()) {
+    ReloadApp();
+    Relayout();  // the second zone's column changes the width of the gutter
+  }
   Invalidate();
 }
 

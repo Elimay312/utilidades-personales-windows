@@ -27,7 +27,18 @@ struct Preferences {
   int durationMin = 60;        // an event with a time and no length
   Lang lang = Lang::Es;
   std::wstring theme;          // "dark", "light", or empty to follow Windows
+  // Phase 13: a second column of hours on the timeline, as an IANA zone; empty is none.
+  std::string secondZone;
 };
+
+// What the second-zone chooser steps through, after "Ninguna": the zones a person in Colombia
+// most often has a meeting in. Any IANA name typed into the config by hand is honoured too.
+inline constexpr const char* kSecondZoneChoices[] = {
+    "Etc/UTC",          "America/New_York", "America/Chicago",    "America/Los_Angeles",
+    "America/Mexico_City", "America/Bogota", "America/Lima",      "America/Santiago",
+    "America/Argentina/Buenos_Aires", "America/Sao_Paulo", "Europe/London", "Europe/Madrid",
+    "Europe/Paris",     "Europe/Berlin",    "Asia/Dubai",         "Asia/Kolkata",
+    "Asia/Shanghai",    "Asia/Tokyo",       "Australia/Sydney"};
 
 inline constexpr int kDurationChoices[] = {30, 45, 60, 90, 120};
 

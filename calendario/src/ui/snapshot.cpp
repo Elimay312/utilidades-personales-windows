@@ -45,7 +45,7 @@ constexpr RECT kSnapshotWork{0, 0, 1920, 1032};
 AppView ViewFor(std::wstring_view view) {
   if (view == L"app-semana" || view == L"app-detalle" || view == L"app-arrastre" ||
       view == L"app-borrar" || view == L"app-repeticion" || view == L"app-buscar" ||
-      view == L"app-invitados") {
+      view == L"app-invitados" || view == L"app-zonas") {
     return AppView::Week;
   }
   if (view == L"app-mes") return AppView::Month;
@@ -147,6 +147,8 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
   AppModel appModel;
   appModel.view = ViewFor(view);
   appModel.nowMinute = kSnapshotMinute;
+  appModel.localZone = "America/Bogota";  // fixed, like the day: not this machine's
+  if (view == L"app-zonas") appModel.secondZone = "Europe/Madrid";
   float progress = 1.0f;
   RECT window{0, 0, static_cast<LONG>(kAppBaseWidthDip), static_cast<LONG>(kAppBaseHeightDip)};
   if (app) {
@@ -214,7 +216,8 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
   const D2D1_SIZE_F appSize{static_cast<float>(window.right - window.left),
                             static_cast<float>(window.bottom - window.top)};
   const AppLayout appLayout = MakeAppLayout(appSize, layout, appModel.view, AllDayRows(appModel),
-                                            EaseOutCubic(appModel.detail.t));
+                                            EaseOutCubic(appModel.detail.t),
+                                            !appModel.secondZone.empty());
   if (app) {
     const Date first = appModel.first;
     const bool showsToday = first <= kSnapshotToday &&

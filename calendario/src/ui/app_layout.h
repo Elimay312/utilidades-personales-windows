@@ -34,7 +34,8 @@ inline constexpr float kAppBaseHeightDip = 826.0f;
 // letters in the app are the letters in the popup.
 inline constexpr float kHourDip = 48.0f;          // one hour of timeline
 inline constexpr float kGutterDip = 56.0f;        // the hour labels to the left of it
-inline constexpr float kDayHeaderDip = 44.0f;     // weekday and number above each column
+inline constexpr float kDayHeaderDip = 44.0f;
+inline constexpr float kGutterTwoDip = 120.0f;  // two columns of hours, the second zone's first     // weekday and number above each column
 inline constexpr float kAllDayRowDip = 22.0f;     // a chip in the all-day strip
 inline constexpr int kAllDayMaxRows = 3;
 inline constexpr float kMinBlockDip = 20.0f;      // an event of five minutes still gets a line
@@ -187,8 +188,10 @@ struct AppLayout {
 // its capsule, and every length here is scaled by its `type`. `allDayRows` is how many chips
 // the busiest day of the week has, which is the only part of the layout that depends on data.
 // `detailShown` is how far the detail panel has slid in, nought to one.
+// `secondClock` widens the gutter for the second zone's column of hours (phase 13).
 inline AppLayout MakeAppLayout(D2D1_SIZE_F size, const PanelLayout& popup, AppView view,
-                               int allDayRows, float detailShown = 0.0f) {
+                               int allDayRows, float detailShown = 0.0f,
+                               bool secondClock = false) {
   AppLayout out;
   out.view = view;
   out.width = size.width;
@@ -257,7 +260,7 @@ inline AppLayout MakeAppLayout(D2D1_SIZE_F size, const PanelLayout& popup, AppVi
   out.allDayRows = std::clamp(allDayRows, 0, kAllDayMaxRows);
   out.allDayTop = out.dayHeaderTop + out.dayHeaderHeight;
   out.allDayHeight = static_cast<float>(out.allDayRows) * (out.allDayRow + out.gap) + out.gap;
-  out.gutter = at(kGutterDip);
+  out.gutter = at(secondClock ? kGutterTwoDip : kGutterDip);
   out.timeline = D2D1_RECT_F{out.main.left, out.allDayTop + out.allDayHeight, out.main.right,
                              (std::max)(out.allDayTop + out.allDayHeight, out.main.bottom)};
   out.columnsLeft = out.main.left + out.gutter;

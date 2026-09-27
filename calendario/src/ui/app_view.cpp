@@ -295,6 +295,19 @@ void DrawTimeline(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& th
     DrawTextIn(target, fonts.label.Get(), Clock(hour * 60),
                D2D1_RECT_F{area.left, y - labelHalf, labelRight, y + labelHalf}, brush,
                Align::Right);
+    // The second zone's hour, quieter, in the left half of the gutter. Read off the first day
+    // on screen: a week that crosses a change of the clocks is off by an hour for its end.
+    if (!appModel.secondZone.empty()) {
+      if (const auto there = ConvertWall(appModel.first, hour * 60, appModel.localZone,
+                                         appModel.secondZone)) {
+        brush->SetColor(theme.textMuted);
+        DrawTextIn(target, fonts.label.Get(), Clock(there->second),
+                   D2D1_RECT_F{area.left, y - labelHalf,
+                               area.left + app.gutter / 2.0f - std::round(4.0f * app.type),
+                               y + labelHalf},
+                   brush, Align::Right);
+      }
+    }
   }
   target->PopAxisAlignedClip();
 
@@ -368,6 +381,20 @@ void DrawDayOrWeek(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
                    const AppLayout& app, const PopupModel& model, const AppModel& appModel,
                    ID2D1SolidColorBrush* brush) {
   DrawDayHeaders(target, fonts, theme, app, model, appModel, brush);
+  // Which column of hours is which, at the foot of the header, over each one.
+  if (!appModel.secondZone.empty()) {
+    const float bottom = app.dayHeaderTop + app.dayHeaderHeight;
+    const float top = bottom - std::round(18.0f * app.type);
+    const float middle = app.main.left + app.gutter / 2.0f;
+    const float inset = std::round(4.0f * app.type);
+    brush->SetColor(theme.textMuted);
+    DrawTextIn(target, fonts.label.Get(), ZoneLabel(appModel.secondZone),
+               D2D1_RECT_F{app.main.left, top, middle - inset, bottom}, brush, Align::Right);
+    brush->SetColor(theme.textSecondary);
+    DrawTextIn(target, fonts.label.Get(), ZoneLabel(appModel.localZone),
+               D2D1_RECT_F{middle, top, app.columnsLeft - std::round(8.0f * app.type), bottom},
+               brush, Align::Right);
+  }
   DrawAllDay(target, fonts, theme, app, appModel, brush);
   brush->SetColor(theme.border);
   target->FillRectangle(D2D1_RECT_F{app.main.left, app.timeline.top - 1.0f, app.main.right,
@@ -683,6 +710,23 @@ void DrawDetail(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
     if (layout.labels[i].right <= layout.labels[i].left) continue;
     brush->SetColor(theme.textSecondary);
     DrawTextIn(target, fonts.label.Get(), kDetailLabelNames[English() ? 1 : 0][i], layout.labels[i], brush);
+  }
+
+  // An event written in another zone says its hours there, on the date's line: the fields
+  // below are this machine's clock (phase 13).
+  if (!detail.event.timeZone.empty() && detail.event.startMin && !appModel.localZone.empty()) {
+    const auto start = ConvertWall(detail.event.startDay, *detail.event.startMin,
+                                   appModel.localZone, detail.event.timeZone);
+    const auto end = detail.event.endMin
+                         ? ConvertWall(detail.event.endDay, *detail.event.endMin,
+                                       appModel.localZone, detail.event.timeZone)
+                         : std::nullopt;
+    if (start) {
+      std::wstring note = ZoneLabel(detail.event.timeZone) + L" · " + Clock(start->second);
+      if (end) note += L"–" + Clock(end->second);
+      brush->SetColor(theme.textSecondary);
+      DrawTextIn(target, fonts.label.Get(), note, layout.labels[kFieldDate], brush, Align::Right);
+    }
   }
 
   const bool allDay = !detail.event.startMin;

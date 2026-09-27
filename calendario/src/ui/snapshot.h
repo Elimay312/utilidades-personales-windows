@@ -26,6 +26,9 @@ inline constexpr std::wstring_view kSnapshotViews[] = {
     L"app-buscar",          // the same search in the app, hanging below the capsule
     L"app-invitados",       // a meeting open in the panel: its guests, the answer and Unirse
     L"app-zonas",           // the week with a second column of hours, Madrid's
+    L"app-trimestre",       // the quarter: fourteen weeks with their events beside the number
+    L"app-anio",            // the year: twelve mini months with their dots
+    L"app-lista",           // the next thirty days, one day after another
     L"configuracion",       // the settings window's client area, as it opens
 };
 

@@ -190,7 +190,7 @@ void DrawChevron(ID2D1RenderTarget* target, const Theme& theme, const PanelLayou
 void DrawMonthGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush, Month month,
                    Date today, Date selected, const std::vector<DayDot>& dots,
-                   const float* hover, float offsetX) {
+                   const float* hover, float offsetX, bool othersMuted) {
   const float radius = layout.dayCircle / 2.0f;
   const float ring = 1.5f * layout.type;
 
@@ -201,6 +201,8 @@ void DrawMonthGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
     const D2D1_POINT_2F center{(rect.left + rect.right) / 2.0f, rect.top + layout.dayCenterY};
 
     const bool inMonth = date.year() == month.year() && date.month() == month.month();
+    // The year leaves them out: each is already drawn in its own month's box.
+    if (!inMonth && !othersMuted) continue;
     const bool isToday = date == today;
     const bool isSelected = date == selected;
 

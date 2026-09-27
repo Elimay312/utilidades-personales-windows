@@ -78,10 +78,14 @@ struct AppModel {
   // second empty is one column of hours, as always.
   std::string localZone;
   std::string secondZone;
+  // Phase 13. The year's dots, all twelve months of them, and how far the list is wheeled, in
+  // pixels from its top.
+  std::vector<DayDot> yearDots;
+  float listScroll = 0.0f;
 
   // Hover, walked like the popup's: the tabs, the collapse button, the period arrows and the
   // calendar rows.
-  float tabHover[3] = {};
+  float tabHover[kAppViews] = {};
   float collapseHover = 0.0f;
   float prevHover = 0.0f;
   float nextHover = 0.0f;

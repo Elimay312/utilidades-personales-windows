@@ -49,6 +49,9 @@ AppView ViewFor(std::wstring_view view) {
     return AppView::Week;
   }
   if (view == L"app-mes") return AppView::Month;
+  if (view == L"app-trimestre") return AppView::Quarter;
+  if (view == L"app-anio") return AppView::Year;
+  if (view == L"app-lista") return AppView::List;
   return AppView::Day;
 }
 

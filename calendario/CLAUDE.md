@@ -8,7 +8,7 @@ Un calendario nativo para Windows escrito en C++ que se abre con un atajo global
 
 1. El usuario pulsa el atajo y aparece un **popup compacto** (abajo a la derecha, sobre la barra de tareas) con el mes, los eventos del día y un campo de texto con foco.
 2. Escribe en lenguaje natural (`mañana 5pm dentista`) y ve una **vista previa en vivo** de lo que entendió. Con Enter se crea el evento o la tarea.
-3. Si hace **clic en el calendario**, el popup se **expande con animación** a una app completa con vistas de día, semana y mes y una línea de tiempo detallada.
+3. Si hace **clic en el calendario**, el popup se **expande con animación** a una app completa con vistas de día, semana, mes, trimestre, año y lista, y una línea de tiempo detallada.
 4. Todo se sincroniza con **Google Calendar** (eventos) y **Google Tasks** (tareas).
 
 ## Prioridades (en este orden)
@@ -93,6 +93,7 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - Panel de detalle: 320 DIP a la derecha, superficie de tarjeta con el radio del panel (14), campos de 32 DIP con fondo `panelOpaque` y radio 8; foco en acento, error en el rojo de `now`. Entra con los 160 ms de siempre y no con el muelle: es algo que entra, no la ventana que cambia de tamaño.
   - Arrastrar: ajuste a 15 min, 4 DIP de temblor siguen siendo un clic, y los 6 DIP de abajo de un bloque lo estiran. El fantasma del arrastre es el bloque con el contorno de la selección.
   - Respeta la preferencia de "reducir animaciones" de Windows (`SPI_GETCLIENTAREAANIMATION`).
+  - **Seis vistas (fase 13.5)**, en este orden de pestaña y de `AppView`: Día, Semana, Mes, Trimestre, Año, Lista (teclas D, S, M, R/Q, A/Y, L). `HasTimeline` (día y semana) e `IsDayGrid` (mes y trimestre) sustituyen a las comprobaciones de «es mes». **Trimestre** son 14 semanas seguidas desde el lunes de la semana del día 1 del trimestre natural, con los eventos al lado del número (una fila no da para ponerlos debajo) y el mes en acento bajo cada día 1. **Año** son doce `DrawMonthGrid` del popup en 4×3 (`PlaceYearMonth`, filas nunca más altas que las del popup, sin los días de los meses vecinos) y sus puntos salen de un solo `DotsForRange`. **Lista** son 30 días desde el seleccionado, sin los vacíos: fecha a la izquierda (120 DIP) y las tarjetas del popup a la derecha, hasta 640 DIP. En trimestre y año un clic abre el día. Los ids UIA de las pestañas pasaron a 20–25.
 - **Semana:** empieza en lunes. Iniciales en español: L M X J V S D; en inglés, M T W T F S S. El locale por defecto es es-CO.
 - **Configuración (fase 7):** ventana normal con barra de título del color de `panelOpaque`, 560 DIP de ancho, tarjetas de 64 DIP con radio 8 sobre el panel, secciones en 15 semibold, controles de 32 DIP a la derecha: el segmentado es la cápsula de las pestañas de la app, el selector es el del panel de detalle, el interruptor mide 44×22 y su bola viaja en 160 ms.
 - **Foco de teclado:** anillo de 2 DIP en `textPrimary`, 3 DIP por fuera de lo enfocado, y solo después de usar el teclado (un clic lo quita), como en Windows.
@@ -224,6 +225,9 @@ build\debug\Agenda.exe --render-snapshot=popup-buscar --out=docs\img\popup-busca
 build\debug\Agenda.exe --render-snapshot=app-buscar --out=docs\img\app-buscar.png
 build\debug\Agenda.exe --render-snapshot=app-invitados --out=docs\img\app-invitados.png
 build\debug\Agenda.exe --render-snapshot=app-zonas --out=docs\img\app-zonas.png
+build\debug\Agenda.exe --render-snapshot=app-trimestre --out=docs\img\app-trimestre.png
+build\debug\Agenda.exe --render-snapshot=app-anio --out=docs\img\app-anio.png
+build\debug\Agenda.exe --render-snapshot=app-lista --out=docs\img\app-lista.png
 build\debug\Agenda.exe --render-snapshot=popup "--text=llamada con ana@x.com mañana 3pm hora de Madrid" --out=docs\img\popup-zona.png
 build\debug\Agenda.exe --render-snapshot=configuracion --theme=light --out=docs\img\configuracion-claro.png
 build\debug\Agenda.exe --render-snapshot=popup --theme=contrast --out=docs\img\popup-contraste.png

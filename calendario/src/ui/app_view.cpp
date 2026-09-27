@@ -46,6 +46,23 @@ std::wstring Lower(std::wstring_view text) {
   return out;
 }
 
+// "MAR", "HOY": the list's small line over the date. The accented capitals Spanish needs are
+// the only ones towupper leaves alone in the C locale, so they are done by hand.
+std::wstring Upper(std::wstring_view text) {
+  std::wstring out;
+  for (const wchar_t c : text) {
+    switch (c) {
+      case L'á': out.push_back(L'Á'); break;
+      case L'é': out.push_back(L'É'); break;
+      case L'í': out.push_back(L'Í'); break;
+      case L'ó': out.push_back(L'Ó'); break;
+      case L'ú': out.push_back(L'Ú'); break;
+      default: out.push_back(static_cast<wchar_t>(std::towupper(c)));
+    }
+  }
+  return out;
+}
+
 bool SameMonth(Date a, Date b) { return a.year() == b.year() && a.month() == b.month(); }
 
 // The tint an event block wears on the timeline: its calendar's colour washed into the card
@@ -133,17 +150,18 @@ void DrawTopRow(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
   // The three views as one segmented capsule, the same height and the same round ends as the
   // input next to it.
   const float radius = (app.rowHeight) / 2.0f;
-  const D2D1_RECT_F all{app.tabs[0].left, app.rowTop, app.tabs[2].right,
+  const D2D1_RECT_F all{app.tabs[0].left, app.rowTop, app.tabs[kAppViews - 1].right,
                         app.rowTop + app.rowHeight};
   brush->SetColor(theme.surface);
   FillRound(target, all, radius, brush);
   brush->SetColor(theme.border);
   StrokeRound(target, all, radius, brush, 1.0f);
 
-  const std::wstring_view kNames[3] = {T(L"Día", L"Day"), T(L"Semana", L"Week"),
-                                       T(L"Mes", L"Month")};
+  const std::wstring_view kNames[kAppViews] = {T(L"Día", L"Day"),         T(L"Semana", L"Week"),
+                                               T(L"Mes", L"Month"),       T(L"Trimestre", L"Quarter"),
+                                               T(L"Año", L"Year"),        T(L"Lista", L"List")};
   const float inset = std::round(3.0f * app.type);
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < kAppViews; ++i) {
     const bool on = static_cast<int>(appModel.view) == i;
     const D2D1_RECT_F pill = Inset(app.tabs[i], inset);
     if (on) {
@@ -422,11 +440,18 @@ void DrawMonthView(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
   const float dot = std::round(6.0f * app.type);
   const Month shown{model.selected.year(), model.selected.month()};
   const Date firstOfMonth{shown.year(), shown.month(), std::chrono::day{1}};
+  // The quarter: fourteen weeks, where the days of its three months are the ones in full
+  // colour, the first of each month says which month it is, and the events sit beside the
+  // number because a row is too short to put them under it.
+  const bool quarter = appModel.view == AppView::Quarter;
+  const Date quarterFrom = QuarterStart(model.selected);
+  const Date quarterTo = AddMonths(quarterFrom, 3);
 
-  for (int index = 0; index < kGridCells; ++index) {
+  for (int index = 0; index < app.monthRows * kGridCols; ++index) {
     const D2D1_RECT_F cell = app.monthCell(index);
     const Date date = AddDays(appModel.first, index);
-    const bool inMonth = SameMonth(date, firstOfMonth);
+    const bool inMonth =
+        quarter ? date >= quarterFrom && date < quarterTo : SameMonth(date, firstOfMonth);
 
     if (date == model.selected) {
       brush->SetColor(Fade(theme.textPrimary, theme.light ? 0.04f : 0.05f));
@@ -449,10 +474,22 @@ void DrawMonthView(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
     brush->SetColor(today ? theme.onAccent : (inMonth ? theme.textPrimary : theme.textMuted));
     DrawTextIn(target, fonts.day.Get(), std::to_wstring(static_cast<unsigned>(date.day())),
                number, brush, Align::Center);
+    float lineLeft = cell.left + pad;
+    if (quarter) {
+      lineLeft = number.right + pad / 2.0f;
+      if (static_cast<unsigned>(date.day()) == 1u) {
+        // "oct" under the 1, in the accent, where a month starts.
+        brush->SetColor(inMonth ? theme.accent : theme.textMuted);
+        DrawTextIn(target, fonts.label.Get(), Lower(MonthName(date.month()).substr(0, 3)),
+                   D2D1_RECT_F{number.left - pad / 2.0f, number.bottom, number.right + pad / 2.0f,
+                               cell.bottom},
+                   brush, Align::Center);
+      }
+    }
 
     if (index >= static_cast<int>(appModel.days.size())) continue;
     const std::vector<DayItem>& items = appModel.days[static_cast<size_t>(index)];
-    const float listTop = number.bottom + app.gap / 2.0f;
+    const float listTop = quarter ? number.top : number.bottom + app.gap / 2.0f;
     const int fits =
         (std::max)(0, static_cast<int>((cell.bottom - pad / 2.0f - listTop) / app.monthLine));
     const int total = static_cast<int>(items.size());
@@ -460,7 +497,7 @@ void DrawMonthView(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
     for (int k = 0; k < shownCount; ++k) {
       const DayItem& item = items[static_cast<size_t>(k)];
       const float top = listTop + static_cast<float>(k) * app.monthLine;
-      const D2D1_RECT_F line{cell.left + pad, top, cell.right - pad / 2.0f, top + app.monthLine};
+      const D2D1_RECT_F line{lineLeft, top, cell.right - pad / 2.0f, top + app.monthLine};
       brush->SetColor(Rgb(item.color, inMonth ? 1.0f : 0.45f));
       FillCircle(target, D2D1_POINT_2F{line.left + dot / 2.0f, (line.top + line.bottom) / 2.0f},
                  dot / 2.0f, brush);
@@ -475,8 +512,96 @@ void DrawMonthView(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
       const float top = listTop + static_cast<float>(shownCount) * app.monthLine;
       brush->SetColor(theme.textSecondary);
       DrawTextIn(target, fonts.label.Get(), More(total - shownCount),
-                 D2D1_RECT_F{cell.left + pad, top, cell.right - pad / 2.0f, top + app.monthLine},
+                 D2D1_RECT_F{lineLeft, top, cell.right - pad / 2.0f, top + app.monthLine},
                  brush);
+    }
+  }
+}
+
+// --- Year -----------------------------------------------------------------------------------
+
+void DrawYearView(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                  const PanelLayout& popup, const AppLayout& app, const PopupModel& model,
+                  const AppModel& appModel, ID2D1SolidColorBrush* brush) {
+  const int year = static_cast<int>(appModel.first.year());
+  for (int m = 0; m < 12; ++m) {
+    const YearMonth place = PlaceYearMonth(app, popup, m);
+    const Month month{std::chrono::year{year}, std::chrono::month{static_cast<unsigned>(m + 1)}};
+    const bool current =
+        model.today.year() == month.year() && model.today.month() == month.month();
+    brush->SetColor(current ? theme.accent : theme.textPrimary);
+    DrawTextIn(target, fonts.title.Get(), MonthName(month.month()), place.title, brush);
+    const float column = (place.weekdays.right - place.weekdays.left) / kGridCols;
+    for (int d = 0; d < kGridCols; ++d) {
+      const float left = place.weekdays.left + static_cast<float>(d) * column;
+      brush->SetColor(theme.textSecondary);
+      DrawTextIn(target, fonts.label.Get(), WeekdayInitial(d),
+                 D2D1_RECT_F{left, place.weekdays.top, left + column, place.weekdays.bottom},
+                 brush, Align::Center);
+    }
+    // The popup's own grid, with the days of the months either side left out: in a year they
+    // are already there, in their own month.
+    const Date selected = SameMonth(model.selected, Date{month.year(), month.month(),
+                                                          std::chrono::day{1}})
+                              ? model.selected
+                              : Date{};
+    target->PushAxisAlignedClip(place.box, D2D1_ANTIALIAS_MODE_ALIASED);
+    DrawMonthGrid(target, fonts, theme, place.grid, brush, month, model.today, selected,
+                  appModel.yearDots, nullptr, 0.0f, /*othersMuted=*/false);
+    target->PopAxisAlignedClip();
+  }
+}
+
+// --- List -----------------------------------------------------------------------------------
+
+void DrawListView(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                  const PanelLayout& popup, const AppLayout& app, const PopupModel& model,
+                  const AppModel& appModel, ID2D1SolidColorBrush* brush) {
+  const std::vector<ListRow> rows =
+      PlaceList(app, popup, appModel.first, appModel.days, appModel.listScroll);
+  if (rows.empty()) {
+    brush->SetColor(theme.textSecondary);
+    DrawTextIn(target, fonts.event.Get(),
+               T(L"Nada en los próximos 30 días", L"Nothing in the next 30 days"),
+               D2D1_RECT_F{app.main.left, app.main.top, app.main.right,
+                           app.main.top + std::round(64.0f * app.type)},
+               brush, Align::Center);
+    return;
+  }
+  for (const ListRow& row : rows) {
+    if (row.rect.bottom < app.main.top || row.rect.top > app.main.bottom) continue;
+    if (row.heading) {
+      // The date on the left, big like the week's headings, and a hairline between days.
+      brush->SetColor(theme.border);
+      target->FillRectangle(
+          D2D1_RECT_F{row.rect.left, row.rect.top, row.rect.right, row.rect.top + 1.0f}, brush);
+      const bool today = row.day == model.today;
+      const int weekday = MondayIndex(std::chrono::weekday{std::chrono::sys_days{row.day}});
+      const float top = row.rect.top + app.gap;
+      brush->SetColor(today ? theme.accent : theme.textSecondary);
+      DrawTextIn(target, fonts.label.Get(),
+                 today ? std::wstring(T(L"Hoy", L"Today")) : Upper(WeekdayName(weekday).substr(0, 3)),
+                 D2D1_RECT_F{row.rect.left, top, row.rect.left + std::round(100.0f * app.type),
+                             top + std::round(16.0f * app.type)},
+                 brush);
+      brush->SetColor(today ? theme.accent : theme.textPrimary);
+      DrawTextIn(target, fonts.title.Get(),
+                 std::format(L"{} {}", static_cast<unsigned>(row.day.day()),
+                             Lower(MonthName(row.day.month()).substr(0, 3))),
+                 D2D1_RECT_F{row.rect.left, top + std::round(16.0f * app.type),
+                             row.rect.left + std::round(100.0f * app.type),
+                             top + std::round(40.0f * app.type)},
+                 brush);
+      continue;
+    }
+    const DayItem& item =
+        appModel.days[static_cast<size_t>(row.index)][static_cast<size_t>(row.item)];
+    DrawEventCard(target, fonts, theme, popup, brush, row.rect, item, 0,
+                  item.done ? 1.0f : 0.0f);
+    if (item.uid == appModel.selected) {
+      brush->SetColor(theme.accent);
+      StrokeRound(target, Inset(row.rect, -1.0f), popup.cardRadius + 1.0f, brush,
+                  1.5f * app.type);
     }
   }
 }
@@ -1003,7 +1128,7 @@ void DrawFreeGhost(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
 
 std::vector<PlacedBlock> PlaceBlocks(const AppLayout& app, const AppModel& model) {
   std::vector<PlacedBlock> out;
-  if (model.view == AppView::Month) return out;
+  if (!HasTimeline(model.view)) return out;
   const float inset = (std::max)(1.0f, std::round(app.gap / 2.0f));
   for (int i = 0; i < app.columns && i < static_cast<int>(model.days.size()); ++i) {
     const D2D1_RECT_F column = app.column(i);
@@ -1072,7 +1197,7 @@ float AppAlpha(float progress) { return Ease(0.3f, 0.85f, progress); }
 float ListAlpha(float progress) { return 1.0f - Ease(0.0f, 0.3f, progress); }
 
 int AllDayRows(const AppModel& model) {
-  if (model.view == AppView::Month) return 1;
+  if (!HasTimeline(model.view)) return 1;
   int most = 0;
   for (const std::vector<DayItem>& day : model.days) {
     int count = 0;
@@ -1113,6 +1238,26 @@ std::wstring PeriodTitle(AppView view, Date anchor) {
     }
     case AppView::Month:
       return std::format(L"{} {}", MonthName(anchor.month()), static_cast<int>(anchor.year()));
+    case AppView::Quarter: {
+      const Date from = QuarterStart(anchor);
+      const Date to = AddMonths(from, 2);
+      if (English()) {
+        return std::format(L"{} – {} {}", MonthName(from.month()), MonthName(to.month()),
+                           static_cast<int>(from.year()));
+      }
+      return std::format(L"{} – {} {}", MonthName(from.month()), Lower(MonthName(to.month())),
+                         static_cast<int>(from.year()));
+    }
+    case AppView::Year:
+      return std::to_wstring(static_cast<int>(anchor.year()));
+    case AppView::List: {
+      const Date last = AddDays(anchor, kListDays - 1);
+      const auto day = [](Date date) {
+        return std::format(L"{} {}", static_cast<unsigned>(date.day()),
+                           Lower(MonthName(date.month()).substr(0, 3)));
+      };
+      return day(anchor) + L" – " + day(last);
+    }
   }
   return {};
 }
@@ -1185,8 +1330,12 @@ void DrawApp(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
         DrawSidebar(target, fonts, theme, popup, app, appModel, brush.Get(), rounded.Get());
         DrawTopRow(target, fonts, theme, popup, app, model, appModel, brush.Get(), rounded.Get());
         target->PushAxisAlignedClip(app.main, D2D1_ANTIALIAS_MODE_ALIASED);
-        if (appModel.view == AppView::Month) {
+        if (IsDayGrid(appModel.view)) {
           DrawMonthView(target, fonts, theme, app, model, appModel, brush.Get());
+        } else if (appModel.view == AppView::Year) {
+          DrawYearView(target, fonts, theme, popup, app, model, appModel, brush.Get());
+        } else if (appModel.view == AppView::List) {
+          DrawListView(target, fonts, theme, popup, app, model, appModel, brush.Get());
         } else {
           DrawDayOrWeek(target, fonts, theme, app, model, appModel, brush.Get());
         }

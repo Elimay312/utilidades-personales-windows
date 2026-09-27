@@ -23,7 +23,27 @@
 
 namespace agenda {
 
-enum class AppView { Day, Week, Month };
+// The tabs, in the order they are drawn: a view's number is its tab. Quarter, Year and List came
+// in phase 13, after the three that were already there.
+enum class AppView { Day, Week, Month, Quarter, Year, List };
+inline constexpr int kAppViews = 6;
+
+// The two views with hours down the side, where blocks are dragged and the wheel scrolls time.
+inline bool HasTimeline(AppView view) { return view == AppView::Day || view == AppView::Week; }
+// The two that are a grid of day cells with their events written in: the month, and the
+// quarter's fourteen weeks in a row.
+inline bool IsDayGrid(AppView view) { return view == AppView::Month || view == AppView::Quarter; }
+
+// A quarter is fourteen weeks, Monday to Sunday: the most its three months can touch.
+inline constexpr int kQuarterRows = 14;
+// The list reads a month ahead, as a phone's agenda does.
+inline constexpr int kListDays = 30;
+
+// The first day of the quarter `day` is in: 1 January, 1 April, 1 July or 1 October.
+inline Date QuarterStart(Date day) {
+  const unsigned month = (static_cast<unsigned>(day.month()) - 1u) / 3u * 3u + 1u;
+  return Date{day.year(), std::chrono::month{month}, std::chrono::day{1}};
+}
 
 // The size the app is designed at: 80 % of a 1920x1032 work area. The snapshots render it, so
 // a committed PNG never depends on the monitor that produced it.
@@ -59,6 +79,12 @@ inline int ShownDays(AppView view) {
       return 7;
     case AppView::Month:
       return kGridCells;
+    case AppView::Quarter:
+      return kQuarterRows * kGridCols;
+    case AppView::Year:
+      return 0;  // twelve months of dots, which come from DotsForRange and not day by day
+    case AppView::List:
+      return kListDays;
   }
   return 1;
 }
@@ -73,6 +99,14 @@ inline Date FirstShown(AppView view, Date anchor) {
       return AddDays(anchor, -MondayIndex(std::chrono::weekday{std::chrono::sys_days{anchor}}));
     case AppView::Month:
       return GridStart(Month{anchor.year(), anchor.month()});
+    case AppView::Quarter: {
+      const Date start = QuarterStart(anchor);
+      return GridStart(Month{start.year(), start.month()});
+    }
+    case AppView::Year:
+      return Date{anchor.year(), std::chrono::January, std::chrono::day{1}};
+    case AppView::List:
+      return anchor;
   }
   return anchor;
 }
@@ -103,7 +137,7 @@ struct AppLayout {
   D2D1_RECT_F next{};
   D2D1_RECT_F title{};
   D2D1_RECT_F input{};
-  D2D1_RECT_F tabs[3]{};
+  D2D1_RECT_F tabs[kAppViews]{};
   D2D1_RECT_F collapse{};
 
   D2D1_RECT_F main{};
@@ -127,7 +161,8 @@ struct AppLayout {
   float hourHeight = 0.0f;
   float minBlock = 0.0f;
 
-  // Month.
+  // Month, and the quarter's weeks, which are the same cells with more rows.
+  int monthRows = kGridRows;
   float monthLabelsTop = 0.0f;
   float monthLabelsHeight = 0.0f;
   float monthGridTop = 0.0f;
@@ -222,8 +257,8 @@ inline AppLayout MakeAppLayout(D2D1_SIZE_F size, const PanelLayout& popup, AppVi
   out.collapse = D2D1_RECT_F{right - out.rowHeight, out.rowTop, right, rowBottom};
   const float tabWidth = at(kTabWidthDip);
   const float tabsRight = out.collapse.left - 2.0f * out.gap;
-  for (int i = 0; i < 3; ++i) {
-    const float tabLeft = tabsRight - static_cast<float>(3 - i) * tabWidth;
+  for (int i = 0; i < kAppViews; ++i) {
+    const float tabLeft = tabsRight - static_cast<float>(kAppViews - i) * tabWidth;
     out.tabs[i] = D2D1_RECT_F{tabLeft, out.rowTop, tabLeft + tabWidth, rowBottom};
   }
 
@@ -273,9 +308,130 @@ inline AppLayout MakeAppLayout(D2D1_SIZE_F size, const PanelLayout& popup, AppVi
   out.monthLabelsHeight = at(kMonthLabelsDip);
   out.monthGridTop = out.monthLabelsTop + out.monthLabelsHeight;
   out.monthCellWidth = (out.main.right - out.main.left) / kGridCols;
-  out.monthCellHeight = (std::max)(0.0f, (out.main.bottom - out.monthGridTop) / kGridRows);
+  out.monthRows = view == AppView::Quarter ? kQuarterRows : kGridRows;
+  out.monthCellHeight = (std::max)(
+      0.0f, (out.main.bottom - out.monthGridTop) / static_cast<float>(out.monthRows));
   out.monthLine = at(kMonthLineDip);
   return out;
+}
+
+// --- The year -------------------------------------------------------------------------------
+
+// Twelve months, four across and three down. Each has its name, the weekday initials and the
+// popup's own grid, scaled to fit: the mini month the sidebar is, twelve times.
+struct YearMonth {
+  D2D1_RECT_F box{};
+  D2D1_RECT_F title{};
+  D2D1_RECT_F weekdays{};
+  PanelLayout grid;  // the popup's layout with its grid moved and resized into this box
+};
+
+inline YearMonth PlaceYearMonth(const AppLayout& app, const PanelLayout& popup, int month) {
+  YearMonth out;
+  const float width = (app.main.right - app.main.left) / 4.0f;
+  const float height = (app.main.bottom - app.main.top) / 3.0f;
+  const float left = app.main.left + static_cast<float>(month % 4) * width;
+  const float top = app.main.top + static_cast<float>(month / 4) * height;
+  const float pad = 2.0f * app.gap;
+  out.box = D2D1_RECT_F{left + pad, top + pad / 2.0f, left + width - pad, top + height - pad};
+  const float titleHeight = std::round(24.0f * app.type);
+  const float weekdayHeight = std::round(18.0f * app.type);
+  out.title = D2D1_RECT_F{out.box.left, out.box.top, out.box.right, out.box.top + titleHeight};
+  out.weekdays = D2D1_RECT_F{out.box.left, out.title.bottom, out.box.right,
+                             out.title.bottom + weekdayHeight};
+
+  PanelLayout& grid = out.grid;
+  grid = popup;
+  grid.contentLeft = out.box.left;
+  grid.contentRight = out.box.right;
+  grid.contentWidth = out.box.right - out.box.left;
+  grid.gridTop = out.weekdays.bottom;
+  grid.cellWidth = grid.contentWidth / kGridCols;
+  // Never taller than the popup's rows: a roomier year is more air, not bigger numbers.
+  grid.cellHeight = (std::min)(popup.cellHeight, (out.box.bottom - grid.gridTop) / kGridRows);
+  grid.gridHeight = grid.cellHeight * kGridRows;
+  const float scale = grid.cellHeight / popup.cellHeight;
+  grid.dayCircle = std::round((std::min)(popup.dayCircle * scale, grid.cellWidth - 4.0f));
+  grid.dayCenterY = std::round(popup.dayCenterY * scale);
+  grid.dotCenterY = grid.dayCenterY + grid.dayCircle / 2.0f + grid.eventDot / 2.0f;
+  return out;
+}
+
+// The day under the pointer in the year, if any.
+inline std::optional<Date> YearDayAt(const AppLayout& app, const PanelLayout& popup, Date anchor,
+                                     float x, float y) {
+  for (int m = 0; m < 12; ++m) {
+    const YearMonth month = PlaceYearMonth(app, popup, m);
+    if (x < month.box.left || x >= month.box.right || y < month.grid.gridTop ||
+        y >= month.grid.gridTop + month.grid.gridHeight) {
+      continue;
+    }
+    const int column = static_cast<int>((x - month.box.left) / month.grid.cellWidth);
+    const int row = static_cast<int>((y - month.grid.gridTop) / month.grid.cellHeight);
+    const Month shown{anchor.year(), std::chrono::month{static_cast<unsigned>(m + 1)}};
+    const Date date = CellDate(shown, row * kGridCols + std::clamp(column, 0, kGridCols - 1));
+    // A day of the month before or after is drawn muted, and belongs to its own month's box.
+    if (date.month() != shown.month()) return std::nullopt;
+    return date;
+  }
+  return std::nullopt;
+}
+
+// --- The list -------------------------------------------------------------------------------
+
+// One row of the list view: a day's heading or one of its cards. `scroll` is how far the list
+// has been wheeled, in pixels.
+struct ListRow {
+  bool heading = false;
+  D2D1_RECT_F rect{};
+  Date day{};
+  int index = -1;  // the day's place in AppModel::days, and for a card its place in that day
+  int item = -1;
+};
+
+// The days with something on them, one after another: a column for the date on the left and
+// the cards to its right, as tall as the day needs. A day with nothing is left out.
+inline std::vector<ListRow> PlaceList(const AppLayout& app, const PanelLayout& popup, Date first,
+                                      const std::vector<std::vector<DayItem>>& days,
+                                      float scroll) {
+  std::vector<ListRow> out;
+  const float dateColumn = std::round(120.0f * app.type);
+  const float cardLeft = app.main.left + dateColumn;
+  const float cardRight = (std::min)(app.main.right, cardLeft + std::round(640.0f * app.type));
+  float y = app.main.top - scroll;
+  for (int d = 0; d < static_cast<int>(days.size()); ++d) {
+    const std::vector<DayItem>& items = days[static_cast<size_t>(d)];
+    if (items.empty()) continue;
+    const float cards = static_cast<float>(items.size()) * (popup.cardHeight + app.gap);
+    const float height = (std::max)(cards, std::round(44.0f * app.type)) + 2.0f * app.gap;
+    ListRow heading;
+    heading.heading = true;
+    heading.day = AddDays(first, d);
+    heading.index = d;
+    heading.rect = D2D1_RECT_F{app.main.left, y, app.main.right, y + height};
+    out.push_back(heading);
+    for (int k = 0; k < static_cast<int>(items.size()); ++k) {
+      const float top = y + app.gap + static_cast<float>(k) * (popup.cardHeight + app.gap);
+      ListRow card;
+      card.day = heading.day;
+      card.index = d;
+      card.item = k;
+      card.rect = D2D1_RECT_F{cardLeft, top, cardRight, top + popup.cardHeight};
+      out.push_back(card);
+    }
+    y += height;
+  }
+  return out;
+}
+
+// How far the list can be wheeled: its length past the bottom of the view.
+inline float ListMaxScroll(const AppLayout& app, const PanelLayout& popup, Date first,
+                           const std::vector<std::vector<DayItem>>& days) {
+  const std::vector<ListRow> rows = PlaceList(app, popup, first, days, 0.0f);
+  if (rows.empty()) return 0.0f;
+  float bottom = app.main.top;
+  for (const ListRow& row : rows) bottom = (std::max)(bottom, row.rect.bottom);
+  return (std::max)(0.0f, bottom - app.main.bottom + 2.0f * app.gap);
 }
 
 // --- The detail panel ---------------------------------------------------------------------

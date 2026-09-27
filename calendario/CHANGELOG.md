@@ -27,6 +27,10 @@ sigue [SemVer](https://semver.org/lang/es/).
 - **Segunda zona horaria** (fase 13.4). La configuración tiene **Segunda zona horaria**, que
   añade otra columna de horas en el día y la semana con el nombre de cada zona encima. Un
   evento escrito en otra zona enseña en el detalle su hora allí. Captura `app-zonas`.
+- **Vistas de trimestre, año y lista** (fase 13.5). Seis pestañas: Día, Semana, Mes,
+  **Trimestre** (las catorce semanas del trimestre con sus eventos), **Año** (los doce meses con
+  sus puntos) y **Lista** (los próximos treinta días, sin los vacíos). Teclas `R`, `A` y `L`.
+  En trimestre y año un clic abre el día. Capturas `app-trimestre`, `app-anio` y `app-lista`.
 
 - **Varias cuentas de Google** (fase 12.3). La configuración tiene una sección **Cuentas de
   Google** con **Añadir…** otra cuenta, **Reconectar…** la que perdió el permiso y una tarjeta

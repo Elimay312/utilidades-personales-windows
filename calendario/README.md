@@ -3,7 +3,7 @@
 Calendario nativo para Windows 11, escrito en C++ y Win32 puro. Se abre con un atajo global
 en un popup compacto sobre la barra de tareas, entiende lenguaje natural (`mañana 5pm
 dentista`) y, al hacer clic en el calendario, se expande con animación a una app completa con
-vistas de día, semana y mes. Sincroniza con Google Calendar y Google Tasks.
+vistas de día, semana, mes, trimestre, año y lista. Sincroniza con Google Calendar y Google Tasks.
 
 Las decisiones de producto, el stack y el sistema de diseño están en [CLAUDE.md](CLAUDE.md).
 
@@ -166,7 +166,12 @@ La ventana crece hasta el 80 % del área de trabajo, centrada, y tiene tres part
   eventos que se solapan uno al lado del otro y lo de día entero en una franja arriba. La rueda
   del ratón desplaza las horas. Al abrir, la hora actual queda a un tercio de la altura, o las
   ocho de la mañana si el día no es hoy. Mes es la rejilla de seis semanas con lo de cada día y
-  un «+N más» cuando no cabe.
+  un «+N más» cuando no cabe. **Trimestre** son las catorce semanas seguidas de los tres meses
+  (julio a septiembre, octubre a diciembre…), con los eventos al lado del número y el mes
+  escrito bajo cada día 1. **Año** son los doce meses como el del popup, con sus puntos. En las
+  dos, un clic en un día abre ese día. **Lista** es lo de los próximos treinta días, un día
+  detrás de otro y sin los días vacíos; la rueda la desplaza, un clic abre el detalle y la
+  casilla de una tarea la marca.
 - **Barra de arriba:** las flechas y el periodo, el mismo campo de lenguaje natural del popup
   y el botón de contraer.
 
@@ -276,6 +281,7 @@ monitor, aunque tenga otra escala; al contraerse cae en la esquina del monitor d
 | Tecla | Qué hace |
 |---|---|
 | `D`, `S`, `M` | Vista de día, semana o mes |
+| `R`, `A`, `L` | Vista de trimestre, año o lista (en inglés también `Q` y `Y`) |
 | `T` | Ir a hoy |
 | `←` `→` | Periodo anterior o siguiente |
 | `↑` `↓` | Sin evento seleccionado, una hora arriba o abajo (en Mes, una semana); con uno, el anterior o el siguiente |
@@ -569,7 +575,12 @@ ventana a mitad de la expansión sobre esa área de trabajo entera para poder ju
 reorganiza; y `app-detalle`, `app-arrastre`, `app-borrar` y `app-repeticion`, la semana con el
 panel de detalle abierto, con un evento a medio arrastrar, con la pregunta de borrar y con la de
 «solo este o toda la serie». `app-invitados` abre una reunión con invitados y videollamada, y
-`app-zonas` enseña la semana con una segunda columna de horas (Madrid). Llevan una semana de
+`app-zonas` enseña la semana con una segunda columna de horas (Madrid). `app-trimestre`,
+`app-anio` y `app-lista` son las tres vistas de la fase 13.
+
+| Trimestre | Año | Lista |
+|---|---|---|
+| ![Vista de trimestre](docs/img/app-trimestre.png) | ![Vista de año](docs/img/app-anio.png) | ![Vista de lista](docs/img/app-lista.png) | Llevan una semana de
 ejemplo propia, con solapes, días enteros y una repetición.
 
 | | Tema oscuro | Tema claro |

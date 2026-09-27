@@ -25,7 +25,7 @@ namespace agenda {
 void DrawMonthGrid(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush, Month month,
                    Date today, Date selected, const std::vector<DayDot>& dots,
-                   const float* hover, float offsetX);
+                   const float* hover, float offsetX, bool othersMuted = true);
 
 // A card: a bar of calendar colour down the left, then either the time (an event) or a tick
 // box (a task), and the title in primary. `more` above zero adds the "+N" counter that says

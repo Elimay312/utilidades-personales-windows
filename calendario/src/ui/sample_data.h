@@ -201,6 +201,15 @@ inline void FillSampleApp(PopupModel& model, AppModel& app) {
   for (int i = 0; i < ShownDays(app.view); ++i) {
     app.days.push_back(detail::SampleAppDay(AddDays(app.first, i)));
   }
+  // The year's dots: the sample rows land on the same days of every month, which is what a
+  // year of a routine looks like anyway.
+  app.yearDots.clear();
+  if (app.view == AppView::Year) {
+    for (Date day = app.first; day.year() == app.first.year(); day = AddDays(day, 1)) {
+      const std::vector<DayItem> items = detail::SampleAppDay(day);
+      if (!items.empty()) app.yearDots.push_back(DayDot{day, items.front().color});
+    }
+  }
 
   app.calendars = SampleCalendars();
   app.calendarHover.assign(app.calendars.size(), 0.0f);

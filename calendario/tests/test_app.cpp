@@ -185,3 +185,62 @@ TEST_CASE("the time fields take a clock or a word, and midnight at the end of a 
   CHECK_FALSE(ReadTimeField(L"luego").has_value());
   CHECK(TimeFieldText(9 * 60 + 5) == L"09:05");
 }
+
+TEST_CASE("the quarter, the year and the list start where they should and hold what they should") {
+  const Date tuesday = Day(2026, 9, 22);
+  // The quarter of 22 September is July to September; its grid starts on the Monday of 1 July.
+  CHECK(QuarterStart(tuesday) == Day(2026, 7, 1));
+  CHECK(QuarterStart(Day(2026, 12, 31)) == Day(2026, 10, 1));
+  CHECK(FirstShown(AppView::Quarter, tuesday) == Day(2026, 6, 29));
+  CHECK(ShownDays(AppView::Quarter) == 98);
+  // Fourteen weeks always reach the end of the quarter.
+  CHECK(AddDays(FirstShown(AppView::Quarter, tuesday), ShownDays(AppView::Quarter) - 1) >=
+        Day(2026, 9, 30));
+  CHECK(FirstShown(AppView::Year, tuesday) == Day(2026, 1, 1));
+  CHECK(ShownDays(AppView::Year) == 0);
+  CHECK(FirstShown(AppView::List, tuesday) == tuesday);
+  CHECK(ShownDays(AppView::List) == kListDays);
+  CHECK(HasTimeline(AppView::Week));
+  CHECK_FALSE(HasTimeline(AppView::Quarter));
+
+  // Six tabs, all of them between the capsule and the collapse button.
+  const AppLayout app = BaseApp(AppView::Quarter);
+  CHECK(app.input.right <= app.tabs[0].left);
+  CHECK(app.tabs[kAppViews - 1].right <= app.collapse.left);
+  CHECK(app.monthRows == kQuarterRows);
+}
+
+TEST_CASE("a click in the year lands on the day drawn under it") {
+  const AppLayout app = BaseApp(AppView::Year);
+  const PanelLayout popup = BaseLayout();
+  // The 22nd of September, found where its month's box draws it.
+  const YearMonth september = PlaceYearMonth(app, popup, 8);
+  const Month month{std::chrono::year{2026}, std::chrono::September};
+  const int cell = static_cast<int>(
+      (std::chrono::sys_days{Day(2026, 9, 22)} - std::chrono::sys_days{GridStart(month)}).count());
+  const D2D1_RECT_F rect = september.grid.cell(cell);
+  const auto found = YearDayAt(app, popup, Day(2026, 1, 1), (rect.left + rect.right) / 2.0f,
+                               (rect.top + rect.bottom) / 2.0f);
+  REQUIRE(found.has_value());
+  CHECK(*found == Day(2026, 9, 22));
+  // The boxes stay inside the view.
+  CHECK(PlaceYearMonth(app, popup, 11).box.right <= app.main.right);
+  CHECK(september.grid.gridTop + september.grid.gridHeight <= september.box.bottom + 1.0f);
+}
+
+TEST_CASE("the list leaves out the days with nothing on them") {
+  const AppLayout app = BaseApp(AppView::List);
+  std::vector<std::vector<DayItem>> days(kListDays);
+  DayItem item;
+  item.title = L"Dentista";
+  days[0].push_back(item);
+  days[0].push_back(item);
+  days[5].push_back(item);
+  const std::vector<ListRow> rows = PlaceList(app, BaseLayout(), Day(2026, 9, 22), days, 0.0f);
+  REQUIRE(rows.size() == 5);  // two headings and three cards
+  CHECK(rows[0].heading);
+  CHECK(rows[3].heading);
+  CHECK(rows[3].day == Day(2026, 9, 27));
+  CHECK(rows[2].rect.top > rows[1].rect.top);
+  CHECK(ListMaxScroll(app, BaseLayout(), Day(2026, 9, 22), days) == 0.0f);
+}

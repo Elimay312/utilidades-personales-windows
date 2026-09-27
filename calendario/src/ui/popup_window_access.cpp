@@ -34,7 +34,7 @@ constexpr int kNextMonthId = 3;
 constexpr int kGridId = 4;
 constexpr int kListId = 5;
 constexpr int kTitleId = 6;
-constexpr int kTabIds = 7;  // 7, 8, 9
+constexpr int kTabIds = 20;  // 20 to 25, one per view (they were 7 to 9 with three views)
 constexpr int kPrevPeriodId = 10;
 constexpr int kNextPeriodId = 11;
 constexpr int kCollapseId = 12;
@@ -125,7 +125,7 @@ void PopupWindow::EnterZone(Zone zone, bool back) {
       listFocus_ = back ? static_cast<int>(model_.day.size()) - 1 : 0;
       break;
     case Zone::Events:
-      if (app_.selected.empty() && app_.view != AppView::Month) {
+      if (app_.selected.empty() && HasTimeline(app_.view)) {
         const std::vector<const DayItem*> events = ShownEvents();
         if (!events.empty()) app_.selected = events.front()->uid;
         RevealSelected();
@@ -238,7 +238,7 @@ bool PopupWindow::OnZoneKey(WPARAM key) {
       return true;
     }
     case Zone::Events: {
-      if (app_.view == AppView::Month) {
+      if (!HasTimeline(app_.view)) {
         if (key != VK_RETURN) return false;
         SetView(AppView::Day);
         return true;
@@ -483,7 +483,7 @@ void PopupWindow::SelectAdjacentEvent(int direction) {
 }
 
 void PopupWindow::RevealSelected() {
-  if (app_.view == AppView::Month) return;
+  if (!HasTimeline(app_.view)) return;
   for (const std::vector<DayItem>& day : app_.days) {
     for (const DayItem& item : day) {
       if (item.uid != app_.selected || !item.startMin) continue;
@@ -510,7 +510,7 @@ int PopupWindow::TodayColumnOf(const std::wstring& uid) const {
 }
 
 void PopupWindow::NudgeSelected(int minutes, int days, int endMinutes) {
-  if (store_ == nullptr || app_.view == AppView::Month) return;
+  if (store_ == nullptr || !HasTimeline(app_.view)) return;
   const int column = TodayColumnOf(app_.selected);
   if (column < 0) return;
   const DayItem* found = nullptr;
@@ -604,9 +604,38 @@ void PopupWindow::UpdateRing() {
 
   switch (zone_) {
     case Zone::Events: {
-      if (app_.view == AppView::Month) {
+      if (IsDayGrid(app_.view)) {
         const int cell = DaysBetween(app_.first, model_.selected);
-        if (cell >= 0 && cell < kGridCells) set(Inset(appLayout_.monthCell(cell), pad), pad * 2.0f);
+        if (cell >= 0 && cell < appLayout_.monthRows * kGridCols) {
+          set(Inset(appLayout_.monthCell(cell), pad), pad * 2.0f);
+        }
+        return;
+      }
+      if (app_.view == AppView::Year) {
+        const YearMonth month = PlaceYearMonth(
+            appLayout_, layout_, static_cast<int>(static_cast<unsigned>(model_.selected.month())) - 1);
+        const Month shown{model_.selected.year(), model_.selected.month()};
+        const int cell = DaysBetween(GridStart(shown), model_.selected);
+        const D2D1_RECT_F rect = month.grid.cell(cell);
+        const float side = month.grid.dayCircle + 2.0f * pad;
+        const D2D1_POINT_2F center{(rect.left + rect.right) / 2.0f,
+                                   rect.top + month.grid.dayCenterY};
+        set(D2D1_RECT_F{center.x - side / 2.0f, center.y - side / 2.0f, center.x + side / 2.0f,
+                        center.y + side / 2.0f},
+            side / 2.0f);
+        return;
+      }
+      if (app_.view == AppView::List) {
+        for (const ListRow& row :
+             PlaceList(appLayout_, layout_, app_.first, app_.days, app_.listScroll)) {
+          if (row.heading) continue;
+          const DayItem& item =
+              app_.days[static_cast<size_t>(row.index)][static_cast<size_t>(row.item)];
+          if (item.uid == app_.selected) {
+            set(Inset(row.rect, -pad), layout_.cardRadius + pad);
+            return;
+          }
+        }
         return;
       }
       const float radius = std::round(kRadiusCard * appLayout_.type) + pad;
@@ -793,8 +822,10 @@ std::vector<A11yNode> PopupWindow::A11yNodes() {
   title.name = PeriodTitle(app_.view, model_.selected);
   title.rect = appLayout_.title;
   nodes.push_back(title);
-  const std::wstring_view views[3] = {T(L"Día", L"Day"), T(L"Semana", L"Week"), T(L"Mes", L"Month")};
-  for (int i = 0; i < 3; ++i) {
+  const std::wstring_view views[kAppViews] = {T(L"Día", L"Day"),     T(L"Semana", L"Week"),
+                                              T(L"Mes", L"Month"),   T(L"Trimestre", L"Quarter"),
+                                              T(L"Año", L"Year"),    T(L"Lista", L"List")};
+  for (int i = 0; i < kAppViews; ++i) {
     A11yNode tab;
     tab.id = kTabIds + i;
     tab.type = UIA_RadioButtonControlTypeId;
@@ -1030,7 +1061,7 @@ void PopupWindow::A11yInvoke(int id) {
   } else if (Within(id, kCardIds, static_cast<int>(model_.day.size()))) {
     listFocus_ = id - kCardIds;
     OpenFocusedCard();
-  } else if (Within(id, kTabIds, 3)) {
+  } else if (Within(id, kTabIds, kAppViews)) {
     SetView(static_cast<AppView>(id - kTabIds));
   } else if (id == kPrevPeriodId || id == kNextPeriodId) {
     MovePeriod(id == kPrevPeriodId ? -1 : 1);
@@ -1069,7 +1100,7 @@ void PopupWindow::A11yToggle(int id) {
 void PopupWindow::A11ySelect(int id) {
   if (Within(id, kCellIds, kGridCells)) {
     SelectDay(CellDate(model_.month, id - kCellIds));
-  } else if (Within(id, kTabIds, 3)) {
+  } else if (Within(id, kTabIds, kAppViews)) {
     SetView(static_cast<AppView>(id - kTabIds));
   } else if (id >= kEventIds && id < kCalendarIds) {
     const std::vector<const DayItem*> events = ShownEvents();

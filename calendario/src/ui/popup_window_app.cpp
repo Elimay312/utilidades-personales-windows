@@ -217,12 +217,19 @@ void PopupWindow::ReloadApp() {
   app_.first = FirstShown(app_.view, model_.selected);
   app_.days.assign(static_cast<size_t>(ShownDays(app_.view)), {});
   if (store_ != nullptr && store_->IsOpen()) {
-    // One indexed lookup per day, 42 at most: well under the frame this runs in.
+    // One indexed lookup per day, 98 at most (the quarter): well under the frame this runs in.
+    // ponytail: a day at a time; one ranged query if the quarter ever feels slow to open.
     for (size_t i = 0; i < app_.days.size(); ++i) {
       app_.days[i] = store_->ItemsForDay(AddDays(app_.first, static_cast<int>(i)), false);
     }
     app_.calendars = store_->AllCalendars();
     app_.undated = store_->UndatedTasks();
+    // The year is dots and not days: one query for all twelve months.
+    app_.yearDots.clear();
+    if (app_.view == AppView::Year) {
+      app_.yearDots = store_->DotsForRange(
+          app_.first, Date{app_.first.year(), std::chrono::December, std::chrono::day{31}});
+    }
     for (std::vector<DayItem>& day : app_.days) DropPending(day);
     DropPending(app_.undated);
   }
@@ -233,6 +240,7 @@ void PopupWindow::ReloadApp() {
 void PopupWindow::SetView(AppView view) {
   if (app_.view == view) return;
   app_.view = view;
+  app_.listScroll = 0.0f;
   ReloadApp();
   app_.scroll = std::clamp(app_.scroll, 0.0f, MaxScroll(appLayout_));
   Invalidate();
@@ -248,6 +256,16 @@ void PopupWindow::MovePeriod(int direction) {
       break;
     case AppView::Month:
       SelectDay(AddMonths(model_.selected, direction));
+      break;
+    case AppView::Quarter:
+      SelectDay(AddMonths(QuarterStart(model_.selected), 3 * direction));
+      break;
+    case AppView::Year:
+      SelectDay(AddMonths(model_.selected, 12 * direction));
+      break;
+    case AppView::List:
+      app_.listScroll = 0.0f;
+      SelectDay(AddDays(model_.selected, kListDays * direction));
       break;
   }
 }
@@ -294,16 +312,28 @@ bool PopupWindow::OnAppKeyDown(WPARAM key) {
   // With Ctrl down a letter is somebody else's shortcut (Ctrl+Z, Ctrl+V), not a view.
   if (GetKeyState(VK_CONTROL) < 0) return false;
 
-  const bool timeline = app_.view != AppView::Month;
+  const bool timeline = HasTimeline(app_.view);
   switch (key) {
     case 'D':
       SetView(AppView::Day);
       return true;
     case 'S':
+    case 'W':
       SetView(AppView::Week);
       return true;
     case 'M':
       SetView(AppView::Month);
+      return true;
+    case 'R':  // tRimestre; Q for the English
+    case 'Q':
+      SetView(AppView::Quarter);
+      return true;
+    case 'A':  // Año; Y for the English
+    case 'Y':
+      SetView(AppView::Year);
+      return true;
+    case 'L':
+      SetView(AppView::List);
       return true;
     case 'T':
       SelectDay(model_.today);
@@ -375,7 +405,7 @@ bool PopupWindow::OnAppLeftDown(float x, float y) {
     Contract();
     return true;
   }
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < kAppViews; ++i) {
     if (!Inside(appLayout_.tabs[i], x, y)) continue;
     FocusInput(false);
     SetView(static_cast<AppView>(i));
@@ -424,11 +454,39 @@ bool PopupWindow::OnAppLeftDown(float x, float y) {
   if (SelectAllDayAt(x, y)) return true;
   if (BeginDrag(x, y)) return true;
 
-  if (app_.view == AppView::Month) {
-    for (int i = 0; i < kGridCells; ++i) {
+  if (IsDayGrid(app_.view)) {
+    for (int i = 0; i < appLayout_.monthRows * kGridCols; ++i) {
       if (!Inside(appLayout_.monthCell(i), x, y)) continue;
       FocusInput(false);
       SelectDay(AddDays(app_.first, i));
+      // The quarter is for seeing where things are; a day of it opens as a day.
+      if (app_.view == AppView::Quarter) SetView(AppView::Day);
+      return true;
+    }
+  } else if (app_.view == AppView::Year) {
+    if (const std::optional<Date> day = YearDayAt(appLayout_, layout_, app_.first, x, y)) {
+      FocusInput(false);
+      SelectDay(*day);
+      SetView(AppView::Day);
+      return true;
+    }
+  } else if (app_.view == AppView::List) {
+    for (const ListRow& row :
+         PlaceList(appLayout_, layout_, app_.first, app_.days, app_.listScroll)) {
+      if (row.heading || !Inside(row.rect, x, y) || !Inside(appLayout_.main, x, y)) continue;
+      DayItem& item = app_.days[static_cast<size_t>(row.index)][static_cast<size_t>(row.item)];
+      FocusInput(false);
+      app_.selected = item.uid;
+      if (item.isTask) {
+        if (Inside(CheckboxRect(layout_, row.rect), x, y) && store_ != nullptr) {
+          item.done = !item.done;
+          store_->SetDone(item.uid, item.done);
+          if (sync_ != nullptr) sync_->Push();
+        }
+      } else {
+        OpenDetailFor(item.uid, item.occurrence);
+      }
+      Invalidate();
       return true;
     }
   } else if (app_.view == AppView::Week) {
@@ -473,7 +531,7 @@ bool PopupWindow::OnAppMouseMove(float x, float y) {
     }
   }
   int tab = -1;
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < kAppViews; ++i) {
     if (Inside(appLayout_.tabs[i], x, y)) tab = i;
   }
   int calendar = -1;
@@ -496,7 +554,16 @@ bool PopupWindow::OnAppMouseMove(float x, float y) {
 }
 
 void PopupWindow::OnWheel(int delta) {
-  if (app_.view == AppView::Month) return;
+  if (app_.view == AppView::List) {
+    // Three cards a notch, as a list scrolls anywhere else in Windows.
+    const float step = 3.0f * (layout_.cardHeight + appLayout_.gap);
+    app_.listScroll = std::clamp(
+        app_.listScroll - static_cast<float>(delta) / WHEEL_DELTA * step, 0.0f,
+        ListMaxScroll(appLayout_, layout_, app_.first, app_.days));
+    Invalidate();
+    return;
+  }
+  if (!HasTimeline(app_.view)) return;
   app_.scroll = std::clamp(
       app_.scroll - static_cast<float>(delta) / WHEEL_DELTA * kWheelMinutes, 0.0f,
       MaxScroll(appLayout_));
@@ -510,7 +577,7 @@ bool PopupWindow::TickApp(float step) {
   const float detailStep = step >= 1.0f ? 1.0f : step * kStateMs / kCardEnterMs;
   if (Settle(app_.detail.t, app_.detail.open, detailStep)) moving = true;
   Relayout();
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < kAppViews; ++i) {
     if (Settle(app_.tabHover[i], hoverTab_ == i, step)) moving = true;
   }
   if (Settle(app_.collapseHover, hoverCollapse_, step)) moving = true;
@@ -525,7 +592,7 @@ bool PopupWindow::TickApp(float step) {
 // --- Dragging on the timeline ---------------------------------------------------------------
 
 bool PopupWindow::BeginDrag(float x, float y) {
-  if (app_.view == AppView::Month || !Inside(appLayout_.timeline, x, y) ||
+  if (!HasTimeline(app_.view) || !Inside(appLayout_.timeline, x, y) ||
       x < appLayout_.columnsLeft) {
     return false;
   }
@@ -627,7 +694,7 @@ void PopupWindow::UpdateDrag(float x, float y) {
       ghost.title = drag.item.title;
       ghost.at = D2D1_POINT_2F{x, y};
       // Over the timeline it becomes the hour it would take; anywhere else it is in the hand.
-      const bool over = app_.view != AppView::Month && column >= 0 &&
+      const bool over = HasTimeline(app_.view) && column >= 0 &&
                         Inside(appLayout_.timeline, x, y);
       ghost.free = !over;
       if (over) {
@@ -831,7 +898,7 @@ void PopupWindow::ConvertTask(const DayItem& task, int column, int start) {
 }
 
 bool PopupWindow::SelectAllDayAt(float x, float y) {
-  if (app_.view == AppView::Month) return false;
+  if (!HasTimeline(app_.view)) return false;
   for (int i = 0; i < appLayout_.columns && i < static_cast<int>(app_.days.size()); ++i) {
     std::vector<const DayItem*> chips;
     for (const DayItem& item : app_.days[static_cast<size_t>(i)]) {

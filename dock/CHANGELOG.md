@@ -77,6 +77,11 @@ abajo.
   sus argumentos y su icono, un `.url` de Steam por su URL, una app de la Store por su AUMID.
   De 241 a 294 handles por el registro OLE de las tres ventanas; la memoria queda dentro del
   ruido entre arranques (14,4–16,6 frente a 15,8–17,0 MB).
+- **La rueda en C++**: sobre una app con varias ventanas enseña la lista de sus ventanas con
+  un ✕ por fila (pide cerrar, como la X de la ventana) y la **miniatura en vivo** de la
+  elegida, también de una minimizada. Clic en la fila o en el icono, y esa ventana viene al
+  frente. Con la lista abierta el dock pasa **de 13,1 a 13,3 MB**; en el de C#, que la
+  capturaba con `PrintWindow` cada 250 ms, eran +27 MB.
 - **El autoarranque solo lo toca la copia instalada**, para que una build de desarrollo no
   se registre en el inicio de sesión del usuario.
 - **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.

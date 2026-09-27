@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <dwmapi.h>
 
 #include <memory>
 #include <string>
@@ -71,8 +72,19 @@ class DockWindow {
   // El menú del clic derecho: recientes de la app (llegan del worker), Quitar/Anclar, Salir.
   void OpenContextMenu();
   void ShowMenu();
+  // Encima del icono index, dentro de la ventana; la región crece para cubrirlo.
+  void PlaceMenu(const std::vector<std::wstring>& items, int index, bool closable);
   void CloseMenu();
   void OnMenuChoice(int choice);
+  // La rueda sobre una app con varias ventanas: la lista de sus ventanas, con miniatura en
+  // vivo de la elegida y un ✕ por fila. La rueda elige; el clic (en la fila o en el icono)
+  // es el que va, porque solo el clic da permiso para traer una ventana al frente.
+  void OnWheel(int delta, POINT screen);
+  void ShowWheelList();
+  void OnWheelPick();
+  void OnCloseWindow(int row);
+  void ShowPreview();
+  void HidePreview();
   // Lo anclado en el orden de head, con la papelera detrás si iba tras las abiertas.
   std::vector<DockApp> WithTrash(std::vector<DockApp> head) const;
   // Arrastrar: solo lo anclado (lo que va antes del separador de las abiertas).
@@ -114,6 +126,13 @@ class DockWindow {
   bool dropAdd_ = false;         // sobre el "+"
   int menuIndex_ = -1;           // el icono del menú abierto, o -1 (solo "Salir")
   std::vector<struct JumpItem> menuJumps_;
+  int wheelIndex_ = -1;               // el icono de la lista de la rueda, o -1
+  std::vector<HWND> wheelWindows_;    // copia: la lista no cambia mientras se mira
+  int wheelAt_ = 0;                   // la elegida
+  int wheelFirst_ = -1;               // la primera fila visible
+  HWND preview_ = nullptr;            // la ventana de la miniatura: DWM no pinta en un visual
+  HTHUMBNAIL thumb_ = nullptr;
+  HWND thumbSource_ = nullptr;
   // La app que se está abriendo: su icono bota hasta que aparece su ventana, o 20 s.
   std::wstring launchingTarget_;
   ULONGLONG launchingUntil_ = 0;

@@ -74,6 +74,9 @@ class Visuals {
   // la fila.
   int MenuHitTestClose(float x, float y) const;
   void MenuSetHot(int index);
+  // Cuántas filas caben en ese alto: la ventana no crece (su alto va dentro de las
+  // expresiones), así que una lista larga se desplaza con la selección.
+  static int RowsThatFit(float height, float scale);
 
   // Soltar: levanta el icono que recibiría el fichero (con muelle sobre Bounce) y baja el
   // anterior; -1 no levanta ninguno.

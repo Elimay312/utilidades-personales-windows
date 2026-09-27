@@ -199,24 +199,28 @@ void DockWindow::ShowMenu() {
                                 extra ? L"al dock" : L"del dock"));
   }
   items.push_back(L"Salir del dock");
+  PlaceMenu(items, menuIndex_, false);
+}
 
+void DockWindow::PlaceMenu(const std::vector<std::wstring>& items, int index, bool closable) {
   const float width = static_cast<float>(width_);
-  const float anchor = menuIndex_ >= 0
-                           ? curve_.Project((curve_.RestLeft(menuIndex_) + curve_.RestRight(menuIndex_)) / 2, width, lastRest_)
-                           : width / 2;
+  const float anchor =
+      index >= 0 ? curve_.Project((curve_.RestLeft(index) + curve_.RestRight(index)) / 2, width, lastRest_) : width / 2;
   // Dentro de la ventana; la región se amplía para cubrirlo (ApplyRegion).
   const float pad = kPadding * dpi_ / 96.0f;
-  const float left = pad;
-  const float right = width - pad;
   visuals_->SetLabel(-1);  // la etiqueta ocupa el mismo hueco
-  visuals_->OpenMenu(items, anchor, static_cast<float>(height_ - Px(config_.iconSize + 2 * kPadding)), left, right,
-                     dpi_ / 96.0f, false);
+  visuals_->OpenMenu(items, anchor, static_cast<float>(height_ - Px(config_.iconSize + 2 * kPadding)), pad, width - pad,
+                     dpi_ / 96.0f, closable);
   ApplyRegion();  // el menú sube por encima de lo que la región deja pasar
-  LogTrace(L"[menu] {} filas, centro x={:.0f}, techo y={:.0f} (cliente, {}%)", items.size(), anchor, visuals_->MenuTop(),
+  const RECT menu = visuals_->MenuRect();
+  LogTrace(L"[menu] {} filas, x={}..{}, techo y={} (cliente, {}%)", items.size(), menu.left, menu.right, menu.top,
            dpi_ * 100 / 96);
 }
 
 void DockWindow::CloseMenu() {
+  HidePreview();
+  wheelIndex_ = -1;
+  wheelWindows_.clear();
   if (!visuals_->MenuOpen()) return;
   visuals_->CloseMenu();
   menuIndex_ = -1;
@@ -225,6 +229,17 @@ void DockWindow::CloseMenu() {
 }
 
 void DockWindow::OnMenuChoice(int choice) {
+  if (wheelIndex_ >= 0) {
+    // En la lista de la rueda cada fila es una ventana, y el clic da el permiso de traerla.
+    const int at = choice + wheelFirst_;
+    const HWND window = at >= 0 && at < static_cast<int>(wheelWindows_.size()) ? wheelWindows_[at] : nullptr;
+    const int total = static_cast<int>(wheelWindows_.size());
+    CloseMenu();
+    if (!window) return;
+    BringToFront(window);
+    LogInfo(L"[rueda] al frente la ventana {} de {}", at + 1, total);
+    return;
+  }
   const int index = menuIndex_;
   const std::vector<JumpItem> jumps = menuJumps_;
   CloseMenu();
@@ -266,6 +281,170 @@ void DockWindow::CancelDrag() {
     LogTrace(L"[arrastre] cancelado");
   }
   pressedIndex_ = -1;
+}
+
+namespace {
+
+constexpr wchar_t kPreviewClass[] = L"DockPreview";
+// Lo que cabe de miniatura, en lógicas: la ventana entra por el lado que le apriete.
+constexpr float kPreviewWidth = 300;
+constexpr float kPreviewHeight = 190;
+constexpr float kPreviewPad = 8;
+
+std::wstring TitleOf(HWND window) {
+  wchar_t text[256]{};
+  return GetWindowTextW(window, text, 256) > 0 ? std::wstring(text) : std::wstring(L"(sin título)");
+}
+
+LRESULT CALLBACK PreviewProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+  if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;  // como el dock: nunca el foco
+  return DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+}  // namespace
+
+void DockWindow::OnWheel(int delta, POINT screen) {
+  // lParam de WM_MOUSEWHEEL viene en coordenadas de PANTALLA, no de cliente.
+  RECT window{};
+  GetWindowRect(hwnd_, &window);
+  const int index = curve_.SlotAt(curve_.Invert(static_cast<float>(screen.x - window.left), static_cast<float>(width_)));
+  if (index < 0 || index >= static_cast<int>(windows_.size()) || windows_[index].size() < 2) return;
+  if (wheelIndex_ != index || !visuals_->MenuOpen()) {
+    CloseMenu();
+    wheelIndex_ = index;
+    wheelWindows_ = windows_[index];
+    wheelAt_ = 0;
+    wheelFirst_ = -1;
+  } else {
+    // Hacia arriba sube por la lista, que se lee de arriba abajo; da la vuelta en los extremos.
+    const int count = static_cast<int>(wheelWindows_.size());
+    wheelAt_ = ((wheelAt_ + (delta > 0 ? -1 : 1)) % count + count) % count;
+  }
+  ShowWheelList();
+  LogInfo(L"[rueda] '{}' ventana {} de {}", drawn_[index].name, wheelAt_ + 1, wheelWindows_.size());
+}
+
+void DockWindow::ShowWheelList() {
+  const int total = static_cast<int>(wheelWindows_.size());
+  const int fit = std::min(
+      total, Visuals::RowsThatFit(static_cast<float>(height_ - Px(config_.iconSize + 2 * kPadding)), dpi_ / 96.0f));
+  const int first = std::clamp(wheelAt_ - fit / 2, 0, total - fit);
+  if (first != wheelFirst_ || !visuals_->MenuOpen()) {
+    wheelFirst_ = first;
+    std::vector<std::wstring> items;
+    for (int i = first; i < first + fit; i++) items.push_back(Shorten(TitleOf(wheelWindows_[i]), 40));
+    PlaceMenu(items, wheelIndex_, true);
+  }
+  visuals_->MenuSetHot(wheelAt_ - wheelFirst_);
+  ShowPreview();
+}
+
+// Clic en el ICONO con la lista abierta: a la ventana que dejó elegida la rueda, como un clic
+// normal. Sin esto había que bajar a pinchar el título, que es el viaje que la rueda ahorra.
+void DockWindow::OnWheelPick() {
+  const HWND window = wheelWindows_[wheelAt_];
+  const int index = wheelIndex_;
+  const std::wstring trace = std::format(L"'{}' ({} de {})", drawn_[index].name, wheelAt_ + 1, wheelWindows_.size());
+  CloseMenu();  // antes de actuar: la lista tapa el icono
+  const HWND foreground = app_.ForeignForeground();
+  if (window == foreground || window == GetAncestor(foreground, GA_ROOT)) {
+    Minimize(window);
+    LogInfo(L"[dock] minimizada {}", trace);
+    return;
+  }
+  visuals_->Bounce(index, config_.iconSize * dpi_ / 96.0f * 0.35f, false);
+  BringToFront(window);
+  LogInfo(L"[dock] al frente {}", trace);
+}
+
+// WM_CLOSE, el mismo mensaje que la X de la propia ventana: la app puede preguntar si guardar,
+// y entonces contesta el usuario. Nunca se mata un proceso.
+void DockWindow::OnCloseWindow(int row) {
+  const int at = row + wheelFirst_;
+  if (at < 0 || at >= static_cast<int>(wheelWindows_.size())) return;
+  PostMessageW(wheelWindows_[at], WM_CLOSE, 0, 0);
+  LogInfo(L"[cerrar] pedida la ventana {} de {}", at + 1, wheelWindows_.size());
+  // La fila se va ya aunque la app tarde o acabe negándose (la siguiente vuelta de rueda la
+  // vuelve a enseñar): esperar dejaría una fila muerta durante todo el "¿guardar cambios?".
+  wheelWindows_.erase(wheelWindows_.begin() + at);
+  if (wheelWindows_.size() < 2) {
+    CloseMenu();
+    return;
+  }
+  wheelAt_ = std::min(at, static_cast<int>(wheelWindows_.size()) - 1);
+  wheelFirst_ = -1;
+  ShowWheelList();
+}
+
+// Miniatura DWM, no captura: es en vivo, sale también de una minimizada (medido en F1) y no
+// copia la ventana. El de C# la capturaba con PrintWindow cada 250 ms: +27 MB con la lista
+// abierta. DWM no pinta miniaturas dentro de un visual de Composition, así que va en una
+// ventana propia, encima del menú.
+void DockWindow::ShowPreview() {
+  const HWND source = wheelWindows_[wheelAt_];
+  if (!preview_) {
+    static bool registered = false;
+    if (!registered) {
+      WNDCLASSEXW wc{sizeof(wc)};
+      wc.lpfnWndProc = PreviewProc;
+      wc.hInstance = GetModuleHandleW(nullptr);
+      wc.hbrBackground = CreateSolidBrush(RGB(32, 32, 38));  // el fondo del menú
+      wc.lpszClassName = kPreviewClass;
+      registered = RegisterClassExW(&wc) != 0;
+    }
+    // Propiedad del dock: una ventana con dueño va siempre por encima de él.
+    preview_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST, kPreviewClass, L"", WS_POPUP, 0, 0, 1,
+                               1, hwnd_, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!preview_) return;
+    const DWM_WINDOW_CORNER_PREFERENCE round = DWMWCP_ROUND;
+    DwmSetWindowAttribute(preview_, DWMWA_WINDOW_CORNER_PREFERENCE, &round, sizeof(round));
+  }
+  if (source != thumbSource_) {
+    if (thumb_) DwmUnregisterThumbnail(thumb_);
+    thumb_ = nullptr;
+    thumbSource_ = nullptr;
+    if (const HRESULT hr = DwmRegisterThumbnail(preview_, source, &thumb_); FAILED(hr)) {
+      LogError(L"[miniatura] DwmRegisterThumbnail falló ({:#010x})", static_cast<unsigned>(hr));
+      HidePreview();
+      return;
+    }
+    thumbSource_ = source;
+  }
+  SIZE size{};
+  if (FAILED(DwmQueryThumbnailSourceSize(thumb_, &size)) || size.cx <= 0 || size.cy <= 0) {
+    HidePreview();  // mejor sin miniatura que con la de otra ventana
+    return;
+  }
+  const float s = dpi_ / 96.0f;
+  const float fit = std::min(kPreviewWidth * s / size.cx, kPreviewHeight * s / size.cy);
+  const int w = static_cast<int>(size.cx * fit), h = static_cast<int>(size.cy * fit);
+  const int pad = Px(kPreviewPad);
+  RECT window{};
+  GetWindowRect(hwnd_, &window);
+  const RECT menu = visuals_->MenuRect();
+  const RECT& screen = monitor_.bounds;
+  const int outerW = w + 2 * pad, outerH = h + 2 * pad;
+  const int x = std::clamp(static_cast<int>(window.left + (menu.left + menu.right) / 2 - outerW / 2), static_cast<int>(screen.left),
+                           static_cast<int>(screen.right - outerW));
+  const int y = std::max(static_cast<int>(screen.top), static_cast<int>(window.top + menu.top - pad - outerH));
+  SetWindowPos(preview_, HWND_TOPMOST, x, y, outerW, outerH, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+  DWM_THUMBNAIL_PROPERTIES props{};
+  props.dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY | DWM_TNP_SOURCECLIENTAREAONLY;
+  props.rcDestination = RECT{pad, pad, pad + w, pad + h};
+  props.fVisible = TRUE;
+  props.opacity = 255;
+  props.fSourceClientAreaOnly = FALSE;
+  DwmUpdateThumbnailProperties(thumb_, &props);
+  LogTrace(L"[miniatura] {}x{} -> {}x{} en {},{}", size.cx, size.cy, w, h, x, y);
+}
+
+// Se destruye, no se esconde: la ventana y el registro de DWM se liberan con la lista cerrada.
+void DockWindow::HidePreview() {
+  if (thumb_) DwmUnregisterThumbnail(thumb_);
+  thumb_ = nullptr;
+  thumbSource_ = nullptr;
+  if (preview_) DestroyWindow(preview_);
+  preview_ = nullptr;
 }
 
 bool DockWindow::DropOver(POINT screen) {
@@ -539,6 +718,7 @@ DockWindow::~DockWindow() {
   KillTimer(hwnd_, kSlideTimer);
   if (registered_) AppBarRemove(hwnd_);
   RevokeDragDrop(hwnd_);  // el DropTarget apunta a este objeto: fuera antes de que muera
+  HidePreview();
   visuals_.reset();  // el target de Composition antes que su ventana
   DestroyWindow(hwnd_);
 }
@@ -646,6 +826,8 @@ void DockWindow::BuildVisuals(const IconSet& icons) {
   // Cambiar la lista con algo cogido deja el índice apuntando a otra cosa: en C# una app
   // que se cerraba a mitad de pulsación acababa en RemoveAt(-1) y tumbaba el dock.
   if (pressedIndex_ >= 0) CancelDrag();
+  // El menú se va con el árbol, y sus índices ya no apuntarían a lo mismo.
+  CloseMenu();
   curve_ = CurveFor();
   std::vector<DockItem> items;
   std::wstring names;
@@ -868,9 +1050,14 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
           visuals_->SetHover(true);
         }
         const int slot = curve_.SlotAt(rest);
-        if (visuals_->MenuOpen())
-          visuals_->MenuSetHot(visuals_->MenuHitTest(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam))));
-        else if (!dragging_) visuals_->SetLabel(slot);
+        if (visuals_->MenuOpen()) {
+          int hot = visuals_->MenuHitTest(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
+          // Fuera de las filas, en la lista de la rueda sigue resaltada la elegida.
+          if (hot < 0 && wheelIndex_ >= 0) hot = wheelAt_ - wheelFirst_;
+          visuals_->MenuSetHot(hot);
+        } else if (!dragging_) {
+          visuals_->SetLabel(slot);
+        }
         LogTrace(L"[hover] x={} idx={} reposo={:.1f}", GET_X_LPARAM(lparam), slot, rest);
       }
       if (pressedIndex_ >= 0) {
@@ -907,8 +1094,11 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
     case WM_LBUTTONUP:
       if (visuals_->MenuOpen()) {
         pressedIndex_ = -1;
-        const int choice = visuals_->MenuHitTest(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
-        if (choice >= 0) OnMenuChoice(choice);
+        const float x = static_cast<float>(GET_X_LPARAM(lparam)), y = static_cast<float>(GET_Y_LPARAM(lparam));
+        // El ✕ primero: vive DENTRO de su fila y el hit-test de filas daría la misma.
+        if (const int close = visuals_->MenuHitTestClose(x, y); close >= 0) OnCloseWindow(close);
+        else if (const int choice = visuals_->MenuHitTest(x, y); choice >= 0) OnMenuChoice(choice);
+        else if (wheelIndex_ >= 0 && curve_.SlotAt(lastRest_) == wheelIndex_) OnWheelPick();
         else CloseMenu();
         return 0;
       }
@@ -927,6 +1117,11 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       return 0;
     case WM_MBUTTONUP:
       OnClick(true);
+      return 0;
+    // Llega aunque el dock no tenga el foco: Windows manda la rueda a la ventana bajo el
+    // cursor (el ajuste por defecto "desplazar ventanas inactivas").
+    case WM_MOUSEWHEEL:
+      if (!dragging_) OnWheel(GET_WHEEL_DELTA_WPARAM(wparam), POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)});
       return 0;
 
     case WM_MOUSELEAVE:

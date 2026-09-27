@@ -576,6 +576,10 @@ int Visuals::MenuHitTestClose(float x, float y) const {
   return row >= 0 && x >= right - kCloseWidth * menuScale_ && x <= right ? row : -1;
 }
 
+int Visuals::RowsThatFit(float height, float scale) {
+  return std::max(1, static_cast<int>((height - kMenuPadY * 2 * scale) / (kRowHeight * scale)));
+}
+
 void Visuals::MenuSetHot(int index) {
   if (!menuHot_ || index == menuHotIndex_) return;
   menuHotIndex_ = index;

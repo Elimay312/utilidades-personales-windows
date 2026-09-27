@@ -44,7 +44,10 @@ class Http {
   Http(const Http&) = delete;
   Http& operator=(const Http&) = delete;
 
-  bool Open();
+  // `decompress` false leaves the body as sent. The weather needs it (phase 13): Open-Meteo
+  // answers WinHTTP's "gzip, deflate" with deflate, and WinHTTP fails every read of it with
+  // E_ABORT. Its answer is two kilobytes; compression buys nothing there.
+  bool Open(bool decompress = true);
   void Close();
 
   // Closes whatever is in flight and wakes whoever is sleeping between retries. Called from the

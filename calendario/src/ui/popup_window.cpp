@@ -452,7 +452,10 @@ void PopupWindow::Show() {
   theme_ = theme;
   if (flipped) ApplyDwmAttributes();
 
+  // The weather is not the popup's to forget: it arrives every three hours, not on opening.
+  std::vector<DayWeather> weather = std::move(model_.weather);
   model_ = MakeModel(TodayLocal());
+  model_.weather = std::move(weather);
   model_.focus = 1.0f;
   // Opening closes the undo window: the notice lives inside the panel, so once the panel is
   // gone there is nothing left offering to take anything back.

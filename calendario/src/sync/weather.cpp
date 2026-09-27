@@ -84,7 +84,7 @@ void Weather::Run(WeatherCity city) {
   }
 
   sync::Http http;
-  if (!http.Open()) {
+  if (!http.Open(/*decompress=*/false)) {
     LogError(L"clima: no se pudo abrir WinHTTP");
     return;
   }
@@ -108,7 +108,9 @@ void Weather::Run(WeatherCity city) {
         L"&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=16",
         city.latitude, city.longitude);
     sync::HttpResponse response;
-    if (!http.Send(L"api.open-meteo.com", L"GET", path, L"", {}, response) ||
+    // Uncompressed on purpose: see Http::Open.
+    if (!http.Send(L"api.open-meteo.com", L"GET", path, L"Accept-Encoding: identity\r\n", {},
+                   response) ||
         response.status != 200) {
       LogInfo(L"clima: Open-Meteo no respondió ({}), se reintenta en 3 h", response.status);
       continue;

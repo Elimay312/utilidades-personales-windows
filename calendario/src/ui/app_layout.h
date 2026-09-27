@@ -144,6 +144,9 @@ struct AppLayout {
   D2D1_RECT_F title{};
   D2D1_RECT_F input{};
   D2D1_RECT_F tabs[kAppViews]{};
+  // How the tabs are labelled, from what fits: 0 the whole word, 1 shortened ("Sem.",
+  // "Trim."), 2 the initial alone. Six views do not fit a small laptop's app at full length.
+  int tabLabels = 0;
   D2D1_RECT_F collapse{};
 
   D2D1_RECT_F main{};
@@ -284,14 +287,27 @@ inline AppLayout MakeAppLayout(D2D1_SIZE_F size, const PanelLayout& popup, AppVi
   const float right = (std::max)(left, out.width - out.padding);
 
   out.collapse = D2D1_RECT_F{right - out.rowHeight, out.rowTop, right, rowBottom};
-  const float tabWidth = at(kTabWidthDip);
   const float tabsRight = out.collapse.left - 2.0f * out.gap;
+  const float arrow = popup.arrowSize;
+  // What has to fit left of the tabs: the arrows, a title worth reading and the shortest
+  // capsule. The tabs take the widest labels that still leave that much.
+  const float leftNeeds = 2.0f * arrow + out.gap + 2.0f * out.gap + at(120.0f) + 3.0f * out.gap +
+                          at(kCapsuleMinDip) + 3.0f * out.gap;
+  const float tabsRoom = tabsRight - left - leftNeeds;
+  constexpr float kTabWidths[3] = {kTabWidthDip, 56.0f, 34.0f};
+  out.tabLabels = 2;
+  for (int labels = 0; labels < 3; ++labels) {
+    if (static_cast<float>(kAppViews) * at(kTabWidths[labels]) <= tabsRoom) {
+      out.tabLabels = labels;
+      break;
+    }
+  }
+  const float tabWidth = at(kTabWidths[out.tabLabels]);
   for (int i = 0; i < kAppViews; ++i) {
     const float tabLeft = tabsRight - static_cast<float>(kAppViews - i) * tabWidth;
     out.tabs[i] = D2D1_RECT_F{tabLeft, out.rowTop, tabLeft + tabWidth, rowBottom};
   }
 
-  const float arrow = popup.arrowSize;
   const float arrowTop = std::round(out.rowTop + (out.rowHeight - arrow) / 2.0f);
   out.prev = D2D1_RECT_F{left, arrowTop, left + arrow, arrowTop + arrow};
   out.next = D2D1_RECT_F{out.prev.right + out.gap, arrowTop, out.prev.right + out.gap + arrow,
@@ -302,7 +318,9 @@ inline AppLayout MakeAppLayout(D2D1_SIZE_F size, const PanelLayout& popup, AppVi
   const float inputRight = out.tabs[0].left - 3.0f * out.gap;
   const float titleMin = at(200.0f);
   const float room = inputRight - (out.next.right + 2.0f * out.gap + titleMin + 3.0f * out.gap);
-  const float capsule = std::clamp(room, at(kCapsuleMinDip), at(kCapsuleMaxDip));
+  // Never over the arrows, even when that means shorter than its minimum.
+  const float capsule = (std::min)(std::clamp(room, at(kCapsuleMinDip), at(kCapsuleMaxDip)),
+                                   (std::max)(0.0f, inputRight - out.next.right - 2.0f * out.gap));
   out.input = D2D1_RECT_F{inputRight - capsule, out.rowTop, inputRight, rowBottom};
   out.title = D2D1_RECT_F{out.next.right + 2.0f * out.gap, out.rowTop,
                           (std::max)(out.next.right + 2.0f * out.gap,
@@ -381,8 +399,11 @@ inline YearMonth PlaceYearMonth(const AppLayout& app, const PanelLayout& popup, 
   grid.gridHeight = grid.cellHeight * kGridRows;
   const float scale = grid.cellHeight / popup.cellHeight;
   grid.dayCircle = std::round((std::min)(popup.dayCircle * scale, grid.cellWidth - 4.0f));
-  grid.dayCenterY = std::round(popup.dayCenterY * scale);
-  grid.dotCenterY = grid.dayCenterY + grid.dayCircle / 2.0f + grid.eventDot / 2.0f;
+  // The dot at the foot of its own cell and the number centred in what is left above it: the
+  // letters do not shrink with the rows, so anything worked out from the popup's proportions
+  // puts the dot against the next row's number on a small screen (seen at 175 %).
+  grid.dotCenterY = grid.cellHeight - grid.eventDot / 2.0f - 1.0f;
+  grid.dayCenterY = std::round((grid.cellHeight - grid.eventDot - 2.0f) / 2.0f);
   return out;
 }
 
@@ -432,7 +453,8 @@ inline std::vector<ListRow> PlaceList(const AppLayout& app, const PanelLayout& p
     const std::vector<DayItem>& items = days[static_cast<size_t>(d)];
     if (items.empty()) continue;
     const float cards = static_cast<float>(items.size()) * (popup.cardHeight + app.gap);
-    const float height = (std::max)(cards, std::round(44.0f * app.type)) + 2.0f * app.gap;
+    // Never shorter than its date column: weekday, date and the weather under them (64 DIP).
+    const float height = (std::max)(cards, std::round(64.0f * app.type)) + 2.0f * app.gap;
     ListRow heading;
     heading.heading = true;
     heading.day = AddDays(first, d);

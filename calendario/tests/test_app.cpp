@@ -279,3 +279,18 @@ TEST_CASE("a template made from an event is named after it and says all but when
   CHECK(TemplateTextFor(event) ==
         L"e: Revisión por 90 min @ Sala Andes con ana@x.com y luis@x.com");
 }
+
+TEST_CASE("on a small screen the tabs shorten before the capsule climbs over the arrows") {
+  // The app on a 1920x1080 laptop at 175 %: 878 x 494 DIP, with the popup's 308 DIP sidebar.
+  const PanelLayout popup = MakeLayout(D2D1_SIZE_F{308.0f, 380.0f});
+  for (const float width : {878.0f, 1100.0f, kAppBaseWidthDip}) {
+    const AppLayout app =
+        MakeAppLayout(D2D1_SIZE_F{width, 494.0f}, popup, AppView::Week, 1);
+    CHECK(app.input.left >= app.next.right);
+    CHECK(app.input.right <= app.tabs[0].left);
+    CHECK(app.tabs[0].left >= app.sidebarRight);
+    CHECK(app.tabs[kAppViews - 1].right <= app.collapse.left);
+  }
+  CHECK(BaseApp(AppView::Week).tabLabels == 0);  // the design size has room for whole words
+  CHECK(MakeAppLayout(D2D1_SIZE_F{878.0f, 494.0f}, popup, AppView::Week, 1).tabLabels > 0);
+}

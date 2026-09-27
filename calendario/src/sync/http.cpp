@@ -57,7 +57,7 @@ class RequestHandle {
 
 Http::~Http() { Close(); }
 
-bool Http::Open() {
+bool Http::Open(bool decompress) {
   Close();
 
   session_ = WinHttpOpen(kAgent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
@@ -76,9 +76,11 @@ bool Http::Open() {
   WinHttpSetOption(session_, WINHTTP_OPTION_ENABLE_HTTP_PROTOCOL, &http2, sizeof(http2));
 
   // A year of somebody's calendar arrives compressed, without a line of gzip written here.
-  DWORD decompression = WINHTTP_DECOMPRESSION_FLAG_ALL;
-  WinHttpSetOption(session_, WINHTTP_OPTION_DECOMPRESSION, &decompression,
-                   sizeof(decompression));
+  if (decompress) {
+    DWORD decompression = WINHTTP_DECOMPRESSION_FLAG_ALL;
+    WinHttpSetOption(session_, WINHTTP_OPTION_DECOMPRESSION, &decompression,
+                     sizeof(decompression));
+  }
 
   {
     std::lock_guard<std::mutex> lock(mutex_);

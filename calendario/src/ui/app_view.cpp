@@ -157,9 +157,16 @@ void DrawTopRow(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
   brush->SetColor(theme.border);
   StrokeRound(target, all, radius, brush, 1.0f);
 
-  const std::wstring_view kNames[kAppViews] = {T(L"Día", L"Day"),         T(L"Semana", L"Week"),
-                                               T(L"Mes", L"Month"),       T(L"Trimestre", L"Quarter"),
-                                               T(L"Año", L"Year"),        T(L"Lista", L"List")};
+  const std::wstring_view kFull[kAppViews] = {T(L"Día", L"Day"),   T(L"Semana", L"Week"),
+                                              T(L"Mes", L"Month"), T(L"Trimestre", L"Quarter"),
+                                              T(L"Año", L"Year"),  T(L"Lista", L"List")};
+  const std::wstring_view kShort[kAppViews] = {T(L"Día", L"Day"),  T(L"Sem.", L"Week"),
+                                               T(L"Mes", L"Mon."), T(L"Trim.", L"Qtr."),
+                                               T(L"Año", L"Year"), T(L"Lista", L"List")};
+  const std::wstring_view kInitial[kAppViews] = {T(L"D", L"D"), T(L"S", L"W"), T(L"M", L"M"),
+                                                 T(L"T", L"Q"), T(L"A", L"Y"), T(L"L", L"L")};
+  const std::wstring_view* kNames =
+      app.tabLabels == 0 ? kFull : (app.tabLabels == 1 ? kShort : kInitial);
   const float inset = std::round(3.0f * app.type);
   for (int i = 0; i < kAppViews; ++i) {
     const bool on = static_cast<int>(appModel.view) == i;

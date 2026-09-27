@@ -217,6 +217,8 @@ void Visuals::KeepOnlyIcons(const std::set<std::pair<std::wstring, int>>& used) 
 void Visuals::Build(const Curve& curve, const std::vector<DockItem>& items, const IconSet& icons, float windowWidth,
                     float windowHeight, float padding, float iconSize, float scale) {
   root_.Children().RemoveAll();
+  menu_ = nullptr;  // se iba con el árbol
+  menuHot_ = nullptr;
   labels_.clear();
   dots_.clear();
   items_.clear();
@@ -384,6 +386,106 @@ void Visuals::Puff(int index) {
   fade.Duration(std::chrono::milliseconds(180));
   items_[index].StartAnimation(L"Opacity", fade);
   if (index < static_cast<int>(dots_.size()) && dots_[index]) dots_[index].StartAnimation(L"Opacity", fade);
+}
+
+namespace {
+constexpr float kRowHeight = 30;
+constexpr float kMenuPadX = 12;
+constexpr float kMenuPadY = 5;
+constexpr float kCloseWidth = 30;
+}  // namespace
+
+void Visuals::OpenMenu(const std::vector<std::wstring>& items, float anchorX, float bottom, float left, float right,
+                       float scale, bool closable) {
+  CloseMenu();
+  if (items.empty()) return;
+  menuRows_ = items.size();
+  menuScale_ = scale;
+  menuClosable_ = closable;
+
+  float width = 0;
+  for (const auto& item : items) width = std::max(width, MeasureLabel(item, scale).width);
+  // Con ✕ se le reserva su hueco, o se comería el final del título, que es lo que distingue
+  // una ventana de otra.
+  width += (kMenuPadX * 2 + (closable ? kCloseWidth : 0)) * scale;
+  const float height = items.size() * kRowHeight * scale + kMenuPadY * 2 * scale;
+  menuSize_ = {std::ceil(width), std::ceil(height)};
+  const float x = std::clamp(anchorX - menuSize_.x / 2, left, std::max(left, right - menuSize_.x));
+  menuOrigin_ = {x, bottom - menuSize_.y};
+
+  menu_ = compositor_.CreateContainerVisual();
+  menu_.Size(menuSize_);
+  menu_.Offset({menuOrigin_.x, menuOrigin_.y, 0});
+  auto round = compositor_.CreateRoundedRectangleGeometry();
+  round.Size(menuSize_);
+  round.CornerRadius({10 * scale, 10 * scale});
+  menu_.Clip(compositor_.CreateGeometricClip(round));
+
+  auto chip = compositor_.CreateSpriteVisual();
+  chip.RelativeSizeAdjustment({1, 1});
+  chip.Brush(compositor_.CreateColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(242, 32, 32, 38)));
+  menu_.Children().InsertAtBottom(chip);
+
+  menuHot_ = compositor_.CreateSpriteVisual();
+  menuHot_.Size({menuSize_.x - kMenuPadY * 2 * scale, kRowHeight * scale});
+  menuHot_.Brush(compositor_.CreateColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(46, 255, 255, 255)));
+  menuHot_.Opacity(0);
+  auto hotRound = compositor_.CreateRoundedRectangleGeometry();
+  hotRound.Size(menuHot_.Size());
+  hotRound.CornerRadius({6 * scale, 6 * scale});
+  menuHot_.Clip(compositor_.CreateGeometricClip(hotRound));
+  menu_.Children().InsertAtTop(menuHot_);
+
+  // Todas las filas en UNA superficie.
+  auto text = compositor_.CreateSpriteVisual();
+  text.Size(menuSize_);
+  text.Brush(compositor_.CreateSurfaceBrush(Surface(menuSize_.x, menuSize_.y, [&](ID2D1DeviceContext* context, POINT at) {
+    for (size_t i = 0; i < items.size(); i++) {
+      const float top = at.y + kMenuPadY * scale + i * kRowHeight * scale;
+      DrawRow(context, items[i], scale, at.x + kMenuPadX * scale, top, kRowHeight * scale);
+      if (closable)
+        DrawRow(context, L"✕", scale, at.x + menuSize_.x - (kMenuPadY + kCloseWidth * 0.62f) * scale, top,
+                kRowHeight * scale);
+    }
+  })));
+  menu_.Children().InsertAtTop(text);
+  root_.Children().InsertAtTop(menu_);
+  menuHotIndex_ = -1;
+}
+
+void Visuals::CloseMenu() {
+  if (!menu_) return;
+  root_.Children().Remove(menu_);
+  menu_ = nullptr;
+  menuHot_ = nullptr;
+  menuHotIndex_ = -1;
+}
+
+RECT Visuals::MenuRect() const {
+  return RECT{static_cast<LONG>(std::floor(menuOrigin_.x)), static_cast<LONG>(std::floor(menuOrigin_.y)),
+              static_cast<LONG>(std::ceil(menuOrigin_.x + menuSize_.x)), static_cast<LONG>(std::ceil(menuOrigin_.y + menuSize_.y))};
+}
+
+int Visuals::MenuHitTest(float x, float y) const {
+  if (!menu_) return -1;
+  const float local = y - menuOrigin_.y;
+  if (x < menuOrigin_.x || x > menuOrigin_.x + menuSize_.x || local < 0 || local > menuSize_.y) return -1;
+  const int row = static_cast<int>((local - kMenuPadY * menuScale_) / (kRowHeight * menuScale_));
+  return row >= 0 && row < static_cast<int>(menuRows_) ? row : -1;
+}
+
+int Visuals::MenuHitTestClose(float x, float y) const {
+  if (!menuClosable_) return -1;
+  const int row = MenuHitTest(x, y);
+  const float right = menuOrigin_.x + menuSize_.x - kMenuPadY * menuScale_;
+  return row >= 0 && x >= right - kCloseWidth * menuScale_ && x <= right ? row : -1;
+}
+
+void Visuals::MenuSetHot(int index) {
+  if (!menuHot_ || index == menuHotIndex_) return;
+  menuHotIndex_ = index;
+  menuHot_.Opacity(index < 0 ? 0.0f : 1.0f);
+  if (index >= 0) menuHot_.Offset({kMenuPadY * menuScale_, kMenuPadY * menuScale_ + index * kRowHeight * menuScale_, 0});
 }
 
 void Visuals::SetRunning(const std::vector<bool>& running) {

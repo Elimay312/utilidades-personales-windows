@@ -18,5 +18,7 @@ struct TextSize {
 // las filas del menú, y solo cuadraban con iconos de 48.
 TextSize MeasureLabel(const std::wstring& text, float scale);
 void DrawLabel(ID2D1DeviceContext* context, const std::wstring& text, float scale, TextSize size, POINT at);
+// Una fila del menú: el texto solo, centrado en vertical dentro de rowHeight.
+void DrawRow(ID2D1DeviceContext* context, const std::wstring& text, float scale, float x, float top, float rowHeight);
 
 }  // namespace dock

@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -30,6 +31,8 @@ class App {
   // La ventana con el foco a efectos del clic: la de primer plano, salvo que sea del propio
   // dock, y entonces la última ajena que lo tuvo.
   HWND ForeignForeground() const;
+  // Algo que puede bloquear (el shell), al worker: responde con PostMessage a quien lo pidió.
+  void PostJob(std::function<void()> job) { worker_.Post(std::move(job)); }
   // Guarda la superposición de una pantalla y recarga todo tras delayMs (para dejar acabar el
   // desvanecido de un icono quitado). Recargar reconstruye también las otras pantallas.
   void SaveAndReload(const std::wstring& device, const std::vector<DockApp>& base,

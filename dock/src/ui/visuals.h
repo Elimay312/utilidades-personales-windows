@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <winrt/Windows.Foundation.Numerics.h>
 #include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.UI.Composition.Desktop.h>
 
@@ -58,6 +59,22 @@ class Visuals {
   // Sacado del dock: se desvanece (no encoge: Scale es de la expresión de la lupa).
   void Puff(int index);
 
+  // El menú, dibujado a mano: TrackPopupMenu necesita el foco para cerrarse bien y el dock
+  // no lo toma nunca. Centrado en anchorX pero sin salirse de [left, right] (la ventana): la
+  // región recorta también el dibujo, así que quien lo abre tiene que meter MenuRect en ella.
+  // closable: un ✕ por fila (la rueda).
+  void OpenMenu(const std::vector<std::wstring>& items, float anchorX, float bottom, float left, float right,
+                float scale, bool closable);
+  void CloseMenu();
+  bool MenuOpen() const { return static_cast<bool>(menu_); }
+  float MenuTop() const { return menuOrigin_.y; }
+  RECT MenuRect() const;
+  int MenuHitTest(float x, float y) const;
+  // La fila cuyo ✕ está bajo el punto, o -1. Va antes que MenuHitTest: el ✕ está dentro de
+  // la fila.
+  int MenuHitTestClose(float x, float y) const;
+  void MenuSetHot(int index);
+
   // Esconder desliza el árbol hacia abajo con un muelle; la ventana no se mueve nunca.
   void Slide(bool hidden, bool instant);
 
@@ -78,6 +95,13 @@ class Visuals {
   std::vector<bool> running_;
   int labelShown_ = -1;
   float hiddenOffset_ = 0;
+  winrt::Windows::UI::Composition::ContainerVisual menu_{nullptr};
+  winrt::Windows::UI::Composition::SpriteVisual menuHot_{nullptr};
+  winrt::Windows::Foundation::Numerics::float2 menuOrigin_{}, menuSize_{};
+  size_t menuRows_ = 0;
+  float menuScale_ = 1;
+  bool menuClosable_ = false;
+  int menuHotIndex_ = -1;
 };
 
 }  // namespace dock

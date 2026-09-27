@@ -8,6 +8,7 @@
 
 #include "model/config.h"
 #include "model/magnify.h"
+#include "system/jumplist.h"
 #include "ui/visuals.h"
 
 namespace dock {
@@ -66,6 +67,13 @@ class DockWindow {
   void ApplyRegion();
   void Compose();
   void OnClick(bool middle);
+  // El menú del clic derecho: recientes de la app (llegan del worker), Quitar/Anclar, Salir.
+  void OpenContextMenu();
+  void ShowMenu();
+  void CloseMenu();
+  void OnMenuChoice(int choice);
+  // Lo anclado en el orden de head, con la papelera detrás si iba tras las abiertas.
+  std::vector<DockApp> WithTrash(std::vector<DockApp> head) const;
   // Arrastrar: solo lo anclado (lo que va antes del separador de las abiertas).
   int DraggableEnd() const;
   void OnDragMove(int x, int y);
@@ -95,6 +103,8 @@ class DockWindow {
   POINT press_{};
   bool dragging_ = false;        // pasado el umbral
   std::vector<int> dragOrder_;   // el orden que va quedando, en índices de drawn_
+  int menuIndex_ = -1;           // el icono del menú abierto, o -1 (solo "Salir")
+  std::vector<struct JumpItem> menuJumps_;
   // La app que se está abriendo: su icono bota hasta que aparece su ventana, o 20 s.
   std::wstring launchingTarget_;
   ULONGLONG launchingUntil_ = 0;

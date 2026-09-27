@@ -112,16 +112,20 @@ void DockWindow::ApplyDragShifts() {
   }
 }
 
+std::vector<DockApp> DockWindow::WithTrash(std::vector<DockApp> head) const {
+  // Lo abierto sin anclar nunca se guarda: reordenar o quitar anclaría todo lo abierto.
+  for (size_t i = DraggableEnd(); i < drawn_.size(); i++)
+    if (!drawn_[i].separator && drawn_[i].target == kTrashTarget) head.push_back(drawn_[i]);
+  return head;
+}
+
 void DockWindow::FinishDrag(int y) {
   dragging_ = false;
   const int dragged = pressedIndex_;
   pressedIndex_ = -1;
-  // Solo lo anclado, en el orden nuevo; detrás, la papelera si iba tras las abiertas. Lo
-  // abierto sin anclar nunca se guarda: reordenar anclaría todo lo que estuviera abierto.
-  std::vector<DockApp> pinned;
-  for (int index : dragOrder_) pinned.push_back(drawn_[index]);
-  for (size_t i = DraggableEnd(); i < drawn_.size(); i++)
-    if (!drawn_[i].separator && drawn_[i].target == kTrashTarget) pinned.push_back(drawn_[i]);
+  std::vector<DockApp> order;
+  for (int index : dragOrder_) order.push_back(drawn_[index]);
+  std::vector<DockApp> pinned = WithTrash(std::move(order));
   const bool removed = PulledOff(y);
   if (removed) {
     visuals_->Puff(dragged);
@@ -133,6 +137,122 @@ void DockWindow::FinishDrag(int y) {
   // Se guarda y se recarga como cualquier cambio de dock.local.json: así se enteran también
   // los docks de las otras pantallas. Si se ha quitado uno, se le deja acabar de desvanecerse.
   app_.SaveAndReload(monitor_.device, base_, pinned, removed ? kPuffMs : 1);
+}
+
+namespace {
+
+constexpr UINT kJumpsReady = WM_APP + 2;
+constexpr size_t kMenuJumpLimit = 4;
+
+struct JumpResult {
+  int index;
+  std::wstring appId;
+  std::vector<JumpItem> items;
+};
+
+std::wstring Shorten(const std::wstring& text, size_t limit) {
+  return text.size() <= limit ? text : text.substr(0, limit - 1) + L"…";
+}
+
+}  // namespace
+
+void DockWindow::OpenContextMenu() {
+  if (visuals_->MenuOpen()) {  // el segundo clic derecho lo cierra
+    CloseMenu();
+    return;
+  }
+  const int index = curve_.SlotAt(lastRest_);
+  // Fuera de un icono solo hay "Salir": a la derecha del último, Invert satura y el índice
+  // es -1, y componer "Quitar..." con él tumbaba el dock de C# (ArgumentOutOfRange).
+  menuIndex_ = index >= 0 && index < static_cast<int>(drawn_.size()) && !drawn_[index].separator ? index : -1;
+  menuJumps_.clear();
+  ShowMenu();
+  if (menuIndex_ < 0) return;
+
+  // Los recientes llegan después: el menú no espera al shell. Se pregunta por UNA app, la
+  // del icono, y solo desde este gesto.
+  const DockApp& app = drawn_[menuIndex_];
+  const HWND window = menuIndex_ < static_cast<int>(windows_.size()) && !windows_[menuIndex_].empty()
+                          ? windows_[menuIndex_].front()
+                          : nullptr;
+  const auto appId = AppIdOf(app, window);
+  if (!appId) {
+    LogTrace(L"[saltos] '{}' sin AppID", app.name);
+    return;
+  }
+  const HWND self = hwnd_;
+  app_.PostJob([self, index = menuIndex_, id = *appId] {
+    auto* result = new JumpResult{index, id, ReadJumpList(id, kMenuJumpLimit)};
+    if (!PostMessageW(self, kJumpsReady, 0, reinterpret_cast<LPARAM>(result))) delete result;
+  });
+}
+
+void DockWindow::ShowMenu() {
+  std::vector<std::wstring> items;
+  if (menuIndex_ >= 0) {
+    const DockApp& app = drawn_[menuIndex_];
+    for (const JumpItem& jump : menuJumps_) items.push_back(Shorten(jump.name, 34));
+    // Una app que solo está abierta no se puede quitar: se ancla.
+    const bool extra = menuIndex_ > DraggableEnd() && app.target != kTrashTarget;
+    items.push_back(std::format(L"{} '{}' {}", extra ? L"Anclar" : L"Quitar", Shorten(app.name, 34),
+                                extra ? L"al dock" : L"del dock"));
+  }
+  items.push_back(L"Salir del dock");
+
+  const float width = static_cast<float>(width_);
+  const float anchor = menuIndex_ >= 0
+                           ? curve_.Project((curve_.RestLeft(menuIndex_) + curve_.RestRight(menuIndex_)) / 2, width, lastRest_)
+                           : width / 2;
+  // Dentro de la ventana; la región se amplía para cubrirlo (ApplyRegion).
+  const float pad = kPadding * dpi_ / 96.0f;
+  const float left = pad;
+  const float right = width - pad;
+  visuals_->SetLabel(-1);  // la etiqueta ocupa el mismo hueco
+  visuals_->OpenMenu(items, anchor, static_cast<float>(height_ - Px(config_.iconSize + 2 * kPadding)), left, right,
+                     dpi_ / 96.0f, false);
+  ApplyRegion();  // el menú sube por encima de lo que la región deja pasar
+  LogTrace(L"[menu] {} filas, centro x={:.0f}, techo y={:.0f} (cliente, {}%)", items.size(), anchor, visuals_->MenuTop(),
+           dpi_ * 100 / 96);
+}
+
+void DockWindow::CloseMenu() {
+  if (!visuals_->MenuOpen()) return;
+  visuals_->CloseMenu();
+  menuIndex_ = -1;
+  menuJumps_.clear();
+  ApplyRegion();
+}
+
+void DockWindow::OnMenuChoice(int choice) {
+  const int index = menuIndex_;
+  const std::vector<JumpItem> jumps = menuJumps_;
+  CloseMenu();
+  if (index >= 0 && choice < static_cast<int>(jumps.size())) {
+    OpenWithDetached(drawn_[index], {jumps[choice].path});
+    LogInfo(L"[saltos] abriendo '{}' con '{}'", jumps[choice].name, drawn_[index].name);
+    return;
+  }
+  // La última entrada siempre es salir, tenga el menú una fila o seis.
+  const int rest = choice - static_cast<int>(jumps.size());
+  if (index < 0 || rest == 1) {
+    app_.Quit();
+    return;
+  }
+  const DockApp app = drawn_[index];
+  std::vector<DockApp> head(drawn_.begin(), drawn_.begin() + DraggableEnd());
+  if (index > DraggableEnd()) {
+    head.push_back(app);  // anclada: pasa a lo anclado, delante de la papelera
+    LogInfo(L"[dock] anclada '{}'", app.name);
+    app_.SaveAndReload(monitor_.device, base_, WithTrash(std::move(head)), 1);
+    return;
+  }
+  visuals_->Puff(index);
+  std::vector<DockApp> pinned = WithTrash(std::move(head));
+  pinned.erase(std::find_if(pinned.begin(), pinned.end(), [&](const DockApp& a) {
+    return a.separator == app.separator && a.target == app.target && a.name == app.name;
+  }));
+  LogInfo(L"[dock] quitada '{}'", app.name);
+  app_.SaveAndReload(monitor_.device, base_, pinned, kPuffMs);
 }
 
 void DockWindow::CancelDrag() {
@@ -276,7 +396,7 @@ RECT DockWindow::BarOnScreen() const {
 // Sin nada debajo no hay de qué esconderse: con el escritorio a la vista el dock se queda.
 // Se reevalúa en cada barrido, porque abrir, cerrar o activar ventanas es justo cuando cambia.
 void DockWindow::UpdateSmartHide() {
-  if (!config_.autoHide || hovering_ || dragging_ || fullscreen_) return;
+  if (!config_.autoHide || hovering_ || dragging_ || fullscreen_ || visuals_->MenuOpen()) return;
   const bool covered = AnythingOver(BarOnScreen());
   if (covered == !revealed_) return;
   if (covered) Hide(/*force=*/true);
@@ -475,6 +595,10 @@ void DockWindow::ApplyRegion() {
   // atraviesa procesos) y además recorta el dibujo: tiene que cubrir todo lo que se pinte.
   std::vector<RECT> rects;
   if (revealed_ || sliding_) rects.push_back(BarRect(hovering_));
+  // El menú entero, no solo subir el techo de la barra: con un dock estrecho el menú es más
+  // ancho que la barra y la región, que también recorta el dibujo, le cortaba el final de las
+  // filas (medido: "Quitar 'Explorado" con un solo icono). En C# se encajaba dentro de la barra.
+  if (visuals_ && visuals_->MenuOpen()) rects.push_back(visuals_->MenuRect());
   if (config_.autoHide) rects.push_back(RECT{0, height_ - Px(kRevealStrip), width_, height_});
   if (Same(rects, region_)) return;
   region_ = rects;
@@ -619,7 +743,9 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
           visuals_->SetHover(true);
         }
         const int slot = curve_.SlotAt(rest);
-        if (!dragging_) visuals_->SetLabel(slot);
+        if (visuals_->MenuOpen())
+          visuals_->MenuSetHot(visuals_->MenuHitTest(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam))));
+        else if (!dragging_) visuals_->SetLabel(slot);
         LogTrace(L"[hover] x={} idx={} reposo={:.1f}", GET_X_LPARAM(lparam), slot, rest);
       }
       if (pressedIndex_ >= 0) {
@@ -636,8 +762,31 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       press_ = POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
       return 0;
     }
+    case WM_RBUTTONUP:
+      CancelDrag();
+      OpenContextMenu();
+      return 0;
+
+    case kJumpsReady: {
+      std::unique_ptr<JumpResult> result(reinterpret_cast<JumpResult*>(lparam));
+      LogTrace(L"[saltos] appId={} recientes={}", result->appId, result->items.size());
+      // Solo si sigue abierto el menú de ese mismo icono.
+      if (visuals_->MenuOpen() && menuIndex_ == result->index && !result->items.empty()) {
+        menuJumps_ = std::move(result->items);
+        ShowMenu();
+      }
+      return 0;
+    }
+
     // Al soltar, no al pulsar: si se pasó el umbral fue un arrastre, si no un clic.
     case WM_LBUTTONUP:
+      if (visuals_->MenuOpen()) {
+        pressedIndex_ = -1;
+        const int choice = visuals_->MenuHitTest(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
+        if (choice >= 0) OnMenuChoice(choice);
+        else CloseMenu();
+        return 0;
+      }
       if (dragging_) {
         // Antes de soltar la captura: ReleaseCapture manda WM_CAPTURECHANGED, que cancelaría
         // lo que se acaba de decidir.
@@ -658,6 +807,7 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
     case WM_MOUSELEAVE:
       if (dragging_) return 0;  // con la captura puesta el arrastre sigue fuera de la ventana
       hovering_ = false;
+      CloseMenu();  // los clics fuera del dock no llegan: salir es la única forma de cerrarlo
       if (hoverShown_) {
         hoverShown_ = false;
         visuals_->SetHover(false);

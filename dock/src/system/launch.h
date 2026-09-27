@@ -2,6 +2,9 @@
 
 #include <windows.h>
 
+#include <string>
+#include <vector>
+
 #include "model/config.h"
 
 namespace dock {
@@ -11,6 +14,10 @@ namespace dock {
 // propio: ShellExecuteEx puede tardar segundos y el hilo de UI atiende el ratón y el
 // compositor.
 void LaunchDetached(const DockApp& app);
+
+// Abre esos ficheros con esa app (un reciente del menú, o lo que se suelta encima del icono).
+// También en un hilo propio.
+void OpenWithDetached(const DockApp& app, std::vector<std::wstring> paths);
 
 // Las únicas operaciones sobre ventanas ajenas, siempre como respuesta a un clic.
 // SetForegroundWindow solo funciona porque el dock acaba de recibir la entrada (el clic):

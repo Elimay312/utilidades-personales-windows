@@ -64,6 +64,12 @@ abajo.
   tirando hacia arriba, con el icono desvaneciéndose. Se guarda en `dock.local.json` con el
   mismo formato que el de C#, solo el bloque de esa pantalla y ese perfil, y se recarga en
   ~40 ms en todas las pantallas. Lo abierto sin anclar no se arrastra ni se guarda.
+- **El menú del clic derecho en C++**: los 4 documentos recientes de la app (o las carpetas
+  frecuentes, en el Explorador), «Quitar del dock», «Anclar al dock» para lo abierto sin
+  anclar, y «Salir del dock». Sale al instante y los recientes llegan después desde el
+  worker: de 11,6 a 12,3 MB con el menú abierto, sin proceso hijo. Un reciente se abre con
+  su app (las de la Store, por `ActivateForFile`). Con un dock de un solo icono el menú es
+  más ancho que la barra: se encaja en la ventana y la región crece para cubrirlo.
 - **El autoarranque solo lo toca la copia instalada**, para que una build de desarrollo no
   se registre en el inicio de sesión del usuario.
 - **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.

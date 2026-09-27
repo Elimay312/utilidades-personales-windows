@@ -87,6 +87,9 @@ class Store {
   // in moved_from: Google moves events with POST .../move on the calendar they are in, and by
   // the time the queue sends this the row already says where it is going.
   void UpdateEvent(const EventDetail& edit, unsigned edits);
+  // This account's answer to an invitation: "accepted", "tentative" or "declined". The guest
+  // list goes up whole (kEditAttendees), which is how Google takes an answer.
+  void SetResponse(const std::wstring& uid, const std::string& response);
   // "Solo este": the occurrence of `seriesUid` on `occurrence` becomes a row of its own, written
   // as `edit` says, the way Google keeps an occurrence apart (series_id and original_day). The
   // series skips that day from now on. Returns the new row's uid, which the interface edits from

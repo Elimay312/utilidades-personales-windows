@@ -192,6 +192,16 @@ INSERT INTO accounts (id, token_file, added_at)
 UPDATE calendars SET account_id = 1 WHERE id NOT IN ('local', 'local-tasks');
 )SQL";
 
+// v6 (phase 13): the guests as Google lists them (its JSON array, untouched), the video call it
+// attached, and the zone an event was written in when that is not this machine's. Only
+// columns; the tokens are emptied so the next pass brings all three down for what is cached.
+constexpr const char* kV6 = R"SQL(
+ALTER TABLE events ADD COLUMN attendees TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ADD COLUMN conference TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ADD COLUMN time_zone TEXT NOT NULL DEFAULT '';
+UPDATE sync_state SET sync_token = '';
+)SQL";
+
 struct Migration {
   int version;
   const char* sql;
@@ -203,6 +213,7 @@ constexpr Migration kMigrations[] = {
     {3, kV3},
     {4, kV4},
     {5, kV5},
+    {6, kV6},
 };
 
 }  // namespace

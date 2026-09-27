@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "core/dates.h"
 
@@ -53,6 +54,11 @@ struct Draft {
   std::optional<int> startMin;    // empty means all day, or a task with no time
   std::optional<Date> endDay;     // events only; defaults to `day`
   std::optional<int> endMin;
+  // Events only (phase 13). The zone is the IANA name the times were written in when it is not
+  // this machine's; `day` and `startMin` are already this machine's wall clock either way.
+  std::wstring location;
+  std::vector<std::string> attendees;  // e-mail addresses
+  std::string timeZone;
 };
 
 // One row of the day list. Events and tasks arrive already mixed, because that is how the
@@ -66,6 +72,7 @@ struct DayItem {
   std::uint32_t color = 0;        // 0xRRGGBB, from the calendar or list it belongs to
   bool done = false;              // tasks only
   bool repeats = false;           // it carries an RRULE
+  bool hasCall = false;           // there is a video call to join (JoinUrl)
   // The day this card stands for. For a repetition it is which occurrence of the series, the
   // one "solo este" edits; for anything else, the day it starts on.
   Date occurrence{};
@@ -92,6 +99,52 @@ inline bool EarlierThan(const DayItem& a, const DayItem& b) {
   return a.title < b.title;
 }
 
+// Somebody invited to an event, as Google lists them. `response` is Google's own word:
+// "needsAction", "accepted", "tentative" or "declined". `self` is the account reading it.
+struct Attendee {
+  std::string email;
+  std::wstring name;              // displayName; empty when Google has none
+  std::string response = "needsAction";
+  bool self = false;
+  bool organizer = false;
+  bool optional = false;
+};
+
+// The first address of a video call in `text`: Meet, Zoom, Teams, Webex or Whereby. A call
+// pasted into the location or the notes is the same button as one Google attached.
+inline std::wstring FindCallUrl(std::wstring_view text) {
+  constexpr std::wstring_view kHosts[] = {L"meet.google.com/", L"zoom.us/",
+                                          L"teams.microsoft.com/", L"teams.live.com/",
+                                          L"webex.com/", L"whereby.com/"};
+  for (size_t at = text.find(L"https://"); at != std::wstring_view::npos;
+       at = text.find(L"https://", at + 1)) {
+    size_t end = at;
+    while (end < text.size() && text[end] > L' ' && text[end] != L'"' && text[end] != L'<' &&
+           text[end] != L'>' && text[end] != L')')
+      ++end;
+    const std::wstring_view url = text.substr(at, end - at);
+    const size_t slash = url.find(L'/', 8);
+    const std::wstring_view host = url.substr(8, slash == std::wstring_view::npos
+                                                     ? std::wstring_view::npos
+                                                     : slash - 8 + 1);
+    for (const std::wstring_view known : kHosts) {
+      // The host or any subdomain of it: us02web.zoom.us, acme.webex.com.
+      if (host == known || (host.size() > known.size() && host.ends_with(known) &&
+                            host[host.size() - known.size() - 1] == L'.'))
+        return std::wstring(url);
+    }
+  }
+  return {};
+}
+
+// What the Unirse button opens: the call Google attached, or else one written in the event.
+inline std::wstring JoinUrl(std::wstring_view conference, std::wstring_view location,
+                            std::wstring_view notes) {
+  if (!conference.empty()) return std::wstring(conference);
+  if (std::wstring found = FindCallUrl(location); !found.empty()) return found;
+  return FindCallUrl(notes);
+}
+
 // An event whole, as the detail panel edits it and UpdateEvent writes it back. The day list's
 // DayItem is what an event looks like on a card; this is what it is.
 struct EventDetail {
@@ -109,6 +162,12 @@ struct EventDetail {
   // string is none, otherwise minutes before the start, "10,60", with Google's e-mail ones
   // written "m1440" so they go back up untouched when the list is edited here.
   std::optional<std::string> reminders;
+  // Phase 13. The guests, as Google lists them; empty when it is only the owner's.
+  std::vector<Attendee> attendees;
+  std::wstring conference;        // the call Google attached (hangoutLink or conferenceData)
+  // The IANA zone it was written in when that is not this machine's; empty means this one.
+  // The times above are this machine's wall clock regardless.
+  std::string timeZone;
 };
 
 // The five answers the detail panel offers for the reminder, and Custom for a list that is none
@@ -184,12 +243,16 @@ inline constexpr unsigned kEditLocation = 1u;
 inline constexpr unsigned kEditRecurrence = 2u;
 // The reminders were changed here (phase 11), so this once they go up instead of coming down.
 inline constexpr unsigned kEditReminders = 4u;
+// The guest list or somebody's answer to it (phase 13). Google takes the list whole, so it only
+// goes up when it was touched here.
+inline constexpr unsigned kEditAttendees = 8u;
 
 inline std::string UpdateOp(unsigned edits) {
   std::string op = "update";
   if (edits & kEditLocation) op += "+location";
   if (edits & kEditRecurrence) op += "+recurrence";
   if (edits & kEditReminders) op += "+reminders";
+  if (edits & kEditAttendees) op += "+attendees";
   return op;
 }
 
@@ -198,6 +261,7 @@ inline unsigned UpdateEdits(std::string_view op) {
   if (op.find("+location") != std::string_view::npos) edits |= kEditLocation;
   if (op.find("+recurrence") != std::string_view::npos) edits |= kEditRecurrence;
   if (op.find("+reminders") != std::string_view::npos) edits |= kEditReminders;
+  if (op.find("+attendees") != std::string_view::npos) edits |= kEditAttendees;
   return edits;
 }
 

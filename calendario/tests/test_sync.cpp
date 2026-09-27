@@ -509,3 +509,81 @@ TEST_CASE("moving to another calendar is a POST on the calendar it is still in")
         "/calendar/v3/calendars/casa%40gmail.com/events/abc123/move?destination="
         "trabajo%231%40group.calendar.google.com");
 }
+
+TEST_CASE("the guests come down as Google sent them and only go up when touched") {
+  nlohmann::json event = Timed("2026-09-23T15:00:00Z", "2026-09-23T16:00:00Z");
+  event["attendees"] = {
+      {{"email", "yo@x.com"}, {"self", true}, {"responseStatus", "needsAction"}},
+      {{"email", "ana@x.com"}, {"displayName", "Ana"}, {"organizer", true},
+       {"responseStatus", "accepted"}, {"comment", "llego tarde"}},
+      {{"email", "sala@resource.calendar.google.com"}, {"resource", true}}};
+  const EventRow row = *ReadEvent(event);
+
+  // The interface sees the people, not the room.
+  const std::vector<Attendee> guests = ReadAttendees(row.attendees);
+  REQUIRE(guests.size() == 2);
+  CHECK(guests[0].self);
+  CHECK(guests[1].name == L"Ana");
+  CHECK(guests[1].organizer);
+  CHECK(guests[1].response == "accepted");
+
+  // A PATCH that did not touch them leaves them to Google.
+  CHECK_FALSE(WriteEvent(row, "").contains("attendees"));
+
+  // An answer goes up with the whole list, the room and the comment still in it.
+  EventRow answered = row;
+  answered.attendees = WithResponse(row.attendees, "declined");
+  const nlohmann::json body = WriteEvent(answered, "", kEditAttendees);
+  REQUIRE(body["attendees"].size() == 3);
+  CHECK(body["attendees"][0]["responseStatus"] == "declined");
+  CHECK(body["attendees"][1]["comment"] == "llego tarde");
+  CHECK(body["attendees"][2]["resource"] == true);
+  CHECK(UpdateEdits(UpdateOp(kEditAttendees)) == kEditAttendees);
+}
+
+TEST_CASE("a creation with guests sends them") {
+  EventRow row = *ReadEvent(Timed("2026-09-23T15:00:00Z", "2026-09-23T16:00:00Z"));
+  row.attendees = WriteAttendees({{.email = "ana@x.com"}});
+  const nlohmann::json body = WriteEvent(row, "abc");
+  REQUIRE(body["attendees"].size() == 1);
+  CHECK(body["attendees"][0]["email"] == "ana@x.com");
+}
+
+TEST_CASE("the call to join is Google's, or one written in the event") {
+  nlohmann::json event = Timed("2026-09-23T15:00:00Z", "2026-09-23T16:00:00Z");
+  event["hangoutLink"] = "https://meet.google.com/abc-defg-hij";
+  CHECK(ReadEvent(event)->conference == "https://meet.google.com/abc-defg-hij");
+
+  event.erase("hangoutLink");
+  event["conferenceData"] = {
+      {"entryPoints",
+       {{{"entryPointType", "phone"}, {"uri", "tel:+1-555"}},
+        {{"entryPointType", "video"}, {"uri", "https://us02web.zoom.us/j/123"}}}}};
+  CHECK(ReadEvent(event)->conference == "https://us02web.zoom.us/j/123");
+
+  CHECK(FindCallUrl(L"Sala 3 (https://teams.microsoft.com/l/meetup-join/x)") ==
+        L"https://teams.microsoft.com/l/meetup-join/x");
+  CHECK(FindCallUrl(L"https://example.com/zoom.us/ no") == L"");
+  CHECK(FindCallUrl(L"https://evilzoom.us/j/1") == L"");
+  CHECK(JoinUrl(L"", L"Oficina", L"entra en https://meet.google.com/x-y-z gracias") ==
+        L"https://meet.google.com/x-y-z");
+  CHECK(JoinUrl(L"https://meet.google.com/a", L"https://zoom.us/j/1", L"") ==
+        L"https://meet.google.com/a");
+}
+
+TEST_CASE("the zone an event was written in is kept only when it is not this one") {
+  nlohmann::json event = Timed("2026-09-23T15:00:00Z", "2026-09-23T16:00:00Z");
+  event["start"]["timeZone"] = LocalZoneName();
+  CHECK(ReadEvent(event)->timeZone.empty());
+
+  // Somewhere this test machine is not: one of the two is always another zone.
+  const std::string other =
+      LocalZoneName() == "Pacific/Kiritimati" ? "Pacific/Pago_Pago" : "Pacific/Kiritimati";
+  event["start"]["timeZone"] = other;
+  const EventRow row = *ReadEvent(event);
+  CHECK(row.timeZone == other);
+  // And it goes back up with it.
+  const nlohmann::json body = WriteEvent(row, "");
+  CHECK(body["start"]["timeZone"] == other);
+  CHECK(body["end"]["timeZone"] == other);
+}

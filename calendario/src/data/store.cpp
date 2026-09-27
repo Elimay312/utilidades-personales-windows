@@ -13,6 +13,7 @@
 #include "core/recurrence.h"
 #include "core/text.h"
 #include "data/schema.h"
+#include "sync/map.h"
 
 namespace agenda {
 namespace {
@@ -215,7 +216,8 @@ std::vector<DayItem> Store::ItemsForDay(Date day, bool includeUndated) {
   // a clock: "17:00" on the second day of a trip would be a lie.
   if (std::optional<Stmt> stmt = db_.Prepare(
           "SELECT e.uid, e.title, e.start_day, e.start_min, e.end_min, e.recurrence, c.color, "
-          "       COALESCE(e.remote_id, replace(lower(e.uid), '-', '')) "
+          "       COALESCE(e.remote_id, replace(lower(e.uid), '-', '')), e.conference, "
+          "       e.location, e.notes "
           "FROM events e JOIN calendars c ON c.id = e.calendar_id "
           "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
           "  AND e.start_day <= ?1 AND e.end_day >= ?1")) {
@@ -236,6 +238,7 @@ std::vector<DayItem> Store::ItemsForDay(Date day, bool includeUndated) {
       item.endMin = startsHere ? stmt->OptInt(4) : std::nullopt;
       item.repeats = !stmt->Text(5).empty();
       item.color = static_cast<std::uint32_t>(stmt->Int(6));
+      item.hasCall = !JoinUrl(stmt->Wide(8), stmt->Wide(9), stmt->Wide(10)).empty();
       item.occurrence = ParseDayKey(stmt->Text(2)).value_or(day);
       items.push_back(std::move(item));
     }
@@ -248,7 +251,8 @@ std::vector<DayItem> Store::ItemsForDay(Date day, bool includeUndated) {
   // an index on recurrence != '' if thousands of them ever show up.
   if (std::optional<Stmt> stmt = db_.Prepare(
           "SELECT e.uid, e.title, e.start_day, e.start_min, e.end_min, e.recurrence, c.color, "
-          "       COALESCE(e.remote_id, replace(lower(e.uid), '-', '')) "
+          "       COALESCE(e.remote_id, replace(lower(e.uid), '-', '')), e.conference, "
+          "       e.location, e.notes "
           "FROM events e JOIN calendars c ON c.id = e.calendar_id "
           "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
           "  AND e.recurrence != '' AND e.start_day < ?1 AND e.end_day < ?1")) {
@@ -264,6 +268,7 @@ std::vector<DayItem> Store::ItemsForDay(Date day, bool includeUndated) {
       item.endMin = stmt->OptInt(4);
       item.repeats = true;
       item.color = static_cast<std::uint32_t>(stmt->Int(6));
+      item.hasCall = !JoinUrl(stmt->Wide(8), stmt->Wide(9), stmt->Wide(10)).empty();
       item.occurrence = day;
       items.push_back(std::move(item));
     }
@@ -467,7 +472,8 @@ std::optional<EventDetail> Store::Event(const std::wstring& uid) {
   if (!db_.IsOpen()) return std::nullopt;
   std::optional<Stmt> stmt = db_.Prepare(
       "SELECT calendar_id, title, location, notes, recurrence, start_day, start_min, end_day, "
-      "       end_min, reminders FROM events WHERE uid = ? AND deleted_at IS NULL");
+      "       end_min, reminders, attendees, conference, time_zone "
+      "FROM events WHERE uid = ? AND deleted_at IS NULL");
   if (!stmt) return std::nullopt;
   stmt->Bind(1, uid);
   if (!stmt->Step()) return std::nullopt;
@@ -487,6 +493,9 @@ std::optional<EventDetail> Store::Event(const std::wstring& uid) {
   out.endDay = *end;
   out.endMin = stmt->OptInt(8);
   if (!stmt->IsNull(9)) out.reminders = stmt->Text(9);
+  out.attendees = sync::ReadAttendees(stmt->Text(10));
+  out.conference = stmt->Wide(11);
+  out.timeZone = stmt->Text(12);
   return out;
 }
 
@@ -838,8 +847,9 @@ DayItem Store::Create(const Draft& draft) {
     } else if (draft.day) {
       if (std::optional<Stmt> stmt = db_.Prepare(
               "INSERT INTO events (uid, calendar_id, title, start_day, start_min, end_day, "
-              "                    end_min, recurrence, updated_at) "
-              "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+              "                    end_min, recurrence, updated_at, location, attendees, "
+              "                    time_zone) "
+              "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
         const Date endDay = draft.endDay ? *draft.endDay : *draft.day;
         stmt->Bind(1, uid);
         stmt->Bind(2, list);
@@ -850,6 +860,11 @@ DayItem Store::Create(const Draft& draft) {
         stmt->Bind(7, draft.endMin);
         stmt->Bind(8, draft.recurrence);
         stmt->Bind(9, now);
+        stmt->Bind(10, draft.location);
+        std::vector<Attendee> guests;
+        for (const std::string& email : draft.attendees) guests.push_back({.email = email});
+        stmt->Bind(11, sync::WriteAttendees(guests));
+        stmt->Bind(12, draft.timeZone);
         stmt->Step(&ok);
       }
     }
@@ -977,6 +992,46 @@ void Store::UpdateEvent(const EventDetail& edit, unsigned edits) {
   });
 }
 
+void Store::SetResponse(const std::wstring& uid, const std::string& response) {
+  Enqueue([this, uid, response] {
+    Transaction tx(db_);
+    if (!tx.Begin()) {
+      Report(uid, T(L"no se pudo guardar la respuesta", L"could not save the answer"));
+      return;
+    }
+    std::string attendees;
+    if (std::optional<Stmt> stmt = db_.Prepare("SELECT attendees FROM events WHERE uid = ?")) {
+      stmt->Bind(1, uid);
+      if (stmt->Step()) attendees = stmt->Text(0);
+    }
+    bool ok = false;
+    if (std::optional<Stmt> stmt =
+            db_.Prepare("UPDATE events SET attendees = ?, updated_at = ? WHERE uid = ?")) {
+      stmt->Bind(1, sync::WithResponse(attendees, response));
+      stmt->Bind(2, NowSeconds());
+      stmt->Bind(3, uid);
+      stmt->Step(&ok);
+    }
+    // Merged into whatever update is already waiting, like UpdateEvent.
+    unsigned merged = kEditAttendees;
+    if (ok) {
+      if (std::optional<Stmt> stmt = db_.Prepare(
+              "SELECT op FROM pending_ops WHERE uid = ? AND op LIKE 'update%'")) {
+        stmt->Bind(1, uid);
+        while (stmt->Step()) merged |= UpdateEdits(stmt->Text(0));
+      }
+    }
+    std::int64_t queued = 0;
+    if (ok) ok = QueueOp("event", uid, UpdateOp(merged).c_str(), &queued);
+    if (ok) ok = DropOthers(uid, "update%", queued);
+    if (!ok || !tx.Commit()) {
+      Report(uid, T(L"no se pudo guardar la respuesta", L"could not save the answer"));
+      return;
+    }
+    Notify();
+  });
+}
+
 std::wstring Store::DetachOccurrence(const std::wstring& seriesUid, Date occurrence,
                                      const EventDetail& edit, unsigned edits) {
   const std::wstring uid = NewUid();
@@ -991,9 +1046,10 @@ std::wstring Store::DetachOccurrence(const std::wstring& seriesUid, Date occurre
     if (std::optional<Stmt> stmt = db_.Prepare(
             "INSERT INTO events (uid, calendar_id, title, notes, location, start_day, start_min, "
             "                    end_day, end_min, reminders, updated_at, series_id, "
-            "                    original_day) "
+            "                    original_day, attendees, conference, time_zone) "
             "SELECT ?1, calendar_id, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?12, ?9, "
-            "       COALESCE(remote_id, replace(lower(uid), '-', '')), ?10 "
+            "       COALESCE(remote_id, replace(lower(uid), '-', '')), ?10, attendees, "
+            "       conference, time_zone "
             "FROM events WHERE uid = ?11 AND deleted_at IS NULL")) {
       stmt->Bind(1, uid);
       stmt->Bind(2, edit.title);

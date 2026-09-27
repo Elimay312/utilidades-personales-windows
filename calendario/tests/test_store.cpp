@@ -977,3 +977,50 @@ TEST_CASE("a replaced operation never takes the number of one a pass may still b
   CHECK(CountRows(store->db(), "SELECT COUNT(*) FROM pending_ops WHERE op = 'delete'") == 1);
   CHECK(store->PendingOpCount() == 1);
 }
+
+TEST_CASE("v5 caches migrate to v6 with no guests, no call and this machine's zone") {
+  const std::filesystem::path file = ScratchFile();
+  Erase(file);
+  OldCache(file, 5);
+  {
+    Store store;
+    REQUIRE(store.Open(file));
+    CHECK(store.db().UserVersion() == kSchemaVersion);
+    CHECK(CountRows(store.db(), "SELECT COUNT(*) FROM events WHERE attendees = '' AND "
+                                "conference = '' AND time_zone = ''") == 1);
+    CHECK(CountRows(store.db(), "SELECT COUNT(*) FROM sync_state WHERE sync_token != ''") == 0);
+    const std::optional<EventDetail> event = store.Event(L"ev1");
+    REQUIRE(event.has_value());
+    CHECK(event->attendees.empty());
+  }
+  Erase(file);
+}
+
+TEST_CASE("an event created with guests and a place keeps them, and an answer is queued") {
+  Open store;
+  Draft draft = EventAt(L"Revisión", Day(2026, 9, 23), 15 * 60, 16 * 60);
+  draft.location = L"https://meet.google.com/abc-defg-hij";
+  draft.attendees = {"ana@x.com", "luis@x.com"};
+  draft.timeZone = "Europe/Madrid";
+  const DayItem made = store->Create(draft);
+  store.settle();
+
+  const std::optional<EventDetail> event = store->Event(made.uid);
+  REQUIRE(event.has_value());
+  REQUIRE(event->attendees.size() == 2);
+  CHECK(event->attendees[1].email == "luis@x.com");
+  CHECK(event->location == L"https://meet.google.com/abc-defg-hij");
+  CHECK(event->timeZone == "Europe/Madrid");
+  const std::vector<DayItem> day = store->ItemsForDay(Day(2026, 9, 23), false);
+  REQUIRE(day.size() == 1);
+  CHECK(day[0].hasCall);
+
+  // Answering is a change to the list, merged with whatever is waiting.
+  REQUIRE(store->db().Exec(
+      "UPDATE events SET attendees = '[{\"email\":\"yo@x.com\",\"self\":true}]'"));
+  store->SetResponse(made.uid, "accepted");
+  store.settle();
+  CHECK(store->Event(made.uid)->attendees[0].response == "accepted");
+  CHECK(CountRows(store->db(),
+                  "SELECT COUNT(*) FROM pending_ops WHERE op LIKE '%+attendees%'") == 1);
+}

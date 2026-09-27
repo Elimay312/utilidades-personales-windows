@@ -27,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "core/dates.h"
 #include "data/model.h"
@@ -63,6 +64,12 @@ struct EventRow {
   // "m1440"; nullopt is Google's useDefault -- the calendar's own list -- and an empty string is
   // "no reminders at all".
   std::optional<std::string> reminders;
+  // Phase 13. The guests as the JSON array Google sent, untouched (rooms, comments and all);
+  // empty when there are none. The call Google attached.
+  // The zone the event was written in when it is not this machine's -- empty means this one.
+  std::string attendees;
+  std::string conference;
+  std::string timeZone;
   std::int64_t updatedAt = 0;  // epoch seconds UTC, the one instant in the schema
   bool cancelled = false;      // how a deletion arrives in an incremental pass
 };
@@ -121,6 +128,14 @@ std::optional<Wall> ReadStamp(const nlohmann::json& node);
 // Google sends the e-mails itself; they are kept only to go back up whole when the list is
 // edited here, and the notifications skip them.
 std::string ReadReminders(const nlohmann::json& list);
+
+// The events.attendees column and the list the interface reads, both ways. Unreadable text is
+// an empty list and not an error: a guest list is something to show, never something to lose
+// an event over.
+std::vector<Attendee> ReadAttendees(std::string_view json);
+std::string WriteAttendees(const std::vector<Attendee>& attendees);
+// The same list with this account's answer changed ("accepted", "tentative", "declined").
+std::string WithResponse(std::string_view json, std::string_view response);
 
 // '#039be5' as 0x039BE5. Nullopt for anything that is not six hex digits behind a hash.
 std::optional<std::uint32_t> ReadColor(std::string_view hex);

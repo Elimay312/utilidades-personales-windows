@@ -9,6 +9,12 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **Invitados, videollamada y zona horaria en la caché** (fase 13.1). Agenda guarda la lista de
+  invitados de cada evento con sus respuestas, el enlace de Meet, Zoom o Teams (el que puso
+  Google o uno pegado en el lugar o las notas) y la zona horaria en que se escribió cuando no es
+  la de este equipo. Esquema v6 (tres columnas en `events`); la migración vuelve a bajar los
+  calendarios una vez para traerlos.
+
 - **Varias cuentas de Google** (fase 12.3). La configuración tiene una sección **Cuentas de
   Google** con **Añadir…** otra cuenta, **Reconectar…** la que perdió el permiso y una tarjeta
   por cuenta con su dirección y **Quitar**, que pregunta antes y no borra nada en Google. Los

@@ -192,8 +192,10 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
     std::optional<Stmt> stmt = db.Prepare(
         "INSERT INTO events (uid, calendar_id, title, notes, start_day, start_min, end_day, "
         "                    end_min, recurrence, remote_id, etag, updated_at, location, "
-        "                    reminders, series_id, original_day) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''))");
+        "                    reminders, series_id, original_day, attendees, conference, "
+        "                    time_zone) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, "
+        "        ?)");
     if (!stmt) return;
     stmt->Bind(1, uid);
     stmt->Bind(2, calendarId);
@@ -211,6 +213,9 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
     BindReminders(*stmt, 14, row->reminders);
     stmt->Bind(15, row->seriesId);
     stmt->Bind(16, row->originalDay);
+    stmt->Bind(17, row->attendees);
+    stmt->Bind(18, row->conference);
+    stmt->Bind(19, row->timeZone);
     stmt->Step();
     return;
   }
@@ -226,14 +231,20 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
   // list -- unless a list chosen here is still waiting to go up (phase 11): that one is newer
   // than anything Google can be sending back.
   //
-  // Which series an occurrence belongs to is Google's bookkeeping as well.
+  // Which series an occurrence belongs to is Google's bookkeeping as well. So are the guests'
+  // answers and the call -- they change at Google without anybody touching the event -- except
+  // an answer given here that has not gone up yet.
   if (std::optional<Stmt> stmt = db.Prepare(
           "UPDATE events SET etag = ?1, remote_id = ?2, "
           "  reminders = CASE WHEN EXISTS (SELECT 1 FROM pending_ops WHERE uid = ?7 "
           "                                AND op LIKE '%+reminders%') "
           "              THEN reminders ELSE ?3 END, "
           "  location = CASE WHEN location = '' THEN ?4 ELSE location END, "
-          "  series_id = NULLIF(?5, ''), original_day = NULLIF(?6, '') WHERE uid = ?7")) {
+          "  series_id = NULLIF(?5, ''), original_day = NULLIF(?6, ''), "
+          "  attendees = CASE WHEN EXISTS (SELECT 1 FROM pending_ops WHERE uid = ?7 "
+          "                                AND op LIKE '%+attendees%') "
+          "              THEN attendees ELSE ?8 END, "
+          "  conference = ?9 WHERE uid = ?7")) {
     stmt->Bind(1, row->etag);
     stmt->Bind(2, row->remoteId);
     BindReminders(*stmt, 3, row->reminders);
@@ -241,6 +252,8 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
     stmt->Bind(5, row->seriesId);
     stmt->Bind(6, row->originalDay);
     stmt->Bind(7, uid);
+    stmt->Bind(8, row->attendees);
+    stmt->Bind(9, row->conference);
     stmt->Step();
   }
 
@@ -257,7 +270,7 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
   std::optional<Stmt> stmt = db.Prepare(
       "UPDATE events SET calendar_id = ?, title = ?, notes = ?, start_day = ?, start_min = ?, "
       "                  end_day = ?, end_min = ?, recurrence = ?, updated_at = ?, "
-      "                  location = ?, moved_from = NULL, deleted_at = NULL "
+      "                  location = ?, time_zone = ?, moved_from = NULL, deleted_at = NULL "
       "WHERE uid = ?");
   if (!stmt) return;
   stmt->Bind(1, calendarId);
@@ -270,7 +283,8 @@ void ApplyEvent(Db& db, const nlohmann::json& item, const std::string& calendarI
   stmt->Bind(8, row->recurrence);
   stmt->Bind(9, row->updatedAt);
   stmt->Bind(10, row->location);
-  stmt->Bind(11, uid);
+  stmt->Bind(11, row->timeZone);
+  stmt->Bind(12, uid);
   stmt->Step();
 }
 
@@ -389,7 +403,7 @@ Outgoing LoadEvent(Db& db, const std::wstring& uid) {
   std::optional<Stmt> stmt = db.Prepare(
       "SELECT calendar_id, title, notes, start_day, start_min, end_day, end_min, recurrence, "
       "       remote_id, etag, updated_at, deleted_at, location, moved_from, series_id, "
-      "       original_day, reminders "
+      "       original_day, reminders, attendees, time_zone "
       "FROM events WHERE uid = ?");
   if (!stmt) return out;
   stmt->Bind(1, uid);
@@ -412,6 +426,8 @@ Outgoing LoadEvent(Db& db, const std::wstring& uid) {
   out.movedFrom = stmt->IsNull(13) ? std::string() : stmt->Text(13);
   out.occurrence = !stmt->IsNull(14);
   if (!stmt->IsNull(16)) out.event.reminders = stmt->Text(16);
+  out.event.attendees = stmt->Text(17);
+  out.event.timeZone = stmt->Text(18);
 
   // An occurrence detached here ("solo este") has never had an id of its own, but it has one at
   // Google already, inside its series: worked out from the series' current start. A series
@@ -1382,10 +1398,13 @@ bool GoogleSync::PushPending(const std::map<int, std::wstring>& auths) {
         path = base;
         // Our own identifier, which is what makes this safe to send twice.
         body = WriteEvent(row.event, EventIdFor(item.uid), edits).dump();
+        // Guests hear about it from Google, the way they would from its own web page.
+        if (!row.event.attendees.empty()) path += L"?sendUpdates=all";
       } else {
         verb = L"PATCH";
         path = base + L"/" + ToWide(UrlEscape(row.remoteId));
         body = WriteEvent(row.event, {}, edits).dump();
+        if (edits & kEditAttendees) path += L"?sendUpdates=all";
         if (!row.etag.empty()) requestHeaders += L"If-Match: " + ToWide(row.etag) + L"\r\n";
       }
     }

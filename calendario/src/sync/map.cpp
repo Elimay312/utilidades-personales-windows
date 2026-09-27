@@ -6,6 +6,8 @@
 #include <ctime>
 #include <format>
 
+#include "data/db.h"
+
 namespace agenda::sync {
 namespace {
 
@@ -221,6 +223,49 @@ std::string ReadReminders(const nlohmann::json& list) {
   return out;
 }
 
+std::vector<Attendee> ReadAttendees(std::string_view json) {
+  std::vector<Attendee> out;
+  const nlohmann::json list = nlohmann::json::parse(json, nullptr, false);
+  if (!list.is_array()) return out;
+  for (const nlohmann::json& item : list) {
+    if (!item.is_object()) continue;
+    Attendee guest;
+    guest.email = Str(item, "email");
+    // A room or a resource is on the list too, and is not somebody to show.
+    if (guest.email.empty() || Flag(item, "resource")) continue;
+    guest.name = ToWide(Str(item, "displayName"));
+    guest.response = Str(item, "responseStatus", "needsAction");
+    guest.self = Flag(item, "self");
+    guest.organizer = Flag(item, "organizer");
+    guest.optional = Flag(item, "optional");
+    out.push_back(std::move(guest));
+  }
+  return out;
+}
+
+std::string WithResponse(std::string_view json, std::string_view response) {
+  nlohmann::json list = nlohmann::json::parse(json, nullptr, false);
+  if (!list.is_array()) return std::string(json);
+  for (nlohmann::json& item : list) {
+    if (item.is_object() && Flag(item, "self")) item["responseStatus"] = std::string(response);
+  }
+  return list.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
+std::string WriteAttendees(const std::vector<Attendee>& attendees) {
+  if (attendees.empty()) return {};
+  nlohmann::json list = nlohmann::json::array();
+  for (const Attendee& guest : attendees) {
+    nlohmann::json item = {{"email", guest.email}, {"responseStatus", guest.response}};
+    if (!guest.name.empty()) item["displayName"] = ToUtf8(guest.name);
+    if (guest.self) item["self"] = true;
+    if (guest.organizer) item["organizer"] = true;
+    if (guest.optional) item["optional"] = true;
+    list.push_back(std::move(item));
+  }
+  return list.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
 std::optional<EventRow> ReadEvent(const nlohmann::json& event) {
   if (!event.is_object()) return std::nullopt;
 
@@ -262,6 +307,34 @@ std::optional<EventRow> ReadEvent(const nlohmann::json& event) {
   // without this line every one of them would be two days long in the month grid.
   row.endDay = start->minute.has_value() ? end->day : PrevDay(end->day);
   if (row.endDay < row.startDay) row.endDay = row.startDay;
+
+  if (const auto found = event.find("attendees"); found != event.end() && found->is_array()) {
+    // Kept as Google sent it, rooms and comments included: the list goes back up whole when an
+    // answer is changed here, and whatever Agenda does not read must survive that.
+    if (!found->empty())
+      row.attendees = found->dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+  }
+  row.conference = Str(event, "hangoutLink");
+  if (const auto found = event.find("conferenceData");
+      row.conference.empty() && found != event.end() && found->is_object()) {
+    if (const auto points = found->find("entryPoints");
+        points != found->end() && points->is_array()) {
+      for (const nlohmann::json& point : *points) {
+        if (point.is_object() && Str(point, "entryPointType") == "video") {
+          row.conference = Str(point, "uri");
+          break;
+        }
+      }
+    }
+  }
+  // Only a zone that is not this machine's is worth keeping: it is the one the detail panel
+  // shows next to the times ("15:00 Madrid"). A timed event only; an all-day one has none.
+  if (start->minute) {
+    if (const std::string zone = Str(*startNode, "timeZone");
+        !zone.empty() && zone != LocalZoneName()) {
+      row.timeZone = zone;
+    }
+  }
 
   if (const auto found = event.find("reminders"); found != event.end() && found->is_object()) {
     if (!Flag(*found, "useDefault")) {
@@ -349,7 +422,10 @@ nlohmann::json WriteEvent(const EventRow& row, std::string_view id, unsigned edi
     // The zone matters only to a repetition: it is what keeps a weekly seven o'clock at seven
     // when the clocks move. Left out when the standard library cannot name it, because the
     // instant above already places this one occurrence.
-    if (const std::string zone = LocalZoneName(); !zone.empty()) {
+    // An event written in another zone keeps it, so Google shows it at the hour it was
+    // written in -- and a weekly repetition follows that zone's clocks, not these.
+    if (const std::string zone = row.timeZone.empty() ? LocalZoneName() : row.timeZone;
+        !zone.empty()) {
       start["timeZone"] = zone;
       end["timeZone"] = zone;
     }
@@ -366,6 +442,14 @@ nlohmann::json WriteEvent(const EventRow& row, std::string_view id, unsigned edi
 
   const bool creating = !id.empty();
   if (!row.location.empty() || (edits & kEditLocation)) body["location"] = row.location;
+
+  // The list whole, because that is the only way Google takes it -- a guest's own answer
+  // included. Left out otherwise, so a round trip never drops a guest Agenda did not read.
+  if ((edits & kEditAttendees) || (creating && !row.attendees.empty())) {
+    body["attendees"] = nlohmann::json::parse(row.attendees.empty() ? "[]" : row.attendees,
+                                              nullptr, false);
+    if (body["attendees"].is_discarded()) body["attendees"] = nlohmann::json::array();
+  }
 
   // Only when they were chosen here: left out, Google keeps whatever it has.
   if (edits & kEditReminders) {

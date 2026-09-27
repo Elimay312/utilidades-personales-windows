@@ -15,6 +15,7 @@
 #include "system/drop.h"
 #include "system/inventory.h"
 #include "system/launch.h"
+#include "ui/stack.h"
 
 namespace dock {
 namespace {
@@ -143,7 +144,14 @@ void DockWindow::FinishDrag(int y) {
 namespace {
 
 constexpr UINT kJumpsReady = WM_APP + 2;
+constexpr UINT kStackReady = WM_APP + 3;
 constexpr size_t kMenuJumpLimit = 4;
+
+struct StackResult {
+  int index;
+  std::wstring folder;
+  StackContents contents;
+};
 
 struct JumpResult {
   int index;
@@ -589,12 +597,31 @@ void DockWindow::OnClick(bool middle) {
   const HWND foreground = app_.ForeignForeground();
   LogTrace(L"[clic] '{}' {} ventanas={} primerPlano={:#x}", app.name, middle ? L"central" : L"izquierdo", windows.size(),
            reinterpret_cast<uintptr_t>(foreground));
+  // Cualquier clic en el dock cierra el stack abierto; el de su propia carpeta, además, no lo
+  // vuelve a abrir.
+  const bool stackWasOpen = stack_ && stackFolder_ == app.target;
+  stack_.reset();
+  stackFolder_.clear();
 
   // Clic central: una instancia NUEVA aunque ya haya ventana, como la barra de Windows.
   if (middle) {
     if (!IsApp(app)) return;
     LaunchDetached(app);
     visuals_->Bounce(index, bounce, false);
+    return;
+  }
+
+  // Una carpeta (o la papelera) se despliega en rejilla en vez de abrir el Explorador; el
+  // mismo clic la cierra.
+  const DWORD attributes = IsUrl(app.target) ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(app.target.c_str());
+  if (app.target == kTrashTarget || (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY))) {
+    if (stackWasOpen) return;
+    visuals_->Bounce(index, bounce * 0.7f, false);
+    const HWND self = hwnd_;
+    app_.PostJob([self, index, folder = app.target] {
+      auto* result = new StackResult{index, folder, ReadStack(folder, L"")};
+      if (!PostMessageW(self, kStackReady, 0, reinterpret_cast<LPARAM>(result))) delete result;
+    });
     return;
   }
 
@@ -625,8 +652,7 @@ void DockWindow::OnClick(bool middle) {
     launchingTarget_ = app.target;
     launchingUntil_ = GetTickCount64() + 20000;
   } else {
-    // ponytail: una carpeta se abre en el Explorador hasta que lleguen los stacks (F6).
-    visuals_->Bounce(index, bounce * 0.7f, false);
+    visuals_->Bounce(index, bounce * 0.7f, false);  // un documento o una URL
   }
 }
 
@@ -686,7 +712,7 @@ RECT DockWindow::BarOnScreen() const {
 // Sin nada debajo no hay de qué esconderse: con el escritorio a la vista el dock se queda.
 // Se reevalúa en cada barrido, porque abrir, cerrar o activar ventanas es justo cuando cambia.
 void DockWindow::UpdateSmartHide() {
-  if (!config_.autoHide || hovering_ || dragging_ || dropping_ || fullscreen_ || visuals_->MenuOpen()) return;
+  if (!config_.autoHide || hovering_ || dragging_ || dropping_ || stack_ || fullscreen_ || visuals_->MenuOpen()) return;
   const bool covered = AnythingOver(BarOnScreen());
   if (covered == !revealed_) return;
   if (covered) Hide(/*force=*/true);
@@ -719,6 +745,7 @@ DockWindow::~DockWindow() {
   if (registered_) AppBarRemove(hwnd_);
   RevokeDragDrop(hwnd_);  // el DropTarget apunta a este objeto: fuera antes de que muera
   HidePreview();
+  stack_.reset();  // antes que su dueña, que al destruirse se llevaría su ventana por delante
   visuals_.reset();  // el target de Composition antes que su ventana
   DestroyWindow(hwnd_);
 }
@@ -1090,6 +1117,37 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       return 0;
     }
 
+    case kStackReady: {
+      std::unique_ptr<StackResult> result(reinterpret_cast<StackResult*>(lparam));
+      const int index = result->index;
+      // La lista pudo cambiar mientras el worker leía: solo si ese icono sigue siendo esa carpeta.
+      if (index >= static_cast<int>(drawn_.size()) || drawn_[index].target != result->folder) return 0;
+      if (result->contents.items.empty()) {
+        // Vacía o ilegible: se abre como siempre, en el Explorador.
+        LogInfo(L"[stack] {} no tiene nada que desplegar", result->folder);
+        LaunchDetached(drawn_[index]);
+        return 0;
+      }
+      RECT window{};
+      GetWindowRect(hwnd_, &window);
+      const float center = curve_.Project((curve_.RestLeft(index) + curve_.RestRight(index)) / 2, static_cast<float>(width_), lastRest_);
+      stack_ = std::make_unique<StackWindow>(app_, hwnd_);
+      // Encima de lo más alto que llega el icono magnificado, no del techo de la ventana.
+      if (!stack_->Open(std::move(result->contents), window.left + static_cast<int>(center), window.top + BarRect(false).top,
+                        monitor_.bounds, dpi_)) {
+        stack_.reset();
+        return 0;
+      }
+      stackFolder_ = result->folder;
+      return 0;
+    }
+    case kStackClosed:
+      stack_.reset();
+      stackFolder_.clear();
+      // Mientras estaba abierto el dock no se escondía, y su WM_MOUSELEAVE ya pasó hace rato.
+      if (config_.autoHide && !hovering_) SetTimer(hwnd_, kHideTimer, kHideDelayMs, nullptr);
+      return 0;
+
     // Al soltar, no al pulsar: si se pasó el umbral fue un arrastre, si no un clic.
     case WM_LBUTTONUP:
       if (visuals_->MenuOpen()) {
@@ -1128,6 +1186,7 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       if (dragging_) return 0;  // con la captura puesta el arrastre sigue fuera de la ventana
       hovering_ = false;
       CloseMenu();  // los clics fuera del dock no llegan: salir es la única forma de cerrarlo
+      if (stack_) stack_->ScheduleClose();  // salvo que el ratón vaya a la rejilla
       if (hoverShown_) {
         hoverShown_ = false;
         visuals_->SetHover(false);
@@ -1143,7 +1202,7 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
         if (!fullscreen_) ReassertTopmost();
       } else if (wparam == kHideTimer) {
         KillTimer(hwnd_, kHideTimer);
-        if (!hovering_ && !dropping_) Hide();
+        if (!hovering_ && !dropping_ && !stack_) Hide();
       } else if (wparam == kSlideTimer) {
         KillTimer(hwnd_, kSlideTimer);
         sliding_ = false;

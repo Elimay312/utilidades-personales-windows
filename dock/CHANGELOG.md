@@ -82,6 +82,11 @@ abajo.
   elegida, también de una minimizada. Clic en la fila o en el icono, y esa ventana viene al
   frente. Con la lista abierta el dock pasa **de 13,1 a 13,3 MB**; en el de C#, que la
   capturaba con `PrintWindow` cada 250 ms, eran +27 MB.
+- **Los stacks en C++**: una carpeta del dock (o la papelera) se despliega en una rejilla de
+  hasta 20 elementos, 5 por fila, con las carpetas primero y los números en orden («2» antes
+  que «10»). Las subcarpetas se recorren dentro, con «Atrás»; un fichero se abre y la
+  rejilla se cierra, y también 0,7 s después de salir el ratón. Al cerrarla se devuelve la
+  memoria a WARP: con 20 iconos, de 25,2 a 11,3 MB (sin eso, se quedaba en 25).
 - **El autoarranque solo lo toca la copia instalada**, para que una build de desarrollo no
   se registre en el inicio de sesión del usuario.
 - **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.

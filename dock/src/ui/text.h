@@ -20,5 +20,7 @@ TextSize MeasureLabel(const std::wstring& text, float scale);
 void DrawLabel(ID2D1DeviceContext* context, const std::wstring& text, float scale, TextSize size, POINT at);
 // Una fila del menú: el texto solo, centrado en vertical dentro de rowHeight.
 void DrawRow(ID2D1DeviceContext* context, const std::wstring& text, float scale, float x, float top, float rowHeight);
+// El nombre bajo un icono del stack: el texto solo, centrado en centerX.
+void DrawCaption(ID2D1DeviceContext* context, const std::wstring& text, float scale, float centerX, float top);
 
 }  // namespace dock

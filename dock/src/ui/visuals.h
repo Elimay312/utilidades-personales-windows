@@ -88,6 +88,12 @@ class Visuals {
   // Cuánto sobresale el "+" (resaltado) por la derecha del borde de la barra.
   float AddZoneReach() const;
 
+  // El stack: la rejilla de una carpeta, en su propia ventana (la del dock no llega de alto).
+  // Mismo material que la barra. cell, icon y pad en px físicos; filas de `columns`.
+  void BuildStack(const std::vector<DockItem>& items, const IconSet& icons, int columns, float cell, float icon, float pad,
+                  float scale);
+  void StackSetHot(int index);
+
   // Esconder desliza el árbol hacia abajo con un muelle; la ventana no se mueve nunca.
   void Slide(bool hidden, bool instant);
 
@@ -96,6 +102,8 @@ class Visuals {
   // iconos que ya están. Después de cada tanda se poda lo que ya no usa nadie.
   static bool HasIcon(const std::wstring& key, int px);
   static void KeepOnlyIcons(const std::set<std::pair<std::wstring, int>>& used);
+  // Devuelve al sistema lo que WARP guarda de las superficies ya soltadas (al cerrar un stack).
+  static void Trim();
 
  private:
   winrt::Windows::UI::Composition::Compositor compositor_{nullptr};
@@ -112,6 +120,9 @@ class Visuals {
   int dropTarget_ = -1;
   winrt::Windows::UI::Composition::ContainerVisual addZone_{nullptr};
   bool addZoneHot_ = false;
+  winrt::Windows::UI::Composition::SpriteVisual stackHot_{nullptr};
+  int stackHotIndex_ = -1, stackColumns_ = 1;
+  float stackCell_ = 0, stackPad_ = 0;
   winrt::Windows::UI::Composition::ContainerVisual menu_{nullptr};
   winrt::Windows::UI::Composition::SpriteVisual menuHot_{nullptr};
   winrt::Windows::Foundation::Numerics::float2 menuOrigin_{}, menuSize_{};

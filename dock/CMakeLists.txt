@@ -58,6 +58,7 @@ add_executable(Dock WIN32
   src/system/steam.cpp
   src/system/worker.cpp
   src/ui/dock_window.cpp
+  src/ui/stack.cpp
   src/ui/text.cpp
   src/ui/visuals.cpp
   assets/dock.rc)

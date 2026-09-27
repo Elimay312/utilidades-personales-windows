@@ -4,6 +4,7 @@
 #include <d2d1_1.h>
 #include <d3d11.h>
 #include <dxgi.h>
+#include <dxgi1_3.h>  // IDXGIDevice3::Trim
 #include <windows.ui.composition.interop.h>
 #include <wrl/client.h>
 
@@ -47,6 +48,11 @@ wuc::Compositor SharedCompositor() {
 // ni un fotograma, solo sube píxeles, y HARDWARE mapeaba el driver de usuario entero con su
 // pool de shaders (medido en C#: 79,6 frente a 34,9 MB privados, 70 frente a 25 hilos). Se
 // crea la primera vez que hace falta una superficie.
+ComPtr<IDXGIDevice>& Dxgi() {
+  static ComPtr<IDXGIDevice> dxgi;
+  return dxgi;
+}
+
 wuc::CompositionGraphicsDevice Graphics() {
   static wuc::CompositionGraphicsDevice graphics{nullptr};
   if (graphics) return graphics;
@@ -54,7 +60,7 @@ wuc::CompositionGraphicsDevice Graphics() {
   // BGRA_SUPPORT: sin él Direct2D no puede usar el device.
   winrt::check_hresult(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                                          nullptr, 0, D3D11_SDK_VERSION, &d3d, nullptr, nullptr));
-  ComPtr<IDXGIDevice> dxgi;
+  ComPtr<IDXGIDevice>& dxgi = Dxgi();
   winrt::check_hresult(d3d.As(&dxgi));
   ComPtr<ID2D1Device> d2d;
   winrt::check_hresult(D2D1CreateDevice(dxgi.Get(), nullptr, &d2d));
@@ -93,8 +99,9 @@ std::map<std::pair<std::wstring, int>, wuc::CompositionSurfaceBrush>& IconCache(
 // C# subía 256x256 por icono y por pantalla, 256 KB cada una. Se comparte entre docks.
 // La de la caché si ya está; si no, se sube desde los píxeles, o nada si no los hay (el icono
 // de esa app aún no ha llegado del proceso hijo).
+// keep: a la caché compartida. Los del stack no: se ven un momento y no los vuelve a pedir nadie.
 wuc::CompositionSurfaceBrush IconBrush(const wuc::Compositor& compositor, const std::wstring& key, int px,
-                                       const IconBitmap* pixels) {
+                                       const IconBitmap* pixels, bool keep = true) {
   auto& cache = IconCache();
   if (auto found = cache.find({key, px}); found != cache.end()) return found->second;
   if (!pixels) return nullptr;
@@ -121,7 +128,7 @@ wuc::CompositionSurfaceBrush IconBrush(const wuc::Compositor& compositor, const 
   auto brush = compositor.CreateSurfaceBrush(surface);
   // Por defecto Stretch es None y el visual enseñaría un recorte del centro.
   brush.Stretch(wuc::CompositionStretch::Uniform);
-  cache.emplace(std::make_pair(key, px), brush);
+  if (keep) cache.emplace(std::make_pair(key, px), brush);
   return brush;
 }
 
@@ -209,6 +216,11 @@ Visuals::Visuals(HWND hwnd) : compositor_(SharedCompositor()) {
 }
 
 bool Visuals::HasIcon(const std::wstring& key, int px) { return IconCache().contains({key, px}); }
+
+void Visuals::Trim() {
+  ComPtr<IDXGIDevice3> device;
+  if (Dxgi() && SUCCEEDED(Dxgi().As(&device))) device->Trim();
+}
 
 void Visuals::KeepOnlyIcons(const std::set<std::pair<std::wstring, int>>& used) {
   std::erase_if(IconCache(), [&](const auto& entry) { return !used.contains(entry.first); });
@@ -574,6 +586,75 @@ int Visuals::MenuHitTestClose(float x, float y) const {
   const int row = MenuHitTest(x, y);
   const float right = menuOrigin_.x + menuSize_.x - kMenuPadY * menuScale_;
   return row >= 0 && x >= right - kCloseWidth * menuScale_ && x <= right ? row : -1;
+}
+
+void Visuals::BuildStack(const std::vector<DockItem>& items, const IconSet& icons, int columns, float cell, float icon,
+                         float pad, float scale) {
+  root_.Children().RemoveAll();
+  stackColumns_ = std::max(1, columns);
+  stackCell_ = cell;
+  stackPad_ = pad;
+  stackHotIndex_ = -1;
+  const int rows = (static_cast<int>(items.size()) + stackColumns_ - 1) / stackColumns_;
+  const winrt::Windows::Foundation::Numerics::float2 size{stackColumns_ * cell + pad * 2, rows * cell + pad * 2};
+
+  auto chip = compositor_.CreateContainerVisual();
+  chip.RelativeSizeAdjustment({1, 1});
+  auto round = compositor_.CreateRoundedRectangleGeometry();
+  round.Size(size);
+  round.CornerRadius({14 * scale, 14 * scale});
+  chip.Clip(compositor_.CreateGeometricClip(round));
+  auto material = compositor_.CreateSpriteVisual();
+  material.RelativeSizeAdjustment({1, 1});
+  material.Brush(AcrylicBrush(compositor_));
+  chip.Children().InsertAtBottom(material);
+  auto tint = compositor_.CreateSpriteVisual();
+  tint.RelativeSizeAdjustment({1, 1});
+  tint.Brush(compositor_.CreateColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(52, 255, 255, 255)));
+  chip.Children().InsertAtTop(tint);
+  root_.Children().InsertAtBottom(chip);
+
+  stackHot_ = compositor_.CreateSpriteVisual();
+  stackHot_.Size({cell - 4, cell - 4});
+  stackHot_.Brush(compositor_.CreateColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(46, 255, 255, 255)));
+  stackHot_.Opacity(0);
+  auto hotRound = compositor_.CreateRoundedRectangleGeometry();
+  hotRound.Size(stackHot_.Size());
+  hotRound.CornerRadius({8 * scale, 8 * scale});
+  stackHot_.Clip(compositor_.CreateGeometricClip(hotRound));
+  root_.Children().InsertAtTop(stackHot_);
+
+  const int px = static_cast<int>(std::ceil(icon));
+  const float captionTop = pad * 0.5f + icon + 4 * scale;
+  for (size_t i = 0; i < items.size(); i++) {
+    const float left = pad + (i % stackColumns_) * cell, top = pad + (i / stackColumns_) * cell;
+    const auto found = icons.find(items[i].iconKey);
+    if (auto brush = IconBrush(compositor_, items[i].iconKey, px, found != icons.end() ? &found->second : nullptr, false)) {
+      auto visual = compositor_.CreateSpriteVisual();
+      visual.Size({icon, icon});
+      visual.Offset({left + (cell - icon) / 2, top + pad * 0.5f, 0});
+      visual.Brush(brush);
+      root_.Children().InsertAtTop(visual);
+    }
+  }
+  // Todos los nombres en UNA superficie, como las filas del menú.
+  auto text = compositor_.CreateSpriteVisual();
+  text.Size(size);
+  text.Brush(compositor_.CreateSurfaceBrush(Surface(size.x, size.y, [&](ID2D1DeviceContext* context, POINT at) {
+    for (size_t i = 0; i < items.size(); i++) {
+      const float left = pad + (i % stackColumns_) * cell, top = pad + (i / stackColumns_) * cell;
+      DrawCaption(context, items[i].name, scale, at.x + left + cell / 2, at.y + top + captionTop);
+    }
+  })));
+  root_.Children().InsertAtTop(text);
+}
+
+void Visuals::StackSetHot(int index) {
+  if (!stackHot_ || index == stackHotIndex_) return;
+  stackHotIndex_ = index;
+  stackHot_.Opacity(index < 0 ? 0.0f : 1.0f);
+  if (index >= 0)
+    stackHot_.Offset({stackPad_ + (index % stackColumns_) * stackCell_ + 2, stackPad_ + (index / stackColumns_) * stackCell_ + 2, 0});
 }
 
 int Visuals::RowsThatFit(float height, float scale) {

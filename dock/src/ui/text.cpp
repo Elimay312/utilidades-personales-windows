@@ -74,4 +74,14 @@ void DrawRow(ID2D1DeviceContext* context, const std::wstring& text, float scale,
   context->DrawTextLayout(D2D1::Point2F(x, top + (rowHeight - metrics.height) / 2), layout.Get(), ink.Get());
 }
 
+void DrawCaption(ID2D1DeviceContext* context, const std::wstring& text, float scale, float centerX, float top) {
+  auto layout = LayoutOf(text, scale);
+  if (!layout) return;
+  DWRITE_TEXT_METRICS metrics{};
+  layout->GetMetrics(&metrics);
+  ComPtr<ID2D1SolidColorBrush> ink;
+  context->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.95f), &ink);
+  context->DrawTextLayout(D2D1::Point2F(centerX - metrics.width / 2, top), layout.Get(), ink.Get());
+}
+
 }  // namespace dock

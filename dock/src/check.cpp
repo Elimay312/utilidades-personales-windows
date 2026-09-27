@@ -17,6 +17,7 @@
 #include "system/icons.h"
 #include "system/inventory.h"
 #include "system/steam.h"
+#include "ui/stack.h"
 #include "ui/visuals.h"
 
 namespace dock {
@@ -245,6 +246,28 @@ void CheckDrop() {
   std::filesystem::remove_all(dir, ec);
 }
 
+// El orden del stack: carpetas primero, números como el Explorador, "Atrás" delante y tope.
+void CheckStack() {
+  const std::filesystem::path dir = std::filesystem::temp_directory_path() / L"dock-check-stack";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir / L"10");
+  std::filesystem::create_directories(dir / L"2");
+  for (int i = 0; i < 25; i++) std::ofstream(dir / std::format(L"f{}.txt", i)) << "x";
+  const auto root = ReadStack(dir.wstring(), L"");
+  Expect(root.items.size() == 20, "stack: tope de 20");
+  Expect(root.items.size() == 20 && root.items[0].name == L"2" && root.items[1].name == L"10" && root.items[0].folder &&
+             !root.items[2].folder,
+         "stack: carpetas primero y '2' antes que '10'");
+  Expect(root.items.size() == 20 && root.items[2].path.ends_with(L"f0.txt") && root.items[3].path.ends_with(L"f1.txt"),
+         "stack: ficheros en orden lógico");
+  const auto inner = ReadStack((dir / L"2").wstring(), dir.wstring());
+  Expect(inner.items.size() == 1 && inner.items[0].back && inner.items[0].path == dir.wstring(),
+         "stack: una carpeta vacía por dentro solo tiene 'Atrás'");
+  Expect(ReadStack((dir / L"no-existe").wstring(), L"").folder.empty(), "stack: una carpeta que no existe no se lee");
+  std::error_code ec;
+  std::filesystem::remove_all(dir, ec);
+}
+
 void CheckSteamAndApps() {
   Expect(SteamAppIdOf(L"steam://rungameid/19680") == 19680u, "steam: rungameid");
   Expect(!SteamAppIdOf(L"C:\\juego.exe") && !SteamAppIdOf(L"steam://open/games"), "steam: lo que no es juego");
@@ -415,6 +438,7 @@ int RunChecks(const std::filesystem::path& configPath) {
   CheckSteamAndApps();
   CheckSaveLocal();
   CheckDrop();
+  CheckStack();
   CheckMagnify();
   CheckIcons();
   CheckExpressions();

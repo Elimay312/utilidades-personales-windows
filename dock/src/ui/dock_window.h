@@ -16,6 +16,7 @@ namespace dock {
 
 class App;
 struct Dropped;
+class StackWindow;
 
 // Un monitor tal como lo ve el dock. Se identifica por el nombre de dispositivo
 // (\\.\DISPLAY2), nunca por el HMONITOR, que cambia entre arranques.
@@ -133,6 +134,8 @@ class DockWindow {
   HWND preview_ = nullptr;            // la ventana de la miniatura: DWM no pinta en un visual
   HTHUMBNAIL thumb_ = nullptr;
   HWND thumbSource_ = nullptr;
+  std::unique_ptr<StackWindow> stack_;  // la rejilla de una carpeta, si hay una abierta
+  std::wstring stackFolder_;
   // La app que se está abriendo: su icono bota hasta que aparece su ventana, o 20 s.
   std::wstring launchingTarget_;
   ULONGLONG launchingUntil_ = 0;

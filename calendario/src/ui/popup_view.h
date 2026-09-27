@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core/dates.h"
+#include "core/text.h"
 #include "core/zones.h"
 #include "data/model.h"
 #include "nlp/parser.h"
@@ -131,6 +132,30 @@ inline bool Searching(const PopupModel& model) {
 }
 inline std::wstring_view SearchQuery(const PopupModel& model) {
   return std::wstring_view(model.input.text()).substr(1);
+}
+
+// "?libre" or "?free": the search that finds free time instead of events (phase 13).
+inline bool FreeQuery(std::wstring_view query) {
+  while (!query.empty() && query.front() == L' ') query.remove_prefix(1);
+  const std::wstring folded = Folded(query.substr(0, 5));
+  return folded.starts_with(L"libre") || folded.starts_with(L"free");
+}
+
+// The free slots as the search's result cards: when each starts, and until when it is free.
+inline std::vector<DayItem> FreeResults(const std::vector<FreeSlot>& slots, std::uint32_t color) {
+  std::vector<DayItem> out;
+  for (size_t i = 0; i < slots.size(); ++i) {
+    DayItem item;
+    item.uid = L"free:" + std::to_wstring(i);
+    item.title = std::format(L"{} {:02}:{:02}", T(L"Libre hasta las", L"Free until"),
+                             slots[i].end / 60, slots[i].end % 60);
+    item.startMin = slots[i].start;
+    item.endMin = slots[i].end;
+    item.occurrence = slots[i].day;
+    item.color = color;
+    out.push_back(std::move(item));
+  }
+  return out;
 }
 
 // Where the day's cards land. Asked from one place so the drawing and the click cannot end up

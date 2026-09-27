@@ -158,7 +158,12 @@ class PopupWindow final : public A11ySource {
   // or the arrows open with Enter or a click.
   void StartSearch();
   int SearchRowAt(float x, float y) const;
-  void OpenResult();
+  // `clicked` tells a click from Enter, which matter differently for a free slot: Enter copies
+  // them all for a chat, a click writes that slot into the capsule to be named.
+  void OpenResult(bool clicked = false);
+  // "?libre esta semana 1h": the free slots, as results, and the sentence Enter copies.
+  std::vector<DayItem> FindFreeTime(std::wstring_view query);
+  void PutOnClipboard(const std::wstring& text);
   // Ctrl+Z while the notice is up: takes back a creation, a deletion or a task made into an
   // event, whichever the notice is about.
   void Undo();
@@ -373,7 +378,9 @@ class PopupWindow final : public A11ySource {
   std::function<void()> openSettings_;
   ULONGLONG lastTick_ = 0;
   std::wstring parsed_;  // the text the preview in the model was built from
-  std::vector<nlp::Person> people_;  // who "con Ana" can mean: guests seen before (phase 13)
+  std::vector<nlp::Person> people_;
+  std::vector<FreeSlot> freeSlots_;  // what the free-time results stand for, in their order
+  int freeMinutes_ = 60;  // who "con Ana" can mean: guests seen before (phase 13)
 
   // The expansion. `spring_.x` is how far it has got, 0 the popup and 1 the app; `goal_` is
   // where it is going. The two rectangles are in physical pixels on this monitor.

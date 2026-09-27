@@ -133,9 +133,20 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
   }
   const bool search = view == L"popup-buscar" || view == L"app-buscar";
   if (search && text.empty()) text = L"?con";
+  if (view == L"popup-libre" && text.empty()) text = L"?libre 1h";
   if (!text.empty()) {
     model.input.Insert(text);
-    if (Searching(model)) {
+    if (Searching(model) && FreeQuery(SearchQuery(model))) {
+      // The sample week's working days from the snapshot's Tuesday, an hour at a time.
+      std::vector<std::pair<Date, std::vector<DayItem>>> days;
+      for (int i = 0; i < 4; ++i) {
+        const Date day = AddDays(kSnapshotToday, i);
+        days.emplace_back(day, detail::SampleAppDay(day));
+      }
+      model.results = FreeResults(FreeSlots(days, 60, 9 * 60, 18 * 60, kSnapshotToday,
+                                            kSnapshotMinute),
+                                  0x4A8BF5);
+    } else if (Searching(model)) {
       model.results = SampleSearch(SearchQuery(model));
     } else {
       model.preview = nlp::ParseInput(text, nlp::Now{kSnapshotToday, kSnapshotMinute});

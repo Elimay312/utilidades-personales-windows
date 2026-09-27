@@ -7,7 +7,10 @@
 #include <format>
 #include <optional>
 #include <string>
+#include <algorithm>
+#include <cwctype>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "core/dates.h"
@@ -279,6 +282,69 @@ struct Reminder {
   std::uint32_t color = 0;  // its calendar's, for the dot the island draws
   std::wstring joinUrl;     // phase 13: the call, for the notification's Unirse button
 };
+
+// --- Free time (phase 13) -------------------------------------------------------------------
+
+// A stretch of a day with nothing in it: `start` and `end` are minutes of that day.
+struct FreeSlot {
+  Date day{};
+  int start = 0;
+  int end = 0;
+};
+
+// The gaps of at least `minutes` between `from` and `to` (minutes of the day, the working
+// hours) on each of `days`. What counts as busy is anything with a start and an end that is
+// not a task; a day-long event is a note on the day (a birthday, a trip), not a meeting. Today
+// starts at the next quarter of an hour from `nowMinute`, not at a time that has gone.
+inline std::vector<FreeSlot> FreeSlots(const std::vector<std::pair<Date, std::vector<DayItem>>>& days,
+                                       int minutes, int from, int to, Date today, int nowMinute) {
+  std::vector<FreeSlot> out;
+  for (const auto& [day, items] : days) {
+    if (day < today) continue;
+    int cursor = from;
+    if (day == today) cursor = (std::max)(cursor, (nowMinute + 14) / 15 * 15);
+    std::vector<std::pair<int, int>> busy;
+    for (const DayItem& item : items) {
+      if (item.isTask || !item.startMin) continue;
+      const int end = item.endMin && *item.endMin > *item.startMin ? *item.endMin : 24 * 60;
+      busy.emplace_back(*item.startMin, end);
+    }
+    std::sort(busy.begin(), busy.end());
+    for (const auto& [start, end] : busy) {
+      if (start - cursor >= minutes && cursor < to) {
+        out.push_back(FreeSlot{day, cursor, (std::min)(start, to)});
+      }
+      cursor = (std::max)(cursor, end);
+    }
+    if (to - cursor >= minutes) out.push_back(FreeSlot{day, cursor, to});
+  }
+  std::erase_if(out, [minutes](const FreeSlot& slot) { return slot.end - slot.start < minutes; });
+  return out;
+}
+
+// The sentence to paste into a chat: "Estoy libre: mar 29 sep, 15:00–17:00; mié 30 sep,
+// 09:00–11:00 (hora de Colombia)." `zone` is the name of this machine's zone, or empty.
+inline std::wstring FreeText(const std::vector<FreeSlot>& slots, std::wstring_view zone) {
+  std::wstring out = English() ? L"I'm free: " : L"Estoy libre: ";
+  for (size_t i = 0; i < slots.size(); ++i) {
+    const FreeSlot& slot = slots[i];
+    const std::wstring_view weekday =
+        WeekdayName(MondayIndex(std::chrono::weekday{std::chrono::sys_days{slot.day}})).substr(0, 3);
+    std::wstring month(MonthName(slot.day.month()).substr(0, 3));
+    if (!English() && !month.empty()) month[0] = static_cast<wchar_t>(std::towlower(month[0]));
+    std::wstring day(weekday);
+    if (!English() && !day.empty()) day[0] = static_cast<wchar_t>(std::towlower(day[0]));
+    if (i > 0) out += L"; ";
+    out += English() ? std::format(L"{} {} {}", day, month, static_cast<unsigned>(slot.day.day()))
+                     : std::format(L"{} {} {}", day, static_cast<unsigned>(slot.day.day()), month);
+    out += std::format(L", {:02}:{:02}–{:02}:{:02}", slot.start / 60, slot.start % 60,
+                       slot.end / 60, slot.end % 60);
+  }
+  if (!zone.empty()) {
+    out += English() ? std::format(L" ({} time)", zone) : std::format(L" (hora de {})", zone);
+  }
+  return out + L".";
+}
 
 // A day that has something on it, and the colour its dot takes.
 struct DayDot {

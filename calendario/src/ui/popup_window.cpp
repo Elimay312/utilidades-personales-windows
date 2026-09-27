@@ -835,9 +835,9 @@ void PopupWindow::Invalidate() {
       // Nothing is created from a search, so nothing is parsed: the card says what was found.
       model_.preview = nlp::ParsedInput{};
       // One more than is shown, to know whether to say "más de 20".
-      model_.results = store_ != nullptr
-                           ? store_->Search(SearchQuery(model_), TodayLocal(), kSearchLimit + 1)
-                           : std::vector<DayItem>{};
+      model_.results = store_ == nullptr        ? std::vector<DayItem>{}
+                       : FreeQuery(SearchQuery(model_)) ? FindFreeTime(SearchQuery(model_))
+                           : store_->Search(SearchQuery(model_), TodayLocal(), kSearchLimit + 1);
       model_.moreResults = model_.results.size() > kSearchLimit;
       if (model_.moreResults) model_.results.resize(kSearchLimit);
       model_.resultPick = 0;
@@ -909,10 +909,88 @@ int PopupWindow::SearchRowAt(float x, float y) const {
   return -1;
 }
 
-void PopupWindow::OpenResult() {
+std::vector<DayItem> PopupWindow::FindFreeTime(std::wstring_view query) {
+  freeSlots_.clear();
+  const Date today = TodayLocal();
+  const nlp::Now now{today, NowMinuteLocal()};
+  // What follows the word: a day ("mañana", "el viernes"), "esta semana" or "la próxima", and
+  // how long ("1h", "30 min"). Parsed as if it had an hour late in the evening, which is how a
+  // length is kept and never makes the day tomorrow.
+  std::wstring rest(query);
+  while (!rest.empty() && rest.front() == L' ') rest.erase(0, 1);
+  rest.erase(0, (std::min)(rest.size(), size_t{5}));
+  const nlp::ParsedInput parsed = nlp::ParseInput(rest + L" 23:00", now, 60);
+  freeMinutes_ = parsed.durationMin > 0 ? parsed.durationMin : 60;
+  bool dated = false;
+  for (const nlp::Span& span : parsed.spans) dated |= span.kind == nlp::SpanKind::Date;
+  const std::wstring folded = Folded(rest);
+  const int weekday = MondayIndex(std::chrono::weekday{std::chrono::sys_days{today}});
+
+  // ponytail: working hours fixed at 9 to 18; a setting if anybody's day is different.
+  constexpr int kWorkStart = 9 * 60;
+  constexpr int kWorkEnd = 18 * 60;
+  std::vector<Date> days;
+  if (dated && parsed.start) {
+    days.push_back(parsed.start->date);
+  } else if (folded.find(L"proxima semana") != std::wstring::npos ||
+             folded.find(L"next week") != std::wstring::npos) {
+    const Date monday = AddDays(today, 7 - weekday);
+    for (int i = 0; i < 5; ++i) days.push_back(AddDays(monday, i));
+  } else if (folded.find(L"semana") != std::wstring::npos ||
+             folded.find(L"week") != std::wstring::npos) {
+    for (int i = weekday; i < 5; ++i) days.push_back(AddDays(today, i - weekday));
+  } else {
+    // The next five working days, today included.
+    for (Date day = today; days.size() < 5; day = AddDays(day, 1)) {
+      if (MondayIndex(std::chrono::weekday{std::chrono::sys_days{day}}) < 5) days.push_back(day);
+    }
+  }
+  std::vector<std::pair<Date, std::vector<DayItem>>> items;
+  for (const Date day : days) items.emplace_back(day, store_->ItemsForDay(day, false));
+  freeSlots_ = FreeSlots(items, freeMinutes_, kWorkStart, kWorkEnd, today, NowMinuteLocal());
+  if (freeSlots_.size() > kSearchLimit) freeSlots_.resize(kSearchLimit);
+
+  return FreeResults(freeSlots_, theme_.light ? 0x2F6FE0 : 0x4A8BF5);
+}
+
+void PopupWindow::PutOnClipboard(const std::wstring& text) {
+  if (!OpenClipboard(hwnd_)) return;
+  EmptyClipboard();
+  const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+  if (const HGLOBAL handle = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+    if (void* memory = GlobalLock(handle)) {
+      std::memcpy(memory, text.c_str(), bytes);
+      GlobalUnlock(handle);
+      if (SetClipboardData(CF_UNICODETEXT, handle) == nullptr) GlobalFree(handle);
+    } else {
+      GlobalFree(handle);
+    }
+  }
+  CloseClipboard();
+}
+
+void PopupWindow::OpenResult(bool clicked) {
   const int pick = model_.resultPick;
   if (pick < 0 || pick >= static_cast<int>(model_.results.size())) return;
   const DayItem item = model_.results[static_cast<size_t>(pick)];
+  if (item.uid.starts_with(L"free:") && !freeSlots_.empty()) {
+    if (clicked) {
+      // That slot, written the way the capsule reads it, for a title to be typed after it.
+      const FreeSlot& slot = freeSlots_[(std::min)(static_cast<size_t>(pick), freeSlots_.size() - 1)];
+      model_.input.Clear();
+      model_.input.Insert(std::format(L"e: {}/{} {:02}:{:02} por {} min ",
+                                      static_cast<unsigned>(slot.day.day()),
+                                      static_cast<unsigned>(slot.day.month()), slot.start / 60,
+                                      slot.start % 60, freeMinutes_));
+    } else {
+      PutOnClipboard(FreeText(freeSlots_, ZoneLabel(LocalZone())));
+      model_.input.Clear();
+      ShowToast(std::wstring(T(L"Huecos copiados: pégalos donde quieras",
+                               L"Free slots copied: paste them anywhere")));
+    }
+    Invalidate();
+    return;
+  }
   model_.input.Clear();
   // The app on the day it stands for, with the event open in the panel: the popup has no room
   // to show more than the card that was already in the list.
@@ -1252,7 +1330,7 @@ void PopupWindow::OnLeftDown(float x, float y) {
   // A result is on top of whatever it covers -- the list in the popup, the timeline in the app.
   if (const int row = SearchRowAt(x, y); row >= 0) {
     model_.resultPick = row;
-    OpenResult();
+    OpenResult(/*clicked=*/true);
     return;
   }
   if (InApp() && OnAppLeftDown(x, y)) return;
@@ -1553,23 +1631,7 @@ void PopupWindow::ChangeMonth(int direction) {
 void PopupWindow::CopySelection(bool cut) {
   TextInput& input = FocusedText();
   if (!input.hasSelection()) return;
-  const std::wstring selected{input.selectedText()};
-
-  if (OpenClipboard(hwnd_)) {
-    EmptyClipboard();
-    const size_t bytes = (selected.size() + 1) * sizeof(wchar_t);
-    if (const HGLOBAL handle = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
-      if (void* memory = GlobalLock(handle)) {
-        std::memcpy(memory, selected.c_str(), bytes);
-        GlobalUnlock(handle);
-        if (SetClipboardData(CF_UNICODETEXT, handle) == nullptr) GlobalFree(handle);
-      } else {
-        GlobalFree(handle);
-      }
-    }
-    CloseClipboard();
-  }
-
+  PutOnClipboard(std::wstring{input.selectedText()});
   if (cut) input.DeleteSelection();
 }
 

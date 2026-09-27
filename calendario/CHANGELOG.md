@@ -38,6 +38,10 @@ sigue [SemVer](https://semver.org/lang/es/).
 - **Duplicar y plantillas** (fase 13.7). El detalle tiene **Duplicar** (también `Ctrl+D`) y
   **Plantilla**, que guarda el evento como plantilla: `/revision-de-codigo mañana 3pm` crea otro
   igual (título, duración, lugar e invitados) a esa hora. Un `/` solo lista las plantillas.
+- **Proponer horarios** (fase 13.8). `?libre` busca los huecos libres de los próximos días
+  laborables (`?libre mañana 2h`, `?libre esta semana 30 min`). Enter los copia en una frase
+  lista para pegar, y un clic en uno lo escribe en el campo para crear el evento ahí. Captura
+  `popup-libre`.
 
 - **Varias cuentas de Google** (fase 12.3). La configuración tiene una sección **Cuentas de
   Google** con **Añadir…** otra cuenta, **Reconectar…** la que perdió el permiso y una tarjeta

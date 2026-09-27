@@ -112,6 +112,7 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - Si el texto trae una hora, se crea un **evento** de 60 min por defecto.
   - Si no trae hora, se crea una **tarea**.
   - El prefijo `t:` o `!` fuerza que sea tarea. El prefijo `e:` fuerza que sea evento.
+  - `?libre` / `?free` (fase 13.8) busca huecos en vez de eventos: `FreeSlots` en `model.h` (9:00–18:00 fijo, 5 días laborables por defecto, «esta/próxima semana», un día o una duración tras la palabra, leídos con el parser sobre `rest + " 23:00"`). Enter copia `FreeText` al portapapeles; un clic escribe el hueco en la cápsula. Sin freeBusy ni servidor: solo la caché.
   - El prefijo `/` (fase 13.7) es una plantilla: `/nombre` se sustituye por su frase y lo que sigue se parsea detrás.
   - El prefijo `?` no se parsea: es una búsqueda (fase 10, `Store::Search`, `Searching` en `popup_view.h`). Ctrl+F lo pone. Los resultados se apilan junto a la tarjeta de la vista previa, sobre un fondo opaco: hacia arriba en el popup (hasta 4, por encima del mes) y hacia abajo en la app (hasta 6). El plegado sin acentos es uno solo, `core/text.h`, y lo usan el parser y la búsqueda.
 - La caché local es la fuente de verdad para la interfaz. La sincronización ocurre en segundo plano con `syncToken` en eventos y `updatedMin` en tareas. En conflictos gana el cambio más reciente, y cada conflicto se registra en el log.
@@ -231,6 +232,7 @@ build\debug\Agenda.exe --render-snapshot=app-zonas --out=docs\img\app-zonas.png
 build\debug\Agenda.exe --render-snapshot=app-trimestre --out=docs\img\app-trimestre.png
 build\debug\Agenda.exe --render-snapshot=app-anio --out=docs\img\app-anio.png
 build\debug\Agenda.exe --render-snapshot=app-lista --out=docs\img\app-lista.png
+build\debug\Agenda.exe --render-snapshot=popup-libre --out=docs\img\popup-libre.png
 build\debug\Agenda.exe --render-snapshot=popup "--text=llamada con ana@x.com mañana 3pm hora de Madrid" --out=docs\img\popup-zona.png
 build\debug\Agenda.exe --render-snapshot=configuracion --theme=light --out=docs\img\configuracion-claro.png
 build\debug\Agenda.exe --render-snapshot=popup --theme=contrast --out=docs\img\popup-contraste.png

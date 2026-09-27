@@ -1024,3 +1024,30 @@ TEST_CASE("an event created with guests and a place keeps them, and an answer is
   CHECK(CountRows(store->db(),
                   "SELECT COUNT(*) FROM pending_ops WHERE op LIKE '%+attendees%'") == 1);
 }
+
+TEST_CASE("free time is the working hours minus what has a start and an end") {
+  const Date tuesday = Day(2026, 9, 22);
+  const auto at = [](int start, int end, bool task = false) {
+    DayItem item;
+    item.isTask = task;
+    item.startMin = start;
+    item.endMin = end;
+    return item;
+  };
+  DayItem allDay;  // a trip or a birthday: not a meeting
+  std::vector<std::pair<Date, std::vector<DayItem>>> days = {
+      {tuesday, {at(10 * 60, 11 * 60), at(10 * 60 + 30, 12 * 60), at(15 * 60, 15 * 60, true)}},
+      {Day(2026, 9, 23), {allDay, at(8 * 60, 9 * 60 + 30), at(17 * 60 + 30, 19 * 60)}}};
+  // Tuesday at 9:05: the day starts at 9:15, and the overlapping meetings are one block.
+  const std::vector<FreeSlot> slots = FreeSlots(days, 60, 9 * 60, 18 * 60, tuesday, 9 * 60 + 5);
+  REQUIRE(slots.size() == 2);
+  CHECK(slots[0].day == tuesday);
+  CHECK(slots[0].start == 12 * 60);  // 9:15 to 10:00 is too short for an hour
+  CHECK(slots[0].end == 18 * 60);
+  CHECK(slots[1].start == 9 * 60 + 30);
+  CHECK(slots[1].end == 17 * 60 + 30);
+
+  const std::wstring text = FreeText(slots, L"Colombia");
+  CHECK(text.starts_with(L"Estoy libre: mar 22 sep, 12:00–18:00; mié 23 sep, 09:30–17:30"));
+  CHECK(text.ends_with(L"(hora de Colombia)."));
+}

@@ -29,6 +29,7 @@ inline constexpr std::wstring_view kSnapshotViews[] = {
     L"app-trimestre",       // the quarter: fourteen weeks with their events beside the number
     L"app-anio",            // the year: twelve mini months with their dots
     L"app-lista",           // the next thirty days, one day after another
+    L"popup-libre",         // "?libre 1h": the free hours of the next working days
     L"configuracion",       // the settings window's client area, as it opens
 };
 

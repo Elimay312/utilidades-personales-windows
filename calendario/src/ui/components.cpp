@@ -428,6 +428,12 @@ void DrawPreviewCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme&
     const size_t count = model.results.size();
     if (SearchQuery(model).find_first_not_of(L' ') == std::wstring_view::npos) {
       said = T(L"Escribe qué buscar", L"Type what to look for");
+    } else if (FreeQuery(SearchQuery(model))) {
+      // Free time: what Enter does with it is the point, so the card says it.
+      said = count == 0 ? std::wstring(T(L"Ningún hueco libre", L"No free time"))
+                        : std::format(L"{} {} · {}", count,
+                                      count == 1 ? T(L"hueco", L"slot") : T(L"huecos", L"slots"),
+                                      T(L"Enter los copia", L"Enter copies them"));
     } else if (count == 0) {
       said = T(L"Sin resultados", L"No results");
     } else if (model.moreResults) {

@@ -545,6 +545,23 @@ Las reglas cuando la frase no lo dice todo:
 - Lo que no se entiende no se pierde: se queda en el título. `25:00 reunión` es una tarea
   titulada «25:00 reunión», no las once de la noche.
 
+### Proponer horarios
+
+`?libre` en el campo (o `?free`) busca **tiempo libre** en vez de eventos: los huecos de al menos
+una hora entre las 9:00 y las 18:00 de los próximos cinco días laborables, sin contar lo que
+ya pasó hoy. Detrás se puede decir cuánto y cuándo: `?libre 30 min`, `?libre mañana 2h`,
+`?libre esta semana`, `?libre la próxima semana`. Los eventos de día entero (un viaje, un
+cumpleaños) no ocupan; las tareas tampoco.
+
+- **Enter** copia todos los huecos al portapapeles, listos para pegar en un chat: «Estoy libre:
+  mar 22 sep, 12:00–18:00; mié 23 sep, 09:30–17:30 (hora de Colombia).».
+- **Un clic** en un hueco lo escribe en el campo (`e: 22/9 12:00 por 60 min `) para ponerle
+  título y crear el evento ahí.
+
+Se calcula con la caché local: no se consulta la disponibilidad de nadie más.
+
+![Proponer horarios](docs/img/popup-libre.png)
+
 ### Opciones de línea de comandos
 
 - `--monitor=N` fija el monitor por su número de Windows, es decir el dispositivo

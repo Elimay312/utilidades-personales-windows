@@ -32,6 +32,10 @@ constexpr float kRevealStrip = 3;
 constexpr float kLabelRoom = 200;     // aire encima para la etiqueta y seis filas de menú
 constexpr float kLabelStrip = 36;
 constexpr float kRadiusInSlots = 1.75f;
+constexpr float kDragThreshold = 6;
+constexpr float kPullOffDistance = 40;
+// Lo que tarda el icono sacado en desvanecerse antes de reconstruir (Puff dura 180).
+constexpr UINT kPuffMs = 200;
 
 // Un segundo: a 250 ms el dock de C# gastaba un 4,1% de un núcleo en reposo con tres
 // pantallas. El aviso del shell al activarse una ventana reafirma al momento; el reloj es la
@@ -51,9 +55,96 @@ bool Same(const std::vector<RECT>& a, const std::vector<RECT>& b) {
 
 }  // namespace
 
-DockWindow::DockWindow(App& app, const Monitor& monitor, const DockConfig& config, std::vector<DockApp> apps)
-    : app_(app), monitor_(monitor), config_(config), apps_(std::move(apps)) {
+DockWindow::DockWindow(App& app, const Monitor& monitor, const DockConfig& config, ScreenApps screen)
+    : app_(app), monitor_(monitor), config_(config), base_(std::move(screen.base)), apps_(std::move(screen.apps)) {
   Compose();
+}
+
+int DockWindow::DraggableEnd() const {
+  for (size_t i = 0; i < drawn_.size(); i++)
+    if (drawn_[i].separator && drawn_[i].name == L"|abiertas|") return static_cast<int>(i);
+  return static_cast<int>(drawn_.size());
+}
+
+bool DockWindow::PulledOff(int y) const {
+  // Bastante por encima de la barra: el icono se está sacando del dock.
+  const int barTop = height_ - Px(config_.iconSize + 2 * kPadding);
+  return y < barTop - Px(kPullOffDistance);
+}
+
+void DockWindow::OnDragMove(int x, int y) {
+  if (!dragging_) {
+    // El umbral mira las DOS direcciones: mirando solo la X, sacar un icono tirando recto
+    // hacia arriba no llegaba a contar nunca como arrastre.
+    if (std::max(std::abs(x - press_.x), std::abs(y - press_.y)) < Px(kDragThreshold)) return;
+    dragging_ = true;
+    dragOrder_.clear();
+    for (int i = 0; i < DraggableEnd(); i++) dragOrder_.push_back(i);
+    visuals_->SetLabel(-1);
+    visuals_->SetLifted(pressedIndex_, true);
+    // Ahora sí: el ratón aunque salga de la ventana, para poder sacarlo hacia arriba.
+    SetCapture(hwnd_);
+    LogTrace(L"[arrastre] empieza '{}'", drawn_[pressedIndex_].name);
+  }
+  // Donde va el dedo, sin muelle: interpolar aquí solo añadiría retraso.
+  visuals_->SetShift(pressedIndex_, static_cast<float>(x - press_.x));
+  if (PulledOff(y)) return;  // arriba, fuera del dock: nadie hace hueco
+  const int over = std::clamp(curve_.SlotAt(lastRest_), 0, DraggableEnd() - 1);
+  const auto from = std::find(dragOrder_.begin(), dragOrder_.end(), pressedIndex_);
+  if (curve_.SlotAt(lastRest_) < 0 || from - dragOrder_.begin() == over) return;
+  dragOrder_.erase(from);
+  dragOrder_.insert(dragOrder_.begin() + over, pressedIndex_);
+  ApplyDragShifts();
+}
+
+// Cada icono al sitio que le toca con el orden de ahora. En píxeles de PANTALLA (Project), no
+// en reposo: bajo la lupa una ranura mide casi el doble y los vecinos se apartarían poco.
+// ponytail: se recalcula al cambiar el orden, no en cada movimiento, así que entre dos
+// permutaciones la lupa lo desvía un poco; menos que relanzar N muelles por píxel.
+void DockWindow::ApplyDragShifts() {
+  const float width = static_cast<float>(width_);
+  for (size_t position = 0; position < dragOrder_.size(); position++) {
+    const int index = dragOrder_[position];
+    if (index == pressedIndex_) continue;
+    const float now = curve_.Project(curve_.RestLeft(index), width, lastRest_);
+    const float target = curve_.Project(curve_.RestLeft(static_cast<int>(position)), width, lastRest_);
+    visuals_->SpringShift(index, target - now);
+  }
+}
+
+void DockWindow::FinishDrag(int y) {
+  dragging_ = false;
+  const int dragged = pressedIndex_;
+  pressedIndex_ = -1;
+  // Solo lo anclado, en el orden nuevo; detrás, la papelera si iba tras las abiertas. Lo
+  // abierto sin anclar nunca se guarda: reordenar anclaría todo lo que estuviera abierto.
+  std::vector<DockApp> pinned;
+  for (int index : dragOrder_) pinned.push_back(drawn_[index]);
+  for (size_t i = DraggableEnd(); i < drawn_.size(); i++)
+    if (!drawn_[i].separator && drawn_[i].target == kTrashTarget) pinned.push_back(drawn_[i]);
+  const bool removed = PulledOff(y);
+  if (removed) {
+    visuals_->Puff(dragged);
+    pinned.erase(pinned.begin() + (std::find(dragOrder_.begin(), dragOrder_.end(), dragged) - dragOrder_.begin()));
+    LogInfo(L"[dock] quitada '{}'", drawn_[dragged].name);
+  } else {
+    LogInfo(L"[dock] reordenado '{}'", drawn_[dragged].name);
+  }
+  // Se guarda y se recarga como cualquier cambio de dock.local.json: así se enteran también
+  // los docks de las otras pantallas. Si se ha quitado uno, se le deja acabar de desvanecerse.
+  app_.SaveAndReload(monitor_.device, base_, pinned, removed ? kPuffMs : 1);
+}
+
+void DockWindow::CancelDrag() {
+  const bool was = dragging_;
+  dragging_ = false;
+  if (was) {
+    visuals_->SetLifted(pressedIndex_, false);
+    for (size_t i = 0; i < drawn_.size(); i++) visuals_->SpringShift(static_cast<int>(i), 0);
+    if (GetCapture() == hwnd_) ReleaseCapture();
+    LogTrace(L"[arrastre] cancelado");
+  }
+  pressedIndex_ = -1;
 }
 
 int DockWindow::IconPx() const {
@@ -185,7 +276,7 @@ RECT DockWindow::BarOnScreen() const {
 // Sin nada debajo no hay de qué esconderse: con el escritorio a la vista el dock se queda.
 // Se reevalúa en cada barrido, porque abrir, cerrar o activar ventanas es justo cuando cambia.
 void DockWindow::UpdateSmartHide() {
-  if (!config_.autoHide || hovering_ || fullscreen_) return;
+  if (!config_.autoHide || hovering_ || dragging_ || fullscreen_) return;
   const bool covered = AnythingOver(BarOnScreen());
   if (covered == !revealed_) return;
   if (covered) Hide(/*force=*/true);
@@ -193,10 +284,11 @@ void DockWindow::UpdateSmartHide() {
   LogInfo(L"[autoocultar] {}: {}", monitor_.device, covered ? L"escondido, hay algo debajo" : L"a la vista, no hay nada debajo");
 }
 
-void DockWindow::Apply(const DockConfig& config, std::vector<DockApp> apps) {
+void DockWindow::Apply(const DockConfig& config, ScreenApps screen) {
   const bool autoHideChanged = config.autoHide != config_.autoHide;
   config_ = config;
-  apps_ = std::move(apps);
+  base_ = std::move(screen.base);
+  apps_ = std::move(screen.apps);
   Compose();
   // Pasar de reservar la franja a autoocultar (o al revés) no se deshace con ABM_SETPOS:
   // se da de baja la appbar y se vuelve a registrar limpia.
@@ -311,6 +403,9 @@ Curve DockWindow::CurveFor() const {
 }
 
 void DockWindow::BuildVisuals(const IconSet& icons) {
+  // Cambiar la lista con algo cogido deja el índice apuntando a otra cosa: en C# una app
+  // que se cerraba a mitad de pulsación acababa en RemoveAt(-1) y tumbaba el dock.
+  if (pressedIndex_ >= 0) CancelDrag();
   curve_ = CurveFor();
   std::vector<DockItem> items;
   std::wstring names;
@@ -524,20 +619,44 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
           visuals_->SetHover(true);
         }
         const int slot = curve_.SlotAt(rest);
-        visuals_->SetLabel(slot);
+        if (!dragging_) visuals_->SetLabel(slot);
         LogTrace(L"[hover] x={} idx={} reposo={:.1f}", GET_X_LPARAM(lparam), slot, rest);
+      }
+      if (pressedIndex_ >= 0) {
+        // Un movimiento sin el botón pulsado con algo cogido: se soltó fuera del dock y el
+        // WM_LBUTTONUP no llegó. En C# el icono seguía al cursor sin botón (70 px -> 0).
+        if (!(wparam & MK_LBUTTON)) CancelDrag();
+        else OnDragMove(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
       }
       return 0;
 
-    // Al soltar, no al pulsar: F6 distinguirá un clic de un arrastre por la distancia.
+    case WM_LBUTTONDOWN: {
+      const int index = curve_.SlotAt(lastRest_);
+      pressedIndex_ = index >= 0 && index < DraggableEnd() ? index : -1;
+      press_ = POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+      return 0;
+    }
+    // Al soltar, no al pulsar: si se pasó el umbral fue un arrastre, si no un clic.
     case WM_LBUTTONUP:
+      if (dragging_) {
+        // Antes de soltar la captura: ReleaseCapture manda WM_CAPTURECHANGED, que cancelaría
+        // lo que se acaba de decidir.
+        FinishDrag(GET_Y_LPARAM(lparam));
+        ReleaseCapture();
+        return 0;
+      }
+      pressedIndex_ = -1;
       OnClick(false);
+      return 0;
+    case WM_CAPTURECHANGED:
+      if (dragging_) CancelDrag();
       return 0;
     case WM_MBUTTONUP:
       OnClick(true);
       return 0;
 
     case WM_MOUSELEAVE:
+      if (dragging_) return 0;  // con la captura puesta el arrastre sigue fuera de la ventana
       hovering_ = false;
       if (hoverShown_) {
         hoverShown_ = false;

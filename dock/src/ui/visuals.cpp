@@ -346,6 +346,46 @@ void Visuals::StopBounce(int index) {
   items_[index].Properties().InsertScalar(L"Bounce", 0);
 }
 
+void Visuals::SetLifted(int index, bool lifted) {
+  if (index < 0 || index >= static_cast<int>(items_.size())) return;
+  auto visual = items_[index];
+  // El orden Z es el de inserción: sin volver a meterlo arriba, el icono cogido pasaba por
+  // debajo de los vecinos y desaparecía.
+  if (lifted) {
+    root_.Children().Remove(visual);
+    root_.Children().InsertAtTop(visual);
+  }
+  auto fade = compositor_.CreateScalarKeyFrameAnimation();
+  fade.InsertKeyFrame(1, lifted ? 0.85f : 1.0f);
+  fade.Duration(std::chrono::milliseconds(120));
+  visual.StartAnimation(L"Opacity", fade);
+}
+
+void Visuals::SetShift(int index, float x) {
+  if (index < 0 || index >= static_cast<int>(items_.size())) return;
+  // Un muelle en marcha es dueño de Shift: hay que pararlo antes de escribirla a mano.
+  items_[index].Properties().StopAnimation(L"Shift");
+  items_[index].Properties().InsertScalar(L"Shift", x);
+}
+
+void Visuals::SpringShift(int index, float x) {
+  if (index < 0 || index >= static_cast<int>(items_.size())) return;
+  auto spring = compositor_.CreateSpringScalarAnimation();
+  spring.DampingRatio(0.9f);
+  spring.Period(std::chrono::milliseconds(55));
+  spring.FinalValue(x);
+  items_[index].Properties().StartAnimation(L"Shift", spring);
+}
+
+void Visuals::Puff(int index) {
+  if (index < 0 || index >= static_cast<int>(items_.size())) return;
+  auto fade = compositor_.CreateScalarKeyFrameAnimation();
+  fade.InsertKeyFrame(1, 0);
+  fade.Duration(std::chrono::milliseconds(180));
+  items_[index].StartAnimation(L"Opacity", fade);
+  if (index < static_cast<int>(dots_.size()) && dots_[index]) dots_[index].StartAnimation(L"Opacity", fade);
+}
+
 void Visuals::SetRunning(const std::vector<bool>& running) {
   for (size_t i = 0; i < dots_.size() && i < running.size(); i++) {
     const bool was = i < running_.size() && running_[i];

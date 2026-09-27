@@ -50,6 +50,14 @@ class Visuals {
   void Bounce(int index, float height, bool forever);
   void StopBounce(int index);
 
+  // Arrastrar: el icono cogido sube por encima de los vecinos y va donde va el dedo, sin
+  // muelle; los vecinos se apartan con muelle. Shift se suma en la expresión de Offset.
+  void SetLifted(int index, bool lifted);
+  void SetShift(int index, float x);
+  void SpringShift(int index, float x);
+  // Sacado del dock: se desvanece (no encoge: Scale es de la expresión de la lupa).
+  void Puff(int index);
+
   // Esconder desliza el árbol hacia abajo con un muelle; la ventana no se mueve nunca.
   void Slide(bool hidden, bool instant);
 

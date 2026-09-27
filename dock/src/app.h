@@ -30,6 +30,10 @@ class App {
   // La ventana con el foco a efectos del clic: la de primer plano, salvo que sea del propio
   // dock, y entonces la última ajena que lo tuvo.
   HWND ForeignForeground() const;
+  // Guarda la superposición de una pantalla y recarga todo tras delayMs (para dejar acabar el
+  // desvanecido de un icono quitado). Recargar reconstruye también las otras pantallas.
+  void SaveAndReload(const std::wstring& device, const std::vector<DockApp>& base,
+                     const std::vector<DockApp>& current, UINT delayMs);
 
  private:
   static LRESULT CALLBACK HostProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);

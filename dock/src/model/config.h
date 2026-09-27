@@ -71,6 +71,14 @@ DockConfig LoadConfig(const std::filesystem::path& file);
 LocalOverlay ParseLocal(std::string_view text);
 LocalOverlay LoadLocal(const std::filesystem::path& file);
 
+// Escribe la superposición de ESTA pantalla y ESTE perfil, deducida de la diferencia entre lo
+// que dice dock.json (base) y lo que hay ahora (current, solo anclado): así no hay dos estados
+// que mantener a la par. El resto del fichero se conserva.
+bool SaveLocal(const std::filesystem::path& file, const std::wstring& device, const std::vector<DockApp>& base,
+               const std::vector<DockApp>& current);
+// Con las claves en mayúscula del dock de C#, que lee el mismo fichero mientras convivan.
+std::string LocalToJson(const LocalOverlay& local);
+
 // Resuelve la pantalla: perfil activo, lista propia de la pantalla, papelera y superposición.
 ScreenApps ResolveFor(const DockConfig& config, const LocalOverlay& local, const std::wstring& device);
 

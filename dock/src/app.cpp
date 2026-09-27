@@ -122,6 +122,14 @@ int App::Run() {
   }
 }
 
+void App::SaveAndReload(const std::wstring& device, const std::vector<DockApp>& base,
+                        const std::vector<DockApp>& current, UINT delayMs) {
+  SaveLocal(localPath_, device, base, current);
+  // El mismo temporizador que el vigía: la recarga se hace una vez aunque el vigía también
+  // despierte por la escritura, y CheckFilesChanged ve el fichero cambiado.
+  SetTimer(host_, kReloadTimer, std::max<UINT>(delayMs, 1), nullptr);
+}
+
 HWND App::ForeignForeground() const {
   // Un clic de ratón de verdad no activa el dock (MA_NOACTIVATE), pero una activación
   // programática sí: computer use activa la ventana antes de hacer clic, y el dock decidía
@@ -153,7 +161,7 @@ void App::Rebuild() {
   std::vector<Monitor> monitors;
   EnumDisplayMonitors(nullptr, nullptr, CollectMonitor, reinterpret_cast<LPARAM>(&monitors));
   for (const Monitor& monitor : monitors) {
-    auto window = std::make_unique<DockWindow>(*this, monitor, config_, ResolveFor(config_, local_, monitor.device).apps);
+    auto window = std::make_unique<DockWindow>(*this, monitor, config_, ResolveFor(config_, local_, monitor.device));
     if (window->Create()) docks_.push_back(std::move(window));
   }
   LogInfo(L"[dock] {} monitor(es)", docks_.size());
@@ -180,7 +188,7 @@ void App::Apply() {
   // Todo lo que depende de la config pasa por aquí: en C# el atajo, el autoarranque y la
   // altura de la ventana solo se leían al arrancar.
   SyncAutoStart(config_.autoStart);
-  for (auto& dockWindow : docks_) dockWindow->Apply(config_, ResolveFor(config_, local_, dockWindow->Device()).apps);
+  for (auto& dockWindow : docks_) dockWindow->Apply(config_, ResolveFor(config_, local_, dockWindow->Device()));
   RefreshRunning();
   RequestIcons();
   LogInfo(L"[config] recargado en {:.0f} ms",

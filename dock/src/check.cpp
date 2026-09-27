@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <string>
 
 #include "core/jsonc.h"
@@ -131,6 +132,35 @@ void CheckOverlay() {
   Expect(ResolveFor(config, rootOnly, L"\\\\.\\DISPLAY1").apps.size() == 1, "resolver: la raíz sí se aplica");
   config.trash = false;
   Expect(ResolveFor(config, none, L"\\\\.\\DISPLAY1").apps.size() == 1, "resolver: trash false sin papelera");
+}
+
+// Guardar y volver a leer: lo que se aplica tiene que dar exactamente lo que se guardó, y el
+// resto del fichero (otras pantallas, el perfil) tiene que seguir ahí.
+void CheckSaveLocal() {
+  const std::filesystem::path file = std::filesystem::temp_directory_path() / L"dock-check.local.json";
+  {
+    std::ofstream seed(file, std::ios::binary | std::ios::trunc);
+    seed << R"({"Orden": ["https://raiz.example"], "Pantallas": {"otra": {"Orden": ["https://otra.example"]}}})";
+  }
+  const DockApp a{L"A", L"https://a.example"}, b{L"B", L"https://b.example"}, c{L"C", L"https://c.example"};
+  const DockApp d{L"D", L"https://d.example"}, sep{L"", L"", L"", L"", true};
+  const std::vector<DockApp> base{a, b, sep, c};
+  const std::vector<DockApp> current{c, a, sep, d};  // B quitada, D añadida, C delante
+  Expect(SaveLocal(file, L"pantalla", base, current), "guardar: escribe el fichero");
+  const LocalOverlay back = LoadLocal(file);
+  const auto block = back.screens.find(L"pantalla");
+  Expect(block != back.screens.end(), "guardar: el bloque de la pantalla");
+  if (block != back.screens.end()) {
+    const auto applied = ApplyOverlay(block->second, base);
+    Expect(applied.size() == 4 && applied[0].name == L"C" && applied[1].name == L"A" && applied[2].separator &&
+               applied[3].name == L"D",
+           "guardar: aplicar lo guardado da lo mismo");
+    Expect(block->second.removed.size() == 1 && block->second.removed[0] == b.target, "guardar: B quitada");
+    Expect(block->second.added.size() == 1 && block->second.added[0].target == d.target, "guardar: D añadida");
+  }
+  Expect(back.order.size() == 1 && back.screens.contains(L"otra"), "guardar: el resto del fichero se conserva");
+  std::error_code ec;
+  std::filesystem::remove(file, ec);
 }
 
 void CheckSteamAndApps() {
@@ -301,6 +331,7 @@ int RunChecks(const std::filesystem::path& configPath) {
   CheckConfig();
   CheckOverlay();
   CheckSteamAndApps();
+  CheckSaveLocal();
   CheckMagnify();
   CheckIcons();
   CheckExpressions();

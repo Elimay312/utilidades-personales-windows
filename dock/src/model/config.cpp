@@ -114,6 +114,31 @@ std::vector<std::wstring> KeysOf(const std::vector<DockApp>& apps) {
   return keys;
 }
 
+std::string Narrow(const std::wstring& text) {
+  if (text.empty()) return {};
+  const int size = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+  std::string out(static_cast<size_t>(size), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), size, nullptr, nullptr);
+  return out;
+}
+
+nlohmann::json ToJson(const LocalOverlay& local) {
+  nlohmann::json keysOrder = nlohmann::json::array(), keysRemoved = nlohmann::json::array();
+  for (const auto& key : local.order) keysOrder.push_back(Narrow(key));
+  for (const auto& key : local.removed) keysRemoved.push_back(Narrow(key));
+  nlohmann::json added = nlohmann::json::array();
+  for (const DockApp& app : local.added)
+    added.push_back({{"Name", Narrow(app.name)},
+                     {"Target", Narrow(app.target)},
+                     {"Separator", app.separator},
+                     {"Arguments", Narrow(app.arguments)},
+                     {"IconTarget", Narrow(app.iconTarget)}});
+  nlohmann::json screens = nlohmann::json::object();
+  for (const auto& [key, screen] : local.screens) screens[Narrow(key)] = ToJson(screen);
+  return {{"Orden", keysOrder}, {"Anadidas", added}, {"Quitadas", keysRemoved}, {"Pantallas", screens},
+          {"Perfil", Narrow(local.profile)}};
+}
+
 std::string ReadAll(const std::filesystem::path& file, bool& found) {
   std::ifstream in(file, std::ios::binary);
   found = static_cast<bool>(in);
@@ -266,6 +291,31 @@ std::vector<DockApp> ApplyOverlay(const LocalOverlay& local, const std::vector<D
   std::vector<DockApp> ordered;
   for (const auto& [rank, index] : ranked) ordered.push_back(result[index]);
   return ordered;
+}
+
+std::string LocalToJson(const LocalOverlay& local) { return ToJson(local).dump(2); }
+
+bool SaveLocal(const std::filesystem::path& file, const std::wstring& device, const std::vector<DockApp>& base,
+               const std::vector<DockApp>& current) {
+  LocalOverlay local = LoadLocal(file);
+  const std::vector<std::wstring> before = KeysOf(base), after = KeysOf(current);
+  LocalOverlay block;
+  block.order = after;
+  for (const auto& key : before)
+    if (!Contains(after, key)) block.removed.push_back(key);
+  for (size_t i = 0; i < current.size(); i++)
+    if (!current[i].separator && !Contains(before, after[i])) block.added.push_back(current[i]);
+  // Solo el bloque de esta pantalla y este perfil: mover un icono en una pantalla no puede
+  // reordenar las otras, ni reordenar "juegos" tocar "trabajo".
+  local.screens[local.profile.empty() ? device : local.profile + L"|" + device] = std::move(block);
+
+  std::ofstream out(file, std::ios::binary | std::ios::trunc);
+  if (!out) {
+    LogError(L"[config] no se pudo guardar {}", file.wstring());
+    return false;
+  }
+  out << LocalToJson(local);
+  return static_cast<bool>(out);
 }
 
 ScreenApps ResolveFor(const DockConfig& config, const LocalOverlay& local, const std::wstring& device) {

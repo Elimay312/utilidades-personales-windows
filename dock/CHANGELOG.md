@@ -60,6 +60,10 @@ abajo.
   que aparece (~730 ms con la app de prueba); con el foco se minimiza; sin foco, esté
   minimizada o solo tapada, viene al frente. Clic central, otra instancia. Las carpetas se
   abren en el Explorador hasta que lleguen los stacks (F6).
+- **Arrastrar en C++**: reordenar (los vecinos se apartan con muelle) y sacar del dock
+  tirando hacia arriba, con el icono desvaneciéndose. Se guarda en `dock.local.json` con el
+  mismo formato que el de C#, solo el bloque de esa pantalla y ese perfil, y se recarga en
+  ~40 ms en todas las pantallas. Lo abierto sin anclar no se arrastra ni se guarda.
 - **El autoarranque solo lo toca la copia instalada**, para que una build de desarrollo no
   se registre en el inicio de sesión del usuario.
 - **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.

@@ -28,7 +28,7 @@ struct Monitor {
 // región, no el rectángulo.
 class DockWindow {
  public:
-  DockWindow(App& app, const Monitor& monitor, const DockConfig& config, std::vector<DockApp> apps);
+  DockWindow(App& app, const Monitor& monitor, const DockConfig& config, ScreenApps screen);
   ~DockWindow();
   DockWindow(const DockWindow&) = delete;
   DockWindow& operator=(const DockWindow&) = delete;
@@ -46,7 +46,7 @@ class DockWindow {
   void ShowIcons(const IconSet& icons);
   // Config nueva sin destruir la ventana: geometría, appbar y visuals. Los iconos los vuelve
   // a pedir App.
-  void Apply(const DockConfig& config, std::vector<DockApp> apps);
+  void Apply(const DockConfig& config, ScreenApps screen);
 
   // Lo que App reparte a todos los docks.
   void OnWindowActivated();
@@ -66,6 +66,13 @@ class DockWindow {
   void ApplyRegion();
   void Compose();
   void OnClick(bool middle);
+  // Arrastrar: solo lo anclado (lo que va antes del separador de las abiertas).
+  int DraggableEnd() const;
+  void OnDragMove(int x, int y);
+  bool PulledOff(int y) const;
+  void ApplyDragShifts();
+  void FinishDrag(int y);
+  void CancelDrag();
   RECT BarOnScreen() const;
   void UpdateSmartHide();
   void Reveal();
@@ -77,12 +84,17 @@ class DockWindow {
   App& app_;
   Monitor monitor_;
   DockConfig config_;
+  std::vector<DockApp> base_;    // lo que dice dock.json, para deducir la superposición
   std::vector<DockApp> apps_;    // ancladas, ya resueltas para esta pantalla
   std::vector<DockApp> extras_;  // abiertas sin anclar
   std::vector<DockApp> drawn_;   // lo que se ve: apps_ + separador + extras_ + papelera
   std::vector<bool> running_;    // un puntito por entrada de drawn_
   std::vector<std::vector<HWND>> windows_;  // las ventanas de cada entrada de drawn_
   float lastRest_ = -1;          // el cursor en reposo, del último movimiento
+  int pressedIndex_ = -1;        // el icono pulsado, hasta soltar
+  POINT press_{};
+  bool dragging_ = false;        // pasado el umbral
+  std::vector<int> dragOrder_;   // el orden que va quedando, en índices de drawn_
   // La app que se está abriendo: su icono bota hasta que aparece su ventana, o 20 s.
   std::wstring launchingTarget_;
   ULONGLONG launchingUntil_ = 0;

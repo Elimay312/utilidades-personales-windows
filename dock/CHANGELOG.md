@@ -14,6 +14,26 @@ está en el mensaje de su commit.
 La reescritura en C++. Hasta que iguale al de C#, el de uso diario es el de la sección de
 abajo.
 
+### Añadido
+
+- **El esqueleto en C++**: una ventana por pantalla, appbar, región, topmost, pantalla
+  completa, ppp por monitor y rebuild al cambiar de pantallas, todavía sin dibujar nada.
+  **1,3 MB privados y 1 hilo**, frente a los 46 MB del de C# al arrancar. Con tres pantallas
+  (100/125/175 %) la franja escondida mide 3, 4 y 6 px; sin autoocultar, el área de trabajo
+  pasa de 1080 a 1000. Tras reiniciar explorer las tres appbars vuelven a registrarse
+  (~5,6 s, lo que tarda explorer en difundir `TaskbarCreated`).
+- **`--config=<ruta>`** para arrancar con otro `dock.json` sin tocar el del usuario.
+
+### Arreglado
+
+- **Un `dock.json` con comas finales ya no se lee mal en C++**: `nlohmann_json` 3.12 no las
+  admite (no existe `ignore_trailing_commas`), así que se limpian antes, respetando las
+  cadenas. `--check` lo cubre.
+- **La config se relee al cambiar de pantallas.** El de C# reconstruía con la leída al
+  arrancar y perdía lo editado desde entonces.
+- **El dock ya no tapa un segundo un vídeo a pantalla completa tras un rebuild**: la
+  pantalla completa se decide antes de enseñar la ventana, no al primer tic del vigilante.
+
 ### Cambiado
 
 - **El dock de C# sale del repo**: pasa a `legacy/` (ignorada por git) y queda entero en el

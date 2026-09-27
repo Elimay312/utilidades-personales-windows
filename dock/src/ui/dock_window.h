@@ -90,6 +90,8 @@ class DockWindow {
   std::vector<DockApp> WithTrash(std::vector<DockApp> head) const;
   // Arrastrar: solo lo anclado (lo que va antes del separador de las abiertas).
   int DraggableEnd() const;
+  // La última posición a la que puede ir lo cogido.
+  int DragLast() const;
   void OnDragMove(int x, int y);
   bool PulledOff(int y) const;
   void ApplyDragShifts();

@@ -90,6 +90,9 @@ abajo.
 - **El atajo de perfil en C++** (`atajoPerfil`): rota «sin perfil» → cada perfil → vuelta, y
   las tres pantallas se recargan en ~20 ms. El perfil activo se guarda en `dock.local.json`.
   Tiene que llevar un modificador: una tecla sola se le quitaría a todo el sistema.
+- **Anclar arrastrando**: una app abierta sin anclar se arrastra hasta lo anclado y se queda
+  en el puesto donde se suelta, como en macOS. Soltada entre las abiertas o tirada hacia
+  arriba, vuelve a su sitio. Antes solo se anclaba con el menú del clic derecho.
 - **El autoarranque solo lo toca la copia instalada**, para que una build de desarrollo no
   se registre en el inicio de sesión del usuario.
 - **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.

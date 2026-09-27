@@ -74,6 +74,11 @@ bool DockWindow::PulledOff(int y) const {
   return y < barTop - Px(kPullOffDistance);
 }
 
+// Lo anclado se mueve entre lo anclado. Una app abierta sin anclar se mueve desde su sitio
+// hacia la izquierda, pasando por el separador: soltarla antes de él la ancla ahí, como en
+// macOS. Por eso su orden abarca todo lo que hay hasta ella, separador incluido.
+int DockWindow::DragLast() const { return pressedIndex_ > DraggableEnd() ? pressedIndex_ : DraggableEnd() - 1; }
+
 void DockWindow::OnDragMove(int x, int y) {
   if (!dragging_) {
     // El umbral mira las DOS direcciones: mirando solo la X, sacar un icono tirando recto
@@ -81,7 +86,7 @@ void DockWindow::OnDragMove(int x, int y) {
     if (std::max(std::abs(x - press_.x), std::abs(y - press_.y)) < Px(kDragThreshold)) return;
     dragging_ = true;
     dragOrder_.clear();
-    for (int i = 0; i < DraggableEnd(); i++) dragOrder_.push_back(i);
+    for (int i = 0; i <= DragLast(); i++) dragOrder_.push_back(i);
     visuals_->SetLabel(-1);
     visuals_->SetLifted(pressedIndex_, true);
     // Ahora sí: el ratón aunque salga de la ventana, para poder sacarlo hacia arriba.
@@ -91,7 +96,7 @@ void DockWindow::OnDragMove(int x, int y) {
   // Donde va el dedo, sin muelle: interpolar aquí solo añadiría retraso.
   visuals_->SetShift(pressedIndex_, static_cast<float>(x - press_.x));
   if (PulledOff(y)) return;  // arriba, fuera del dock: nadie hace hueco
-  const int over = std::clamp(curve_.SlotAt(lastRest_), 0, DraggableEnd() - 1);
+  const int over = std::clamp(curve_.SlotAt(lastRest_), 0, DragLast());
   const auto from = std::find(dragOrder_.begin(), dragOrder_.end(), pressedIndex_);
   if (curve_.SlotAt(lastRest_) < 0 || from - dragOrder_.begin() == over) return;
   dragOrder_.erase(from);
@@ -122,8 +127,25 @@ std::vector<DockApp> DockWindow::WithTrash(std::vector<DockApp> head) const {
 }
 
 void DockWindow::FinishDrag(int y) {
-  dragging_ = false;
   const int dragged = pressedIndex_;
+  if (dragged > DraggableEnd()) {
+    // Una abierta sin anclar: se ancla solo si se soltó antes del separador. Tirada hacia
+    // arriba o devuelta a las abiertas, vuelve a su sitio (no hay nada que quitar).
+    const auto at = std::find(dragOrder_.begin(), dragOrder_.end(), dragged);
+    const auto separator = std::find(dragOrder_.begin(), dragOrder_.end(), DraggableEnd());
+    if (PulledOff(y) || at > separator) {
+      CancelDrag();
+      return;
+    }
+    dragging_ = false;
+    pressedIndex_ = -1;
+    std::vector<DockApp> pinned;
+    for (auto it = dragOrder_.begin(); it != separator; ++it) pinned.push_back(drawn_[*it]);
+    LogInfo(L"[dock] anclada '{}' arrastrándola, en el puesto {}", drawn_[dragged].name, at - dragOrder_.begin() + 1);
+    app_.SaveAndReload(monitor_.device, base_, WithTrash(std::move(pinned)), 1);
+    return;
+  }
+  dragging_ = false;
   pressedIndex_ = -1;
   std::vector<DockApp> order;
   for (int index : dragOrder_) order.push_back(drawn_[index]);
@@ -1097,7 +1119,11 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
 
     case WM_LBUTTONDOWN: {
       const int index = curve_.SlotAt(lastRest_);
-      pressedIndex_ = index >= 0 && index < DraggableEnd() ? index : -1;
+      // Lo anclado, y las abiertas sin anclar (para anclarlas arrastrando); la papelera no.
+      const bool pinned = index >= 0 && index < DraggableEnd();
+      const bool open = index > DraggableEnd() && index < static_cast<int>(drawn_.size()) &&
+                        !drawn_[index].separator && drawn_[index].target != kTrashTarget;
+      pressedIndex_ = pinned || open ? index : -1;
       press_ = POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
       return 0;
     }

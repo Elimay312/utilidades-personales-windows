@@ -2,7 +2,9 @@
 
 #include <shellapi.h>  // ABN_*
 #include <shellscalingapi.h>
+#include <windowsx.h>  // GET_X_LPARAM
 
+#include <algorithm>
 #include <cmath>
 
 #include "app.h"
@@ -35,9 +37,6 @@ constexpr UINT kHideDelayMs = 450;
 // El muelle de 70 ms está al 99,9% a los 100 ms: la región se encoge después, porque
 // también recorta el dibujo y encogerla antes hacía desaparecer la barra en vez de bajarla.
 constexpr UINT kSlideSettleMs = 150;
-
-// ponytail: sin iconos todavía (F4), la barra mide como 8 huecos. Se va con la curva real.
-constexpr int kPlaceholderSlots = 8;
 
 bool Same(const std::vector<RECT>& a, const std::vector<RECT>& b) {
   if (a.size() != b.size()) return false;
@@ -82,8 +81,11 @@ bool DockWindow::Create() {
   RefreshMonitor();
   // NOACTIVATE + TOOLWINDOW: ni foco ni Alt+Tab. NOREDIRECTIONBITMAP: todo lo pinta
   // Composition, y sin él DWM reservaría un mapa de bits del tamaño de la ventana entera.
+  // Nace ya en su monitor: creada en 0,0 (la principal) y movida después, llegaba un
+  // WM_DPICHANGED por cada pantalla con otra escala y se reconstruía todo dos veces.
   hwnd_ = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP,
-                          kClassName, L"Dock", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, instance, this);
+                          kClassName, L"Dock", WS_POPUP, monitor_.work.left, monitor_.work.top, 1, 1, nullptr,
+                          nullptr, instance, this);
   if (!hwnd_) {
     LogError(L"[dock] CreateWindowExW falló: {}", GetLastError());
     return false;
@@ -97,6 +99,7 @@ bool DockWindow::Create() {
 
   registered_ = AppBarRegister(hwnd_);
   Reposition();
+  BuildVisuals({});  // la barra con su ancho ya; los iconos llegan del worker
 
   // Tras un rebuild se arranca escondido, salvo que el ratón ya esté encima: si no, el dock
   // desaparecía bajo el cursor al enchufar una pantalla.
@@ -134,8 +137,41 @@ void DockWindow::RefreshMonitor() {
   else LogError(L"[dpi] {}: GetDpiForMonitor falló, sigo con {}", monitor_.device, dpi_);
 }
 
+Curve DockWindow::CurveFor() const {
+  const float s = dpi_ / 96.0f;
+  const float icon = config_.iconSize * s;
+  const float spacing = config_.iconSpacing * s;
+  const float separator = std::max(2.0f, spacing * 0.2f);
+  std::vector<Slot> slots;
+  for (const DockApp& app : config_.apps)
+    slots.push_back(app.separator ? Slot{separator + spacing, separator} : Slot{icon + spacing, icon});
+  // Sin nada configurado la ventana necesita igualmente un tamaño con sentido.
+  if (slots.empty()) slots.push_back(Slot{icon + spacing, icon});
+  // 1,75 huecos: con 2,5 el dock se ensanchaba un 62% al pasar el ratón; así crecen ~3 iconos.
+  return Curve(std::move(slots), (icon + spacing) * kRadiusInSlots, config_.magnification);
+}
+
+void DockWindow::BuildVisuals(const IconSet& icons) {
+  curve_ = CurveFor();
+  std::vector<DockItem> items;
+  for (const DockApp& app : config_.apps) items.push_back({app.name, app.IconSource(), app.separator});
+  const float s = dpi_ / 96.0f;
+  try {
+    visuals_->Build(curve_, items, icons, static_cast<float>(width_), static_cast<float>(height_), kPadding * s,
+                    config_.iconSize * s, s);
+  } catch (const winrt::hresult_error& e) {
+    LogError(L"[dock] {}: construir el dock falló ({:#010x}) {}", monitor_.device,
+             static_cast<unsigned>(e.code().value), std::wstring(e.message()));
+  }
+  region_.clear();  // el ancho de la barra ha cambiado: la región se recalcula sí o sí
+  ApplyRegion();
+}
+
+void DockWindow::ShowIcons(const IconSet& icons) { BuildVisuals(icons); }
+
 void DockWindow::Reposition() {
   const int barHeight = Px(config_.iconSize + 2 * kPadding);
+  const int oldWidth = width_, oldHeight = height_;
   width_ = monitor_.work.right - monitor_.work.left;
   height_ = static_cast<int>(std::ceil((config_.iconSize * config_.magnification + 2 * kPadding + kLabelRoom) * dpi_ / 96.0f));
 
@@ -149,16 +185,18 @@ void DockWindow::Reposition() {
   }
   SetWindowPos(hwnd_, HWND_TOPMOST, monitor_.work.left, bottom - height_, width_, height_, SWP_NOACTIVATE);
 
-  // ponytail: ancho en reposo de los huecos de relleno; en F4 lo lleva una expresión.
-  const float slot = static_cast<float>(config_.iconSize + config_.iconSpacing);
-  visuals_->LayoutBar(static_cast<float>(width_), static_cast<float>(height_),
-                      static_cast<float>(Px(kPlaceholderSlots * slot + 2 * kPadding)), static_cast<float>(barHeight));
+  // Las expresiones llevan el ancho de la ventana dentro (para centrar la fila): si cambia,
+  // hay que reconstruir, y los píxeles de los iconos ya no están, así que se piden otra vez.
+  if (oldWidth && (oldWidth != width_ || oldHeight != height_)) {
+    BuildVisuals({});
+    app_.RequestIcons();
+  }
 }
 
 RECT DockWindow::BarRect(bool tall) const {
-  const float slot = static_cast<float>(config_.iconSize + config_.iconSpacing);
-  const float widest = kPlaceholderSlots * slot + (config_.magnification - 1) * kRadiusInSlots * slot;
-  const int half = Px(widest / 2 + kPadding) + 2;
+  // Lo más ancho que llega a ser la fila, magnificada, más el margen de la barra.
+  const float widest = curve_.RestWidth() + curve_.MaxGrowth();
+  const int half = static_cast<int>(std::ceil(widest / 2 + kPadding * dpi_ / 96.0f)) + 2;
   const int barHeight = Px(config_.iconSize + 2 * kPadding);
   int top = height_ - barHeight - Px(config_.iconSize * (config_.magnification - 1));
   if (tall) top -= Px(kLabelStrip);
@@ -302,10 +340,28 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
       KillTimer(hwnd_, kHideTimer);
       if (!revealed_) Reveal();
       else ApplyRegion();
+      if (curve_.Count() > 0) {
+        // Lo ÚNICO que hace el hilo de UI por cada movimiento: invertir la curva y escribir
+        // un escalar. El resto lo evalúa DWM.
+        const float rest = curve_.Invert(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(width_));
+        visuals_->SetCursor(rest);
+        if (!hoverShown_) {
+          hoverShown_ = true;
+          visuals_->SetHover(true);
+        }
+        const int slot = curve_.SlotAt(rest);
+        visuals_->SetLabel(slot);
+        LogTrace(L"[hover] x={} idx={} reposo={:.1f}", GET_X_LPARAM(lparam), slot, rest);
+      }
       return 0;
 
     case WM_MOUSELEAVE:
       hovering_ = false;
+      if (hoverShown_) {
+        hoverShown_ = false;
+        visuals_->SetHover(false);
+        visuals_->SetLabel(-1);
+      }
       ApplyRegion();
       if (config_.autoHide) SetTimer(hwnd_, kHideTimer, kHideDelayMs, nullptr);
       return 0;

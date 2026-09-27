@@ -11,6 +11,7 @@
 #include "check.h"
 #include "core/log.h"
 #include "core/paths.h"
+#include "system/icons.h"
 
 using namespace dock;
 
@@ -43,6 +44,13 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
   int argc = 0;
   wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
   bool check = false;
+  // El proceso hijo que extrae iconos (ver ExtractIconsOutOfProcess): ni log ni mutex.
+  if (argc > 1 && std::wstring(argv[1]) == L"--extraer") {
+    LocalFree(argv);
+    const int code = RunExtractor();
+    OleUninitialize();
+    return code;
+  }
   // --config=<ruta>: otro dock.json, para probar sin tocar el del usuario.
   std::filesystem::path configPath = AppDataDir() / L"dock.json";
   for (int i = 1; i < argc; i++) {
@@ -53,7 +61,7 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
   LocalFree(argv);
 
   if (check) {
-    const int failures = RunChecks();
+    const int failures = RunChecks(configPath);
     OleUninitialize();
     return failures;
   }

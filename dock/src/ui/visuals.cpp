@@ -1,18 +1,28 @@
 #include "ui/visuals.h"
 
 #include <DispatcherQueue.h>
+#include <d2d1_1.h>
+#include <d3d11.h>
+#include <dxgi.h>
 #include <windows.ui.composition.interop.h>
+#include <wrl/client.h>
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Numerics.h>
+#include <winrt/Windows.Graphics.DirectX.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <format>
 
 #include "core/log.h"
+#include "ui/text.h"
 
 namespace wuc = winrt::Windows::UI::Composition;
+using Microsoft::WRL::ComPtr;
 
 namespace dock {
 namespace {
@@ -33,6 +43,84 @@ wuc::Compositor SharedCompositor() {
   return compositor;
 }
 
+// El device que sube píxeles a superficies. WARP y no el adaptador de verdad: no renderiza
+// ni un fotograma, solo sube píxeles, y HARDWARE mapeaba el driver de usuario entero con su
+// pool de shaders (medido en C#: 79,6 frente a 34,9 MB privados, 70 frente a 25 hilos). Se
+// crea la primera vez que hace falta una superficie.
+wuc::CompositionGraphicsDevice Graphics() {
+  static wuc::CompositionGraphicsDevice graphics{nullptr};
+  if (graphics) return graphics;
+  ComPtr<ID3D11Device> d3d;
+  // BGRA_SUPPORT: sin él Direct2D no puede usar el device.
+  winrt::check_hresult(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                                         nullptr, 0, D3D11_SDK_VERSION, &d3d, nullptr, nullptr));
+  ComPtr<IDXGIDevice> dxgi;
+  winrt::check_hresult(d3d.As(&dxgi));
+  ComPtr<ID2D1Device> d2d;
+  winrt::check_hresult(D2D1CreateDevice(dxgi.Get(), nullptr, &d2d));
+  winrt::check_hresult(SharedCompositor().as<ABI::Windows::UI::Composition::ICompositorInterop>()->CreateGraphicsDevice(
+      d2d.Get(), reinterpret_cast<ABI::Windows::UI::Composition::ICompositionGraphicsDevice**>(winrt::put_abi(graphics))));
+  return graphics;
+}
+
+// Dibuja en una superficie nueva de w x h. BeginDraw puede devolver un hueco dentro de un
+// atlas compartido: se dibuja en el offset que indica y se limpia antes, o se arrastran los
+// píxeles del inquilino anterior.
+template <class Paint>
+wuc::CompositionDrawingSurface Surface(float width, float height, Paint paint) {
+  auto surface = Graphics().CreateDrawingSurface(
+      {width, height}, winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+      winrt::Windows::Graphics::DirectX::DirectXAlphaMode::Premultiplied);
+  auto interop = surface.as<ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
+  ComPtr<ID2D1DeviceContext> context;
+  POINT offset{};
+  winrt::check_hresult(interop->BeginDraw(nullptr, IID_PPV_ARGS(&context), &offset));
+  // Nace con el ppp del escritorio (120 aquí) y DrawBitmap trabaja en DIP: sin esto el
+  // dibujo sale un 25% más grande que la superficie, recortado.
+  context->SetDpi(96, 96);
+  context->Clear(D2D1::ColorF(0, 0, 0, 0));
+  paint(context.Get(), offset);
+  interop->EndDraw();
+  return surface;
+}
+
+std::map<std::pair<std::wstring, int>, wuc::CompositionSurfaceBrush>& IconCache() {
+  static std::map<std::pair<std::wstring, int>, wuc::CompositionSurfaceBrush> cache;
+  return cache;
+}
+
+// Superficie del icono a su tamaño máximo de dibujo (icono × magnificación), no a 256: el de
+// C# subía 256x256 por icono y por pantalla, 256 KB cada una. Se comparte entre docks.
+wuc::CompositionSurfaceBrush IconBrush(const wuc::Compositor& compositor, const std::wstring& key, int px,
+                                       const IconBitmap& icon) {
+  auto& cache = IconCache();
+  if (auto found = cache.find({key, px}); found != cache.end()) return found->second;
+  auto surface = Surface(static_cast<float>(px), static_cast<float>(px), [&](ID2D1DeviceContext* context, POINT at) {
+    ComPtr<ID2D1Bitmap1> bitmap;
+    const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    if (FAILED(context->CreateBitmap(D2D1::SizeU(icon.width, icon.height), icon.bgra.data(), icon.width * 4, props,
+                                     &bitmap)))
+      return;
+    const float fit = static_cast<float>(px) / std::max(icon.width, icon.height);
+    const float w = icon.width * fit, h = icon.height * fit;
+    const D2D1_RECT_F dest = D2D1::RectF(at.x + (px - w) / 2, at.y + (px - h) / 2, at.x + (px + w) / 2, at.y + (px + h) / 2);
+    // MULTI_SAMPLE_LINEAR, no HIGH_QUALITY_CUBIC: el cúbico va por efectos y WARP compila sus
+    // sombreadores en la CPU. Medido con diez iconos en tres pantallas: cúbico 32,7 MB y 21
+    // hilos, este 25,0 MB y 18, y sus píxeles casi idénticos (27 de 30800 difieren en más de
+    // 30/765). LINEAR daba 20,8 MB pero con dientes: 1056 píxeles distintos.
+    // ponytail: escalar en WARP cuesta ~4 MB; extraer ya al tamaño de cada pantalla en el
+    // proceso hijo se lo ahorraría, si la memoria aprieta.
+    context->DrawBitmap(bitmap.Get(), &dest, 1.0f, D2D1_INTERPOLATION_MODE_MULTI_SAMPLE_LINEAR);
+    // El ID2D1Bitmap se suelta al salir de aquí (ComPtr): en C# esperaba al finalizador.
+  });
+  auto brush = compositor.CreateSurfaceBrush(surface);
+  // Por defecto Stretch es None y el visual enseñaría un recorte del centro.
+  brush.Stretch(wuc::CompositionStretch::Uniform);
+  cache.emplace(std::make_pair(key, px), brush);
+  return brush;
+}
+
 wuc::CompositionBrush AcrylicBrush(const wuc::Compositor& compositor) {
   // El material NO se le pide a DWM (DWMWA_SYSTEMBACKDROP_TYPE): la ventana ocupa todo el
   // ancho del monitor y un backdrop de DWM pintaría el rectángulo entero. HostBackdrop
@@ -45,6 +133,62 @@ wuc::CompositionBrush AcrylicBrush(const wuc::Compositor& compositor) {
   }
 }
 
+// --- Expresiones --------------------------------------------------------------------
+//
+// Tienen un límite de longitud que se alcanza antes de lo que parece: cada icono repetía
+// cuatro veces G(−c/R) y dos la transferencia del ancho total. Así que los subtérminos
+// compartidos (G0, TW, Origin) se calculan UNA vez como animaciones del property set y los
+// iconos solo los referencian. El orden importa: TW usa G0 y Origin usa TW.
+
+// Decimales fijos: nada de exponentes ("1e-05") ni de coma decimal, que el lenguaje de
+// expresiones no entiende. std::format no usa la configuración regional.
+std::wstring F(float value) { return std::format(L"{:.6f}", value); }
+
+std::wstring G(const std::wstring& t) {
+  const std::wstring clamped = L"Clamp(" + t + L",-1,1)";
+  return L"(" + clamped + L"*0.5 + Sin(3.14159265*" + clamped + L")*0.15915494)";
+}
+
+std::wstring GAt(const Curve& curve, float u) { return G(L"((" + F(u) + L" - P.C)*" + F(1 / curve.Radius()) + L")"); }
+
+// T(u) − Origin: la transferencia sin centrar.
+std::wstring Transfer(const Curve& curve, float u) {
+  return L"(" + F(u) + L" + " + F(curve.MaxGrowth()) + L"*P.Amount*(" + GAt(curve, u) + L" - P.G0))";
+}
+
+// El borde izquierdo proyectado. I.Bounce e I.Shift son propiedades del propio visual:
+// rebote y arrastre suman dentro de la misma expresión en vez de pelearse con ella por
+// Offset. Shift va DESPUÉS de Transfer, en píxeles de pantalla: dentro arrastraría el
+// término G entero y rompería el límite de longitud.
+std::wstring IconOffset(const Curve& curve, int i, float top) {
+  return L"Vector3(P.Origin + " + Transfer(curve, curve.RestLeft(i)) + L" + I.Shift, " + F(top) + L" - I.Bounce, 0)";
+}
+
+// Escala = ancho proyectado / ancho en reposo. Al restar los bordes el anclaje G0 se cancela
+// solo y la expresión sale más corta.
+std::wstring IconScale(const Curve& curve, int i) {
+  const float a = curve.RestLeft(i), b = curve.RestRight(i);
+  const std::wstring s = L"((" + F(b - a) + L" + " + F(curve.MaxGrowth()) + L"*P.Amount*(" + GAt(curve, b) + L" - " +
+                         GAt(curve, a) + L"))*" + F(1 / curve.At(i).content) + L")";
+  return L"Vector3(" + s + L", " + s + L", 1)";
+}
+
+// Centro del elemento menos medio ancho: para la etiqueta (y en F5 el puntito). Lleva el
+// mismo Shift que el icono, o se quedaría atrás al arrastrarlo.
+std::wstring ItemCenter(const Curve& curve, int i, float width, float top) {
+  return L"Vector3(P.Origin + (" + Transfer(curve, curve.RestLeft(i)) + L" + " + Transfer(curve, curve.RestRight(i)) +
+         L")*0.5 - " + F(width / 2) + L" + I.Shift, " + F(top) + L", 0)";
+}
+
+void Animate(const wuc::Compositor& compositor, const wuc::CompositionObject& target, const std::wstring& property,
+             const std::wstring& expression, const wuc::CompositionPropertySet& props,
+             const wuc::CompositionObject& self = nullptr) {
+  auto animation = compositor.CreateExpressionAnimation(expression);
+  animation.SetReferenceParameter(L"P", props);
+  if (self) animation.SetReferenceParameter(L"I", self);
+  target.StartAnimation(property, animation);
+}
+
 }  // namespace
 
 Visuals::Visuals(HWND hwnd) : compositor_(SharedCompositor()) {
@@ -54,37 +198,123 @@ Visuals::Visuals(HWND hwnd) : compositor_(SharedCompositor()) {
   root_.RelativeSizeAdjustment({1, 1});
   target_.Root(root_);
 
-  // La barra: acrílico debajo y un tinte blanco translúcido encima. Sin el tinte, sobre un
-  // fondo oscuro el desenfoque queda casi negro y los iconos no se leen.
-  bar_ = compositor_.CreateContainerVisual();
-  corners_ = compositor_.CreateRoundedRectangleGeometry();
-  // Esquinas recortadas en el compositor, con antialias. SetWindowRgn recortaría sin
-  // suavizar.
-  bar_.Clip(compositor_.CreateGeometricClip(corners_));
+  // La ÚNICA entrada de la animación: el cursor en reposo y la intensidad del hover.
+  props_ = compositor_.CreatePropertySet();
+  props_.InsertScalar(L"C", 0);
+  props_.InsertScalar(L"Amount", 0);
+}
 
+void Visuals::ClearIconCache() { IconCache().clear(); }
+
+void Visuals::Build(const Curve& curve, const std::vector<DockItem>& items, const IconSet& icons, float windowWidth,
+                    float windowHeight, float padding, float iconSize, float scale) {
+  root_.Children().RemoveAll();
+  labels_.clear();
+  labelShown_ = -1;
+
+  props_.InsertScalar(L"G0", 0);
+  props_.InsertScalar(L"TW", curve.RestWidth());
+  props_.InsertScalar(L"Origin", 0);
+  Animate(compositor_, props_, L"G0", G(L"((0 - P.C)*" + F(1 / curve.Radius()) + L")"), props_);
+  Animate(compositor_, props_, L"TW", Transfer(curve, curve.RestWidth()), props_);
+  Animate(compositor_, props_, L"Origin", L"((" + F(windowWidth) + L" - P.TW)*0.5)", props_);
+
+  // La barra: acrílico debajo y un tinte blanco translúcido encima (sin él, sobre un fondo
+  // oscuro el desenfoque queda casi negro y los iconos no se leen). Crece con la fila, como
+  // en macOS: la ventana es fija y del tamaño máximo, la barra sigue a los iconos.
+  const float barHeight = iconSize + padding * 2;
+  const float barTop = windowHeight - barHeight;
+  auto bar = compositor_.CreateContainerVisual();
+  Animate(compositor_, bar, L"Offset", L"Vector3(P.Origin - " + F(padding) + L", " + F(barTop) + L", 0)", props_);
+  Animate(compositor_, bar, L"Size", L"Vector2(P.TW + " + F(padding * 2) + L", " + F(barHeight) + L")", props_);
+  // Esquinas recortadas en el compositor, con antialias; la geometría lleva su propio Size.
+  auto corners = compositor_.CreateRoundedRectangleGeometry();
+  corners.CornerRadius({barHeight * 0.28f, barHeight * 0.28f});
+  Animate(compositor_, corners, L"Size", L"Vector2(P.TW + " + F(padding * 2) + L", " + F(barHeight) + L")", props_);
+  bar.Clip(compositor_.CreateGeometricClip(corners));
   auto material = compositor_.CreateSpriteVisual();
   material.RelativeSizeAdjustment({1, 1});
   material.Brush(AcrylicBrush(compositor_));
-  bar_.Children().InsertAtBottom(material);
-
+  bar.Children().InsertAtBottom(material);
   auto tint = compositor_.CreateSpriteVisual();
   tint.RelativeSizeAdjustment({1, 1});
   tint.Brush(compositor_.CreateColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(48, 255, 255, 255)));
-  bar_.Children().InsertAtTop(tint);
+  bar.Children().InsertAtTop(tint);
+  root_.Children().InsertAtBottom(bar);
+  hiddenOffset_ = barHeight;
 
-  root_.Children().InsertAtBottom(bar_);
+  const int iconPx = static_cast<int>(std::ceil(iconSize * curve.MaxScale()));
+  const float iconTop = windowHeight - padding - iconSize;
+  for (int i = 0; i < curve.Count() && i < static_cast<int>(items.size()); i++) {
+    const DockItem& item = items[i];
+    auto visual = compositor_.CreateSpriteVisual();
+    float top = iconTop;
+    if (item.separator) {
+      // Una raya fina y discreta, más corta que los iconos.
+      visual.Brush(compositor_.CreateColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(60, 255, 255, 255)));
+      visual.Size({curve.At(i).content, iconSize * 0.55f});
+      top = windowHeight - padding - iconSize * 0.55f;
+    } else {
+      if (auto found = icons.find(item.iconKey); found != icons.end())
+        visual.Brush(IconBrush(compositor_, item.iconKey, iconPx, found->second));
+      visual.Size({curve.At(i).content, iconSize});
+    }
+    // CenterPoint en el borde INFERIOR izquierdo: crece hacia arriba y a la derecha.
+    visual.CenterPoint({0, visual.Size().y, 0});
+    visual.Properties().InsertScalar(L"Bounce", 0);
+    visual.Properties().InsertScalar(L"Shift", 0);
+    Animate(compositor_, visual, L"Offset", IconOffset(curve, i, top), props_, visual);
+    Animate(compositor_, visual, L"Scale", IconScale(curve, i), props_);
+    root_.Children().InsertAtTop(visual);
+
+    if (item.separator || item.name.empty()) {
+      labels_.push_back(nullptr);
+      continue;
+    }
+    // Una etiqueta por elemento y no una compartida que se redibuje: así la coloca una
+    // expresión, como todo lo demás, y sigue al icono al magnificarse o arrastrarse.
+    const TextSize size = MeasureLabel(item.name, scale);
+    auto label = compositor_.CreateSpriteVisual();
+    label.Size({size.width, size.height});
+    label.Opacity(0);
+    label.Brush(compositor_.CreateSurfaceBrush(Surface(size.width, size.height, [&](ID2D1DeviceContext* context, POINT at) {
+      DrawLabel(context, item.name, scale, size, at);
+    })));
+    // Justo encima de donde llega el icono del todo magnificado: el aire que reserva la
+    // ventana (kLabelRoom en DockWindow).
+    const float labelTop = windowHeight - padding - iconSize * curve.MaxScale() - size.height - padding * 0.4f;
+    Animate(compositor_, label, L"Offset", ItemCenter(curve, i, size.width, labelTop), props_, visual);
+    root_.Children().InsertAtTop(label);
+    labels_.push_back(label);
+  }
 }
 
-void Visuals::LayoutBar(float windowWidth, float windowHeight, float barWidth, float barHeight) {
-  barHeight_ = barHeight;
-  bar_.Size({barWidth, barHeight});
-  bar_.Offset({(windowWidth - barWidth) / 2, windowHeight - barHeight, 0});
-  corners_.Size({barWidth, barHeight});
-  corners_.CornerRadius({barHeight * 0.28f, barHeight * 0.28f});
+void Visuals::SetCursor(float rest) { props_.InsertScalar(L"C", rest); }
+
+void Visuals::SetHover(bool hovering) {
+  auto spring = compositor_.CreateSpringScalarAnimation();
+  spring.DampingRatio(0.85f);
+  spring.Period(std::chrono::milliseconds(40));
+  spring.FinalValue(hovering ? 1.0f : 0.0f);
+  props_.StartAnimation(L"Amount", spring);
+}
+
+void Visuals::SetLabel(int index) {
+  if (index == labelShown_) return;
+  auto fade = [&](int i, float target) {
+    if (i < 0 || i >= static_cast<int>(labels_.size()) || !labels_[i]) return;
+    auto animation = compositor_.CreateScalarKeyFrameAnimation();
+    animation.InsertKeyFrame(1, target);
+    animation.Duration(std::chrono::milliseconds(target > 0 ? 140 : 90));
+    labels_[i].StartAnimation(L"Opacity", animation);
+  };
+  fade(labelShown_, 0);
+  labelShown_ = index;
+  fade(index, 1);
 }
 
 void Visuals::Slide(bool hidden, bool instant) {
-  const float target = hidden ? barHeight_ : 0.0f;
+  const float target = hidden ? hiddenOffset_ : 0.0f;
   if (instant) {
     root_.StopAnimation(L"Offset.Y");
     root_.Offset({0, target, 0});

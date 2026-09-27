@@ -1,11 +1,31 @@
 #include "app.h"
 
+#include <chrono>
+#include <set>
+
 #include "core/log.h"
+#include "system/icons.h"
 
 namespace dock {
+
+struct IconResult {
+  unsigned round = 0;
+  IconSet icons;
+};
+
 namespace {
 
 constexpr wchar_t kHostClass[] = L"DockHost";
+constexpr UINT kIconsReady = WM_APP + 1;
+
+// Desde que arrancó el proceso, para dejar constancia de cuánto tardan los iconos en verse.
+double MsSinceStart() {
+  FILETIME created{}, exited{}, kernel{}, user{}, now{};
+  GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
+  GetSystemTimePreciseAsFileTime(&now);
+  const auto ticks = [](FILETIME f) { return (static_cast<unsigned long long>(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
+  return (ticks(now) - ticks(created)) / 10000.0;
+}
 constexpr UINT_PTR kDisplayTimer = 1;
 // Enchufar una pantalla manda varios WM_DISPLAYCHANGE seguidos; se reconstruye una vez.
 constexpr UINT kDisplayDebounceMs = 400;
@@ -46,6 +66,7 @@ int App::Run() {
   taskbarCreatedMessage_ = RegisterWindowMessageW(L"TaskbarCreated");
   if (!RegisterShellHookWindow(host_)) LogError(L"[shell] RegisterShellHookWindow falló: {}", GetLastError());
 
+  worker_.Start();
   Rebuild();
 
   MSG message{};
@@ -74,6 +95,34 @@ void App::Rebuild() {
     if (window->Create()) docks_.push_back(std::move(window));
   }
   LogInfo(L"[dock] {} monitor(es)", docks_.size());
+  RequestIcons();
+}
+
+void App::RequestIcons() {
+  std::set<std::wstring> keys;
+  for (const DockApp& app : config_.apps)
+    if (!app.separator) keys.insert(app.IconSource());
+  const unsigned round = ++iconRound_;
+  const HWND host = host_;
+  worker_.Post([keys = std::vector<std::wstring>(keys.begin(), keys.end()), round, host] {
+    const auto start = std::chrono::steady_clock::now();
+    auto* result = new IconResult{round, ExtractIconsOutOfProcess(keys)};
+    for (const std::wstring& key : keys)
+      if (!result->icons.contains(key)) LogError(L"[iconos] sin icono para {}", key);
+    LogTrace(L"[iconos] {} extraídos en {:.0f} ms (proceso hijo)", result->icons.size(),
+             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+    // Si la anfitriona ya no existe (saliendo), nadie va a recoger esto.
+    if (!PostMessageW(host, kIconsReady, 0, reinterpret_cast<LPARAM>(result))) delete result;
+  });
+}
+
+void App::OnIcons(IconResult* raw) {
+  std::unique_ptr<IconResult> result(raw);
+  if (result->round != iconRound_) return;  // la config cambió mientras se extraían
+  Visuals::ClearIconCache();
+  for (auto& dockWindow : docks_) dockWindow->ShowIcons(result->icons);
+  LogInfo(L"[iconos] {} en pantalla ({:.0f} ms desde el arranque)", result->icons.size(), MsSinceStart());
+  // Aquí se sueltan los píxeles: las superficies ya tienen su copia.
 }
 
 LRESULT CALLBACK App::HostProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -99,6 +148,10 @@ LRESULT App::HandleHost(UINT message, WPARAM wparam, LPARAM lparam) {
   }
 
   switch (message) {
+    case kIconsReady:
+      OnIcons(reinterpret_cast<IconResult*>(lparam));
+      return 0;
+
     case WM_DISPLAYCHANGE:
       SetTimer(host_, kDisplayTimer, kDisplayDebounceMs, nullptr);
       return 0;
@@ -117,6 +170,7 @@ LRESULT App::HandleHost(UINT message, WPARAM wparam, LPARAM lparam) {
       return 0;
 
     case WM_CLOSE:
+      worker_.Stop();  // lo que responda ya no encuentra anfitriona y se borra solo
       docks_.clear();
       DeregisterShellHookWindow(host_);
       DestroyWindow(host_);

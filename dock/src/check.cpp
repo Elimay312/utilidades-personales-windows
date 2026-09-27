@@ -1,12 +1,18 @@
-// --check: lógica pura, sin abrir ventanas. Cada fallo se imprime y el código de salida es
-// el número de fallos.
+// --check: lo que se puede comprobar sin enseñar nada. Cada fallo se imprime y el código de
+// salida es el número de fallos.
 #include "check.h"
 
+#include <windows.h>
+
+#include <cmath>
 #include <cstdio>
 #include <string>
 
 #include "core/jsonc.h"
 #include "model/config.h"
+#include "model/magnify.h"
+#include "system/icons.h"
+#include "ui/visuals.h"
 
 namespace dock {
 namespace {
@@ -52,13 +58,163 @@ void CheckConfig() {
 
   const DockConfig f = ParseConfig("no es json");
   Expect(f.iconSize == 48, "config rota da valores por defecto");
+
+  const DockConfig g = ParseConfig(R"({"apps": [
+    {"name": "Bloc", "target": "C:/Windows/notepad.exe"},
+    {"separator": true},
+    {"name": "Web", "target": "https://example.com/a/b"},
+    {"name": "Sin target"}
+  ]})");
+  Expect(g.apps.size() == 3, "apps: la entrada sin target se ignora");
+  Expect(g.apps.size() == 3 && g.apps[0].target == L"C:\\Windows\\notepad.exe", "apps: / pasa a \\");
+  Expect(g.apps.size() == 3 && g.apps[1].separator, "apps: separador");
+  Expect(g.apps.size() == 3 && g.apps[2].target == L"https://example.com/a/b", "apps: una URL no se toca");
+  Expect(IsUrl(L"steam://rungameid/1") && !IsUrl(L"C:\\x") && !IsUrl(L"shell:RecycleBinFolder"), "IsUrl");
+}
+
+// A propósito con ranuras de anchos DISTINTOS: el caso general desde que hay separadores.
+void CheckMagnify() {
+  const Slot icon{80, 60}, separator{24, 2};
+  const Curve curve({icon, icon, separator, icon, icon, separator, icon}, 200, 2);
+  const float width = curve.RestWidth() + curve.MaxGrowth();
+
+  for (float c : {0.0f, 30.0f, 120.0f, curve.RestWidth() * 0.5f, curve.RestWidth() - 40, curve.RestWidth()}) {
+    // Las ranuras particionan la fila: sin perder ni ganar píxeles, y sin solaparse.
+    float sum = 0;
+    for (int i = 0; i < curve.Count(); i++) {
+      const float from = curve.Project(curve.SlotStart(i), width, c);
+      const float to = curve.Project(curve.SlotStart(i) + curve.At(i).width, width, c);
+      Expect(to > from, "curva: ranura de ancho <= 0");
+      sum += to - from;
+    }
+    const float total = curve.Project(curve.RestWidth(), width, c) - curve.Project(0, width, c);
+    Expect(std::abs(sum - total) < 0.01f, "curva: las ranuras no particionan la fila");
+    for (int i = 0; i + 1 < curve.Count(); i++)
+      Expect(curve.Project(curve.RestLeft(i + 1), width, c) >= curve.Project(curve.RestRight(i), width, c) - 0.001f,
+             "curva: dos elementos se solapan");
+    // Monótona: si no, los iconos se cruzarían.
+    float previous = -1e9f;
+    for (float u = 0; u <= curve.RestWidth(); u += curve.RestWidth() / 200) {
+      const float now = curve.Project(u, width, c);
+      Expect(now > previous, "curva: T no es monótona");
+      previous = now;
+    }
+  }
+  // Mientras el bulto cabe dentro, el ancho no "respira".
+  for (float c = curve.Radius(); c <= curve.RestWidth() - curve.Radius(); c += 10) {
+    const float w = curve.Transfer(curve.RestWidth(), c) - curve.Transfer(0, c);
+    Expect(std::abs(w - (curve.RestWidth() + curve.MaxGrowth())) < 0.01f, "curva: el ancho respira");
+  }
+  // La inversión devuelve el punto (el de C# pedía < 0,5 px; 40 pasos dan mucho más).
+  for (float u = 0; u <= curve.RestWidth(); u += 37) {
+    const float back = curve.Invert(curve.Project(u, width, u), width);
+    Expect(std::abs(back - u) < 0.01f, "curva: la inversión no devuelve el punto");
+  }
+  for (int i = 0; i < curve.Count(); i++)
+    Expect(curve.SlotAt(curve.SlotStart(i) + curve.At(i).width * 0.5f) == i, "curva: el centro no cae en su ranura");
+}
+
+void CheckIcons() {
+  std::vector<uint8_t> raw{200, 100, 50, 128};  // sin premultiplicar: canal > alfa
+  PremultiplyIfNeeded(raw);
+  Expect(raw[0] == 100 && raw[1] == 50 && raw[2] == 25, "premultiplica lo que no lo estaba");
+  std::vector<uint8_t> already{50, 40, 30, 128};
+  PremultiplyIfNeeded(already);
+  Expect(already[0] == 50 && already[1] == 40, "no premultiplica dos veces");
+
+  IconBitmap block{8, 8, std::vector<uint8_t>(8 * 8 * 4, 0)};
+  for (int y = 2; y < 7; y++)
+    for (int x = 1; x < 4; x++) block.bgra[(y * 8 + x) * 4 + 3] = 255;
+  Expect(DrawnSide(block) == 5, "lado del dibujo 3x5 = 5");
+  IconBitmap frame{8, 8, std::vector<uint8_t>(8 * 8 * 4, 0)};
+  for (size_t i = 3; i < frame.bgra.size(); i += 4) frame.bgra[i] = 38;
+  Expect(DrawnSide(frame) == 0, "el marco de miniatura (alfa 38) no cuenta");
+}
+
+// Las expresiones sobre un Compositor de verdad y con 40 iconos: el límite de longitud se
+// alcanza antes de lo que parece, y esto es lo que avisa si una fórmula crece de más.
+void CheckExpressions() {
+  WNDCLASSEXW wc{sizeof(wc)};
+  wc.lpfnWndProc = DefWindowProcW;
+  wc.hInstance = GetModuleHandleW(nullptr);
+  wc.lpszClassName = L"DockCheck";
+  RegisterClassExW(&wc);
+  HWND hwnd = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW, L"DockCheck", L"", WS_POPUP, 0, 0, 800,
+                              300, nullptr, nullptr, wc.hInstance, nullptr);
+  std::vector<Slot> slots;
+  std::vector<DockItem> items;
+  for (int i = 0; i < 40; i++) {
+    const bool sep = i % 10 == 9;
+    slots.push_back(sep ? Slot{19, 3} : Slot{64, 48});
+    items.push_back({sep ? L"" : L"Una app con nombre largo", L"", sep});
+  }
+  try {
+    Visuals visuals(hwnd);
+    visuals.Build(Curve(slots, 112, 2.5f), items, {}, 2560, 287, 12, 48, 1.0f);
+    visuals.SetCursor(300);
+    visuals.SetHover(true);
+    visuals.SetLabel(3);
+  } catch (const winrt::hresult_error& e) {
+    std::printf("[check] FALLO: expresiones con 40 iconos: %08X %ls\n", static_cast<unsigned>(e.code().value),
+                e.message().c_str());
+    g_failures++;
+  }
+  DestroyWindow(hwnd);
+}
+
+// La extracción de verdad de los iconos de la config, desde el worker STA como el dock.
+//
+// El fallo de extraer desde MTA no da error: devuelve el icono genérico (la hoja en blanco,
+// 35789 píxeles opacos a 256). Y solo se nota con manejadores de apartamento, como los .url
+// de Steam: con .exe, carpetas y elementos del shell MTA y STA dan lo mismo. Así que se
+// compara cada icono con el genérico de verdad, el de una extensión que nadie tiene asociada.
+void CheckExtraction(const std::filesystem::path& configPath) {
+  const DockConfig config = LoadConfig(configPath);
+  const std::filesystem::path unknown = std::filesystem::temp_directory_path() / L"dock-check.sin-asociar";
+  { FILE* f = nullptr; _wfopen_s(&f, unknown.c_str(), L"wb"); if (f) fclose(f); }
+  // Por el mismo camino que el dock: el proceso hijo.
+  std::vector<std::wstring> keys{unknown.wstring()};
+  for (const DockApp& app : config.apps)
+    if (!app.separator) keys.push_back(app.IconSource());
+  const IconSet icons = ExtractIconsOutOfProcess(keys);
+  {
+    const auto found = icons.find(unknown.wstring());
+    const IconBitmap* generic = found == icons.end() ? nullptr : &found->second;
+    for (const DockApp& app : config.apps) {
+      if (app.separator) continue;
+      const auto it = icons.find(app.IconSource());
+      const IconBitmap* icon = it == icons.end() ? nullptr : &it->second;
+      if (!icon) {
+        std::printf("[check] FALLO: sin icono para %ls\n", app.name.c_str());
+        g_failures++;
+        continue;
+      }
+      if (generic && icon->width == generic->width && icon->bgra == generic->bgra) {
+        std::printf("[check] FALLO: %ls sale con el icono genérico (¿extraído fuera de STA?)\n", app.name.c_str());
+        g_failures++;
+      }
+      int opaque = 0, transparent = 0;
+      for (size_t i = 3; i < icon->bgra.size(); i += 4) {
+        if (icon->bgra[i] == 255) opaque++;
+        else if (icon->bgra[i] == 0) transparent++;
+      }
+      std::printf("[check] %-16ls %dx%d ocupa=%d%% opacos=%d transparentes=%d\n", app.name.c_str(), icon->width,
+                  icon->height, 100 * DrawnSide(*icon) / icon->width, opaque, transparent);
+    }
+  }
+  std::error_code ec;
+  std::filesystem::remove(unknown, ec);
 }
 
 }  // namespace
 
-int RunChecks() {
+int RunChecks(const std::filesystem::path& configPath) {
   CheckJsonc();
   CheckConfig();
+  CheckMagnify();
+  CheckIcons();
+  CheckExpressions();
+  CheckExtraction(configPath);
   std::printf("[check] %s (%d fallos)\n", g_failures ? "MAL" : "OK", g_failures);
   return g_failures;
 }

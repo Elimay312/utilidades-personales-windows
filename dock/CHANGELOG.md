@@ -27,6 +27,20 @@ abajo.
   proceso, esquinas redondeadas recortadas en el compositor y tinte blanco. Esconder la
   desliza hacia abajo con un muelle (amortiguado 1,0, 70 ms) y la región se encoge 150 ms
   después, cuando ya ha bajado. **2,4 MB privados y 5 hilos** con las tres pantallas.
+- **Iconos, lupa y etiquetas en C++**: la misma curva cerrada que el de C# (expresiones de
+  Composition sobre el cursor), la etiqueta encima del icono y el hover con muelle. Con diez
+  apps en tres pantallas, **de 46 a ~25 MB privados** y los iconos en pantalla **de 579 a
+  ~460 ms** desde el arranque.
+  - Los iconos se extraen en un **proceso hijo** (`Dock.exe --extraer`), en paralelo, un
+    hilo STA por icono: la maquinaria del shell se va con él. En serie y dentro del dock
+    eran ~1,2 s y 537 handles; ahora 245.
+  - Cada icono se sube **una vez por tamaño y se comparte entre pantallas**, reducido a su
+    tamaño máximo de dibujo, en vez de 256×256 por icono y pantalla.
+  - El reducido es `MULTI_SAMPLE_LINEAR`: con `HIGH_QUALITY_CUBIC` WARP compilaba sombreadores
+    y el dock subía a 32,7 MB, para una diferencia de 27 píxeles de 30800.
+- **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.
+  Extraer desde MTA no da error, da la hoja en blanco (35789 píxeles opacos), y solo se nota
+  con manejadores como los `.url` de Steam.
 
 ### Arreglado
 

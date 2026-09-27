@@ -50,13 +50,19 @@ add_executable(Dock WIN32
   src/core/log.cpp
   src/model/config.cpp
   src/system/appbar.cpp
+  src/system/icons.cpp
+  src/system/worker.cpp
   src/ui/dock_window.cpp
+  src/ui/text.cpp
   src/ui/visuals.cpp
   assets/dock.rc)
 target_include_directories(Dock PRIVATE src)
 target_compile_options(Dock PRIVATE ${DOCK_WARNINGS})
 target_compile_definitions(Dock PRIVATE ${DOCK_DEFINES})
 # windowsapp y CoreMessaging: Windows.UI.Composition vía C++/WinRT y su DispatcherQueue.
-target_link_libraries(Dock PRIVATE nlohmann_json::nlohmann_json shcore dwmapi windowsapp CoreMessaging)
+target_link_libraries(Dock PRIVATE nlohmann_json::nlohmann_json shcore dwmapi windowsapp CoreMessaging
+  # d3d11/d2d1/dxgi: el device WARP que sube los píxeles a superficies. dwrite: las etiquetas.
+  # shlwapi: AssocQueryString, la app que abre una URL (su icono).
+  d3d11 d2d1 dxgi dwrite shlwapi)
 # El manifiesto (PerMonitorV2, asInvoker) entra por dock.rc.
 target_link_options(Dock PRIVATE /MANIFEST:NO)

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "model/config.h"
+#include "system/worker.h"
 #include "ui/dock_window.h"
 
 namespace dock {
@@ -23,14 +24,20 @@ class App {
   explicit App(std::filesystem::path configPath);
   int Run();
   void Quit();
+  // Extrae otra vez los iconos de la config vigente y se los da a todos los docks.
+  void RequestIcons();
 
  private:
   static LRESULT CALLBACK HostProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
   LRESULT HandleHost(UINT message, WPARAM wparam, LPARAM lparam);
   void Rebuild();
+  void OnIcons(struct IconResult* result);
 
   std::filesystem::path configPath_;
   DockConfig config_;
+  Worker worker_;
+  // Cada petición lleva su número: la respuesta de una config que ya no está se tira.
+  unsigned iconRound_ = 0;
   HWND host_ = nullptr;
   UINT shellHookMessage_ = 0;
   UINT taskbarCreatedMessage_ = 0;

@@ -1,7 +1,9 @@
 #pragma once
 
+#include <filesystem>
+
 namespace dock {
 
-int RunChecks();
+int RunChecks(const std::filesystem::path& configPath);
 
 }  // namespace dock

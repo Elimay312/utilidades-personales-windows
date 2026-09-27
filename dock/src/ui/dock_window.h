@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "model/config.h"
+#include "model/magnify.h"
 #include "ui/visuals.h"
 
 namespace dock {
@@ -34,6 +35,8 @@ class DockWindow {
 
   bool Create();
   const std::wstring& Device() const { return monitor_.device; }
+  // Los píxeles de los iconos, recién extraídos por el worker.
+  void ShowIcons(const IconSet& icons);
 
   // Lo que App reparte a todos los docks.
   void OnWindowActivated();
@@ -45,6 +48,8 @@ class DockWindow {
 
   int Px(float logical) const;
   void RefreshMonitor();
+  Curve CurveFor() const;
+  void BuildVisuals(const IconSet& icons);
   void Reposition();
   RECT BarRect(bool tall) const;
   void ApplyRegion();
@@ -58,6 +63,8 @@ class DockWindow {
   DockConfig config_;
   HWND hwnd_ = nullptr;
   std::unique_ptr<Visuals> visuals_;
+  Curve curve_;  // en px físicos
+  bool hoverShown_ = false;
   UINT dpi_ = 96;
   int width_ = 0;
   int height_ = 0;

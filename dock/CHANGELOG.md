@@ -87,6 +87,9 @@ abajo.
   que «10»). Las subcarpetas se recorren dentro, con «Atrás»; un fichero se abre y la
   rejilla se cierra, y también 0,7 s después de salir el ratón. Al cerrarla se devuelve la
   memoria a WARP: con 20 iconos, de 25,2 a 11,3 MB (sin eso, se quedaba en 25).
+- **El atajo de perfil en C++** (`atajoPerfil`): rota «sin perfil» → cada perfil → vuelta, y
+  las tres pantallas se recargan en ~20 ms. El perfil activo se guarda en `dock.local.json`.
+  Tiene que llevar un modificador: una tecla sola se le quitaría a todo el sistema.
 - **El autoarranque solo lo toca la copia instalada**, para que una build de desarrollo no
   se registre en el inicio de sesión del usuario.
 - **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.
@@ -95,6 +98,8 @@ abajo.
 
 ### Arreglado
 
+- **Cambiar `atajoPerfil` se aplica sin reiniciar el dock**: el de C# solo lo registraba al
+  arrancar. Ahora la recarga suelta el viejo y coge el nuevo.
 - **Soltar sobre la papelera ya no ancla el fichero**: el de C# añadía al dock todo lo que
   no cayera sobre una app, papelera incluida. Ahora solo añade el «+»; el separador y los
   márgenes enseñan el cursor de prohibido.

@@ -3,6 +3,7 @@
 #include <chrono>
 #include <set>
 
+#include "core/hotkey.h"
 #include "core/log.h"
 #include "system/autostart.h"
 #include "system/icons.h"
@@ -19,6 +20,7 @@ namespace {
 
 constexpr wchar_t kHostClass[] = L"DockHost";
 constexpr UINT kIconsReady = WM_APP + 1;
+constexpr int kProfileHotkey = 1;  // el id del atajo en la anfitriona: solo hay uno
 constexpr UINT_PTR kDisplayTimer = 1;
 constexpr UINT_PTR kReloadTimer = 2;
 constexpr UINT_PTR kRunningTimer = 3;
@@ -101,6 +103,7 @@ int App::Run() {
   worker_.Start();
   Rebuild();
   SyncAutoStart(config_.autoStart);
+  SyncHotkey();
   SetTimer(host_, kSafetyTimer, kSafetyMs, nullptr);
 
   MSG message{};
@@ -188,6 +191,7 @@ void App::Apply() {
   // Todo lo que depende de la config pasa por aquí: en C# el atajo, el autoarranque y la
   // altura de la ventana solo se leían al arrancar.
   SyncAutoStart(config_.autoStart);
+  SyncHotkey();
   for (auto& dockWindow : docks_) dockWindow->Apply(config_, ResolveFor(config_, local_, dockWindow->Device()));
   RefreshRunning();
   RequestIcons();
@@ -248,6 +252,30 @@ void App::OnIcons(IconResult* raw) {
   // Aquí se sueltan los píxeles: las superficies ya tienen su copia.
 }
 
+void App::SyncHotkey() {
+  if (config_.profileHotkey == hotkey_) return;
+  if (!hotkey_.empty()) UnregisterHotKey(host_, kProfileHotkey);
+  hotkey_.clear();
+  if (config_.profileHotkey.empty()) return;
+  // Es ASCII ("Ctrl+Alt+P"): se estrecha carácter a carácter; lo que no lo sea, el parser lo
+  // rechaza.
+  std::string text;
+  for (const wchar_t c : config_.profileHotkey) text.push_back(c < 128 ? static_cast<char>(c) : '?');
+  const auto hotkey = ParseHotkey(text);
+  // Sin modificador se quitaría esa tecla a todo el sistema mientras el dock viva.
+  if (!hotkey || !(hotkey->mods & (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN))) {
+    LogError(L"[perfil] no entiendo el atajo '{}': hace falta un modificador y una tecla", config_.profileHotkey);
+    return;
+  }
+  // No es un gancho de teclado: Windows avisa con WM_HOTKEY de ESA combinación y de nada más.
+  if (!RegisterHotKey(host_, kProfileHotkey, hotkey->mods, hotkey->vk)) {
+    LogError(L"[perfil] el atajo '{}' ya lo tiene otra app ({})", config_.profileHotkey, GetLastError());
+    return;
+  }
+  hotkey_ = config_.profileHotkey;
+  LogInfo(L"[perfil] atajo '{}' registrado", hotkey_);
+}
+
 LRESULT CALLBACK App::HostProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
   if (message == WM_NCCREATE) {
     auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
@@ -283,6 +311,16 @@ LRESULT App::HandleHost(UINT message, WPARAM wparam, LPARAM lparam) {
   switch (message) {
     case kIconsReady:
       OnIcons(reinterpret_cast<IconResult*>(lparam));
+      return 0;
+
+    case WM_HOTKEY:
+      if (wparam == kProfileHotkey) {
+        // Se guarda y se recarga como cualquier cambio de dock.local.json: el perfil aplica a
+        // todas las pantallas por el mismo camino que una edición a mano.
+        const std::wstring next = NextProfile(config_, local_.profile);
+        LogInfo(L"[perfil] '{}' -> '{}'", local_.profile, next);
+        if (SaveProfile(localPath_, next)) SetTimer(host_, kReloadTimer, 1, nullptr);
+      }
       return 0;
 
     case WM_DISPLAYCHANGE:

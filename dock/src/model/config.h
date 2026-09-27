@@ -76,6 +76,11 @@ LocalOverlay LoadLocal(const std::filesystem::path& file);
 // que mantener a la par. El resto del fichero se conserva.
 bool SaveLocal(const std::filesystem::path& file, const std::wstring& device, const std::vector<DockApp>& base,
                const std::vector<DockApp>& current);
+// Solo cambia el perfil activo; el resto del fichero se conserva.
+bool SaveProfile(const std::filesystem::path& file, const std::wstring& profile);
+// El que toca tras current. La vuelta incluye "sin perfil" (vacío): siempre se puede volver a
+// la lista de siempre sin editar nada. Un perfil que ya no existe sigue por el principio.
+std::wstring NextProfile(const DockConfig& config, const std::wstring& current);
 // Con las claves en mayúscula del dock de C#, que lee el mismo fichero mientras convivan.
 std::string LocalToJson(const LocalOverlay& local);
 

@@ -10,6 +10,7 @@
 #include <fstream>
 #include <string>
 
+#include "core/hotkey.h"
 #include "core/jsonc.h"
 #include "model/config.h"
 #include "model/magnify.h"
@@ -246,6 +247,34 @@ void CheckDrop() {
   std::filesystem::remove_all(dir, ec);
 }
 
+// La vuelta de perfiles, guardar el activo sin tocar lo demás, y el atajo.
+void CheckProfiles() {
+  DockConfig config;
+  config.profiles[L"juegos"] = {};
+  config.profiles[L"trabajo"] = {};
+  Expect(NextProfile(config, L"") == L"juegos" && NextProfile(config, L"juegos") == L"trabajo" &&
+             NextProfile(config, L"trabajo").empty(),
+         "perfil: sin perfil -> juegos -> trabajo -> sin perfil");
+  Expect(NextProfile(config, L"borrado").empty(), "perfil: uno que ya no existe vuelve al principio");
+  Expect(NextProfile(DockConfig{}, L"").empty(), "perfil: sin perfiles se queda en ninguno");
+
+  const std::filesystem::path file = std::filesystem::temp_directory_path() / L"dock-check.perfil.json";
+  std::ofstream(file, std::ios::binary | std::ios::trunc) << R"({"Orden": ["https://a.example"], "Pantallas": {"x": {}}})";
+  Expect(SaveProfile(file, L"juegos"), "perfil: guardar");
+  const LocalOverlay back = LoadLocal(file);
+  Expect(back.profile == L"juegos" && back.order.size() == 1 && back.screens.contains(L"x"),
+         "perfil: se guarda el activo y el resto del fichero sigue ahí");
+  std::error_code ec;
+  std::filesystem::remove(file, ec);
+
+  const auto hotkey = ParseHotkey("Ctrl + Alt + P");
+  Expect(hotkey && hotkey->vk == 'P' && (hotkey->mods & MOD_CONTROL) && (hotkey->mods & MOD_ALT) &&
+             (hotkey->mods & MOD_NOREPEAT),
+         "atajo: Ctrl+Alt+P, sin repetir al mantener");
+  Expect(ParseHotkey("Win+F12") && ParseHotkey("Win+F12")->vk == VK_F12, "atajo: Win+F12");
+  Expect(!ParseHotkey("Ctrl+P+Q") && !ParseHotkey("Ctrl+Nada") && !ParseHotkey("Ctrl"), "atajo: lo que no se entiende");
+}
+
 // El orden del stack: carpetas primero, números como el Explorador, "Atrás" delante y tope.
 void CheckStack() {
   const std::filesystem::path dir = std::filesystem::temp_directory_path() / L"dock-check-stack";
@@ -438,6 +467,7 @@ int RunChecks(const std::filesystem::path& configPath) {
   CheckSteamAndApps();
   CheckSaveLocal();
   CheckDrop();
+  CheckProfiles();
   CheckStack();
   CheckMagnify();
   CheckIcons();

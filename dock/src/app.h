@@ -51,6 +51,9 @@ class App {
   // true si apareció o se fue alguna app sin anclar (hay iconos que pedir).
   bool RefreshRunning();
   void OnIcons(struct IconResult* result);
+  // El atajo de perfil de la config vigente, registrado en la anfitriona. Solo toca el
+  // registro si cambió: registrar y soltar en cada recarga lo dejaría libre un instante.
+  void SyncHotkey();
 
   std::filesystem::path configPath_;
   std::filesystem::path localPath_;
@@ -63,6 +66,7 @@ class App {
   unsigned iconRound_ = 0;
   HWND host_ = nullptr;
   HWND lastForeign_ = nullptr;
+  std::wstring hotkey_;  // el texto registrado ahora, o vacío
   UINT shellHookMessage_ = 0;
   UINT taskbarCreatedMessage_ = 0;
   std::vector<std::unique_ptr<DockWindow>> docks_;

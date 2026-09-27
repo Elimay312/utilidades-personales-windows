@@ -295,6 +295,20 @@ std::vector<DockApp> ApplyOverlay(const LocalOverlay& local, const std::vector<D
 
 std::string LocalToJson(const LocalOverlay& local) { return ToJson(local).dump(2); }
 
+namespace {
+
+bool WriteLocal(const std::filesystem::path& file, const LocalOverlay& local) {
+  std::ofstream out(file, std::ios::binary | std::ios::trunc);
+  if (!out) {
+    LogError(L"[config] no se pudo guardar {}", file.wstring());
+    return false;
+  }
+  out << LocalToJson(local);
+  return static_cast<bool>(out);
+}
+
+}  // namespace
+
 bool SaveLocal(const std::filesystem::path& file, const std::wstring& device, const std::vector<DockApp>& base,
                const std::vector<DockApp>& current) {
   LocalOverlay local = LoadLocal(file);
@@ -308,14 +322,20 @@ bool SaveLocal(const std::filesystem::path& file, const std::wstring& device, co
   // Solo el bloque de esta pantalla y este perfil: mover un icono en una pantalla no puede
   // reordenar las otras, ni reordenar "juegos" tocar "trabajo".
   local.screens[local.profile.empty() ? device : local.profile + L"|" + device] = std::move(block);
+  return WriteLocal(file, local);
+}
 
-  std::ofstream out(file, std::ios::binary | std::ios::trunc);
-  if (!out) {
-    LogError(L"[config] no se pudo guardar {}", file.wstring());
-    return false;
-  }
-  out << LocalToJson(local);
-  return static_cast<bool>(out);
+bool SaveProfile(const std::filesystem::path& file, const std::wstring& profile) {
+  LocalOverlay local = LoadLocal(file);
+  local.profile = profile;
+  return WriteLocal(file, local);
+}
+
+std::wstring NextProfile(const DockConfig& config, const std::wstring& current) {
+  std::vector<std::wstring> cycle{L""};
+  for (const auto& [name, list] : config.profiles) cycle.push_back(name);
+  const auto at = std::find(cycle.begin(), cycle.end(), current);
+  return at == cycle.end() || at + 1 == cycle.end() ? cycle.front() : *(at + 1);
 }
 
 ScreenApps ResolveFor(const DockConfig& config, const LocalOverlay& local, const std::wstring& device) {

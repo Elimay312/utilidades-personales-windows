@@ -55,7 +55,9 @@ constexpr int kReminderIds = 5300;
 constexpr int kJoinId = 5102;
 constexpr int kGuestsId = 5103;
 constexpr int kResponseIds = 5400;
-constexpr int kSetIds = 5500;  // "Todos", each calendar set, and "+" after them (phase 13)
+constexpr int kSetIds = 5500;
+constexpr int kDuplicateId = 5104;
+constexpr int kTemplateId = 5105;  // "Todos", each calendar set, and "+" after them (phase 13)
 
 bool Within(int id, int base, int count) { return id >= base && id < base + count; }
 
@@ -381,6 +383,12 @@ bool PopupWindow::OnDetailControlKey(WPARAM key) {
     case kControlDelete:
       if (key == VK_SPACE || key == VK_RETURN) AskDelete(detail.event.uid);
       break;
+    case kControlDuplicate:
+      if (key == VK_SPACE || key == VK_RETURN) DuplicateEvent();
+      break;
+    case kControlTemplate:
+      if (key == VK_SPACE || key == VK_RETURN) ToggleTemplate();
+      break;
     case kControlJoin:
       if (key == VK_SPACE || key == VK_RETURN)
         JoinCall(JoinUrl(detail.event.conference, detail.event.location, detail.event.notes));
@@ -688,6 +696,10 @@ void PopupWindow::UpdateRing() {
                               layout.reminder[last].right, layout.reminder[last].bottom}
                 : layout.reminder[static_cast<int>(reminder)];
         set(Inset(pill, -pad), (pill.bottom - pill.top) / 2.0f + pad);
+      } else if (detail.control == kControlDuplicate) {
+        set(Inset(layout.duplicate, -pad), radius);
+      } else if (detail.control == kControlTemplate) {
+        set(Inset(layout.saveTemplate, -pad), radius);
       } else if (detail.control == kControlJoin) {
         set(Inset(layout.join, -pad), (layout.join.bottom - layout.join.top) / 2.0f + pad);
       } else if (detail.control == kControlResponse) {
@@ -1061,6 +1073,21 @@ std::vector<A11yNode> PopupWindow::A11yNodes() {
       nodes.push_back(std::move(choice));
     }
   }
+  for (const bool isTemplate : {false, true}) {
+    A11yNode foot;
+    foot.id = isTemplate ? kTemplateId : kDuplicateId;
+    foot.parent = kDetailId;
+    foot.type = UIA_ButtonControlTypeId;
+    foot.name = !isTemplate          ? T(L"Duplicar evento", L"Duplicate event")
+                  : detail.isTemplate  ? T(L"Quitar de las plantillas", L"Remove from templates")
+                                       : T(L"Guardar como plantilla", L"Save as template");
+    foot.rect = isTemplate ? layout.saveTemplate : layout.duplicate;
+    foot.invokable = true;
+    foot.focusable = true;
+    foot.focused =
+        keysHere && detail.control == (isTemplate ? kControlTemplate : kControlDuplicate);
+    nodes.push_back(std::move(foot));
+  }
   A11yNode remove;
   remove.id = kDeleteId;
   remove.parent = kDetailId;
@@ -1190,6 +1217,10 @@ void PopupWindow::A11yFocus(int id) {
     FocusDetailStop(kDetailFields + kControlReminder);
   } else if (id == kDeleteId) {
     FocusDetailStop(kDetailFields + kControlDelete);
+  } else if (id == kDuplicateId) {
+    DuplicateEvent();
+  } else if (id == kTemplateId) {
+    ToggleTemplate();
   } else if (id == kJoinId) {
     const EventDetail& event = app_.detail.event;
     JoinCall(JoinUrl(event.conference, event.location, event.notes));

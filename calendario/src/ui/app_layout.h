@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "core/config.h"
+#include "core/text.h"
 #include "data/model.h"
 #include "ui/layout.h"
 #include "ui/paint.h"
@@ -462,6 +463,45 @@ inline float ListMaxScroll(const AppLayout& app, const PanelLayout& popup, Date 
   return (std::max)(0.0f, bottom - app.main.bottom + 2.0f * app.gap);
 }
 
+// --- Templates (phase 13) -------------------------------------------------------------------
+
+// What "/" is followed by for a template made from an event: its title folded, with dashes for
+// the spaces, "Revisión de código" as "revision-de-codigo", because a name ends at a space.
+inline std::wstring TemplateNameFor(std::wstring_view title) {
+  std::wstring name;
+  for (const wchar_t c : Folded(title)) {
+    if (c == L' ') {
+      if (!name.empty() && name.back() != L'-') name.push_back(L'-');
+    } else {
+      name.push_back(c);
+    }
+  }
+  while (!name.empty() && name.back() == L'-') name.pop_back();
+  return name;
+}
+
+// The sentence a template made from `event` stands for: an event with its title, how long it
+// lasts, where and with whom, and nothing about when -- that is typed after the name.
+inline std::wstring TemplateTextFor(const EventDetail& event) {
+  std::wstring text = L"e: " + event.title;
+  if (event.startMin && event.endMin) {
+    int minutes = *event.endMin - *event.startMin +
+                  static_cast<int>((std::chrono::sys_days{event.endDay} -
+                                    std::chrono::sys_days{event.startDay}).count()) *
+                      kMinutesPerDay;
+    if (minutes > 0) text += L" por " + std::to_wstring(minutes) + L" min";
+  }
+  if (!event.location.empty()) text += L" @ " + event.location;
+  bool first = true;
+  for (const Attendee& guest : event.attendees) {
+    if (guest.self) continue;
+    text += first ? L" con " : L" y ";
+    text += std::wstring(guest.email.begin(), guest.email.end());
+    first = false;
+  }
+  return text;
+}
+
 // --- Calendar sets (phase 13) ---------------------------------------------------------------
 
 // Which chip the calendars' switches match: 0 when nothing is off ("Todos"), a set's place plus
@@ -522,8 +562,10 @@ enum DetailControl {
   kControlRepeat,
   kControlDelete,
   kControlReminder,
-  kControlJoin,      // phase 13: only when there is a call
-  kControlResponse,  // phase 13: only when this account is a guest
+  kControlJoin,       // phase 13: only when there is a call
+  kControlResponse,   // phase 13: only when this account is a guest
+  kControlDuplicate,  // phase 13: the three buttons at the foot, left to right
+  kControlTemplate,
 };
 
 // The order Tab walks the panel in, top to bottom as it reads. A text field is its own index; a
@@ -539,6 +581,8 @@ inline constexpr int kDetailStops[] = {kFieldTitle,
                                        kDetailFields + kControlResponse,
                                        kDetailFields + kControlRepeat,
                                        kDetailFields + kControlReminder,
+                                       kDetailFields + kControlDuplicate,
+                                       kDetailFields + kControlTemplate,
                                        kDetailFields + kControlDelete};
 
 struct DetailLayout {
@@ -552,6 +596,8 @@ struct DetailLayout {
   D2D1_RECT_F remove{};
   // Phase 13. Empty rectangles when the event has no call, no guests, or no answer to give.
   D2D1_RECT_F join{};
+  D2D1_RECT_F duplicate{};    // Duplicar, Plantilla and Borrar share the foot of the panel
+  D2D1_RECT_F saveTemplate{};
   D2D1_RECT_F guests{};
   D2D1_RECT_F response[kResponseChoices]{};
   float pad = 0.0f;
@@ -669,8 +715,14 @@ inline DetailLayout MakeDetailLayout(const AppLayout& app, const EventDetail& ev
         D2D1_RECT_F{pillLeft, reminderTop, pillLeft + reminderPill, reminderTop + at(28.0f)};
   }
 
-  out.remove = D2D1_RECT_F{left, out.panel.bottom - out.pad - out.fieldHeight, right,
-                           out.panel.bottom - out.pad};
+  // Three buttons along the foot: Duplicar, Plantilla and, last and red, Borrar.
+  const float footTop = out.panel.bottom - out.pad - out.fieldHeight;
+  const float third = std::floor((right - left - 2.0f * app.gap) / 3.0f);
+  out.duplicate = D2D1_RECT_F{left, footTop, left + third, footTop + out.fieldHeight};
+  out.saveTemplate = D2D1_RECT_F{out.duplicate.right + app.gap, footTop,
+                                 out.duplicate.right + app.gap + third, footTop + out.fieldHeight};
+  out.remove = D2D1_RECT_F{out.saveTemplate.right + app.gap, footTop, right,
+                           footTop + out.fieldHeight};
   return out;
 }
 

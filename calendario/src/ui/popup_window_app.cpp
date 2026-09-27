@@ -359,6 +359,12 @@ bool PopupWindow::OnAppKeyDown(WPARAM key) {
     Invalidate();
     return true;
   }
+  // Ctrl+D copies the event in the panel, or the one selected (phase 13).
+  if (GetKeyState(VK_CONTROL) < 0 && key == 'D') {
+    if (!app_.detail.open && !app_.selected.empty()) OpenDetailFor(app_.selected);
+    DuplicateEvent();
+    return true;
+  }
   // With Ctrl down a letter is somebody else's shortcut (Ctrl+Z, Ctrl+V), not a view.
   if (GetKeyState(VK_CONTROL) < 0) return false;
 
@@ -1039,6 +1045,11 @@ void PopupWindow::OpenDetail(const EventDetail& event, int focus) {
   detail.focus = -1;
   detail.occurrence.reset();
   detail.wholeSeries = false;
+  detail.isTemplate = false;
+  if (prefs_ != nullptr) {
+    const std::wstring name = TemplateNameFor(event.title);
+    for (const auto& saved : prefs_->templates) detail.isTemplate |= saved.first == name;
+  }
   detail.fields[kFieldNotes].AllowNewlines(true);
   FillDetailFields();
   app_.selected = event.uid;
@@ -1236,6 +1247,56 @@ void PopupWindow::JoinCall(const std::wstring& url) {
   ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
+void PopupWindow::DuplicateEvent() {
+  const DetailModel& detail = app_.detail;
+  if (!detail.open || store_ == nullptr) return;
+  const EventDetail& event = detail.event;
+  // A copy of this one event, where the panel shows it: it does not repeat, and nobody is
+  // invited to it twice -- a second invitation is for the person to decide on, not a copy.
+  Draft draft;
+  draft.calendar = event.calendarId;
+  draft.title = event.title;
+  draft.day = event.startDay;
+  draft.startMin = event.startMin;
+  draft.endDay = event.endDay;
+  draft.endMin = event.endMin;
+  draft.location = event.location;
+  draft.timeZone = event.timeZone;
+  const DayItem created = store_->Create(draft);
+  if (sync_ != nullptr) sync_->Push();
+  AddToApp(created, draft.day);
+  // Open straight away with what the store will hold, so the panel is on the copy at once.
+  EventDetail copy = event;
+  copy.uid = created.uid;
+  copy.recurrence.clear();
+  copy.attendees.clear();
+  copy.conference.clear();
+  copy.reminders.reset();
+  OpenDetail(copy, -1);
+  a11y_.Announce(std::wstring(T(L"Duplicado", L"Duplicated")));
+}
+
+void PopupWindow::ToggleTemplate() {
+  DetailModel& detail = app_.detail;
+  if (!detail.open || prefs_ == nullptr) return;
+  const std::wstring name = TemplateNameFor(detail.event.title);
+  if (name.empty()) return;
+  auto& templates = prefs_->templates;
+  const auto found = std::find_if(templates.begin(), templates.end(),
+                                  [&name](const auto& saved) { return saved.first == name; });
+  if (found != templates.end()) {
+    templates.erase(found);
+    detail.isTemplate = false;
+    a11y_.Announce(std::wstring(T(L"Plantilla quitada", L"Template removed")));
+  } else {
+    templates.emplace_back(name, TemplateTextFor(detail.event));
+    detail.isTemplate = true;
+    ShowToast(std::format(L"{} /{}", T(L"Plantilla guardada:", L"Template saved:"), name));
+  }
+  SaveSetting("templates", WriteTemplates(templates));
+  Invalidate();
+}
+
 void PopupWindow::StoreEvent(const EventDetail& event, unsigned edits) {
   store_->UpdateEvent(event, edits);
   if (sync_ != nullptr) sync_->Push();
@@ -1400,6 +1461,16 @@ bool PopupWindow::OnDetailLeftDown(float x, float y) {
   }
   if (Inside(layout.join, x, y)) {
     JoinCall(JoinUrl(detail.event.conference, detail.event.location, detail.event.notes));
+    return true;
+  }
+  if (Inside(layout.duplicate, x, y)) {
+    if (detail.focus >= 0) CommitField(detail.focus);
+    DuplicateEvent();
+    return true;
+  }
+  if (Inside(layout.saveTemplate, x, y)) {
+    if (detail.focus >= 0) CommitField(detail.focus);
+    ToggleTemplate();
     return true;
   }
   for (int i = 0; i < kDetailFields; ++i) {

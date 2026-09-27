@@ -135,3 +135,11 @@ TEST_CASE("calendar sets survive the trip through the config, accents and all") 
                                             {{"hidden", 3}}}}})
             .calendarSets.empty());
 }
+
+TEST_CASE("templates survive the config, and a name with a space is refused") {
+  const Preferences read = ReadPreferences(
+      {{"templates", WriteTemplates({{L"1:1", L"e: 1:1 con ana@x.com"}, {L"mal nombre", L"x"}})}});
+  REQUIRE(read.templates.size() == 1);
+  CHECK(read.templates[0].first == L"1:1");
+  CHECK(read.templates[0].second == L"e: 1:1 con ana@x.com");
+}

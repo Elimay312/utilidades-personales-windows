@@ -263,3 +263,19 @@ TEST_CASE("a calendar set is on when exactly its calendars are off") {
 
   CHECK(NameForSet(calendars) == L"Personal + Trabajo");
 }
+
+TEST_CASE("a template made from an event is named after it and says all but when") {
+  CHECK(TemplateNameFor(L"Revisión de código") == L"revision-de-codigo");
+  CHECK(TemplateNameFor(L"  1:1  ") == L"1:1");
+  EventDetail event;
+  event.title = L"Revisión";
+  event.startDay = Day(2026, 9, 22);
+  event.endDay = event.startDay;
+  event.startMin = 14 * 60;
+  event.endMin = 15 * 60 + 30;
+  event.location = L"Sala Andes";
+  event.attendees = {Attendee{"yo@x.com", L"", "accepted", true},
+                     Attendee{"ana@x.com", L"Ana"}, Attendee{"luis@x.com", L"Luis"}};
+  CHECK(TemplateTextFor(event) ==
+        L"e: Revisión por 90 min @ Sala Andes con ana@x.com y luis@x.com");
+}

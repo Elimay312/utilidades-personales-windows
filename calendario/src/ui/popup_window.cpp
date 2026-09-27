@@ -847,8 +847,12 @@ void PopupWindow::Invalidate() {
       }
     } else {
       model_.results.clear();
-      model_.preview = nlp::ParseInput(parsed_, nlp::Now{TodayLocal(), NowMinuteLocal()},
-                                       DefaultMinutes(), people_);
+      std::vector<nlp::Template> templates;
+      if (prefs_ != nullptr) {
+        for (const auto& [name, text] : prefs_->templates) templates.push_back({name, text});
+      }
+      model_.preview = nlp::ParseWithTemplates(
+          parsed_, nlp::Now{TodayLocal(), NowMinuteLocal()}, DefaultMinutes(), people_, templates);
       model_.zoneNote = ZoneNote(model_.preview, LocalZone());
     }
   }

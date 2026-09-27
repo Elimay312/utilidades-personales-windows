@@ -36,6 +36,7 @@ struct DetailModel {
   // kept while the panel stays on it so every field does not ask again.
   std::optional<Date> occurrence;
   bool wholeSeries = false;
+  bool isTemplate = false;  // a template already goes by this event's name (phase 13)
 };
 
 // "Solo este / Toda la serie": asked when one occurrence of a repetition is moved, edited or

@@ -208,8 +208,17 @@ entiende se pone en rojo y no se guarda. En las notas, `Shift+Enter` es un salto
 repetición que no es ninguna de las cinco («el primer martes de cada mes») se enseña como
 personalizada y se conserva. Debajo, **Aviso** elige el recordatorio: *Auto* (los del
 calendario), *Ninguno*, *10 min*, *1 h* o *1 día*; uno distinto puesto en Google se conserva, y
-los avisos por correo que tenga no se pierden. **Borrar evento**, abajo, hace lo mismo que
-`Supr`.
+los avisos por correo que tenga no se pierden. Abajo hay tres botones: **Duplicar** hace una
+copia del evento a la misma hora y la abre (sin repetición ni invitados: volver a invitar es
+decisión de cada uno; también con `Ctrl+D`); **Plantilla** lo guarda como plantilla, y si ya lo
+es la quita; **Borrar** hace lo mismo que `Supr`.
+
+**Plantillas.** Una plantilla guardada desde un evento se llama como él, en minúsculas, sin
+acentos y con guiones (`Revisión de código` → `/revision-de-codigo`), y guarda su título, su
+duración, su lugar y sus invitados. Se usa escribiendo `/` y su nombre en el campo, seguido de
+cuándo: `/revision-de-codigo mañana 3pm`. Un `/` que no es ninguna enseña en la vista previa las
+que hay. Se pueden escribir o renombrar a mano en `config.local.json` (`templates`: `name` sin
+espacios y `text`, la frase que sustituye).
 
 **Reuniones.** Si el evento tiene videollamada —la de Meet que pone Google, o un enlace de
 Meet, Zoom, Teams, Webex o Whereby pegado en la ubicación o las notas—, arriba aparece
@@ -302,6 +311,7 @@ monitor, aunque tenga otra escala; al contraerse cae en la esquina del monitor d
 | `Ctrl+K` | Escribir en el campo; `Enter` crea, como en el popup |
 | `Ctrl+F` | Buscar, como en el popup |
 | `Supr` | Borra el evento seleccionado, después de preguntar (`Supr` otra vez confirma) |
+| `Ctrl+D` | Duplica el evento seleccionado o el del panel, y abre la copia |
 | `Ctrl+Z` | Deshace lo último, mientras el aviso está en pantalla |
 | `Ctrl+,` | Configuración |
 | `Esc` | Por capas: suelta el campo, cierra el detalle, quita la selección y al final contrae |

@@ -1062,6 +1062,57 @@ ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes,
   return out;
 }
 
+ParsedInput ParseWithTemplates(std::wstring_view text, Now now, int defaultMinutes,
+                               const std::vector<Person>& people,
+                               const std::vector<Template>& templates) {
+  size_t slash = 0;
+  while (slash < text.size() && text[slash] == L' ') ++slash;
+  if (slash >= text.size() || text[slash] != L'/') {
+    return ParseInput(text, now, defaultMinutes, people);
+  }
+  // The longest name that the text starts with, whole: "/1:1 mañana" and not "/1".
+  const std::wstring folded = Folded(text);
+  const Template* found = nullptr;
+  size_t end = 0;
+  for (const Template& candidate : templates) {
+    const std::wstring name = Folded(candidate.name);
+    if (name.empty() || folded.compare(slash + 1, name.size(), name) != 0) continue;
+    const size_t after = slash + 1 + name.size();
+    if (after < text.size() && text[after] != L' ') continue;
+    if (found == nullptr || after > end) {
+      found = &candidate;
+      end = after;
+    }
+  }
+  if (found == nullptr) {
+    ParsedInput out;
+    out.title.clear();
+    std::wstring hint = std::wstring(T(L"Plantillas:", L"Templates:"));
+    if (templates.empty()) {
+      hint = T(L"Sin plantillas: guárdalas desde el detalle de un evento",
+               L"No templates yet: save one from an event's details");
+    }
+    for (const Template& candidate : templates) {
+      hint += (hint.back() == L':' ? L" /" : L" · /") + candidate.name;
+    }
+    out.templateHint = hint;
+    out.spans.push_back(Span{slash, 1, SpanKind::Prefix});
+    return out;
+  }
+
+  // The template, then whatever was typed after its name.
+  const std::wstring expanded = found->text + std::wstring(text.substr(end));
+  ParsedInput out = ParseInput(expanded, now, defaultMinutes, people);
+  const size_t body = found->text.size();
+  std::vector<Span> spans{Span{slash, end - slash, SpanKind::Prefix}};
+  for (const Span& span : out.spans) {
+    if (span.offset < body) continue;  // inside the template: nothing typed to light up
+    spans.push_back(Span{span.offset - body + end, span.length, span.kind});
+  }
+  out.spans = std::move(spans);
+  return out;
+}
+
 ParsedInput Flipped(ParsedInput parsed) {
   if (parsed.otherMinute == kNoTime || !parsed.start) return parsed;
   std::swap(parsed.start->minuteOfDay, parsed.otherMinute);
@@ -1079,6 +1130,7 @@ std::wstring Capitalised(std::wstring text) {
 }
 
 std::wstring PreviewText(const ParsedInput& parsed, Date today) {
+  if (!parsed.templateHint.empty()) return parsed.templateHint;
   std::wstring out;
   const auto add = [&out](const std::wstring& piece) {
     if (piece.empty()) return;

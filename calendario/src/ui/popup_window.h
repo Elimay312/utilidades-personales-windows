@@ -232,6 +232,10 @@ class PopupWindow final : public A11ySource {
   // Phase 13: this account's answer (kResponseWords), and the call opened in the browser.
   void ChooseResponse(int index);
   void JoinCall(const std::wstring& url);
+  // The event in the panel, copied onto the same hour and opened; and saved as a template, or
+  // taken back out of them when it already is one.
+  void DuplicateEvent();
+  void ToggleTemplate();
   void DetachShown(const EventDetail& shown, unsigned edits);
   bool OnDetailKeyDown(WPARAM key);
   bool OnDetailLeftDown(float x, float y);

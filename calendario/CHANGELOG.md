@@ -35,6 +35,9 @@ sigue [SemVer](https://semver.org/lang/es/).
   cada conjunto y **+**— enciende de un clic solo los calendarios de un conjunto. **+** guarda
   los interruptores como están, con el nombre de lo que está encendido, y la × de cada ficha lo
   quita. También desde la bandeja, en **Conjunto de calendarios**.
+- **Duplicar y plantillas** (fase 13.7). El detalle tiene **Duplicar** (también `Ctrl+D`) y
+  **Plantilla**, que guarda el evento como plantilla: `/revision-de-codigo mañana 3pm` crea otro
+  igual (título, duración, lugar e invitados) a esa hora. Un `/` solo lista las plantillas.
 
 - **Varias cuentas de Google** (fase 12.3). La configuración tiene una sección **Cuentas de
   Google** con **Añadir…** otra cuenta, **Reconectar…** la que perdió el permiso y una tarjeta

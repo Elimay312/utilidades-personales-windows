@@ -789,3 +789,32 @@ TEST_CASE("a wall clock in one zone is read on the wall of another") {
   CHECK(ZoneLabel("America/Bogota") == L"Colombia");
   CHECK(ZoneLabel("America/Argentina/Cordoba") == L"Cordoba");
 }
+
+TEST_CASE("a template is its sentence, and what is typed after its name still lights up") {
+  const std::vector<nlp::Template> templates = {
+      {L"1:1", L"e: 1:1 con ana@x.com por 30 min @ Sala 2"}, {L"gym", L"e: Gimnasio por 90 min"}};
+  const std::wstring typed = L"/1:1 mañana 3pm";
+  const nlp::ParsedInput out = nlp::ParseWithTemplates(typed, kTue, 60, {}, templates);
+  CHECK(out.kind == nlp::Kind::Event);
+  CHECK(out.title == L"1:1");
+  CHECK(Clock(out.start) == L"15:00");
+  CHECK(Clock(out.end) == L"15:30");
+  CHECK(out.location == L"Sala 2");
+  REQUIRE(out.attendees.size() == 1);
+  // "/1:1" is one prefix, and "mañana" and "3pm" are where they were typed.
+  REQUIRE_FALSE(out.spans.empty());
+  CHECK(out.spans[0].offset == 0);
+  CHECK(out.spans[0].length == 4);
+  for (const nlp::Span& span : out.spans) CHECK(span.offset + span.length <= typed.size());
+  bool tomorrow = false;
+  for (const nlp::Span& span : out.spans) tomorrow |= typed.substr(span.offset, 6) == L"mañana";
+  CHECK(tomorrow);
+
+  // A name the text only starts with is not the template; an unknown one lists them.
+  const nlp::ParsedInput unknown = nlp::ParseWithTemplates(L"/gy", kTue, 60, {}, templates);
+  CHECK(unknown.title.empty());
+  CHECK(unknown.templateHint.find(L"/gym") != std::wstring::npos);
+  CHECK(nlp::PreviewText(unknown, kTue.date) == unknown.templateHint);
+  // No slash: exactly the plain parse.
+  CHECK(nlp::ParseWithTemplates(L"gym 7am", kTue, 60, {}, templates).title == L"gym");
+}

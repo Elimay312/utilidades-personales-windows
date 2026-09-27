@@ -62,7 +62,20 @@ struct ParsedInput {
   std::vector<Person> attendees;
   std::wstring location;
   std::string timeZone;
+  // A "/" that names no template: what the preview says instead, "Plantillas: /1:1 · /gym".
+  std::wstring templateHint;
 };
+
+// A template (phase 13): a name and the sentence it stands for, "e: 1:1 con ana@x.com por 30
+// min". Typing "/1:1 mañana 3pm" is typing that sentence and then "mañana 3pm".
+struct Template {
+  std::wstring name;
+  std::wstring text;
+};
+
+// ParseInput, with a leading "/name" replaced by its template first. The spans still point at
+// what was typed: the "/name" is one Prefix span and the rest keep their places, so the capsule
+// lights up the right letters. Without a "/" it is exactly ParseInput.
 
 // `parsed` with the start in the other half of the day, and the end moved with it.
 ParsedInput Flipped(ParsedInput parsed);
@@ -79,6 +92,9 @@ struct Now {
 // `people` are the guests the agenda has seen before, which is what "con Ana" is looked up in.
 ParsedInput ParseInput(std::wstring_view text, Now now, int defaultMinutes = 60,
                        const std::vector<Person>& people = {});
+ParsedInput ParseWithTemplates(std::wstring_view text, Now now, int defaultMinutes,
+                               const std::vector<Person>& people,
+                               const std::vector<Template>& templates);
 
 // First letter up. It lives here because the preview card uses it to say what will be
 // created, and what gets created has to be what the preview promised -- the window titles its

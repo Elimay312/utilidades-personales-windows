@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/i18n.h"
@@ -39,7 +40,13 @@ struct Preferences {
   // Phase 13: a second column of hours on the timeline, as an IANA zone; empty is none.
   std::string secondZone;
   std::vector<CalendarSet> calendarSets;
+  // Phase 13: "/name" in the capsule stands for `text`. Kept as nlp::Template's two strings so
+  // the config does not have to know the parser.
+  std::vector<std::pair<std::wstring, std::wstring>> templates;
 };
+
+// [{"name": "1:1", "text": "e: 1:1 con ana@x.com por 30 min"}], in the order they were saved.
+nlohmann::json WriteTemplates(const std::vector<std::pair<std::wstring, std::wstring>>& templates);
 
 // The sets as config.local.json keeps them: [{"name": "Trabajo", "hidden": ["id", ...]}].
 nlohmann::json WriteCalendarSets(const std::vector<CalendarSet>& sets);

@@ -75,6 +75,35 @@ bool SaveSetting(const char* key, const nlohmann::json& value) {
   return true;
 }
 
+namespace {
+
+std::wstring Wide(const std::string& utf8) {
+  const int length =
+      MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+  std::wstring out(static_cast<size_t>((std::max)(length, 0)), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), out.data(), length);
+  return out;
+}
+
+std::string Narrow(const std::wstring& text) {
+  const int length = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+                                         nullptr, 0, nullptr, nullptr);
+  std::string out(static_cast<size_t>((std::max)(length, 0)), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), length,
+                      nullptr, nullptr);
+  return out;
+}
+
+}  // namespace
+
+nlohmann::json WriteTemplates(const std::vector<std::pair<std::wstring, std::wstring>>& templates) {
+  nlohmann::json out = nlohmann::json::array();
+  for (const auto& [name, text] : templates) {
+    out.push_back({{"name", Narrow(name)}, {"text", Narrow(text)}});
+  }
+  return out;
+}
+
 nlohmann::json WriteCalendarSets(const std::vector<CalendarSet>& sets) {
   nlohmann::json out = nlohmann::json::array();
   for (const CalendarSet& set : sets) {
@@ -130,6 +159,21 @@ Preferences ReadPreferences(const nlohmann::json& config) {
         if (id.is_string()) set.hidden.push_back(id.get<std::string>());
       }
       if (!set.name.empty()) out.calendarSets.push_back(std::move(set));
+    }
+  }
+  if (const auto found = config.find("templates"); found != config.end() && found->is_array()) {
+    for (const nlohmann::json& item : *found) {
+      if (!item.is_object()) continue;
+      const auto name = item.find("name");
+      const auto sentence = item.find("text");
+      if (name == item.end() || !name->is_string() || sentence == item.end() ||
+          !sentence->is_string()) {
+        continue;
+      }
+      std::wstring wideName = Wide(name->get<std::string>());
+      // The name is what follows the "/": a space in it would end it early.
+      if (wideName.empty() || wideName.find(L' ') != std::wstring::npos) continue;
+      out.templates.emplace_back(std::move(wideName), Wide(sentence->get<std::string>()));
     }
   }
   // An IANA name has a slash ("Europe/Madrid") or is UTC; anything else is a typo, not a zone.

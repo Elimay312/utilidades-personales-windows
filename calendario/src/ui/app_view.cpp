@@ -1080,10 +1080,26 @@ void DrawDetail(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
     }
   }
 
+  // Duplicar and Plantilla, quiet, next to Borrar. Plantilla says so when this event already is
+  // one, and then a click takes it back out.
+  for (const bool isTemplate : {false, true}) {
+    const D2D1_RECT_F& button = isTemplate ? layout.saveTemplate : layout.duplicate;
+    brush->SetColor(theme.panelOpaque);
+    FillRound(target, button, layout.radius, brush);
+    brush->SetColor(theme.border);
+    StrokeRound(target, button, layout.radius, brush, 1.0f);
+    brush->SetColor(theme.textPrimary);
+    const std::wstring_view label =
+        !isTemplate           ? T(L"Duplicar", L"Duplicate")
+        : detail.isTemplate   ? T(L"Plantilla ✓", L"Template ✓")
+                              : T(L"Plantilla", L"Template");
+    DrawTextIn(target, fonts.event.Get(), label, button, brush, Align::Center);
+  }
+
   brush->SetColor(Fade(theme.now, theme.light ? 0.08f : 0.12f));
   FillRound(target, layout.remove, layout.radius, brush);
   brush->SetColor(theme.now);
-  DrawTextIn(target, fonts.event.Get(), T(L"Borrar evento", L"Delete event"), layout.remove, brush, Align::Center);
+  DrawTextIn(target, fonts.event.Get(), T(L"Borrar", L"Delete"), layout.remove, brush, Align::Center);
 
   // The list, last, because it opens over the fields below the chooser.
   if (detail.calendarOpen) {

@@ -378,6 +378,7 @@ void DockWindow::OnWheelPick() {
   CloseMenu();  // antes de actuar: la lista tapa el icono
   const HWND foreground = app_.ForeignForeground();
   if (window == foreground || window == GetAncestor(foreground, GA_ROOT)) {
+    app_.Remember(window);  // el genio sale de donde está AHORA, no de la última foto
     Minimize(window);
     LogInfo(L"[dock] minimizada {}", trace);
     return;
@@ -655,6 +656,7 @@ void DockWindow::OnClick(bool middle) {
     const HWND root = GetAncestor(foreground, GA_ROOT);
     for (HWND window : windows) {
       if (window == foreground || window == root) {
+        app_.Remember(window);  // el genio sale de donde está AHORA, no de la última foto
         Minimize(window);
         LogInfo(L"[dock] minimizada '{}'", app.name);
         return;
@@ -721,6 +723,23 @@ bool DockWindow::UpdateRunning(Snapshot& snapshot, bool showRunning) {
   }
   UpdateSmartHide();
   return changed;
+}
+
+std::optional<RECT> DockWindow::IconFor(HWND window) const {
+  for (size_t i = 0; i < windows_.size() && i < drawn_.size(); i++) {
+    if (std::find(windows_[i].begin(), windows_[i].end(), window) == windows_[i].end()) continue;
+    RECT screen{};
+    GetWindowRect(hwnd_, &screen);
+    // En reposo la fila está centrada y T(u) = u: el borde de la ranura es el origen más su
+    // borde en reposo, como en la expresión de Offset con Amount = 0.
+    const float origin = (width_ - curve_.RestWidth()) / 2;
+    const int index = static_cast<int>(i);
+    const int icon = Px(static_cast<float>(config_.iconSize));
+    const LONG left = screen.left + std::lround(origin + curve_.RestLeft(index));
+    const LONG bottom = screen.top + height_ - Px(kPadding);
+    return RECT{left, bottom - icon, left + icon, bottom};
+  }
+  return std::nullopt;
 }
 
 RECT DockWindow::BarOnScreen() const {

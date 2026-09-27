@@ -93,6 +93,12 @@ abajo.
 - **Anclar arrastrando**: una app abierta sin anclar se arrastra hasta lo anclado y se queda
   en el puesto donde se suelta, como en macOS. Soltada entre las abiertas o tirada hacia
   arriba, vuelve a su sitio. Antes solo se anclaba con el menú del clic derecho.
+- **El genio en C++, al minimizar desde cualquier sitio** (el botón de la ventana o el dock):
+  40 miniaturas DWM de la ventana de verdad en vez de capturas, y la ventana se minimiza ya,
+  sin esperar a la animación. Por genio, de **8-11 MB por captura a 0** (13,7 → 13,6 MB
+  tras diez seguidos); 98 % de los fotogramas a tiempo. Varias a la vez (Win+D) van sin genio.
+  Mientras el dock vive, las ventanas que enseña no hacen la animación propia de Windows;
+  al cerrarlo la recuperan.
 - **El autoarranque solo lo toca la copia instalada**, para que una build de desarrollo no
   se registre en el inicio de sesión del usuario.
 - **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.

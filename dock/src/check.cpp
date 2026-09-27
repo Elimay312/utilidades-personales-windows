@@ -13,6 +13,7 @@
 #include "core/hotkey.h"
 #include "core/jsonc.h"
 #include "model/config.h"
+#include "model/genie_curve.h"
 #include "model/magnify.h"
 #include "system/drop.h"
 #include "system/icons.h"
@@ -247,6 +248,39 @@ void CheckDrop() {
   std::filesystem::remove_all(dir, ec);
 }
 
+// La curva del genio, con las comprobaciones del de C#: en reposo es la ventana, las franjas
+// encajan en todo instante, al final cabe en el icono; y el ritmo va de 0 a 1 sin volver atrás.
+void CheckGenie() {
+  const GenieCurve curve(Box{200, 100, 1400, 900}, Box{940, 1010, 1000, 1070}, 40);
+  bool rest = true, joined = true, forward = true, inside = true;
+  for (int i = 0; i < curve.Slices(); i++) {
+    const auto [left, right] = curve.HorizontalAt(i, 0);
+    rest &= std::abs(curve.TopOf(i, 0) - (100 + i * 20.0f)) < 0.01f && std::abs(left - 200) < 0.01f &&
+            std::abs(right - 1400) < 0.01f;
+    const auto [endLeft, endRight] = curve.HorizontalAt(i, 1);
+    inside &= curve.TopOf(i, 1) >= 1009.5f && curve.BottomOf(i, 1) <= 1070.5f && endLeft >= 939 && endRight <= 1001;
+  }
+  for (float p : {0.0f, 0.15f, 0.3f, 0.45f, 0.6f, 0.8f, 1.0f})
+    for (int i = 0; i < curve.Slices(); i++) {
+      if (i + 1 < curve.Slices()) joined &= std::abs(curve.BottomOf(i, p) - curve.TopOf(i + 1, p)) < 0.01f;
+      forward &= curve.BottomOf(i, p) >= curve.TopOf(i, p) - 0.01f;
+    }
+  Expect(rest, "genio: en reposo la malla es la ventana");
+  Expect(joined, "genio: las franjas encajan sin huecos");
+  Expect(forward, "genio: ninguna franja sale del revés");
+  Expect(inside, "genio: al final cabe en el icono");
+  Expect(std::abs(GenieCurve::Sigmoid(0)) < 0.0001f && std::abs(GenieCurve::Sigmoid(1) - 1) < 0.0001f,
+         "genio: sigmoide normalizada");
+  float previous = -1;
+  bool monotonic = true;
+  for (float t = 0; t <= 1.0001f; t += 0.02f) {
+    monotonic &= GenieEase(t) >= previous - 0.0001f;
+    previous = GenieEase(t);
+  }
+  Expect(std::abs(GenieEase(0)) < 0.001f && std::abs(GenieEase(1) - 1) < 0.001f && monotonic,
+         "genio: el ritmo va de 0 a 1 sin volver atrás");
+}
+
 // La vuelta de perfiles, guardar el activo sin tocar lo demás, y el atajo.
 void CheckProfiles() {
   DockConfig config;
@@ -468,6 +502,7 @@ int RunChecks(const std::filesystem::path& configPath) {
   CheckSaveLocal();
   CheckDrop();
   CheckProfiles();
+  CheckGenie();
   CheckStack();
   CheckMagnify();
   CheckIcons();

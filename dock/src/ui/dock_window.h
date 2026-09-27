@@ -4,6 +4,7 @@
 #include <dwmapi.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -39,6 +40,7 @@ class DockWindow {
 
   bool Create();
   const std::wstring& Device() const { return monitor_.device; }
+  HMONITOR MonitorHandle() const { return monitor_.handle; }
   // Lo que se dibuja: lo anclado más las apps abiertas sin anclar.
   const std::vector<DockApp>& Apps() const { return drawn_; }
   // Tamaño de las superficies de icono de este dock (icono × magnificación, en px).
@@ -51,6 +53,12 @@ class DockWindow {
   // Config nueva sin destruir la ventana: geometría, appbar y visuals. Los iconos los vuelve
   // a pedir App.
   void Apply(const DockConfig& config, ScreenApps screen);
+
+  // Las ventanas de cada entrada, del último barrido.
+  const std::vector<std::vector<HWND>>& Windows() const { return windows_; }
+  // Dónde está en pantalla el icono de la entrada que tiene esa ventana, en reposo (sin lupa),
+  // o nada si esa ventana no es de ninguna entrada de este dock.
+  std::optional<RECT> IconFor(HWND window) const;
 
   // Lo que App reparte a todos los docks.
   void OnWindowActivated();

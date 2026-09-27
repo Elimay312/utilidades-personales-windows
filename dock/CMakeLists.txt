@@ -58,9 +58,11 @@ add_executable(Dock WIN32
   src/system/steam.cpp
   src/system/worker.cpp
   src/ui/dock_window.cpp
+  src/ui/genie.cpp
   src/ui/stack.cpp
   src/ui/text.cpp
   src/ui/visuals.cpp
+  src/ui/vsync.cpp
   assets/dock.rc)
 target_include_directories(Dock PRIVATE src)
 target_compile_options(Dock PRIVATE ${DOCK_WARNINGS})

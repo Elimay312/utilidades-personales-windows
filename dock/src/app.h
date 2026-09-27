@@ -2,9 +2,12 @@
 
 #include <windows.h>
 
+#include <chrono>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
+#include <set>
 #include <vector>
 
 #include "model/config.h"
@@ -37,6 +40,9 @@ class App {
   // desvanecido de un icono quitado). Recargar reconstruye también las otras pantallas.
   void SaveAndReload(const std::wstring& device, const std::vector<DockApp>& base,
                      const std::vector<DockApp>& current, UINT delayMs);
+  // Apunta dónde está ahora una ventana (sus bordes visibles), para el genio: cuando llega el
+  // aviso de minimizar ya es un icono en -32000.
+  void Remember(HWND window);
 
  private:
   static LRESULT CALLBACK HostProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
@@ -54,6 +60,13 @@ class App {
   // El atajo de perfil de la config vigente, registrado en la anfitriona. Solo toca el
   // registro si cambió: registrar y soltar en cada recarga lo dejaría libre un instante.
   void SyncHotkey();
+  // Una ventana empieza a minimizarse (EVENT_SYSTEM_MINIMIZESTART): el genio hacia su icono.
+  void OnMinimizeStart(HWND window);
+  static void CALLBACK OnWinEvent(HWINEVENTHOOK hook, DWORD event, HWND window, LONG object, LONG child, DWORD thread,
+                                  DWORD time);
+  // Sin la animación propia de Windows en las ventanas que enseña algún dock: el genio la
+  // sustituye, y las dos a la vez se pisarían.
+  void QuietTransitions();
 
   std::filesystem::path configPath_;
   std::filesystem::path localPath_;
@@ -67,6 +80,10 @@ class App {
   HWND host_ = nullptr;
   HWND lastForeign_ = nullptr;
   std::wstring hotkey_;  // el texto registrado ahora, o vacío
+  HWINEVENTHOOK minimizeHook_ = nullptr, moveHook_ = nullptr;
+  std::set<HWND> quiet_;  // ventanas con las transiciones de DWM apagadas por el dock
+  std::map<HWND, RECT> rects_;  // dónde estaba cada una la última vez que se miró
+  std::chrono::steady_clock::time_point lastMinimize_{};
   UINT shellHookMessage_ = 0;
   UINT taskbarCreatedMessage_ = 0;
   std::vector<std::unique_ptr<DockWindow>> docks_;

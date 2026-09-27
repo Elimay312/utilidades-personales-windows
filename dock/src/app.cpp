@@ -3,8 +3,11 @@
 #include <chrono>
 #include <set>
 
+#include <dwmapi.h>
+
 #include "core/hotkey.h"
 #include "core/log.h"
+#include "ui/genie.h"
 #include "system/autostart.h"
 #include "system/icons.h"
 #include "system/inventory.h"
@@ -21,6 +24,7 @@ namespace {
 constexpr wchar_t kHostClass[] = L"DockHost";
 constexpr UINT kIconsReady = WM_APP + 1;
 constexpr int kProfileHotkey = 1;  // el id del atajo en la anfitriona: solo hay uno
+App* g_app = nullptr;  // para el gancho de eventos, que no lleva contexto; hay un App por proceso
 constexpr UINT_PTR kDisplayTimer = 1;
 constexpr UINT_PTR kReloadTimer = 2;
 constexpr UINT_PTR kRunningTimer = 3;
@@ -101,6 +105,17 @@ int App::Run() {
                                         FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME |
                                             FILE_NOTIFY_CHANGE_SIZE);
   worker_.Start();
+  g_app = this;
+  // Fuera de contexto: el aviso llega por el bucle de mensajes de este hilo, sin cargar nada
+  // en otros procesos. Los del propio dock no interesan.
+  minimizeHook_ = SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, nullptr, OnWinEvent, 0, 0,
+                                  WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+  if (!minimizeHook_) LogError(L"[genio] SetWinEventHook falló: {}", GetLastError());
+  // ponytail: se sigue el final de mover/redimensionar, no cada movimiento: maximizar con el
+  // botón o encajar con Win+flecha no avisan, y ahí el genio deduce el sitio (Genie::Origin).
+  // EVENT_OBJECT_LOCATIONCHANGE lo cubriría, pero salta con cada movimiento del cursor.
+  moveHook_ = SetWinEventHook(EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZEEND, nullptr, OnWinEvent, 0, 0,
+                              WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
   Rebuild();
   SyncAutoStart(config_.autoStart);
   SyncHotkey();
@@ -180,6 +195,7 @@ bool App::RefreshRunning() {
   Snapshot snapshot = TakeSnapshot();
   bool newApps = false;
   for (auto& dockWindow : docks_) newApps |= dockWindow->UpdateRunning(snapshot, config_.showRunning);
+  QuietTransitions();
   LogTrace(L"[barrido] {} procesos con ventana, {} ventanas en {:.1f} ms", snapshot.names.size(), snapshot.windows.size(),
            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
   return newApps;
@@ -250,6 +266,59 @@ void App::OnIcons(IconResult* raw) {
   Visuals::KeepOnlyIcons(used);
   LogInfo(L"[iconos] {} nuevos en pantalla ({:.0f} ms desde el arranque)", result->icons.size(), MsSinceStart());
   // Aquí se sueltan los píxeles: las superficies ya tienen su copia.
+}
+
+void CALLBACK App::OnWinEvent(HWINEVENTHOOK, DWORD event, HWND window, LONG object, LONG child, DWORD, DWORD) {
+  if (object != OBJID_WINDOW || child != CHILDID_SELF || !g_app) return;
+  if (event == EVENT_SYSTEM_MINIMIZESTART) g_app->OnMinimizeStart(window);
+  // Acabó de moverla o redimensionarla, o volvió de minimizada: su sitio nuevo, para el
+  // próximo genio.
+  else if (g_app->quiet_.contains(window)) g_app->Remember(window);
+}
+
+void App::Remember(HWND window) {
+  RECT bounds{};
+  if (!IsIconic(window) &&
+      SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &bounds, sizeof(bounds))))
+    rects_[window] = bounds;
+}
+
+void App::OnMinimizeStart(HWND window) {
+  const auto now = std::chrono::steady_clock::now();
+  // Win+D, o "minimizar todo": muchas en ráfaga. Un genio por ventana a la vez sería un
+  // enjambre; la primera ya salió, las demás se van sin él.
+  const bool burst = now - lastMinimize_ < std::chrono::milliseconds(100);
+  lastMinimize_ = now;
+  if (burst) {
+    LogInfo(L"[genio] varias a la vez: sin genio");
+    return;
+  }
+  if (!quiet_.contains(window)) return;  // no es de ningún dock: Windows la anima como siempre
+  const auto remembered = rects_.find(window);
+  const std::optional<RECT> known = remembered != rects_.end() ? std::optional(remembered->second) : std::nullopt;
+  // El icono del dock de la pantalla donde estaba la ventana; si ahí no está, el de cualquiera.
+  WINDOWPLACEMENT placement{sizeof(placement)};
+  GetWindowPlacement(window, &placement);
+  const HMONITOR monitor = MonitorFromRect(known ? &*known : &placement.rcNormalPosition, MONITOR_DEFAULTTONEAREST);
+  std::optional<RECT> to;
+  for (auto& dockWindow : docks_)
+    if (dockWindow->MonitorHandle() == monitor) to = dockWindow->IconFor(window);
+  for (auto it = docks_.begin(); !to && it != docks_.end(); ++it) to = (*it)->IconFor(window);
+  if (!to) return;
+  if (!Genie::Play(window, known, *to)) LogError(L"[genio] no se pudo montar; minimizada sin animación");
+}
+
+void App::QuietTransitions() {
+  std::erase_if(quiet_, [](HWND window) { return !IsWindow(window); });
+  std::erase_if(rects_, [](const auto& entry) { return !IsWindow(entry.first); });
+  const BOOL on = TRUE;
+  for (auto& dockWindow : docks_)
+    for (const auto& windows : dockWindow->Windows())
+      for (HWND window : windows) {
+        if (quiet_.insert(window).second)
+          DwmSetWindowAttribute(window, DWMWA_TRANSITIONS_FORCEDISABLED, &on, sizeof(on));
+        Remember(window);
+      }
 }
 
 void App::SyncHotkey() {
@@ -348,12 +417,20 @@ LRESULT App::HandleHost(UINT message, WPARAM wparam, LPARAM lparam) {
       if (wparam) docks_.clear();
       return 0;
 
-    case WM_CLOSE:
+    case WM_CLOSE: {
+      if (minimizeHook_) UnhookWinEvent(minimizeHook_);
+      if (moveHook_) UnhookWinEvent(moveHook_);
+      // Las ventanas ajenas recuperan su animación de Windows: sin el dock, nadie hace el genio.
+      const BOOL off = FALSE;
+      for (HWND window : quiet_)
+        if (IsWindow(window)) DwmSetWindowAttribute(window, DWMWA_TRANSITIONS_FORCEDISABLED, &off, sizeof(off));
+      quiet_.clear();
       worker_.Stop();  // lo que responda ya no encuentra anfitriona y se borra solo
       docks_.clear();
       DeregisterShellHookWindow(host_);
       DestroyWindow(host_);
       return 0;
+    }
 
     case WM_DESTROY:
       PostQuitMessage(0);

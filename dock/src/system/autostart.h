@@ -39,9 +39,14 @@ inline void SyncAutoStart(bool on) {
     RegSetKeyValueW(HKEY_CURRENT_USER, kRunKey, kRunValue, REG_SZ, command.c_str(),
                     static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
     LogInfo(L"[autoarranque] encendido: {}", command);
-  } else if (!on && present) {
+  } else if (!on && present && _wcsicmp(command.c_str(), current) == 0) {
+    // Solo si el valor es ESTE dock: el de C# usa el mismo nombre, y una copia con autoStart
+    // apagado le borraba su arranque (pasó: un Dock.exe de prueba con LOCALAPPDATA redirigido
+    // se creyó la copia instalada y borró el Run del dock de uso diario).
     RegDeleteKeyValueW(HKEY_CURRENT_USER, kRunKey, kRunValue);
     LogInfo(L"[autoarranque] apagado");
+  } else if (!on && present) {
+    LogInfo(L"[autoarranque] apagado aquí, pero el valor Run es de otro ({}): no se toca", current);
   }
 }
 

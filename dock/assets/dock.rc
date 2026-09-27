@@ -1,2 +1,6 @@
 // CREATEPROCESS_MANIFEST_RESOURCE_ID (1), RT_MANIFEST (24).
 1 24 "dock.manifest"
+
+// El dock.json de ejemplo: se escribe la primera vez que no hay ninguno (main.cpp). El id lo
+// comparte con core/paths.h (kSeedConfigResource).
+2 RCDATA "../dock.json"

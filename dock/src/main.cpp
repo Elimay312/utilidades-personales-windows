@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "app.h"
@@ -71,6 +72,16 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
   if (!onlyInstance || GetLastError() == ERROR_ALREADY_EXISTS) {
     LogInfo(L"[dock] ya hay otro dock en marcha, salgo");
     return 1;
+  }
+
+  // La primera vez no hay dock.json: se escribe el de ejemplo que lleva el exe, como hacía el de
+  // C# con el que iba a su lado. Solo el de siempre (no uno de --config) y nunca encima de otro.
+  std::error_code missing;
+  if (configPath == AppDataDir() / L"dock.json" && !std::filesystem::exists(configPath, missing)) {
+    std::filesystem::create_directories(configPath.parent_path(), missing);
+    const std::string_view seed = SeedConfig();
+    std::ofstream(configPath, std::ios::binary).write(seed.data(), static_cast<std::streamsize>(seed.size()));
+    LogInfo(L"[config] primera vez: dock.json de ejemplo ({} bytes)", seed.size());
   }
 
   LogInfo(L"[dock] arranca, config en {}", configPath.wstring());

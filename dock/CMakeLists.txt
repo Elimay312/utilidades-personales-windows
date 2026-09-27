@@ -74,3 +74,20 @@ target_link_libraries(Dock PRIVATE nlohmann_json::nlohmann_json shcore dwmapi wi
   d3d11 d2d1 dxgi dwrite shlwapi)
 # El manifiesto (PerMonitorV2, asInvoker) entra por dock.rc.
 target_link_options(Dock PRIVATE /MANIFEST:NO)
+
+# Instalar-Dock.exe: el instalador de Panel (panel-de-control/CMakeLists.txt), un fichero con
+# Dock.exe dentro como RCDATA. Dock.exe sale en la raíz de la carpeta de build en todas las
+# configuraciones, así que su ruta se sabe al configurar y llega al .rc por una cabecera
+# generada. Instala por usuario en %LOCALAPPDATA%\Programs\Dock y se queda como Desinstalar.exe.
+set(dock_exe "${CMAKE_BINARY_DIR}/Dock.exe")
+set(dock_assets "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+configure_file(src/installer/installer_config.h.in "${CMAKE_BINARY_DIR}/installer/installer_config.h" @ONLY)
+add_executable(dock_installer WIN32 src/installer/installer.cpp src/installer/installer.rc)
+set_target_properties(dock_installer PROPERTIES OUTPUT_NAME "Instalar-Dock")
+add_dependencies(dock_installer Dock)
+target_include_directories(dock_installer PRIVATE "${CMAKE_BINARY_DIR}/installer")
+target_compile_options(dock_installer PRIVATE ${DOCK_WARNINGS})
+target_compile_definitions(dock_installer PRIVATE ${DOCK_DEFINES})
+# comctl32: el TaskDialog. El manifiesto (common controls v6) entra por installer.rc.
+target_link_libraries(dock_installer PRIVATE comctl32)
+target_link_options(dock_installer PRIVATE /MANIFEST:NO)

@@ -4,8 +4,20 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 namespace dock {
+
+// El dock.json de ejemplo que va dentro del exe (assets/dock.rc).
+inline constexpr int kSeedConfigResource = 2;
+
+// Sus bytes, tal cual están en el repo.
+inline std::string_view SeedConfig() {
+  const HRSRC found = FindResourceW(nullptr, MAKEINTRESOURCEW(kSeedConfigResource), RT_RCDATA);
+  const HGLOBAL loaded = found ? LoadResource(nullptr, found) : nullptr;
+  const char* bytes = loaded ? static_cast<const char*>(LockResource(loaded)) : nullptr;
+  return bytes ? std::string_view(bytes, SizeofResource(nullptr, found)) : std::string_view();
+}
 
 // %LOCALAPPDATA%\Dock: dock.json, dock.local.json y los logs. Es la misma carpeta que usaba
 // el dock de C#, así que la configuración migra sola.

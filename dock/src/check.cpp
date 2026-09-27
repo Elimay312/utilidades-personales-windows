@@ -12,6 +12,7 @@
 
 #include "core/hotkey.h"
 #include "core/jsonc.h"
+#include "core/paths.h"
 #include "model/config.h"
 #include "model/genie_curve.h"
 #include "model/magnify.h"
@@ -53,6 +54,15 @@ void CheckJsonc() {
   const auto c = ParseJsonc(R"({"IconSize": 64})");
   Expect(Find(c, "iconsize") && *Find(c, "iconSize") == 64, "claves sin distinguir mayúsculas");
   Expect(Find(c, "nada") == nullptr, "clave ausente");
+}
+
+// El dock.json de ejemplo que lleva el exe: se escribe tal cual la primera vez, así que tiene
+// que leerse sin errores y traer apps.
+void CheckSeed() {
+  const std::string_view seed = SeedConfig();
+  Expect(!seed.empty(), "semilla: el exe lleva dock.json dentro");
+  Expect(!ParseJsonc(seed).is_discarded(), "semilla: se lee sin errores");
+  Expect(!ParseConfig(seed).apps.empty(), "semilla: trae apps");
 }
 
 void CheckConfig() {
@@ -497,6 +507,7 @@ void CheckExtraction(const std::filesystem::path& configPath) {
 int RunChecks(const std::filesystem::path& configPath) {
   CheckJsonc();
   CheckConfig();
+  CheckSeed();
   CheckOverlay();
   CheckSteamAndApps();
   CheckSaveLocal();

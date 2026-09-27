@@ -102,9 +102,16 @@ function Msvc {
 }
 
 $proyectos = @(
-    # El dock se esta reescribiendo en C++ y el de C# ya no esta en el repo (tag
-    # dock-csharp-final). Vuelve aqui con el patron de Agenda cuando tenga instalador;
-    # hasta entonces el que ya este instalado en cada equipo sigue funcionando.
+    # El dock en C++. Solo se toca donde ya esta instalado en Programs\Dock (o con -Todo): el
+    # de C# (Dock\app, tag dock-csharp-final) no se cambia por este solo; ver dock\README.
+    @{ Nombre = 'dock'; Exe = "$la\Programs\Dock\Dock.exe"
+       Instalar = { param($nuevo)
+           Msvc
+           Ejecutar "$repo\dock\empaquetar.ps1"
+           $antes = Vivo "$la\Programs\Dock\Dock.exe"
+           $p = Start-Process "$repo\dock\build\release\Instalar-Dock.exe" '--silent' -Wait -PassThru
+           if ($p.ExitCode -ne 0) { throw "Instalar-Dock salio con codigo $($p.ExitCode)." }
+           if ($antes -or $nuevo) { Start-Process "$la\Programs\Dock\Dock.exe" } } }
     @{ Nombre = 'isla'; Exe = "$la\Isla\app\Isla.exe"
        Instalar = { param($nuevo) Ejecutar "$repo\isla\instalar.ps1" (SinAutoArranque "$la\Isla\isla.json" 'autoArranque') } }
     @{ Nombre = 'lanzador'; Exe = "$la\Lanzador\app\Lanzador.exe"

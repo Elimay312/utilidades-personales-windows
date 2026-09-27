@@ -103,6 +103,12 @@ abajo.
   del icono y la restaura al acabar (~440 ms), no al empezar, así que no asoma entera debajo.
   Si el genio se corta, un plazo de 700 ms la restaura igual. Restaurar desde fuera del dock
   (Alt+Tab) es instantáneo: sin la animación de Windows y sin genio.
+- **`Instalar-Dock.exe`** (1,3 MB, con el dock dentro), el instalador de Panel: por usuario en
+  `%LOCALAPPDATA%\Programs\Dock`, sin administrador, con `--silent` y `Desinstalar.exe`. Al
+  dock en marcha le pide cerrarse y no toca el de C#. `empaquetar.ps1` lo compila y
+  `actualizar.ps1` lo reinstala donde ya esté instalado.
+- **La primera vez escribe el `dock.json` de ejemplo** que lleva dentro, como el de C# con el
+  que iba a su lado; nunca encima de uno que ya exista.
 - **El autoarranque solo lo toca la copia instalada**, para que una build de desarrollo no
   se registre en el inicio de sesión del usuario.
 - **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.
@@ -111,6 +117,9 @@ abajo.
 
 ### Arreglado
 
+- **Un dock con `autoStart` apagado ya no borra el arranque de otro**: el valor Run «Dock» lo
+  comparten el de C# y el de C++, y apagarlo en uno borraba el del otro. Ahora solo se borra
+  si apunta a ese mismo dock.
 - **Cambiar `atajoPerfil` se aplica sin reiniciar el dock**: el de C# solo lo registraba al
   arrancar. Ahora la recarga suelta el viejo y coge el nuevo.
 - **Soltar sobre la papelera ya no ancla el fichero**: el de C# añadía al dock todo lo que

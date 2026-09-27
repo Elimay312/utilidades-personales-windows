@@ -50,6 +50,7 @@ add_executable(Dock WIN32
   src/core/log.cpp
   src/model/config.cpp
   src/system/appbar.cpp
+  src/system/drop.cpp
   src/system/icons.cpp
   src/system/inventory.cpp
   src/system/jumplist.cpp

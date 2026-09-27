@@ -19,6 +19,11 @@ void LaunchDetached(const DockApp& app);
 // También en un hilo propio.
 void OpenWithDetached(const DockApp& app, std::vector<std::wstring> paths);
 
+// A la papelera de Windows, como hace el Explorador: se puede deshacer, y lo que no cabe en
+// ella lo pregunta el propio shell antes de borrarlo del todo. En un hilo propio, porque el
+// shell puede tardar o preguntar.
+void RecycleDetached(std::vector<std::wstring> paths);
+
 // Las únicas operaciones sobre ventanas ajenas, siempre como respuesta a un clic.
 // SetForegroundWindow solo funciona porque el dock acaba de recibir la entrada (el clic):
 // un clic simulado con PostMessage no cambiaba el foco en las pruebas del de C#.

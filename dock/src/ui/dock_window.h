@@ -14,6 +14,7 @@
 namespace dock {
 
 class App;
+struct Dropped;
 
 // Un monitor tal como lo ve el dock. Se identifica por el nombre de dispositivo
 // (\\.\DISPLAY2), nunca por el HMONITOR, que cambia entre arranques.
@@ -81,6 +82,11 @@ class DockWindow {
   void ApplyDragShifts();
   void FinishDrag(int y);
   void CancelDrag();
+  // Soltar desde fuera: sobre el icono de una app se abre con ella, sobre la papelera va a la
+  // papelera, y en el "+" se añade. En el resto (separador, márgenes, carpetas) nada: false.
+  bool DropOver(POINT screen);
+  void DropLeave();
+  void OnDropped(std::vector<Dropped> items);
   RECT BarOnScreen() const;
   void UpdateSmartHide();
   void Reveal();
@@ -103,6 +109,9 @@ class DockWindow {
   POINT press_{};
   bool dragging_ = false;        // pasado el umbral
   std::vector<int> dragOrder_;   // el orden que va quedando, en índices de drawn_
+  bool dropping_ = false;        // algo arrastrado desde fuera está encima
+  int dropSlot_ = -1;            // la app que lo abriría, o la papelera
+  bool dropAdd_ = false;         // sobre el "+"
   int menuIndex_ = -1;           // el icono del menú abierto, o -1 (solo "Salir")
   std::vector<struct JumpItem> menuJumps_;
   // La app que se está abriendo: su icono bota hasta que aparece su ventana, o 20 s.

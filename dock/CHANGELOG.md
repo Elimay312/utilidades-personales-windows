@@ -70,6 +70,13 @@ abajo.
   worker: de 11,6 a 12,3 MB con el menú abierto, sin proceso hijo. Un reciente se abre con
   su app (las de la Store, por `ActivateForFile`). Con un dock de un solo icono el menú es
   más ancho que la barra: se encaja en la ventana y la región crece para cubrirlo.
+- **Soltar ficheros en C++**: sobre el icono de una app se abren con ella (el icono se
+  levanta y enseña su nombre); sobre la papelera van a la papelera de Windows (~0,3 s,
+  deshacible, y lo que no cabe lo pregunta el shell); en el «+» que asoma a la derecha de
+  la barra se añaden a lo anclado de esa pantalla. Un `.lnk` se guarda por su destino con
+  sus argumentos y su icono, un `.url` de Steam por su URL, una app de la Store por su AUMID.
+  De 241 a 294 handles por el registro OLE de las tres ventanas; la memoria queda dentro del
+  ruido entre arranques (14,4–16,6 frente a 15,8–17,0 MB).
 - **El autoarranque solo lo toca la copia instalada**, para que una build de desarrollo no
   se registre en el inicio de sesión del usuario.
 - **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.
@@ -78,6 +85,9 @@ abajo.
 
 ### Arreglado
 
+- **Soltar sobre la papelera ya no ancla el fichero**: el de C# añadía al dock todo lo que
+  no cayera sobre una app, papelera incluida. Ahora solo añade el «+»; el separador y los
+  márgenes enseñan el cursor de prohibido.
 - **Enfocar una ventana que se ve pero no tiene el foco ya es un clic**, no dos: el de C#
   minimizaba todo lo que estuviera a la vista. Ahora solo se minimiza la que tiene el foco.
 - **El clic acierta aunque algo active el propio dock**: se decide con la última ventana

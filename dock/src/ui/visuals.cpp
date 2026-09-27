@@ -219,6 +219,9 @@ void Visuals::Build(const Curve& curve, const std::vector<DockItem>& items, cons
   root_.Children().RemoveAll();
   menu_ = nullptr;  // se iba con el árbol
   menuHot_ = nullptr;
+  addZone_ = nullptr;
+  addZoneHot_ = false;
+  dropTarget_ = -1;
   labels_.clear();
   dots_.clear();
   items_.clear();
@@ -254,6 +257,8 @@ void Visuals::Build(const Curve& curve, const std::vector<DockItem>& items, cons
   bar.Children().InsertAtTop(tint);
   root_.Children().InsertAtBottom(bar);
   hiddenOffset_ = barHeight;
+  padding_ = padding;
+  barTop_ = barTop;
 
   const int iconPx = static_cast<int>(std::ceil(iconSize * curve.MaxScale()));
   const float iconTop = windowHeight - padding - iconSize;
@@ -386,6 +391,96 @@ void Visuals::Puff(int index) {
   fade.Duration(std::chrono::milliseconds(180));
   items_[index].StartAnimation(L"Opacity", fade);
   if (index < static_cast<int>(dots_.size()) && dots_[index]) dots_[index].StartAnimation(L"Opacity", fade);
+}
+
+void Visuals::SetDropTarget(int index, float height) {
+  if (index == dropTarget_) return;
+  auto lift = [&](int i, float to) {
+    if (i < 0 || i >= static_cast<int>(items_.size())) return;
+    // Bounce, la del rebote: es la misma idea de "este es el que recibe" y la expresión de
+    // Offset ya la resta. Con muelle, que distingue "se ha levantado" de "ha parpadeado".
+    auto spring = compositor_.CreateSpringScalarAnimation();
+    spring.DampingRatio(0.7f);
+    spring.Period(std::chrono::milliseconds(50));
+    spring.FinalValue(to);
+    items_[i].Properties().StartAnimation(L"Bounce", spring);
+  };
+  lift(dropTarget_, 0);
+  dropTarget_ = index;
+  lift(index, height);
+}
+
+namespace {
+// El "+" mide un 58% del alto de la barra, separado de ella un 35% de su lado, y resaltado
+// crece un 18% desde el centro.
+constexpr float kZoneSide = 0.58f;
+constexpr float kZoneGap = 0.35f;
+constexpr float kZoneHot = 1.18f;
+}  // namespace
+
+float Visuals::AddZoneReach() const {
+  const float size = hiddenOffset_ * kZoneSide;
+  return size * kZoneGap + size * (1 + kZoneHot) / 2;
+}
+
+void Visuals::SetAddZone(bool visible) {
+  if (!visible) {
+    if (addZone_) root_.Children().Remove(addZone_);
+    addZone_ = nullptr;
+    addZoneHot_ = false;
+    return;
+  }
+  if (addZone_) return;
+  const float size = hiddenOffset_ * kZoneSide;
+  const float top = barTop_ + (hiddenOffset_ - size) / 2;
+  addZone_ = compositor_.CreateContainerVisual();
+  addZone_.Size({size, size});
+  addZone_.CenterPoint({size / 2, size / 2, 0});
+  // Pegado al borde derecho de la barra, y siguiéndolo cuando la lupa la ensancha.
+  Animate(compositor_, addZone_, L"Offset", L"Vector3(P.Origin + P.TW + " + F(padding_ + size * kZoneGap) + L", " + F(top) + L", 0)",
+          props_);
+  auto round = compositor_.CreateRoundedRectangleGeometry();
+  round.Size({size, size});
+  round.CornerRadius({size * 0.28f, size * 0.28f});
+  addZone_.Clip(compositor_.CreateGeometricClip(round));
+  // El material de la barra y no un chip blanco: un "+" blanco sobre blanco translúcido era
+  // invisible encima de una página web en blanco, que es donde se probó primero en C#.
+  auto material = compositor_.CreateSpriteVisual();
+  material.RelativeSizeAdjustment({1, 1});
+  material.Brush(AcrylicBrush(compositor_));
+  addZone_.Children().InsertAtBottom(material);
+  auto tint = compositor_.CreateSpriteVisual();
+  tint.RelativeSizeAdjustment({1, 1});
+  tint.Brush(compositor_.CreateColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(48, 255, 255, 255)));
+  addZone_.Children().InsertAtTop(tint);
+  const float thick = std::max(2.0f, size * 0.1f);
+  const float arm = size * 0.46f;
+  const auto ink = compositor_.CreateColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(255, 255, 255, 255));
+  for (const bool across : {true, false}) {
+    auto bar = compositor_.CreateSpriteVisual();
+    bar.Size(across ? winrt::Windows::Foundation::Numerics::float2{arm, thick}
+                    : winrt::Windows::Foundation::Numerics::float2{thick, arm});
+    bar.Offset({(size - bar.Size().x) / 2, (size - bar.Size().y) / 2, 0});
+    bar.Brush(ink);
+    addZone_.Children().InsertAtTop(bar);
+  }
+  addZone_.Opacity(0);
+  auto fade = compositor_.CreateScalarKeyFrameAnimation();
+  fade.InsertKeyFrame(1, 1);
+  fade.Duration(std::chrono::milliseconds(140));
+  addZone_.StartAnimation(L"Opacity", fade);
+  root_.Children().InsertAtTop(addZone_);
+}
+
+void Visuals::SetAddZoneHot(bool hot) {
+  if (!addZone_ || hot == addZoneHot_) return;
+  addZoneHot_ = hot;
+  auto grow = compositor_.CreateSpringScalarAnimation();
+  grow.DampingRatio(0.7f);
+  grow.Period(std::chrono::milliseconds(50));
+  grow.FinalValue(hot ? kZoneHot : 1.0f);
+  addZone_.StartAnimation(L"Scale.X", grow);
+  addZone_.StartAnimation(L"Scale.Y", grow);
 }
 
 namespace {

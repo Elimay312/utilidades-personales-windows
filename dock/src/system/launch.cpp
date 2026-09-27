@@ -99,6 +99,36 @@ void OpenWithDetached(const DockApp& app, std::vector<std::wstring> paths) {
   }).detach();
 }
 
+void RecycleDetached(std::vector<std::wstring> paths) {
+  std::thread([paths] {
+    const bool com = SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE));
+    IFileOperation* operation = nullptr;
+    size_t queued = 0;
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&operation)))) {
+      // ALLOWUNDO + RECYCLEONDELETE: a la papelera y no borrado. Sin NOCONFIRMATION a propósito:
+      // si algo no cabe en la papelera, el shell avisa de que lo borraría del todo.
+      operation->SetOperationFlags(FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE | FOFX_ADDUNDORECORD);
+      for (const auto& path : paths) {
+        IShellItem* item = nullptr;
+        HRESULT hr = SHCreateItemFromParsingName(path.c_str(), nullptr, IID_PPV_ARGS(&item));
+        if (SUCCEEDED(hr)) {
+          hr = operation->DeleteItem(item, nullptr);
+          item->Release();
+        }
+        if (SUCCEEDED(hr)) queued++;
+        else LogError(L"[papelera] '{}' no se puede tirar ({:#010x})", path, static_cast<unsigned>(hr));
+      }
+      const HRESULT hr = queued ? operation->PerformOperations() : S_FALSE;
+      BOOL aborted = FALSE;
+      operation->GetAnyOperationsAborted(&aborted);
+      if (FAILED(hr)) LogError(L"[papelera] falló ({:#010x})", static_cast<unsigned>(hr));
+      else LogInfo(L"[papelera] {} de {} elemento(s){}", queued, paths.size(), aborted ? L", cancelado por el usuario" : L"");
+      operation->Release();
+    }
+    if (com) CoUninitialize();
+  }).detach();
+}
+
 void BringToFront(HWND window) {
   if (IsIconic(window)) ShowWindow(window, SW_RESTORE);
   const DWORD target = GetWindowThreadProcessId(window, nullptr);

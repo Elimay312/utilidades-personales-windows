@@ -75,6 +75,16 @@ class Visuals {
   int MenuHitTestClose(float x, float y) const;
   void MenuSetHot(int index);
 
+  // Soltar: levanta el icono que recibiría el fichero (con muelle sobre Bounce) y baja el
+  // anterior; -1 no levanta ninguno.
+  void SetDropTarget(int index, float height);
+  // El "+" pegado a la derecha de la barra, solo mientras se arrastra algo encima: se crea al
+  // entrar y se tira al salir, el resto del tiempo el dock no tiene botones de más.
+  void SetAddZone(bool visible);
+  void SetAddZoneHot(bool hot);
+  // Cuánto sobresale el "+" (resaltado) por la derecha del borde de la barra.
+  float AddZoneReach() const;
+
   // Esconder desliza el árbol hacia abajo con un muelle; la ventana no se mueve nunca.
   void Slide(bool hidden, bool instant);
 
@@ -95,6 +105,10 @@ class Visuals {
   std::vector<bool> running_;
   int labelShown_ = -1;
   float hiddenOffset_ = 0;
+  float padding_ = 0, barTop_ = 0;
+  int dropTarget_ = -1;
+  winrt::Windows::UI::Composition::ContainerVisual addZone_{nullptr};
+  bool addZoneHot_ = false;
   winrt::Windows::UI::Composition::ContainerVisual menu_{nullptr};
   winrt::Windows::UI::Composition::SpriteVisual menuHot_{nullptr};
   winrt::Windows::Foundation::Numerics::float2 menuOrigin_{}, menuSize_{};

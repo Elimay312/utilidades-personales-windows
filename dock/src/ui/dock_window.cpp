@@ -12,6 +12,7 @@
 #include "app.h"
 #include "core/log.h"
 #include "system/appbar.h"
+#include "system/drop.h"
 #include "system/inventory.h"
 #include "system/launch.h"
 
@@ -267,6 +268,116 @@ void DockWindow::CancelDrag() {
   pressedIndex_ = -1;
 }
 
+bool DockWindow::DropOver(POINT screen) {
+  const bool entering = !dropping_;
+  if (entering) {
+    dropping_ = true;
+    // Con algo arrastrado encima el dock tiene que estar a la vista, o no habría dónde
+    // soltarlo. Durante el arrastre OLE no llega WM_MOUSEMOVE: la lupa se mueve desde aquí.
+    KillTimer(hwnd_, kHideTimer);
+    CloseMenu();
+    Reveal();
+    if (!hoverShown_) {
+      hoverShown_ = true;
+      visuals_->SetHover(true);
+    }
+  }
+  visuals_->SetAddZone(true);  // no-op si ya está; si una app abierta rehízo la barra, vuelve
+  ApplyRegion();
+  if (curve_.Count() == 0) return false;
+  RECT window{};
+  GetWindowRect(hwnd_, &window);
+  const float width = static_cast<float>(width_);
+  const float x = static_cast<float>(screen.x - window.left);
+  lastRest_ = curve_.Invert(x, width);
+  visuals_->SetCursor(lastRest_);
+  // A la derecha del borde de la barra solo está el "+" (la región no llega más allá). Solo
+  // él añade: el de C# añadía en cualquier hueco, y soltar sobre la papelera anclaba el fichero.
+  const bool add = x > curve_.Project(curve_.RestWidth(), width, lastRest_) + kPadding * dpi_ / 96.0f;
+  const int slot = curve_.SlotAt(lastRest_);
+  const bool valid = !add && slot >= 0 && slot < static_cast<int>(drawn_.size());
+  const bool trash = valid && !drawn_[slot].separator && drawn_[slot].target == kTrashTarget;
+  const int target = valid && (trash || IsApp(drawn_[slot])) ? slot : -1;
+  visuals_->SetDropTarget(target, config_.iconSize * dpi_ / 96.0f * 0.25f);
+  visuals_->SetAddZoneHot(add);
+  visuals_->SetLabel(target);
+  if (entering || target != dropSlot_ || add != dropAdd_)
+    LogTrace(L"[soltar] {}", trash    ? std::wstring(L"a la papelera")
+                             : target >= 0 ? std::format(L"abrir con '{}'", drawn_[target].name)
+                             : add    ? std::wstring(L"añadir al dock")
+                                      : std::wstring(L"nada"));
+  dropSlot_ = target;
+  dropAdd_ = add;
+  return target >= 0 || add;
+}
+
+void DockWindow::DropLeave() {
+  if (!dropping_) return;
+  dropping_ = false;
+  dropSlot_ = -1;
+  dropAdd_ = false;
+  visuals_->SetDropTarget(-1, 0);
+  visuals_->SetAddZone(false);
+  visuals_->SetLabel(-1);
+  if (!hovering_ && hoverShown_) {
+    hoverShown_ = false;
+    visuals_->SetHover(false);
+  }
+  ApplyRegion();
+  if (config_.autoHide && !hovering_) SetTimer(hwnd_, kHideTimer, kHideDelayMs, nullptr);
+}
+
+void DockWindow::OnDropped(std::vector<Dropped> items) {
+  const int slot = dropSlot_;
+  const bool add = dropAdd_;
+  DropLeave();
+  if (items.empty()) return;
+  const float bounce = config_.iconSize * dpi_ / 96.0f * 0.35f;
+
+  if (slot >= 0) {
+    // Solo lo que tiene fichero: a una app no se le puede pasar un objeto virtual, y una app
+    // de la Store arrastrada desde Inicio no es algo que tirar a la papelera.
+    std::vector<std::wstring> paths;
+    for (const Dropped& item : items)
+      if (!item.path.empty()) paths.push_back(item.path);
+    if (paths.empty()) return;
+    LogTrace(L"[soltar] {} fichero(s) sobre '{}': {}", paths.size(), drawn_[slot].name, paths.front());
+    visuals_->Bounce(slot, bounce, false);
+    // Los dos en su hilo: ShellExecuteEx puede tardar segundos, y la papelera puede preguntar.
+    if (drawn_[slot].target == kTrashTarget) RecycleDetached(paths);
+    else OpenWithDetached(drawn_[slot], paths);
+    return;
+  }
+  if (!add) return;
+
+  // Al final de lo anclado, delante de la papelera si la hay.
+  std::vector<DockApp> pinned(drawn_.begin(), drawn_.begin() + DraggableEnd());
+  bool changed = false;
+  for (const Dropped& item : items) {
+    // Por el mismo filtro que dock.json: un target que no existe quedaría en dock.local.json
+    // para siempre y desaparecería en cada arranque sin decir por qué.
+    const std::vector<DockApp> valid = Validate({item.app});
+    if (valid.empty()) continue;
+    const DockApp& app = valid.front();
+    const auto same = std::find_if(pinned.begin(), pinned.end(), [&](const DockApp& a) {
+      return !a.separator && _wcsicmp(a.target.c_str(), app.target.c_str()) == 0;
+    });
+    if (same != pinned.end()) {
+      // Ya estaba: bota el que hay en vez de duplicarlo. Más barato que un diálogo y se entiende.
+      const int index = static_cast<int>(same - pinned.begin());
+      if (index < DraggableEnd()) visuals_->Bounce(index, bounce, false);
+      LogInfo(L"[dock] '{}' ya estaba en el dock", app.name);
+      continue;
+    }
+    auto at = pinned.end();
+    if (!pinned.empty() && !pinned.back().separator && pinned.back().target == kTrashTarget) --at;
+    pinned.insert(at, app);
+    LogInfo(L"[dock] añadida '{}' -> {}", app.name, app.target);
+    changed = true;
+  }
+  if (changed) app_.SaveAndReload(monitor_.device, base_, WithTrash(std::move(pinned)), 1);
+}
+
 int DockWindow::IconPx() const {
   return static_cast<int>(std::ceil(config_.iconSize * dpi_ / 96.0f * config_.magnification));
 }
@@ -396,7 +507,7 @@ RECT DockWindow::BarOnScreen() const {
 // Sin nada debajo no hay de qué esconderse: con el escritorio a la vista el dock se queda.
 // Se reevalúa en cada barrido, porque abrir, cerrar o activar ventanas es justo cuando cambia.
 void DockWindow::UpdateSmartHide() {
-  if (!config_.autoHide || hovering_ || dragging_ || fullscreen_ || visuals_->MenuOpen()) return;
+  if (!config_.autoHide || hovering_ || dragging_ || dropping_ || fullscreen_ || visuals_->MenuOpen()) return;
   const bool covered = AnythingOver(BarOnScreen());
   if (covered == !revealed_) return;
   if (covered) Hide(/*force=*/true);
@@ -427,6 +538,7 @@ DockWindow::~DockWindow() {
   KillTimer(hwnd_, kHideTimer);
   KillTimer(hwnd_, kSlideTimer);
   if (registered_) AppBarRemove(hwnd_);
+  RevokeDragDrop(hwnd_);  // el DropTarget apunta a este objeto: fuera antes de que muera
   visuals_.reset();  // el target de Composition antes que su ventana
   DestroyWindow(hwnd_);
 }
@@ -467,6 +579,14 @@ bool DockWindow::Create() {
     LogError(L"[dock] {}: Composition falló ({:#010x})", monitor_.device, static_cast<unsigned>(e.code().value));
     return false;
   }
+
+  // RegisterDragDrop se queda con su referencia y RevokeDragDrop la suelta: no hay que
+  // guardarla. Pide OleInitialize en el hilo, no CoInitialize (main lo hace lo primero).
+  const auto drop = Microsoft::WRL::Make<DropTarget>(
+      hwnd_, [this](POINT at) { return DropOver(at); }, [this] { DropLeave(); },
+      [this](std::vector<Dropped> items) { OnDropped(std::move(items)); });
+  if (const HRESULT hr = RegisterDragDrop(hwnd_, drop.Get()); FAILED(hr))
+    LogError(L"[soltar] {}: RegisterDragDrop falló ({:#010x})", monitor_.device, static_cast<unsigned>(hr));
 
   registered_ = AppBarRegister(hwnd_);
   Reposition();
@@ -594,7 +714,12 @@ void DockWindow::ApplyRegion() {
   // La región es lo único que deja pasar el ratón a otros procesos (HTTRANSPARENT no
   // atraviesa procesos) y además recorta el dibujo: tiene que cubrir todo lo que se pinte.
   std::vector<RECT> rects;
-  if (revealed_ || sliding_) rects.push_back(BarRect(hovering_));
+  if (revealed_ || sliding_) {
+    RECT bar = BarRect(hovering_ || dropping_);
+    // El "+" sobresale por la derecha de la barra mientras se arrastra algo encima.
+    if (dropping_ && visuals_) bar.right += static_cast<LONG>(std::ceil(visuals_->AddZoneReach())) + 2;
+    rects.push_back(bar);
+  }
   // El menú entero, no solo subir el techo de la barra: con un dock estrecho el menú es más
   // ancho que la barra y la región, que también recorta el dibujo, le cortaba el final de las
   // filas (medido: "Quitar 'Explorado" con un solo icono). En C# se encajaba dentro de la barra.
@@ -823,7 +948,7 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
         if (!fullscreen_) ReassertTopmost();
       } else if (wparam == kHideTimer) {
         KillTimer(hwnd_, kHideTimer);
-        if (!hovering_) Hide();
+        if (!hovering_ && !dropping_) Hide();
       } else if (wparam == kSlideTimer) {
         KillTimer(hwnd_, kSlideTimer);
         sliding_ = false;

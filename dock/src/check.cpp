@@ -3,6 +3,7 @@
 #include "check.h"
 
 #include <windows.h>
+#include <shlobj.h>
 
 #include <cmath>
 #include <cstdio>
@@ -12,6 +13,7 @@
 #include "core/jsonc.h"
 #include "model/config.h"
 #include "model/magnify.h"
+#include "system/drop.h"
 #include "system/icons.h"
 #include "system/inventory.h"
 #include "system/steam.h"
@@ -161,6 +163,86 @@ void CheckSaveLocal() {
   Expect(back.order.size() == 1 && back.screens.contains(L"otra"), "guardar: el resto del fichero se conserva");
   std::error_code ec;
   std::filesystem::remove(file, ec);
+}
+
+// Lo soltado se resuelve igual que lo hará el dock: IDataObject del shell con los ficheros de
+// verdad (el mismo camino que un arrastre desde el Explorador) y una app empaquetada sin ruta.
+IDataObject* DataObjectOf(const std::vector<std::wstring>& names) {
+  std::vector<PIDLIST_ABSOLUTE> pidls;
+  for (const auto& name : names) {
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    if (SUCCEEDED(SHParseDisplayName(name.c_str(), nullptr, &pidl, 0, nullptr))) pidls.push_back(pidl);
+  }
+  IShellItemArray* items = nullptr;
+  IDataObject* data = nullptr;
+  if (pidls.size() == names.size() &&
+      SUCCEEDED(SHCreateShellItemArrayFromIDLists(static_cast<UINT>(pidls.size()),
+                                                  const_cast<PCIDLIST_ABSOLUTE_ARRAY>(pidls.data()), &items))) {
+    items->BindToHandler(nullptr, BHID_DataObject, IID_PPV_ARGS(&data));
+    items->Release();
+  }
+  for (auto pidl : pidls) CoTaskMemFree(pidl);
+  return data;
+}
+
+bool SaveLink(const std::wstring& file, const wchar_t* target, const wchar_t* arguments, const wchar_t* icon, int index) {
+  IShellLinkW* link = nullptr;
+  if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link)))) return false;
+  link->SetPath(target);
+  link->SetArguments(arguments);
+  link->SetIconLocation(icon, index);
+  IPersistFile* persist = nullptr;
+  const bool ok = SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&persist))) && SUCCEEDED(persist->Save(file.c_str(), TRUE));
+  if (persist) persist->Release();
+  link->Release();
+  return ok;
+}
+
+void CheckDrop() {
+  const std::filesystem::path dir = std::filesystem::temp_directory_path() / L"dock-check-soltar";
+  std::filesystem::create_directories(dir);
+  const std::wstring explorer = L"C:\\Windows\\explorer.exe";
+  const std::wstring riot = (dir / L"juego.lnk").wstring(), own = (dir / L"propio.lnk").wstring();
+  const std::wstring url = (dir / L"juego.url").wstring(), doc = (dir / L"nota.txt").wstring();
+  Expect(SaveLink(riot, explorer.c_str(), L"--launch-product=valorant", L"C:\\Windows\\System32\\shell32.dll", 3) &&
+             SaveLink(own, explorer.c_str(), L"", explorer.c_str(), 0),
+         "soltar: crear los accesos directos");
+  {
+    std::ofstream(url, std::ios::binary | std::ios::trunc)
+        << "[InternetShortcut]\r\nURL=steam://rungameid/19680\r\nIconIndex=0\r\nIconFile=C:\\Windows\\explorer.exe\r\n";
+    std::ofstream(doc, std::ios::binary | std::ios::trunc) << "x";
+  }
+  if (IDataObject* data = DataObjectOf({riot, own, url, doc})) {
+    const auto items = ItemsOf(data);
+    data->Release();
+    Expect(items.size() == 4, "soltar: cuatro elementos");
+    if (items.size() == 4) {
+      Expect(_wcsicmp(items[0].app.target.c_str(), explorer.c_str()) == 0 && items[0].path == riot,
+             "soltar: un .lnk se guarda por su destino y se abre por el .lnk");
+      Expect(items[0].app.arguments == L"--launch-product=valorant", "soltar: el .lnk conserva sus argumentos");
+      Expect(items[0].app.iconTarget.empty(), "soltar: un icono con índice no se usa (el extractor no sabe)");
+      Expect(_wcsicmp(items[1].app.iconTarget.c_str(), explorer.c_str()) == 0, "soltar: el .lnk con icono propio");
+      Expect(items[2].app.target == L"steam://rungameid/19680" &&
+                 _wcsicmp(items[2].app.iconTarget.c_str(), explorer.c_str()) == 0,
+             "soltar: un .url se guarda por su URL y su icono");
+      Expect(items[3].app.target == doc && items[3].path == doc, "soltar: un fichero, tal cual");
+    }
+  } else {
+    Expect(false, "soltar: IDataObject de los ficheros");
+  }
+  // Configuración existe en cualquier Windows 11 y no tiene ruta de disco.
+  if (IDataObject* data = DataObjectOf(
+          {L"shell:AppsFolder\\windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel"})) {
+    const auto items = ItemsOf(data);
+    data->Release();
+    Expect(items.size() == 1 && items[0].path.empty() &&
+               _wcsnicmp(items[0].app.target.c_str(), L"shell:AppsFolder\\windows.immersivecontrolpanel", 46) == 0,
+           "soltar: una app de la Store, por su AUMID y sin ruta");
+  } else {
+    Expect(false, "soltar: IDataObject de Configuración");
+  }
+  std::error_code ec;
+  std::filesystem::remove_all(dir, ec);
 }
 
 void CheckSteamAndApps() {
@@ -332,6 +414,7 @@ int RunChecks(const std::filesystem::path& configPath) {
   CheckOverlay();
   CheckSteamAndApps();
   CheckSaveLocal();
+  CheckDrop();
   CheckMagnify();
   CheckIcons();
   CheckExpressions();

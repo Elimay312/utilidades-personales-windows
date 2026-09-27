@@ -15,6 +15,7 @@
 #include "system/drop.h"
 #include "system/inventory.h"
 #include "system/launch.h"
+#include "ui/genie.h"
 #include "ui/stack.h"
 
 namespace dock {
@@ -266,7 +267,7 @@ void DockWindow::OnMenuChoice(int choice) {
     const int total = static_cast<int>(wheelWindows_.size());
     CloseMenu();
     if (!window) return;
-    BringToFront(window);
+    Activate(window);
     LogInfo(L"[rueda] al frente la ventana {} de {}", at + 1, total);
     return;
   }
@@ -384,7 +385,7 @@ void DockWindow::OnWheelPick() {
     return;
   }
   visuals_->Bounce(index, config_.iconSize * dpi_ / 96.0f * 0.35f, false);
-  BringToFront(window);
+  Activate(window);
   LogInfo(L"[dock] al frente {}", trace);
 }
 
@@ -663,7 +664,7 @@ void DockWindow::OnClick(bool middle) {
       }
     }
     visuals_->Bounce(index, bounce, false);  // acuse de recibo, ya mismo
-    BringToFront(windows.front());
+    Activate(windows.front());
     LogInfo(L"[dock] al frente '{}'", app.name);
     return;
   }
@@ -678,6 +679,21 @@ void DockWindow::OnClick(bool middle) {
   } else {
     visuals_->Bounce(index, bounce * 0.7f, false);  // un documento o una URL
   }
+}
+
+void DockWindow::Activate(HWND window) {
+  if (IsIconic(window)) {
+    if (const auto to = IconFor(window)) {
+      // El foco YA, con el permiso del clic (que no dura 400 ms si el ratón pasa por otra
+      // ventana), y restaurar al acabar: restaurada al empezar aparecería entera debajo del
+      // genio. Si el genio se corta, el plazo restaura igual.
+      ::dock::Activate(window);  // la de launch.h, no este método
+      if (Genie::Play(window, app_.Remembered(window), *to, /*reverse=*/true,
+                      [window] { ShowWindow(window, SW_RESTORE); }))
+        return;
+    }
+  }
+  BringToFront(window);
 }
 
 bool DockWindow::UpdateRunning(Snapshot& snapshot, bool showRunning) {

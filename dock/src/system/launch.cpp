@@ -131,6 +131,10 @@ void RecycleDetached(std::vector<std::wstring> paths) {
 
 void BringToFront(HWND window) {
   if (IsIconic(window)) ShowWindow(window, SW_RESTORE);
+  Activate(window);
+}
+
+void Activate(HWND window) {
   const DWORD target = GetWindowThreadProcessId(window, nullptr);
   const DWORD self = GetCurrentThreadId();
   // AttachThreadInput puede fallar (con las apps UWP falla: su hilo vive en otro contenedor)

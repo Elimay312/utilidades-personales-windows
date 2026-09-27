@@ -99,6 +99,10 @@ abajo.
   tras diez seguidos); 98 % de los fotogramas a tiempo. Varias a la vez (Win+D) van sin genio.
   Mientras el dock vive, las ventanas que enseña no hacen la animación propia de Windows;
   al cerrarlo la recuperan.
+- **El genio de vuelta**: restaurar desde el dock (clic, lista de la rueda) saca la ventana
+  del icono y la restaura al acabar (~440 ms), no al empezar, así que no asoma entera debajo.
+  Si el genio se corta, un plazo de 700 ms la restaura igual. Restaurar desde fuera del dock
+  (Alt+Tab) es instantáneo: sin la animación de Windows y sin genio.
 - **El autoarranque solo lo toca la copia instalada**, para que una build de desarrollo no
   se registre en el inicio de sesión del usuario.
 - **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.

@@ -294,8 +294,7 @@ void App::OnMinimizeStart(HWND window) {
     return;
   }
   if (!quiet_.contains(window)) return;  // no es de ningún dock: Windows la anima como siempre
-  const auto remembered = rects_.find(window);
-  const std::optional<RECT> known = remembered != rects_.end() ? std::optional(remembered->second) : std::nullopt;
+  const std::optional<RECT> known = Remembered(window);
   // El icono del dock de la pantalla donde estaba la ventana; si ahí no está, el de cualquiera.
   WINDOWPLACEMENT placement{sizeof(placement)};
   GetWindowPlacement(window, &placement);

@@ -4,6 +4,7 @@
 #include <dwmapi.h>
 
 #include <chrono>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -33,10 +34,15 @@ class Genie {
   // el aviso ya es un icono en -32000 (medido: iconic=true, 160x28), así que hay que saberlo de
   // antes; si no cuadra con el tamaño de la miniatura (se maximizó sin que nadie avisara), se
   // deduce de GetWindowPlacement.
-  static bool Play(HWND window, std::optional<RECT> known, RECT to);
+  //
+  // reverse: al revés, del icono a la ventana (restaurar). `done` se llama al acabar, y
+  // también si el plazo lo corta: en el camino de vuelta es donde se restaura la ventana de
+  // verdad, porque restaurada al empezar aparecería entera debajo del genio.
+  static bool Play(HWND window, std::optional<RECT> known, RECT to, bool reverse = false,
+                   std::function<void()> done = {});
 
  private:
-  Genie(HWND window, RECT to);
+  Genie(HWND window, RECT to, bool reverse, std::function<void()> done);
   ~Genie();
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
   bool Start(std::optional<RECT> known);
@@ -46,6 +52,9 @@ class Genie {
 
   HWND window_;
   RECT to_;
+  bool reverse_;
+  std::function<void()> done_;
+  bool finished_ = false;
   RECT area_{};  // lo que cubre la ventana del genio, en pantalla
   std::optional<GenieCurve> curve_;
   HWND overlay_ = nullptr;

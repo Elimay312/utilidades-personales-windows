@@ -78,6 +78,8 @@ class DockWindow {
   void ApplyRegion();
   void Compose();
   void OnClick(bool middle);
+  // Al frente una ventana del dock. Minimizada, con el genio al revés desde su icono.
+  void Activate(HWND window);
   // El menú del clic derecho: recientes de la app (llegan del worker), Quitar/Anclar, Salir.
   void OpenContextMenu();
   void ShowMenu();

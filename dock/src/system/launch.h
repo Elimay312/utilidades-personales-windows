@@ -28,6 +28,9 @@ void RecycleDetached(std::vector<std::wstring> paths);
 // SetForegroundWindow solo funciona porque el dock acaba de recibir la entrada (el clic):
 // un clic simulado con PostMessage no cambiaba el foco en las pruebas del de C#.
 void BringToFront(HWND window);
+// Solo el foco, sin restaurar: una minimizada se queda minimizada (el genio de vuelta la
+// restaura al acabar, cuando el permiso del clic ya podría haber caducado).
+void Activate(HWND window);
 void Minimize(HWND window);
 
 }  // namespace dock

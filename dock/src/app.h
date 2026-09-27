@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -43,6 +44,10 @@ class App {
   // Apunta dónde está ahora una ventana (sus bordes visibles), para el genio: cuando llega el
   // aviso de minimizar ya es un icono en -32000.
   void Remember(HWND window);
+  std::optional<RECT> Remembered(HWND window) const {
+    const auto found = rects_.find(window);
+    return found != rects_.end() ? std::optional(found->second) : std::nullopt;
+  }
 
  private:
   static LRESULT CALLBACK HostProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);

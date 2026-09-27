@@ -22,14 +22,16 @@ constexpr double kFadeFrom = 0.7;
 
 }  // namespace
 
-bool Genie::Play(HWND window, std::optional<RECT> known, RECT to) {
-  auto* genie = new Genie(window, to);
+bool Genie::Play(HWND window, std::optional<RECT> known, RECT to, bool reverse, std::function<void()> done) {
+  auto* genie = new Genie(window, to, reverse, std::move(done));
   if (genie->Start(known)) return true;
+  genie->done_ = {};  // quien llama se entera por el false y hace la acción él
   delete genie;
   return false;
 }
 
-Genie::Genie(HWND window, RECT to) : window_(window), to_(to) {}
+Genie::Genie(HWND window, RECT to, bool reverse, std::function<void()> done)
+    : window_(window), to_(to), reverse_(reverse), done_(std::move(done)) {}
 
 RECT Genie::Origin(std::optional<RECT> known) const {
   // La miniatura mide lo que los bordes visibles de la ventana en su último estado (maximizada
@@ -128,8 +130,12 @@ void Genie::Step() {
     if (gap > 25) late_++;
   }
   const float t = static_cast<float>(std::min(1.0, elapsed / kDurationMs));
-  const float p = GenieEase(t);
-  const BYTE opacity = static_cast<BYTE>(t < kFadeFrom ? 255 : std::lround(255 * (1 - t) / (1 - kFadeFrom)));
+  // De vuelta, el mismo recorrido de p=1 a p=0 con el mismo ritmo, y la disolución al
+  // principio: la ventana se materializa saliendo del icono.
+  const float p = reverse_ ? 1 - GenieEase(t) : GenieEase(t);
+  const float visible = reverse_ ? std::min(1.0f, t / static_cast<float>(1 - kFadeFrom))
+                                 : (t < kFadeFrom ? 1.0f : static_cast<float>((1 - t) / (1 - kFadeFrom)));
+  const BYTE opacity = static_cast<BYTE>(std::lround(255 * visible));
   for (int i = 0; i < kSlices; i++) {
     const auto [left, right] = curve_->HorizontalAt(i, p);
     // Bordes redondeados por su cuenta y no alto a alto: así el de abajo de una franja es
@@ -150,9 +156,18 @@ void Genie::Step() {
 }
 
 void Genie::Finish() {
+  if (finished_) return;
+  finished_ = true;
   clock_.Pause();
   KillTimer(overlay_, kDeadlineTimer);
-  LogTrace(L"[genio] {} fotogramas, {} tarde (>25 ms), peor {:.1f} ms", frames_, late_, worst_);
+  LogTrace(L"[genio] {}{} fotogramas, {} tarde (>25 ms), peor {:.1f} ms", reverse_ ? L"de vuelta, " : L"", frames_,
+           late_, worst_);
+  if (done_) {
+    // Primero la ventana de verdad y un fotograma compuesto, luego el desmontaje: así no hay
+    // ni un fotograma sin ninguna de las dos.
+    done_();
+    DwmFlush();
+  }
   DestroyWindow(overlay_);  // WM_NCDESTROY borra el objeto
 }
 

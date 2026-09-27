@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "data/db.h"
 #include "ui/components.h"
 
 using Microsoft::WRL::ComPtr;
@@ -237,18 +238,29 @@ void DrawBlock(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme
   const D2D1_COLOR_F titleColor = item.done ? theme.textMuted : theme.textPrimary;
 
   target->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_ALIASED);
+  // The camera in the top right corner, where it does not take a line from the title.
+  float titleRight = right;
+  if (item.hasCall && !item.isTask && right - left > std::round(72.0f * app.type)) {
+    const float side = (std::min)(line, height);
+    const D2D1_RECT_F icon{right - side, rect.top + (std::min)(pad / 2.0f, (height - side) / 2.0f),
+                           right, 0.0f};
+    brush->SetColor(theme.textSecondary);
+    DrawCallIcon(target, brush, D2D1_RECT_F{icon.left, icon.top, icon.right, icon.top + side},
+                 app.type);
+    titleRight = right - side - pad / 2.0f;
+  }
   if (height >= 2.0f * line + pad) {
     const float top = rect.top + pad / 2.0f;
     brush->SetColor(titleColor);
-    DrawTextIn(target, fonts.event.Get(), item.title, D2D1_RECT_F{left, top, right, top + line},
-               brush);
+    DrawTextIn(target, fonts.event.Get(), item.title,
+               D2D1_RECT_F{left, top, titleRight, top + line}, brush);
     brush->SetColor(theme.textSecondary);
     DrawTextIn(target, fonts.label.Get(), when,
                D2D1_RECT_F{left, top + line, right, top + 2.0f * line}, brush);
   } else {
     brush->SetColor(titleColor);
     DrawTextIn(target, fonts.event.Get(), item.title + L"  ·  " + Clock(start),
-               D2D1_RECT_F{left, rect.top, right, rect.bottom}, brush);
+               D2D1_RECT_F{left, rect.top, titleRight, rect.bottom}, brush);
   }
   target->PopAxisAlignedClip();
 }
@@ -522,9 +534,11 @@ void DrawSidebar(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& the
 
 constexpr std::wstring_view kDetailLabelNames[2][kDetailLabels] = {
     {L"Título", L"Fecha", L"Inicio", L"Fin", L"Calendario", L"Ubicación", L"Notas", L"Repetición",
-     L"Aviso"},
+     L"Aviso", L"Invitados"},
     {L"Title", L"Date", L"Start", L"End", L"Calendar", L"Location", L"Notes", L"Repeat",
-     L"Reminder"}};
+     L"Reminder", L"Guests"}};
+constexpr std::wstring_view kResponseNames[2][kResponseChoices] = {{L"Sí", L"Quizá", L"No"},
+                                                                    {L"Yes", L"Maybe", L"No"}};
 constexpr std::wstring_view kRepeatNames[2][kRepeatChoices] = {
     {L"Nunca", L"Diaria", L"Semanal", L"Mensual", L"Anual"},
     {L"Never", L"Daily", L"Weekly", L"Monthly", L"Yearly"}};
@@ -652,7 +666,7 @@ void DrawDetail(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
                 ID2D1SolidColorBrush* brush, ID2D1StrokeStyle* style) {
   const DetailModel& detail = appModel.detail;
   if (detail.t <= 0.0f) return;
-  const DetailLayout layout = MakeDetailLayout(app);
+  const DetailLayout layout = MakeDetailLayout(app, appModel.detail.event);
   const float type = app.type;
   Faded faded(target, EaseOutCubic(detail.t));
 
@@ -666,6 +680,7 @@ void DrawDetail(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
             (std::max)(1.0f, 1.5f * type), style);
 
   for (int i = 0; i < kDetailLabels; ++i) {
+    if (layout.labels[i].right <= layout.labels[i].left) continue;
     brush->SetColor(theme.textSecondary);
     DrawTextIn(target, fonts.label.Get(), kDetailLabelNames[English() ? 1 : 0][i], layout.labels[i], brush);
   }
@@ -761,6 +776,89 @@ void DrawDetail(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
                D2D1_RECT_F{layout.labels[8].left + std::round(80.0f * type), layout.labels[8].top,
                            layout.labels[8].right, layout.labels[8].bottom},
                brush, Align::Right);
+  }
+
+  // Unirse: the one filled button in the panel, because it is the one thing to do at 9:59.
+  if (layout.join.right > layout.join.left) {
+    const float radius = (layout.join.bottom - layout.join.top) / 2.0f;
+    brush->SetColor(theme.accent);
+    FillRound(target, layout.join, radius, brush);
+    brush->SetColor(theme.onAccent);
+    DrawTextIn(target, fonts.label.Get(), T(L"Unirse", L"Join"), layout.join, brush,
+               Align::Center);
+  }
+
+  // The guests: a dot in the colour of their answer, the organiser's with a ring round it.
+  if (layout.guests.right > layout.guests.left) {
+    const std::vector<Attendee>& guests = detail.event.attendees;
+    const int shown = (std::min)(static_cast<int>(guests.size()), kGuestsShown);
+    const int more = static_cast<int>(guests.size()) - shown;
+    int yes = 0;
+    for (const Attendee& guest : guests) yes += guest.response == "accepted" ? 1 : 0;
+    const D2D1_RECT_F count = layout.labels[kLabelGuests];
+    brush->SetColor(theme.textSecondary);
+    DrawTextIn(target, fonts.label.Get(),
+               std::format(L"{} {} {}", yes, T(L"de", L"of"), guests.size()) +
+                   std::wstring(T(L" dicen que sí", L" going")),
+               count, brush, Align::Right);
+
+    const float moreWidth = more > 0 ? std::round(32.0f * type) : 0.0f;
+    const float slot = (layout.guests.right - layout.guests.left - moreWidth) /
+                       static_cast<float>((std::max)(shown, 1));
+    const float middle = (layout.guests.top + layout.guests.bottom) / 2.0f;
+    const float radius = std::round(4.0f * type);
+    for (int i = 0; i < shown; ++i) {
+      const Attendee& guest = guests[static_cast<size_t>(i)];
+      const float left = layout.guests.left + static_cast<float>(i) * slot;
+      const D2D1_COLOR_F answer = guest.response == "accepted"    ? theme.accent
+                                  : guest.response == "declined"  ? theme.now
+                                  : guest.response == "tentative" ? theme.alt
+                                                                  : theme.textMuted;
+      const D2D1_POINT_2F dotAt{left + radius, middle};
+      brush->SetColor(answer);
+      FillCircle(target, dotAt, radius, brush);
+      if (guest.organizer) {
+        brush->SetColor(theme.textSecondary);
+        target->DrawEllipse(D2D1::Ellipse(dotAt, radius + 2.0f * type, radius + 2.0f * type),
+                            brush, type);
+      }
+      std::wstring name = guest.self ? std::wstring(T(L"Tú", L"You")) : guest.name;
+      if (name.empty()) {
+        const std::wstring email = ToWide(guest.email);
+        name = email.substr(0, email.find(L'@'));
+      }
+      brush->SetColor(guest.response == "declined" ? theme.textSecondary : theme.textPrimary);
+      DrawTextIn(target, fonts.label.Get(), name,
+                 D2D1_RECT_F{left + 2.0f * radius + std::round(8.0f * type), layout.guests.top,
+                             left + slot - std::round(6.0f * type), layout.guests.bottom},
+                 brush);
+    }
+    if (more > 0) {
+      brush->SetColor(theme.textSecondary);
+      DrawTextIn(target, fonts.label.Get(), std::format(L"+{}", more),
+                 D2D1_RECT_F{layout.guests.right - moreWidth, layout.guests.top,
+                             layout.guests.right, layout.guests.bottom},
+                 brush, Align::Right);
+    }
+  }
+
+  // This account's answer: the same pills as the repetition.
+  if (const Attendee* self = SelfGuest(detail.event);
+      self != nullptr && layout.response[0].right > layout.response[0].left) {
+    for (int i = 0; i < kResponseChoices; ++i) {
+      const bool on = self->response == kResponseWords[i];
+      const D2D1_RECT_F pill = layout.response[i];
+      const float radius = (pill.bottom - pill.top) / 2.0f;
+      brush->SetColor(on ? theme.accent : theme.panelOpaque);
+      FillRound(target, pill, radius, brush);
+      if (!on) {
+        brush->SetColor(theme.border);
+        StrokeRound(target, pill, radius, brush, 1.0f);
+      }
+      brush->SetColor(on ? theme.onAccent : theme.textSecondary);
+      DrawTextIn(target, fonts.label.Get(), kResponseNames[English() ? 1 : 0][i], pill, brush,
+                 Align::Center);
+    }
   }
 
   brush->SetColor(Fade(theme.now, theme.light ? 0.08f : 0.12f));

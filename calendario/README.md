@@ -200,6 +200,16 @@ calendario), *Ninguno*, *10 min*, *1 h* o *1 día*; uno distinto puesto en Googl
 los avisos por correo que tenga no se pierden. **Borrar evento**, abajo, hace lo mismo que
 `Supr`.
 
+**Reuniones.** Si el evento tiene videollamada —la de Meet que pone Google, o un enlace de
+Meet, Zoom, Teams, Webex o Whereby pegado en la ubicación o las notas—, arriba aparece
+**Unirse**, que la abre en el navegador. La tarjeta del popup y el bloque de la app llevan una
+cámara pequeña (en el popup, un clic en ella también une), y el aviso de Windows y el de la
+[Isla](../isla/README.md) traen su propio botón **Unirse**. Si hay invitados, el panel enseña
+quién va, con un punto del color de su respuesta (el organizador con un aro), y si te invitaron
+a ti, **Sí / Quizá / No** responde en Google, que se lo cuenta al organizador.
+
+![Una reunión con invitados](docs/img/app-invitados.png)
+
 Borrar no es inmediato: el evento desaparece de la pantalla y se borra de verdad cuando se va
 el aviso de cinco segundos. Deshacer solo lo vuelve a enseñar, así que no se pierde nada de lo
 que Google tiene de él, como los invitados o los recordatorios.
@@ -533,7 +543,7 @@ La app tiene siete vistas más: `app-dia`, `app-semana` y `app-mes`, a su tamañ
 ventana a mitad de la expansión sobre esa área de trabajo entera para poder juzgar cómo se
 reorganiza; y `app-detalle`, `app-arrastre`, `app-borrar` y `app-repeticion`, la semana con el
 panel de detalle abierto, con un evento a medio arrastrar, con la pregunta de borrar y con la de
-«solo este o toda la serie». Llevan una semana de
+«solo este o toda la serie». `app-invitados` abre una reunión con invitados y videollamada. Llevan una semana de
 ejemplo propia, con solapes, días enteros y una repetición.
 
 | | Tema oscuro | Tema claro |

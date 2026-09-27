@@ -89,19 +89,26 @@ bool ShowReminderToast(const Reminder& reminder, long long now, HWND notify) {
 
   // The reminder scenario: it stays until answered and Windows handles snooze and dismiss on its
   // own, with the snooze times offered in a list, so none of that comes back to Agenda.
+  // Unirse, when there is a call: a protocol action, so Windows opens the address itself even
+  // when Agenda is no longer running. Only a web address goes in.
+  std::wstring join;
+  if (reminder.joinUrl.starts_with(L"https://")) {
+    join = std::format(LR"(<action activationType="protocol" arguments="{}" content="{}"/>)",
+                       Escape(reminder.joinUrl), T(L"Unirse", L"Join"));
+  }
   const std::wstring xml = std::format(
       LR"(<toast scenario="reminder" launch="agenda">)"
       LR"(<visual><binding template="ToastGeneric"><text>{}</text><text>{}</text>)"
       LR"(<text placement="attribution">{}</text></binding></visual>)"
       LR"(<actions><input id="snooze" type="selection" defaultInput="5">)"
       LR"(<selection id="5" content="{}"/><selection id="10" content="{}"/>)"
-      LR"(<selection id="30" content="{}"/></input>)"
+      LR"(<selection id="30" content="{}"/></input>{})"
       LR"(<action activationType="system" arguments="snooze" hint-inputId="snooze" content="{}"/>)"
       LR"(<action activationType="system" arguments="dismiss" content="{}"/></actions>)"
       LR"(<audio src="ms-winsoundevent:Notification.Reminder"/></toast>)",
       Escape(reminder.title), Escape(ReminderWhen(reminder, now)),
       Escape(ReminderSoon(reminder, now)), T(L"5 minutos", L"5 minutes"),
-      T(L"10 minutos", L"10 minutes"), T(L"30 minutos", L"30 minutes"),
+      T(L"10 minutos", L"10 minutes"), T(L"30 minutos", L"30 minutes"), join,
       T(L"Posponer", L"Snooze"), T(L"Descartar", L"Dismiss"));
 
   ComPtr<IInspectable> inspectable;

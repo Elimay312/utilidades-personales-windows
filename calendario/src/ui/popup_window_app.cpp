@@ -4,6 +4,7 @@
 
 #include "ui/popup_window.h"
 
+#include <shellapi.h>
 #include <windowsx.h>
 
 #include <algorithm>
@@ -1065,6 +1066,24 @@ void PopupWindow::ChooseReminder(ReminderChoice choice) {
   SaveDetail(event, kEditReminders);
 }
 
+void PopupWindow::ChooseResponse(int index) {
+  DetailModel& detail = app_.detail;
+  if (!detail.open || index < 0 || index >= kResponseChoices) return;
+  for (Attendee& guest : detail.event.attendees) {
+    if (!guest.self || guest.response == kResponseWords[index]) continue;
+    guest.response = kResponseWords[index];
+    store_->SetResponse(detail.event.uid, kResponseWords[index]);
+    if (sync_ != nullptr) sync_->Push();
+  }
+  Invalidate();
+}
+
+void PopupWindow::JoinCall(const std::wstring& url) {
+  // Only a web address: whatever an invitation says goes to the browser and nowhere else.
+  if (!url.starts_with(L"https://")) return;
+  ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
 void PopupWindow::StoreEvent(const EventDetail& event, unsigned edits) {
   store_->UpdateEvent(event, edits);
   if (sync_ != nullptr) sync_->Push();
@@ -1190,7 +1209,7 @@ bool PopupWindow::OnDetailKeyDown(WPARAM key) {
 bool PopupWindow::OnDetailLeftDown(float x, float y) {
   DetailModel& detail = app_.detail;
   if (!detail.open) return false;
-  const DetailLayout layout = MakeDetailLayout(appLayout_);
+  const DetailLayout layout = MakeDetailLayout(appLayout_, app_.detail.event);
 
   // The open list sits over the fields below the chooser, so it answers first.
   if (detail.calendarOpen) {
@@ -1227,6 +1246,10 @@ bool PopupWindow::OnDetailLeftDown(float x, float y) {
     CloseDetail();
     return true;
   }
+  if (Inside(layout.join, x, y)) {
+    JoinCall(JoinUrl(detail.event.conference, detail.event.location, detail.event.notes));
+    return true;
+  }
   for (int i = 0; i < kDetailFields; ++i) {
     if (!Inside(layout.fields[i], x, y)) continue;
     FocusDetail(i);
@@ -1259,6 +1282,9 @@ bool PopupWindow::OnDetailLeftDown(float x, float y) {
     for (int i = 0; i < kReminderChoices; ++i) {
       if (Inside(layout.reminder[i], x, y)) ChooseReminder(static_cast<ReminderChoice>(i));
     }
+    for (int i = 0; i < kResponseChoices; ++i) {
+      if (Inside(layout.response[i], x, y)) ChooseResponse(i);
+    }
   }
   Invalidate();
   return true;
@@ -1270,7 +1296,7 @@ bool PopupWindow::DetailCursor(float x, float y, LPCWSTR& cursor) {
     return true;
   }
   if (app_.detail.open) {
-    const DetailLayout layout = MakeDetailLayout(appLayout_);
+    const DetailLayout layout = MakeDetailLayout(appLayout_, app_.detail.event);
     for (int i = 0; i < kDetailFields; ++i) {
       if (Inside(layout.fields[i], x, y)) {
         cursor = IDC_IBEAM;

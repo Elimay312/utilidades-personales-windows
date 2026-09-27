@@ -14,6 +14,11 @@ sigue [SemVer](https://semver.org/lang/es/).
   Google o uno pegado en el lugar o las notas) y la zona horaria en que se escribió cuando no es
   la de este equipo. Esquema v6 (tres columnas en `events`); la migración vuelve a bajar los
   calendarios una vez para traerlos.
+- **Unirse y responder** (fase 13.2). El panel de detalle enseña **Unirse** cuando el evento
+  tiene videollamada, los invitados con su respuesta y, si te invitaron, **Sí / Quizá / No**,
+  que se sube a Google. Las tarjetas y los bloques con videollamada llevan una cámara (en el
+  popup, un clic en ella une), y el aviso de Windows y el de la Isla traen su botón **Unirse**.
+  Captura `app-invitados`.
 
 - **Varias cuentas de Google** (fase 12.3). La configuración tiene una sección **Cuentas de
   Google** con **Añadir…** otra cuenta, **Reconectar…** la que perdió el permiso y una tarjeta

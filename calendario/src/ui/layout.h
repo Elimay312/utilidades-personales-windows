@@ -293,6 +293,16 @@ inline D2D1_RECT_F CheckboxRect(const PanelLayout& layout, const D2D1_RECT_F& ca
   return D2D1_RECT_F{left, top, left + side, top + side};
 }
 
+// The camera on a card with a call to join (phase 13), at the right end, left of any "+N". A
+// click on it joins, so it is a finger's width and not the icon's.
+inline D2D1_RECT_F CallIconRect(const PanelLayout& layout, const D2D1_RECT_F& card, int more) {
+  float right = card.right - std::round(kCardRightPadDip * layout.type);
+  if (more > 0) right -= std::round((kCounterWidthDip + 2.0f * kGapDip) * layout.type);
+  const float side = std::round(24.0f * layout.type);
+  const float top = std::round((card.top + card.bottom - side) / 2.0f);
+  return D2D1_RECT_F{right - side, top, right, top + side};
+}
+
 // Worked out bottom up: the capsule is pinned above the lower padding, the list keeps room for
 // at least two cards, and what is left over goes to the six rows of the month. At 340x420 every
 // number below comes out exactly as the design system writes it.

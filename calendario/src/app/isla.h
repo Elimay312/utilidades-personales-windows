@@ -35,6 +35,9 @@ class Isla {
   static constexpr const char* kSnooze5 = "pos5";
   static constexpr const char* kSnooze10 = "pos10";
   static constexpr const char* kOpen = "abrir";
+  // Phase 13: the island takes no addresses (SEGURIDAD.md 3.7), only a button; the address is
+  // opened on this side, from the reminder that came back with the answer.
+  static constexpr const char* kJoin = "unirse";
 
   Isla() = default;
   ~Isla() { Stop(); }

@@ -1071,6 +1071,17 @@ bool PopupWindow::ToggleCardAt(float x, float y) {
     const size_t index = static_cast<size_t>(slots.first + position);
     zone_ = Zone::List;
     listFocus_ = static_cast<int>(index);
+    // The camera joins the call, straight from the popup.
+    if (model_.day[index].hasCall && !model_.day[index].isTask) {
+      const int more =
+          position == slots.shown - 1 ? static_cast<int>(model_.day.size()) - slots.shown : 0;
+      if (Inside(CallIconRect(layout_, card, more), x, y)) {
+        if (const std::optional<EventDetail> event = store_->Event(model_.day[index].uid)) {
+          JoinCall(JoinUrl(event->conference, event->location, event->notes));
+        }
+        return true;
+      }
+    }
     // A click anywhere else on a card is still a click on the card, not on the day behind it.
     if (!model_.day[index].isTask || !Inside(CheckboxRect(layout_, card), x, y)) return true;
     ToggleDone(index);

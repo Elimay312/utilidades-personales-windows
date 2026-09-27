@@ -281,22 +281,38 @@ inline AppLayout MakeAppLayout(D2D1_SIZE_F size, const PanelLayout& popup, AppVi
 enum DetailField { kFieldTitle, kFieldDate, kFieldStart, kFieldEnd, kFieldLocation, kFieldNotes };
 inline constexpr int kDetailFields = 6;
 inline constexpr int kRepeatChoices = 5;  // Nunca, Diaria, Semanal, Mensual, Anual
-// Título, Fecha, Inicio, Fin, Calendario, Ubicación, Notas, Repetición, Aviso.
-inline constexpr int kDetailLabels = 9;
+// Título, Fecha, Inicio, Fin, Calendario, Ubicación, Notas, Repetición, Aviso, Invitados.
+inline constexpr int kDetailLabels = 10;
+inline constexpr int kLabelGuests = 9;
+// Sí, Quizá, No: Google's "accepted", "tentative" and "declined".
+inline constexpr int kResponseChoices = 3;
+inline constexpr const char* kResponseWords[kResponseChoices] = {"accepted", "tentative",
+                                                                  "declined"};
+// How many guests the panel names before it says "+N".
+inline constexpr int kGuestsShown = 3;
 
-// What the keyboard reaches in the panel that is not a text field. The reminder came last
-// (phase 11), so it is last here too and the others keep their numbers.
-enum DetailControl { kControlCalendar, kControlRepeat, kControlDelete, kControlReminder };
+// What the keyboard reaches in the panel that is not a text field. Each came after the one
+// before it, so each is appended and the others keep their numbers.
+enum DetailControl {
+  kControlCalendar,
+  kControlRepeat,
+  kControlDelete,
+  kControlReminder,
+  kControlJoin,      // phase 13: only when there is a call
+  kControlResponse,  // phase 13: only when this account is a guest
+};
 
 // The order Tab walks the panel in, top to bottom as it reads. A text field is its own index; a
 // control is kDetailFields plus its own.
 inline constexpr int kDetailStops[] = {kFieldTitle,
+                                       kDetailFields + kControlJoin,
                                        kFieldDate,
                                        kFieldStart,
                                        kFieldEnd,
                                        kDetailFields + kControlCalendar,
                                        kFieldLocation,
                                        kFieldNotes,
+                                       kDetailFields + kControlResponse,
                                        kDetailFields + kControlRepeat,
                                        kDetailFields + kControlReminder,
                                        kDetailFields + kControlDelete};
@@ -310,6 +326,10 @@ struct DetailLayout {
   D2D1_RECT_F repeat[kRepeatChoices]{};
   D2D1_RECT_F reminder[kReminderChoices]{};
   D2D1_RECT_F remove{};
+  // Phase 13. Empty rectangles when the event has no call, no guests, or no answer to give.
+  D2D1_RECT_F join{};
+  D2D1_RECT_F guests{};
+  D2D1_RECT_F response[kResponseChoices]{};
   float pad = 0.0f;
   float fieldHeight = 0.0f;
   float radius = 0.0f;
@@ -319,9 +339,25 @@ struct DetailLayout {
     const float top = calendar.bottom + pad / 4.0f + static_cast<float>(index) * fieldHeight;
     return D2D1_RECT_F{calendar.left, top, calendar.right, top + fieldHeight};
   }
+
+  // Whether a stop of kDetailStops is on the panel at all for this event.
+  bool Shows(int stop) const {
+    const auto has = [](const D2D1_RECT_F& rect) { return rect.right > rect.left; };
+    if (stop == kDetailFields + kControlJoin) return has(join);
+    if (stop == kDetailFields + kControlResponse) return has(response[0]);
+    return true;
+  }
 };
 
-inline DetailLayout MakeDetailLayout(const AppLayout& app) {
+// This account among the guests, when it is one and not the one who invited them.
+inline const Attendee* SelfGuest(const EventDetail& event) {
+  for (const Attendee& guest : event.attendees) {
+    if (guest.self) return guest.organizer ? nullptr : &guest;
+  }
+  return nullptr;
+}
+
+inline DetailLayout MakeDetailLayout(const AppLayout& app, const EventDetail& event) {
   DetailLayout out;
   const float type = app.type;
   const auto at = [type](float dip) { return std::round(dip * type); };
@@ -362,7 +398,32 @@ inline DetailLayout MakeDetailLayout(const AppLayout& app) {
 
   out.calendar = field(4, out.fieldHeight);
   out.fields[kFieldLocation] = field(5, out.fieldHeight);
-  out.fields[kFieldNotes] = field(6, at(88.0f));
+  // Unirse sits on the title's line, left of the cross, where it is the first thing seen.
+  if (!JoinUrl(event.conference, event.location, event.notes).empty()) {
+    const float width = at(76.0f);
+    out.join = D2D1_RECT_F{out.close.left - app.gap - width, out.close.top,
+                           out.close.left - app.gap, out.close.bottom};
+    out.labels[0].right = out.join.left - app.gap;
+  }
+
+  // The notes give up a line to the guests, so the panel still fits the window it did.
+  const bool guests = !event.attendees.empty();
+  out.fields[kFieldNotes] = field(6, at(guests ? 56.0f : 88.0f));
+
+  if (guests) {
+    const float line = labelled(kLabelGuests, right);
+    out.guests = D2D1_RECT_F{left, line, right, line + at(20.0f)};
+    y = out.guests.bottom + row;
+    if (SelfGuest(event) != nullptr) {
+      const float width = (right - left - static_cast<float>(kResponseChoices - 1) * app.gap) /
+                          static_cast<float>(kResponseChoices);
+      for (int i = 0; i < kResponseChoices; ++i) {
+        const float pillLeft = left + static_cast<float>(i) * (width + app.gap);
+        out.response[i] = D2D1_RECT_F{pillLeft, y, pillLeft + width, y + at(28.0f)};
+      }
+      y += at(28.0f) + row;
+    }
+  }
 
   const float pillTop = labelled(7, right);
   const float pill = (right - left - static_cast<float>(kRepeatChoices - 1) * app.gap) /

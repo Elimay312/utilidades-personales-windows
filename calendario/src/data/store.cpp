@@ -311,7 +311,7 @@ std::vector<Reminder> Store::DueReminders(long long from, long long to) {
       "SELECT e.uid, e.title, e.location, e.start_day, e.start_min, e.end_min, e.recurrence, "
       "       COALESCE(e.reminders, c.reminders), c.color, "
       "       CAST(strftime('%s', e.updated_at, 'unixepoch', 'localtime') AS INTEGER) / 60, "
-      "       COALESCE(e.remote_id, replace(lower(e.uid), '-', '')) "
+      "       COALESCE(e.remote_id, replace(lower(e.uid), '-', '')), e.conference, e.notes "
       "FROM events e JOIN calendars c ON c.id = e.calendar_id "
       "WHERE e.deleted_at IS NULL AND c.visible = 1 AND c.hidden = 0 "
       "  AND COALESCE(e.reminders, c.reminders) != '' "
@@ -377,6 +377,7 @@ std::vector<Reminder> Store::DueReminders(long long from, long long to) {
         reminder.minutesBefore = lead;
         reminder.at = due;
         reminder.color = static_cast<std::uint32_t>(stmt->Int(8));
+        reminder.joinUrl = JoinUrl(stmt->Wide(11), reminder.location, stmt->Wide(12));
         out.push_back(std::move(reminder));
       }
       if (rule.empty()) break;

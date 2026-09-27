@@ -24,6 +24,7 @@ inline constexpr std::wstring_view kSnapshotViews[] = {
     L"app-repeticion",      // a repetition moved: this one, or all of them
     L"popup-buscar",        // "?con" in the capsule: what it finds, over the day list
     L"app-buscar",          // the same search in the app, hanging below the capsule
+    L"app-invitados",       // a meeting open in the panel: its guests, the answer and Unirse
     L"configuracion",       // the settings window's client area, as it opens
 };
 

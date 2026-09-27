@@ -149,6 +149,8 @@ inline std::vector<DayItem> SampleAppDay(Date date) {
     if (row.endMin >= 0) item.endMin = row.endMin;
     item.title = row.title;
     item.color = row.color;
+    // The work meetings are on Meet, so the camera shows where a real week would have it.
+    item.hasCall = row.color == kSampleWorkColor && !row.isTask && row.startMin >= 0;
     items.push_back(item);
   }
   // Every Monday at seven, from the 7th of September: the repetition CLAUDE.md waited on the

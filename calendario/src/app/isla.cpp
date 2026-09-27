@@ -42,7 +42,7 @@ bool Isla::Offer(const Reminder& reminder, long long now) {
   // way the toast says it instead.
   if (pipe == INVALID_HANDLE_VALUE) return false;
 
-  const nlohmann::json notice = {
+  nlohmann::json notice = {
       {"app", "Agenda"},
       {"titulo", ToUtf8(reminder.title)},
       // The absolute time and not "en 10 min": the bubble can wait a long while to be opened.
@@ -55,6 +55,11 @@ bool Isla::Offer(const Reminder& reminder, long long now) {
         {{"id", kSnooze5}, {"texto", "5 min"}},
         {{"id", kSnooze10}, {"texto", "10 min"}},
         {{"id", kOpen}, {"texto", ToUtf8(T(L"Abrir", L"Open"))}}}}};
+  // Four buttons is the island's limit. With a call to join, Unirse takes the place of the
+  // longer snooze: at the minute a meeting starts, joining it is the answer.
+  if (reminder.joinUrl.starts_with(L"https://")) {
+    notice["botones"][2] = {{"id", kJoin}, {"texto", ToUtf8(T(L"Unirse", L"Join"))}};
+  }
   const std::string line = notice.dump() + "\n";
 
   OVERLAPPED op{};

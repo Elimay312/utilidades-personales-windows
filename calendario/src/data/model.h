@@ -277,6 +277,7 @@ struct Reminder {
   int minutesBefore = 0;
   long long at = 0;
   std::uint32_t color = 0;  // its calendar's, for the dot the island draws
+  std::wstring joinUrl;     // phase 13: the call, for the notification's Unirse button
 };
 
 // A day that has something on it, and the colour its dot takes.

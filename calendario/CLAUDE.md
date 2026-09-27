@@ -89,6 +89,7 @@ Cualquier dependencia que no esté en esta tabla requiere **preguntar antes**.
   - Línea de ahora: `#FF5A5F` en oscuro, `#E0393E` en claro (token `now`). Fuerte en la columna de hoy y al 35 % en las demás.
   - Bloques: el color del calendario mezclado con la superficie (26 % en oscuro, 16 % en claro) y la barra de 3 px a la izquierda.
   - La cápsula viaja primero a la derecha y luego arriba (en línea recta cruzaría la rejilla). La lista del día se va en el primer 30 % del camino y la app entra entre el 30 y el 85 %.
+  - Reuniones (fase 13.2): **Unirse** es una cápsula de acento en la línea del título, a la izquierda de la cruz; los invitados, una línea con hasta 3 nombres y «+N», con el punto del color de su respuesta (sí = acento, quizá = `alt`, no = `now`, sin respuesta = `textMuted`) y un aro en el organizador; **Sí / Quizá / No** son las píldoras de repetir, solo si la cuenta es invitada y no organizadora. Con invitados las notas bajan de 88 a 56 DIP para que el panel quepa. La cámara de las tarjetas (`DrawCallIcon`) es dos rectángulos redondeados y en el bloque solo sale si mide más de 72 DIP. La Isla no admite URLs (SEGURIDAD §3.7): con videollamada, «Unirse» sustituye a «10 min» y la URL la abre Agenda al volver el id del botón.
   - Panel de detalle: 320 DIP a la derecha, superficie de tarjeta con el radio del panel (14), campos de 32 DIP con fondo `panelOpaque` y radio 8; foco en acento, error en el rojo de `now`. Entra con los 160 ms de siempre y no con el muelle: es algo que entra, no la ventana que cambia de tamaño.
   - Arrastrar: ajuste a 15 min, 4 DIP de temblor siguen siendo un clic, y los 6 DIP de abajo de un bloque lo estiran. El fantasma del arrastre es el bloque con el contorno de la selección.
   - Respeta la preferencia de "reducir animaciones" de Windows (`SPI_GETCLIENTAREAANIMATION`).
@@ -219,6 +220,7 @@ build\debug\Agenda.exe --render-snapshot=app-borrar --out=docs\img\app-borrar.pn
 build\debug\Agenda.exe --render-snapshot=app-repeticion --out=docs\img\app-repeticion.png
 build\debug\Agenda.exe --render-snapshot=popup-buscar --out=docs\img\popup-buscar.png
 build\debug\Agenda.exe --render-snapshot=app-buscar --out=docs\img\app-buscar.png
+build\debug\Agenda.exe --render-snapshot=app-invitados --out=docs\img\app-invitados.png
 build\debug\Agenda.exe --render-snapshot=configuracion --theme=light --out=docs\img\configuracion-claro.png
 build\debug\Agenda.exe --render-snapshot=popup --theme=contrast --out=docs\img\popup-contraste.png
 powershell -NoProfile -ExecutionPolicy Bypass -File empaquetar.ps1   # build\release\Instalar-Agenda.exe

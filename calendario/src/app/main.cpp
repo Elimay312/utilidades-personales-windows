@@ -131,6 +131,8 @@ void OnIslaAnswers(App& app) {
       app.snoozed.emplace_back(now + (answer.button == Isla::kSnooze5 ? 5 : 10), reminder);
     } else if (answer.button == Isla::kOpen) {
       app.popup.ShowEvent(reminder.uid, reminder.day);
+    } else if (answer.button == Isla::kJoin && reminder.joinUrl.starts_with(L"https://")) {
+      ShellExecuteW(nullptr, L"open", reminder.joinUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
     // "hecho" is the reminder attended to: nothing more is said. The notes of an event will
     // hang from here when that module exists.

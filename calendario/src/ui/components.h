@@ -35,6 +35,10 @@ void DrawEventCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush,
                    const D2D1_RECT_F& rect, const DayItem& item, int more, float strike);
 
+// A small video camera, centred in `rect`, for an event with a call to join.
+void DrawCallIcon(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, const D2D1_RECT_F& rect,
+                  float type);
+
 // The discreet notice that says something was created and can still be undone. It takes the
 // preview card's rectangle, which is empty the moment after Enter cleared the capsule.
 void DrawToast(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,

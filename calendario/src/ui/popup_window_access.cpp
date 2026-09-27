@@ -52,6 +52,9 @@ constexpr int kChooserId = 5100;
 constexpr int kDeleteId = 5101;
 constexpr int kRepeatIds = 5200;
 constexpr int kReminderIds = 5300;
+constexpr int kJoinId = 5102;
+constexpr int kGuestsId = 5103;
+constexpr int kResponseIds = 5400;
 
 bool Within(int id, int base, int count) { return id >= base && id < base + count; }
 
@@ -377,6 +380,22 @@ bool PopupWindow::OnDetailControlKey(WPARAM key) {
     case kControlDelete:
       if (key == VK_SPACE || key == VK_RETURN) AskDelete(detail.event.uid);
       break;
+    case kControlJoin:
+      if (key == VK_SPACE || key == VK_RETURN)
+        JoinCall(JoinUrl(detail.event.conference, detail.event.location, detail.event.notes));
+      break;
+    case kControlResponse: {
+      if (key != VK_LEFT && key != VK_RIGHT && key != VK_UP && key != VK_DOWN) return true;
+      const Attendee* self = SelfGuest(detail.event);
+      if (self == nullptr) return true;
+      int at = -1;
+      for (int i = 0; i < kResponseChoices; ++i) at = self->response == kResponseWords[i] ? i : at;
+      const int step = key == VK_LEFT || key == VK_UP ? -1 : 1;
+      // Nothing answered yet: the first arrow lands on an end, not past it.
+      ChooseResponse(at < 0 ? (step > 0 ? 0 : kResponseChoices - 1)
+                            : std::clamp(at + step, 0, kResponseChoices - 1));
+      break;
+    }
     default:
       break;
   }
@@ -416,7 +435,10 @@ void PopupWindow::MoveDetailStop(bool back) {
   for (int i = 0; i < count; ++i) {
     if (kDetailStops[i] == stop) at = i;
   }
-  const int next = at + (back ? -1 : 1);
+  // Past the stops this event does not have: no call, no invitation to answer.
+  const DetailLayout layout = MakeDetailLayout(appLayout_, app_.detail.event);
+  int next = at + (back ? -1 : 1);
+  while (next >= 0 && next < count && !layout.Shows(kDetailStops[next])) next += back ? -1 : 1;
   if (next < 0) {
     EnterZone(Zone::Events, true);
   } else if (next >= count) {
@@ -610,7 +632,7 @@ void PopupWindow::UpdateRing() {
     case Zone::Detail: {
       const DetailModel& detail = app_.detail;
       if (detail.control < 0) return;
-      const DetailLayout layout = MakeDetailLayout(appLayout_);
+      const DetailLayout layout = MakeDetailLayout(appLayout_, app_.detail.event);
       const float radius = layout.radius + pad;
       if (detail.control == kControlCalendar) {
         set(Inset(detail.calendarOpen ? layout.calendarOption(detail.calendarPick) : layout.calendar,
@@ -636,6 +658,13 @@ void PopupWindow::UpdateRing() {
                               layout.reminder[last].right, layout.reminder[last].bottom}
                 : layout.reminder[static_cast<int>(reminder)];
         set(Inset(pill, -pad), (pill.bottom - pill.top) / 2.0f + pad);
+      } else if (detail.control == kControlJoin) {
+        set(Inset(layout.join, -pad), (layout.join.bottom - layout.join.top) / 2.0f + pad);
+      } else if (detail.control == kControlResponse) {
+        const D2D1_RECT_F all{layout.response[0].left, layout.response[0].top,
+                              layout.response[kResponseChoices - 1].right,
+                              layout.response[kResponseChoices - 1].bottom};
+        set(Inset(all, -pad), (all.bottom - all.top) / 2.0f + pad);
       } else {
         set(Inset(layout.remove, -pad), radius);
       }
@@ -853,7 +882,7 @@ std::vector<A11yNode> PopupWindow::A11yNodes() {
 
   const DetailModel& detail = app_.detail;
   if (!detail.open) return nodes;
-  const DetailLayout layout = MakeDetailLayout(appLayout_);
+  const DetailLayout layout = MakeDetailLayout(appLayout_, app_.detail.event);
   A11yNode pane;
   pane.id = kDetailId;
   pane.type = UIA_PaneControlTypeId;
@@ -925,6 +954,55 @@ std::vector<A11yNode> PopupWindow::A11yNodes() {
     choice.focusable = true;
     choice.focused = keysHere && detail.control == kControlReminder && choice.selected == 1;
     nodes.push_back(std::move(choice));
+  }
+  if (layout.join.right > layout.join.left) {
+    A11yNode join;
+    join.id = kJoinId;
+    join.parent = kDetailId;
+    join.type = UIA_ButtonControlTypeId;
+    join.name = T(L"Unirse a la videollamada", L"Join the video call");
+    join.rect = layout.join;
+    join.invokable = true;
+    join.focusable = true;
+    join.focused = keysHere && detail.control == kControlJoin;
+    nodes.push_back(std::move(join));
+  }
+  if (layout.guests.right > layout.guests.left) {
+    A11yNode guests;
+    guests.id = kGuestsId;
+    guests.parent = kDetailId;
+    guests.type = UIA_TextControlTypeId;
+    guests.name = T(L"Invitados: ", L"Guests: ");
+    for (const Attendee& guest : detail.event.attendees) {
+      const std::wstring_view answer =
+          guest.response == "accepted"    ? T(L"sí", L"yes")
+          : guest.response == "declined"  ? T(L"no", L"no")
+          : guest.response == "tentative" ? T(L"quizá", L"maybe")
+                                          : T(L"sin respuesta", L"no answer");
+      guests.name += (guest.name.empty() ? ToWide(guest.email) : guest.name) + L" (" +
+                     std::wstring(answer) + L"), ";
+    }
+    guests.name.resize(guests.name.size() - 2);
+    guests.rect = layout.guests;
+    nodes.push_back(std::move(guests));
+  }
+  if (const Attendee* self = SelfGuest(detail.event);
+      self != nullptr && layout.response[0].right > layout.response[0].left) {
+    const std::wstring_view answers[kResponseChoices] = {T(L"Sí", L"Yes"), T(L"Quizá", L"Maybe"),
+                                                         T(L"No", L"No")};
+    for (int i = 0; i < kResponseChoices; ++i) {
+      A11yNode choice;
+      choice.id = kResponseIds + i;
+      choice.parent = kDetailId;
+      choice.type = UIA_RadioButtonControlTypeId;
+      choice.name = std::wstring(T(L"Tu respuesta: ", L"Your answer: ")) + std::wstring(answers[i]);
+      choice.rect = layout.response[i];
+      choice.selected = self->response == kResponseWords[i] ? 1 : 0;
+      choice.focusable = true;
+      choice.focused = keysHere && detail.control == kControlResponse &&
+                       (choice.selected == 1 || (i == 0 && self->response == "needsAction"));
+      nodes.push_back(std::move(choice));
+    }
   }
   A11yNode remove;
   remove.id = kDeleteId;
@@ -1003,6 +1081,8 @@ void PopupWindow::A11ySelect(int id) {
     SaveDetail(event, kEditRecurrence);
   } else if (Within(id, kReminderIds, kReminderChoices)) {
     ChooseReminder(static_cast<ReminderChoice>(id - kReminderIds));
+  } else if (Within(id, kResponseIds, kResponseChoices)) {
+    ChooseResponse(id - kResponseIds);
   }
   Invalidate();
 }
@@ -1053,6 +1133,12 @@ void PopupWindow::A11yFocus(int id) {
     FocusDetailStop(kDetailFields + kControlReminder);
   } else if (id == kDeleteId) {
     FocusDetailStop(kDetailFields + kControlDelete);
+  } else if (id == kJoinId) {
+    const EventDetail& event = app_.detail.event;
+    JoinCall(JoinUrl(event.conference, event.location, event.notes));
+  } else if (Within(id, kResponseIds, kResponseChoices)) {
+    FocusDetailStop(kDetailFields + kControlResponse);
+    ChooseResponse(id - kResponseIds);
   }
   Invalidate();
 }

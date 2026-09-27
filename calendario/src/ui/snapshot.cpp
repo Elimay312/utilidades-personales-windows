@@ -44,7 +44,8 @@ constexpr RECT kSnapshotWork{0, 0, 1920, 1032};
 
 AppView ViewFor(std::wstring_view view) {
   if (view == L"app-semana" || view == L"app-detalle" || view == L"app-arrastre" ||
-      view == L"app-borrar" || view == L"app-repeticion" || view == L"app-buscar") {
+      view == L"app-borrar" || view == L"app-repeticion" || view == L"app-buscar" ||
+      view == L"app-invitados") {
     return AppView::Week;
   }
   if (view == L"app-mes") return AppView::Month;
@@ -169,6 +170,27 @@ bool RenderSnapshot(std::wstring_view view, std::wstring_view theme, D2D1_SIZE_F
       detail.focus = kFieldLocation;
       detail.caretOn = true;
       appModel.selected = L"week-2";
+    } else if (view == L"app-invitados") {
+      // The code review: five guests, one of them this account, and a call on Meet.
+      DetailModel& detail = appModel.detail;
+      detail.open = true;
+      detail.t = 1.0f;
+      detail.event = EventDetail{L"week-3", "trabajo", L"Revisión de código", L"Sala Andes",
+                                 L"Traer el PR de sincronización.", L"",
+                                 tuesday, 14 * 60, tuesday, 15 * 60 + 30};
+      detail.event.conference = L"https://meet.google.com/abc-defg-hij";
+      detail.event.attendees = {
+          Attendee{"marta@example.com", L"Marta", "accepted", false, true, false},
+          Attendee{"yo@example.com", L"", "accepted", true, false, false},
+          Attendee{"diego@example.com", L"Diego", "tentative", false, false, false},
+          Attendee{"laura@example.com", L"Laura", "declined", false, false, false},
+          Attendee{"sofia@example.com", L"Sofía", "needsAction", false, false, false}};
+      const std::wstring texts[kDetailFields] = {
+          detail.event.title, DayFieldText(tuesday), TimeFieldText(14 * 60),
+          TimeFieldText(15 * 60 + 30), detail.event.location, detail.event.notes};
+      detail.fields[kFieldNotes].AllowNewlines(true);
+      for (int i = 0; i < kDetailFields; ++i) detail.fields[i].Insert(texts[i]);
+      appModel.selected = L"week-3";
     } else if (view == L"app-arrastre") {
       // The interview, picked up on Wednesday at eleven and on its way to Thursday at three.
       appModel.ghost = Ghost{true, false, 3, 15 * 60, 16 * 60, detail::kSampleWorkColor,

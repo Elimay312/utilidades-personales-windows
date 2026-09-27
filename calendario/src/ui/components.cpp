@@ -264,6 +264,13 @@ void DrawEventCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
     right -= (kCounterWidthDip + 2.0f * kGapDip) * type;
   }
 
+  if (item.hasCall && !item.isTask) {
+    const D2D1_RECT_F icon = CallIconRect(layout, rect, more);
+    brush->SetColor(theme.textSecondary);
+    DrawCallIcon(target, brush, icon, type);
+    right = icon.left - std::round(kGapDip * type);
+  }
+
   if (item.isTask) {
     DrawCheckbox(target, theme, layout, brush, CheckboxRect(layout, rect), strike);
   } else {
@@ -285,6 +292,24 @@ void DrawEventCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
   brush->SetColor(Lerp(theme.textPrimary, theme.textMuted, strike));
   DrawTextIn(target, fonts.event.Get(), title, titleRect, brush);
   StrikeThrough(target, fonts, theme, layout, brush, titleRect, title, strike);
+}
+
+void DrawCallIcon(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, const D2D1_RECT_F& rect,
+                  float type) {
+  // A body and, to its right, the lens: 14 x 10 DIP in all, drawn with two rounded shapes so it
+  // needs no geometry and stays crisp at every scale.
+  const float width = std::round(14.0f * type);
+  const float height = std::round(10.0f * type);
+  const float left = std::round((rect.left + rect.right - width) / 2.0f);
+  const float top = std::round((rect.top + rect.bottom - height) / 2.0f);
+  const float body = std::round(9.0f * type);
+  FillRound(target, D2D1_RECT_F{left, top, left + body, top + height}, std::round(2.0f * type),
+            brush);
+  const float lens = std::round(3.0f * type);
+  FillRound(target,
+            D2D1_RECT_F{left + body + std::round(1.0f * type), top + lens / 2.0f, left + width,
+                        top + height - lens / 2.0f},
+            std::round(1.0f * type), brush);
 }
 
 void DrawToast(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,

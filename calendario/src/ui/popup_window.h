@@ -223,6 +223,9 @@ class PopupWindow final : public A11ySource {
   void SaveAsSeries(const EventDetail& shown, unsigned edits);
   // The reminder pill, from the mouse, the keys and UI Automation alike.
   void ChooseReminder(ReminderChoice choice);
+  // Phase 13: this account's answer (kResponseWords), and the call opened in the browser.
+  void ChooseResponse(int index);
+  void JoinCall(const std::wstring& url);
   void DetachShown(const EventDetail& shown, unsigned edits);
   bool OnDetailKeyDown(WPARAM key);
   bool OnDetailLeftDown(float x, float y);

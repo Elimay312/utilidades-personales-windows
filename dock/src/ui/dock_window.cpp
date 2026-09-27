@@ -13,6 +13,7 @@
 #include "core/log.h"
 #include "system/appbar.h"
 #include "system/inventory.h"
+#include "system/launch.h"
 
 namespace dock {
 namespace {
@@ -77,6 +78,57 @@ void DockWindow::Compose() {
   if (trash) drawn_.push_back(*trash);
 }
 
+void DockWindow::OnClick(bool middle) {
+  const int index = curve_.SlotAt(lastRest_);
+  if (index < 0 || index >= static_cast<int>(drawn_.size()) || drawn_[index].separator) return;
+  const DockApp& app = drawn_[index];
+  const float bounce = config_.iconSize * dpi_ / 96.0f * 0.35f;
+  const std::vector<HWND> none;
+  const std::vector<HWND>& windows = index < static_cast<int>(windows_.size()) ? windows_[index] : none;
+  const HWND foreground = app_.ForeignForeground();
+  LogTrace(L"[clic] '{}' {} ventanas={} primerPlano={:#x}", app.name, middle ? L"central" : L"izquierdo", windows.size(),
+           reinterpret_cast<uintptr_t>(foreground));
+
+  // Clic central: una instancia NUEVA aunque ya haya ventana, como la barra de Windows.
+  if (middle) {
+    if (!IsApp(app)) return;
+    LaunchDetached(app);
+    visuals_->Bounce(index, bounce, false);
+    return;
+  }
+
+  if (!windows.empty()) {
+    // Como la barra de Windows: si una de sus ventanas tiene el foco, se minimiza; si no,
+    // la de más arriba (EnumWindows va en orden Z) viene al frente, esté minimizada o solo
+    // tapada. El de C# minimizaba lo que "se veía" aunque no tuviera el foco, y enfocar una
+    // ventana visible costaba dos clics.
+    const HWND root = GetAncestor(foreground, GA_ROOT);
+    for (HWND window : windows) {
+      if (window == foreground || window == root) {
+        Minimize(window);
+        LogInfo(L"[dock] minimizada '{}'", app.name);
+        return;
+      }
+    }
+    visuals_->Bounce(index, bounce, false);  // acuse de recibo, ya mismo
+    BringToFront(windows.front());
+    LogInfo(L"[dock] al frente '{}'", app.name);
+    return;
+  }
+
+  LaunchDetached(app);
+  if (IsApp(app)) {
+    // Bota hasta que la app abra una ventana: es el único aviso de que el clic llegó cuando
+    // una app tarda en arrancar.
+    visuals_->Bounce(index, bounce, true);
+    launchingTarget_ = app.target;
+    launchingUntil_ = GetTickCount64() + 20000;
+  } else {
+    // ponytail: una carpeta se abre en el Explorador hasta que lleguen los stacks (F6).
+    visuals_->Bounce(index, bounce * 0.7f, false);
+  }
+}
+
 bool DockWindow::UpdateRunning(Snapshot& snapshot, bool showRunning) {
   // Las abiertas sin anclar salen de las ANCLADAS, no de lo dibujado: si no, las de la vuelta
   // anterior contarían como presentes y la lista no menguaría nunca.
@@ -94,12 +146,25 @@ bool DockWindow::UpdateRunning(Snapshot& snapshot, bool showRunning) {
 
   const std::vector<AppState> states = CheckApps(drawn_, snapshot);
   running_.assign(states.size(), false);
+  windows_.assign(states.size(), {});
   std::wstring trace;
   for (size_t i = 0; i < states.size(); i++) {
     running_[i] = states[i].Open();
+    windows_[i] = states[i].windows;
+    // El icono de la app que se abría deja de botar en cuanto aparece su ventana.
+    if (running_[i] && !launchingTarget_.empty() && _wcsicmp(drawn_[i].target.c_str(), launchingTarget_.c_str()) == 0) {
+      visuals_->StopBounce(static_cast<int>(i));
+      launchingTarget_.clear();
+      LogInfo(L"[dock] '{}' ya tiene ventana", drawn_[i].name);
+    }
     if (running_[i]) trace += std::format(L"{}{}:{}", trace.empty() ? L"" : L" ", drawn_[i].name, states[i].windows.size());
   }
   visuals_->SetRunning(running_);
+  if (!launchingTarget_.empty() && GetTickCount64() > launchingUntil_) {
+    for (size_t i = 0; i < drawn_.size(); i++)
+      if (_wcsicmp(drawn_[i].target.c_str(), launchingTarget_.c_str()) == 0) visuals_->StopBounce(static_cast<int>(i));
+    launchingTarget_.clear();
+  }
   // Solo cuando cambia: es la señal de texto de que los avisos del shell llegan.
   if (trace != lastRunningTrace_) {
     lastRunningTrace_ = trace;
@@ -265,6 +330,11 @@ void DockWindow::BuildVisuals(const IconSet& icons) {
   }
   region_.clear();  // el ancho de la barra ha cambiado: la región se recalcula sí o sí
   ApplyRegion();
+  // Reconstruir crea visuals nuevos: el de la app que se está abriendo vuelve a botar.
+  if (!launchingTarget_.empty())
+    for (size_t i = 0; i < drawn_.size(); i++)
+      if (_wcsicmp(drawn_[i].target.c_str(), launchingTarget_.c_str()) == 0)
+        visuals_->Bounce(static_cast<int>(i), config_.iconSize * dpi_ / 96.0f * 0.35f, true);
 }
 
 void DockWindow::ShowIcons(const IconSet& icons) { BuildVisuals(icons); }
@@ -447,6 +517,7 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
         // Lo ÚNICO que hace el hilo de UI por cada movimiento: invertir la curva y escribir
         // un escalar. El resto lo evalúa DWM.
         const float rest = curve_.Invert(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(width_));
+        lastRest_ = rest;
         visuals_->SetCursor(rest);
         if (!hoverShown_) {
           hoverShown_ = true;
@@ -456,6 +527,14 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
         visuals_->SetLabel(slot);
         LogTrace(L"[hover] x={} idx={} reposo={:.1f}", GET_X_LPARAM(lparam), slot, rest);
       }
+      return 0;
+
+    // Al soltar, no al pulsar: F6 distinguirá un clic de un arrastre por la distancia.
+    case WM_LBUTTONUP:
+      OnClick(false);
+      return 0;
+    case WM_MBUTTONUP:
+      OnClick(true);
       return 0;
 
     case WM_MOUSELEAVE:

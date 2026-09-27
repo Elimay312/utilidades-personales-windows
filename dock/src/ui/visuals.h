@@ -45,6 +45,10 @@ class Visuals {
   void SetLabel(int index);
   // El puntito de "abierta" de cada ranura, en su orden.
   void SetRunning(const std::vector<bool>& running);
+  // Sube y baja un par de veces, cada vez menos. forever: hasta StopBounce (una app que
+  // arranca: macOS bota hasta que aparece la ventana).
+  void Bounce(int index, float height, bool forever);
+  void StopBounce(int index);
 
   // Esconder desliza el árbol hacia abajo con un muelle; la ventana no se mueve nunca.
   void Slide(bool hidden, bool instant);
@@ -62,6 +66,7 @@ class Visuals {
   winrt::Windows::UI::Composition::CompositionPropertySet props_{nullptr};
   std::vector<winrt::Windows::UI::Composition::SpriteVisual> labels_;  // nullptr en separadores
   std::vector<winrt::Windows::UI::Composition::SpriteVisual> dots_;    // nullptr en separadores
+  std::vector<winrt::Windows::UI::Composition::SpriteVisual> items_;   // icono o separador
   std::vector<bool> running_;
   int labelShown_ = -1;
   float hiddenOffset_ = 0;

@@ -56,6 +56,10 @@ abajo.
     dock: las superficies sobreviven a las reconstrucciones y se podan en vez de vaciarse.
     Lo mismo vale para la recarga en caliente.
   - Con trece apps abiertas en tres pantallas: 25,3 MB privados y 18 hilos.
+- **El clic en C++, como la barra de Windows**: sin ventana se lanza y el icono bota hasta
+  que aparece (~730 ms con la app de prueba); con el foco se minimiza; sin foco, esté
+  minimizada o solo tapada, viene al frente. Clic central, otra instancia. Las carpetas se
+  abren en el Explorador hasta que lleguen los stacks (F6).
 - **El autoarranque solo lo toca la copia instalada**, para que una build de desarrollo no
   se registre en el inicio de sesión del usuario.
 - **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.
@@ -64,6 +68,12 @@ abajo.
 
 ### Arreglado
 
+- **Enfocar una ventana que se ve pero no tiene el foco ya es un clic**, no dos: el de C#
+  minimizaba todo lo que estuviera a la vista. Ahora solo se minimiza la que tiene el foco.
+- **El clic acierta aunque algo active el propio dock**: se decide con la última ventana
+  ajena que tuvo el foco. Lo destapó computer use, que activa la ventana antes de hacer
+  clic: el dock veía su propia ventana como primer plano y traía al frente en vez de
+  minimizar.
 - **Una app UWP minimizada desde antes de arrancar el dock ya no sale como
   «ApplicationFrameHost»** entre las abiertas: sin su ventana real no se sabe qué app es. La
   identificación buena, por AppUserModelID, llega en F9.

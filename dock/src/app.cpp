@@ -122,6 +122,17 @@ int App::Run() {
   }
 }
 
+HWND App::ForeignForeground() const {
+  // Un clic de ratón de verdad no activa el dock (MA_NOACTIVATE), pero una activación
+  // programática sí: computer use activa la ventana antes de hacer clic, y el dock decidía
+  // "no la tiene el foco" sobre una ventana que sí lo tenía (medido: primer plano = el propio
+  // DockWindowClass). Se decide con la última ventana ajena que tuvo el foco.
+  const HWND foreground = GetForegroundWindow();
+  DWORD pid = 0;
+  GetWindowThreadProcessId(foreground, &pid);
+  return pid == GetCurrentProcessId() ? lastForeign_ : foreground;
+}
+
 void App::Quit() {
   if (host_) PostMessageW(host_, WM_CLOSE, 0, 0);
 }
@@ -243,8 +254,12 @@ LRESULT App::HandleHost(UINT message, WPARAM wparam, LPARAM lparam) {
   if (message == shellHookMessage_ && shellHookMessage_) {
     // El bit 0x8000 es "RUDEAPPACTIVATED": a efectos del dock, una activación más.
     const WPARAM code = wparam & 0x7FFF;
-    if (code == HSHELL_WINDOWACTIVATED)
+    if (code == HSHELL_WINDOWACTIVATED) {
+      DWORD pid = 0;
+      GetWindowThreadProcessId(reinterpret_cast<HWND>(lparam), &pid);
+      if (lparam && pid != GetCurrentProcessId()) lastForeign_ = reinterpret_cast<HWND>(lparam);
       for (auto& dockWindow : docks_) dockWindow->OnWindowActivated();
+    }
     // Creada, destruida, activada o reemplazada: puede haber cambiado qué está abierto. Se
     // reprograma el mismo temporizador, que es el rebote de toda la vida.
     if (code == HSHELL_WINDOWCREATED || code == HSHELL_WINDOWDESTROYED || code == HSHELL_WINDOWACTIVATED ||

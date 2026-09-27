@@ -52,6 +52,7 @@ add_executable(Dock WIN32
   src/system/appbar.cpp
   src/system/icons.cpp
   src/system/inventory.cpp
+  src/system/launch.cpp
   src/system/steam.cpp
   src/system/worker.cpp
   src/ui/dock_window.cpp

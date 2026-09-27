@@ -219,6 +219,7 @@ void Visuals::Build(const Curve& curve, const std::vector<DockItem>& items, cons
   root_.Children().RemoveAll();
   labels_.clear();
   dots_.clear();
+  items_.clear();
   labelShown_ = -1;
 
   props_.InsertScalar(L"G0", 0);
@@ -278,6 +279,7 @@ void Visuals::Build(const Curve& curve, const std::vector<DockItem>& items, cons
     Animate(compositor_, visual, L"Offset", IconOffset(curve, i, top), props_, visual);
     Animate(compositor_, visual, L"Scale", IconScale(curve, i), props_);
     root_.Children().InsertAtTop(visual);
+    items_.push_back(visual);
 
     if (item.separator) {
       dots_.push_back(nullptr);
@@ -322,6 +324,27 @@ void Visuals::Build(const Curve& curve, const std::vector<DockItem>& items, cons
 }
 
 void Visuals::SetCursor(float rest) { props_.InsertScalar(L"C", rest); }
+
+void Visuals::Bounce(int index, float height, bool forever) {
+  if (index < 0 || index >= static_cast<int>(items_.size())) return;
+  auto jump = compositor_.CreateScalarKeyFrameAnimation();
+  jump.InsertKeyFrame(0.0f, 0);
+  jump.InsertKeyFrame(0.28f, height);
+  jump.InsertKeyFrame(0.52f, 0);
+  jump.InsertKeyFrame(0.74f, height * 0.42f);
+  jump.InsertKeyFrame(1.0f, 0);
+  jump.Duration(std::chrono::milliseconds(680));
+  if (forever) jump.IterationBehavior(wuc::AnimationIterationBehavior::Forever);
+  // Sobre la propiedad del propio icono, que la expresión de Offset ya resta: el rebote no
+  // se pelea con la animación que es dueña de la posición.
+  items_[index].Properties().StartAnimation(L"Bounce", jump);
+}
+
+void Visuals::StopBounce(int index) {
+  if (index < 0 || index >= static_cast<int>(items_.size())) return;
+  items_[index].Properties().StopAnimation(L"Bounce");
+  items_[index].Properties().InsertScalar(L"Bounce", 0);
+}
 
 void Visuals::SetRunning(const std::vector<bool>& running) {
   for (size_t i = 0; i < dots_.size() && i < running.size(); i++) {

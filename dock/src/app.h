@@ -27,6 +27,9 @@ class App {
   void Quit();
   // Extrae otra vez los iconos de lo que enseñan los docks y se los da a todos.
   void RequestIcons();
+  // La ventana con el foco a efectos del clic: la de primer plano, salvo que sea del propio
+  // dock, y entonces la última ajena que lo tuvo.
+  HWND ForeignForeground() const;
 
  private:
   static LRESULT CALLBACK HostProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
@@ -52,6 +55,7 @@ class App {
   // Cada petición lleva su número: la respuesta de una config que ya no está se tira.
   unsigned iconRound_ = 0;
   HWND host_ = nullptr;
+  HWND lastForeign_ = nullptr;
   UINT shellHookMessage_ = 0;
   UINT taskbarCreatedMessage_ = 0;
   std::vector<std::unique_ptr<DockWindow>> docks_;

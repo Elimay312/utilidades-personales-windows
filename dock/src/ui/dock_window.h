@@ -65,6 +65,7 @@ class DockWindow {
   RECT BarRect(bool tall) const;
   void ApplyRegion();
   void Compose();
+  void OnClick(bool middle);
   RECT BarOnScreen() const;
   void UpdateSmartHide();
   void Reveal();
@@ -80,6 +81,11 @@ class DockWindow {
   std::vector<DockApp> extras_;  // abiertas sin anclar
   std::vector<DockApp> drawn_;   // lo que se ve: apps_ + separador + extras_ + papelera
   std::vector<bool> running_;    // un puntito por entrada de drawn_
+  std::vector<std::vector<HWND>> windows_;  // las ventanas de cada entrada de drawn_
+  float lastRest_ = -1;          // el cursor en reposo, del último movimiento
+  // La app que se está abriendo: su icono bota hasta que aparece su ventana, o 20 s.
+  std::wstring launchingTarget_;
+  ULONGLONG launchingUntil_ = 0;
   std::wstring lastRunningTrace_;
   HWND hwnd_ = nullptr;
   std::unique_ptr<Visuals> visuals_;

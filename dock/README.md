@@ -27,6 +27,22 @@ las convenciones están en [CLAUDE.md](CLAUDE.md).
 
 ---
 
+## Reescritura: lo que midieron las sondas (F1)
+
+Antes de portar nada se probó lo que podía tumbar el plan. Son programas de un fichero,
+tirados después; los números son de esta máquina (tres pantallas, la principal un
+ultrawide 2560x1080, la barra de Windows solo en ella y ya en autoocultar).
+
+| Sonda | Qué se midió | Resultado | Qué decide |
+|---|---|---|---|
+| **S1 pila de dibujo** | Tres ventanas, 60 s, mediana de tres rondas | HWND vacío 1,0 MB / 1 hilo · **Composition** (WARP + acrílico + 20 superficies + expresión) **9,0 MB / 14 hilos** · DirectComposition + D2D 7,7 MB / 12 hilos | Se queda Composition: 1,3 MB más que DComp y es la única con acrílico y expresiones. Los hilos son de WARP: el presupuesto de ≤ 10 no se cumple con esta pila. |
+| **S2 genio con miniaturas DWM** | Miniatura sobre un fondo magenta, rejilla de 16x16 (el hueco vacío da 100% magenta: la sonda vale) | **12/12 apps reales minimizadas enseñan contenido** (Brave con vídeo, Calculadora UWP, Steam, Spotify, Discord…). 40 miniaturas animadas: 7 ms de CPU por genio, 94% de fotogramas a tiempo. `EVENT_SYSTEM_MINIMIZESTART` llega en 4,6 ms de mediana (máx. 11) con la miniatura aún con contenido. `DWMWA_CLOAK` ajeno: `E_ACCESSDENIED`. `TRANSITIONS_FORCEDISABLED` ajeno: S_OK. Una miniatura va **encima** de Composition y **la región no la recorta**. | El genio es 40 miniaturas DWM, sin copiar píxeles, y sale en cualquier minimizado. La ventana real no se puede esconder: se minimiza o restaura en su momento. Sin probar: un juego D3D y vídeo con DRM. |
+| **S3 bandeja** | `Shell_TrayWnd` falso y topmost que reenvía todo a explorer, 60 s tras difundir `TaskbarCreated` | 26 iconos, 159 mensajes, 0 reenvíos fallidos, `FindWindow` nos devolvió los 60 s. Llegan también iconos del propio explorer (Bluetooth, micrófono en uso). **Pero** la appbar reenviada pierde la respuesta (`ABM_GETTASKBARPOS` da rect vacío; sin la falsa, `0,1032-2560,1080`) y con la falsa viva `ITaskbarList3::HrInit` de cualquier app da `E_NOTIMPL` (sin ella, S_OK). | La bandeja es imprescindible (las apps en segundo plano, como Roblox, solo se ven ahí), pero F10b tiene que atender la appbar y `ITaskbarList` en vez de solo reenviar. |
+| **S4 ocultar la barra** | Ocultar, pulsar Win, matar la sonda con `Stop-Process -Force` | Oculta en 2,8 ms. El Inicio sale en el monitor principal y la barra no intentó volver. **El guardián la devuelve 30,7 ms después del kill**, con su estado original. | Ocultar con guardián es fiable. |
+| **S5 mensajes de la barra** | Shell hook + `Shell_TrayWnd` falso mientras una ventana ajena parpadea, minimiza y cambia de título | Llegan `HSHELL_FLASH`, `HSHELL_REDRAW` y `HSHELL_GETMINRECT`. Al `Shell_TrayWnd` le llegan ~27 mensajes privados `0x04EF` por segundo. | Parpadeo y títulos en vivo son implementables por el shell hook. |
+
+---
+
 ## Índice
 
 1. [Qué hace](#1-qué-hace)

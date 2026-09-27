@@ -24,6 +24,9 @@ abajo.
 - **Fuera `SEGURIDAD.md`, `auditar.ps1` y `NativeMethods.txt`**, sin sustituto. Sustituir a
   la barra de tareas necesita justo lo que prohibían: miniaturas DWM, hooks de eventos y
   ocultar la barra de explorer.
+- **La pila de dibujo del de C++ es Windows.UI.Composition**: 9,0 MB privados con tres
+  ventanas, acrílico y 20 superficies, frente a 46 MB del de C# al arrancar. El resto de
+  sondas de riesgo (genio con miniaturas DWM, bandeja, ocultar la barra) están en el README.
 - **`actualizar.ps1` ya no instala el dock** hasta que el de C++ tenga instalador, y el
   SDK de .NET de hud, quicklook y renombrar sale ahora del `preparar.ps1` del lanzador.
 

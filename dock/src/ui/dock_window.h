@@ -28,15 +28,19 @@ struct Monitor {
 // región, no el rectángulo.
 class DockWindow {
  public:
-  DockWindow(App& app, const Monitor& monitor, const DockConfig& config);
+  DockWindow(App& app, const Monitor& monitor, const DockConfig& config, std::vector<DockApp> apps);
   ~DockWindow();
   DockWindow(const DockWindow&) = delete;
   DockWindow& operator=(const DockWindow&) = delete;
 
   bool Create();
   const std::wstring& Device() const { return monitor_.device; }
+  const std::vector<DockApp>& Apps() const { return apps_; }
   // Los píxeles de los iconos, recién extraídos por el worker.
   void ShowIcons(const IconSet& icons);
+  // Config nueva sin destruir la ventana: geometría, appbar y visuals. Los iconos los vuelve
+  // a pedir App.
+  void Apply(const DockConfig& config, std::vector<DockApp> apps);
 
   // Lo que App reparte a todos los docks.
   void OnWindowActivated();
@@ -50,7 +54,8 @@ class DockWindow {
   void RefreshMonitor();
   Curve CurveFor() const;
   void BuildVisuals(const IconSet& icons);
-  void Reposition();
+  // true si el tamaño cambió y ya reconstruyó los visuals (y pidió los iconos otra vez).
+  bool Reposition();
   RECT BarRect(bool tall) const;
   void ApplyRegion();
   void Reveal();
@@ -61,6 +66,7 @@ class DockWindow {
   App& app_;
   Monitor monitor_;
   DockConfig config_;
+  std::vector<DockApp> apps_;  // ya resueltas para esta pantalla
   HWND hwnd_ = nullptr;
   std::unique_ptr<Visuals> visuals_;
   Curve curve_;  // en px físicos

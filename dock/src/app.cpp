@@ -4,6 +4,7 @@
 #include <set>
 
 #include "core/log.h"
+#include "system/autostart.h"
 #include "system/icons.h"
 
 namespace dock {
@@ -17,6 +18,13 @@ namespace {
 
 constexpr wchar_t kHostClass[] = L"DockHost";
 constexpr UINT kIconsReady = WM_APP + 1;
+constexpr UINT_PTR kDisplayTimer = 1;
+constexpr UINT_PTR kReloadTimer = 2;
+// Enchufar una pantalla manda varios WM_DISPLAYCHANGE seguidos; se reconstruye una vez.
+constexpr UINT kDisplayDebounceMs = 400;
+// Los editores no guardan de una vez: varios avisos por guardado, y a veces truncan antes de
+// escribir. Sin esperar se leería un JSON a medias.
+constexpr UINT kReloadDebounceMs = 250;
 
 // Desde que arrancó el proceso, para dejar constancia de cuánto tardan los iconos en verse.
 double MsSinceStart() {
@@ -26,9 +34,12 @@ double MsSinceStart() {
   const auto ticks = [](FILETIME f) { return (static_cast<unsigned long long>(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
   return (ticks(now) - ticks(created)) / 10000.0;
 }
-constexpr UINT_PTR kDisplayTimer = 1;
-// Enchufar una pantalla manda varios WM_DISPLAYCHANGE seguidos; se reconstruye una vez.
-constexpr UINT kDisplayDebounceMs = 400;
+
+FILETIME Stamp(const std::filesystem::path& file) {
+  WIN32_FILE_ATTRIBUTE_DATA data{};
+  if (!GetFileAttributesExW(file.c_str(), GetFileExInfoStandard, &data)) return {};
+  return data.ftLastWriteTime;
+}
 
 BOOL CALLBACK CollectMonitor(HMONITOR handle, HDC, LPRECT, LPARAM out) {
   MONITORINFOEXW info{};
@@ -41,7 +52,14 @@ BOOL CALLBACK CollectMonitor(HMONITOR handle, HDC, LPRECT, LPARAM out) {
 
 }  // namespace
 
-App::App(std::filesystem::path configPath) : configPath_(std::move(configPath)) {}
+// dock.local.json vive junto a dock.json: con --config de pruebas, ninguno de los dos es el
+// del usuario.
+App::App(std::filesystem::path configPath)
+    : configPath_(std::move(configPath)), localPath_(configPath_.parent_path() / L"dock.local.json") {}
+
+App::~App() {
+  if (watch_ != INVALID_HANDLE_VALUE) FindCloseChangeNotification(watch_);
+}
 
 int App::Run() {
   const HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -66,42 +84,88 @@ int App::Run() {
   taskbarCreatedMessage_ = RegisterWindowMessageW(L"TaskbarCreated");
   if (!RegisterShellHookWindow(host_)) LogError(L"[shell] RegisterShellHookWindow falló: {}", GetLastError());
 
+  // Vigía de la carpeta de la config, sin hilo propio: su handle entra en el mismo bucle que
+  // los mensajes. No recursivo: los logs viven en una subcarpeta y no deben despertarlo.
+  watch_ = FindFirstChangeNotificationW(configPath_.parent_path().c_str(), FALSE,
+                                        FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME |
+                                            FILE_NOTIFY_CHANGE_SIZE);
   worker_.Start();
   Rebuild();
+  SyncAutoStart(config_.autoStart);
 
   MSG message{};
-  while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-    TranslateMessage(&message);
-    DispatchMessageW(&message);
+  for (;;) {
+    const DWORD handles = watch_ != INVALID_HANDLE_VALUE ? 1 : 0;
+    const DWORD woke = MsgWaitForMultipleObjectsEx(handles, &watch_, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    if (handles && woke == WAIT_OBJECT_0) {
+      FindNextChangeNotification(watch_);
+      SetTimer(host_, kReloadTimer, kReloadDebounceMs, nullptr);
+    }
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+      if (message.message == WM_QUIT) {
+        LogInfo(L"[dock] salida limpia");
+        return 0;
+      }
+      TranslateMessage(&message);
+      DispatchMessageW(&message);
+    }
   }
-  LogInfo(L"[dock] salida limpia");
-  return 0;
 }
 
 void App::Quit() {
   if (host_) PostMessageW(host_, WM_CLOSE, 0, 0);
 }
 
+void App::LoadFiles() {
+  config_ = LoadConfig(configPath_);
+  local_ = LoadLocal(localPath_);
+  configStamp_ = Stamp(configPath_);
+  localStamp_ = Stamp(localPath_);
+}
+
 void App::Rebuild() {
   // La config se relee aquí: el de C# reconstruía con la que había leído al arrancar y
   // perdía lo que se hubiera editado desde entonces.
-  config_ = LoadConfig(configPath_);
+  LoadFiles();
   docks_.clear();
 
   std::vector<Monitor> monitors;
   EnumDisplayMonitors(nullptr, nullptr, CollectMonitor, reinterpret_cast<LPARAM>(&monitors));
   for (const Monitor& monitor : monitors) {
-    auto window = std::make_unique<DockWindow>(*this, monitor, config_);
+    auto window = std::make_unique<DockWindow>(*this, monitor, config_, ResolveFor(config_, local_, monitor.device).apps);
     if (window->Create()) docks_.push_back(std::move(window));
   }
   LogInfo(L"[dock] {} monitor(es)", docks_.size());
   RequestIcons();
 }
 
+void App::Apply() {
+  const auto start = std::chrono::steady_clock::now();
+  LoadFiles();
+  // Todo lo que depende de la config pasa por aquí: en C# el atajo, el autoarranque y la
+  // altura de la ventana solo se leían al arrancar.
+  SyncAutoStart(config_.autoStart);
+  for (auto& dockWindow : docks_) dockWindow->Apply(config_, ResolveFor(config_, local_, dockWindow->Device()).apps);
+  RequestIcons();
+  LogInfo(L"[config] recargado en {:.0f} ms",
+          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+}
+
+void App::CheckFilesChanged() {
+  // El vigía salta por cualquier cosa de la carpeta (un log nuevo, un fichero temporal del
+  // editor): solo cuentan dock.json y dock.local.json. Que el dock escriba su propio
+  // dock.local.json y se recargue es a propósito: así se enteran los docks de las otras
+  // pantallas, que el de C# tenía que avisar a mano.
+  const FILETIME config = Stamp(configPath_), local = Stamp(localPath_);
+  if (CompareFileTime(&config, &configStamp_) == 0 && CompareFileTime(&local, &localStamp_) == 0) return;
+  Apply();
+}
+
 void App::RequestIcons() {
   std::set<std::wstring> keys;
-  for (const DockApp& app : config_.apps)
-    if (!app.separator) keys.insert(app.IconSource());
+  for (const auto& dockWindow : docks_)
+    for (const DockApp& app : dockWindow->Apps())
+      if (!app.separator) keys.insert(app.IconSource());
   const unsigned round = ++iconRound_;
   const HWND host = host_;
   worker_.Post([keys = std::vector<std::wstring>(keys.begin(), keys.end()), round, host] {
@@ -157,10 +221,12 @@ LRESULT App::HandleHost(UINT message, WPARAM wparam, LPARAM lparam) {
       return 0;
 
     case WM_TIMER:
+      KillTimer(host_, wparam);
       if (wparam == kDisplayTimer) {
-        KillTimer(host_, kDisplayTimer);
         LogInfo(L"[dock] cambiaron las pantallas, reconstruyendo");
         Rebuild();
+      } else if (wparam == kReloadTimer) {
+        CheckFilesChanged();
       }
       return 0;
 

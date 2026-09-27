@@ -59,17 +59,76 @@ void CheckConfig() {
   const DockConfig f = ParseConfig("no es json");
   Expect(f.iconSize == 48, "config rota da valores por defecto");
 
-  const DockConfig g = ParseConfig(R"({"apps": [
-    {"name": "Bloc", "target": "C:/Windows/notepad.exe"},
+  const auto g = Validate(ParseConfig(R"({"apps": [
+    {"name": "Explorador", "target": "C:/Windows/explorer.exe"},
     {"separator": true},
     {"name": "Web", "target": "https://example.com/a/b"},
-    {"name": "Sin target"}
-  ]})");
-  Expect(g.apps.size() == 3, "apps: la entrada sin target se ignora");
-  Expect(g.apps.size() == 3 && g.apps[0].target == L"C:\\Windows\\notepad.exe", "apps: / pasa a \\");
-  Expect(g.apps.size() == 3 && g.apps[1].separator, "apps: separador");
-  Expect(g.apps.size() == 3 && g.apps[2].target == L"https://example.com/a/b", "apps: una URL no se toca");
+    {"name": "Sin target"},
+    {"name": "No existe", "target": "C:/no/existe.exe"}
+  ]})").apps);
+  Expect(g.size() == 3, "validar: fuera la entrada sin target y la que no existe");
+  Expect(g.size() == 3 && g[0].target == L"C:\\Windows\\explorer.exe", "validar: / pasa a \\");
+  Expect(g.size() == 3 && g[1].separator, "validar: separador");
+  Expect(g.size() == 3 && g[2].target == L"https://example.com/a/b", "validar: una URL no se toca");
   Expect(IsUrl(L"steam://rungameid/1") && !IsUrl(L"C:\\x") && !IsUrl(L"shell:RecycleBinFolder"), "IsUrl");
+
+  // Las apps que se actualizan (Squirrel): la familia es lo que va antes del número, y se
+  // compara por versión y no por texto.
+  Expect(VersionPrefix(L"app-1.0.9258") == L"app-", "versión: app-1.0.9258");
+  Expect(!VersionPrefix(L"Discord"), "versión: sin número no es familia");
+  Expect(!VersionPrefix(L"1.0.9258"), "versión: sin prefijo no es familia");
+  Expect(!VersionPrefix(L"Steam 2"), "versión: '2' no es una versión");
+  Expect(Newest(L"app-", L"app-1.0.9", L"app-1.0.10") == L"app-1.0.10", "versión: 1.0.10 > 1.0.9");
+  Expect(Newest(L"app-", L"app-1.0.10", L"app-1.0.9") == L"app-1.0.10", "versión: en cualquier orden");
+  Expect(Newest(L"app-", std::nullopt, L"app-1.0.1") == L"app-1.0.1", "versión: gana a nada");
+}
+
+// La superposición de dock.local.json y a qué pantalla le toca cuál. Con elementos del shell
+// y URLs, que Validate no busca en disco.
+void CheckOverlay() {
+  const DockApp a{L"A", L"shell:AppsFolder\\A!App"}, b{L"B", L"shell:AppsFolder\\B!App"};
+  const DockApp c{L"C", L"https://c.example"}, sep{L"", L"", L"", L"", true};
+  LocalOverlay local;
+  local.order = {L"https://c.example", L"shell:appsfolder\\a!app"};  // sin distinguir mayúsculas
+  local.removed = {L"shell:AppsFolder\\B!App"};
+  local.added = {DockApp{L"D", L"https://d.example"}};
+  const auto applied = ApplyOverlay(local, {a, b, sep, c});
+  // Sin B; C y A primero por "orden"; el resto en el orden de dock.json.
+  Expect(applied.size() == 4 && applied[0].name == L"C" && applied[1].name == L"A" && applied[2].separator &&
+             applied[3].name == L"D",
+         "superposición: quitar, añadir y ordenar");
+
+  // El fichero real lleva las claves en mayúscula ("Orden", "Anadidas"...).
+  const LocalOverlay parsed = ParseLocal(R"({"Orden": ["x"], "Quitadas": ["y"], "Perfil": "juegos",
+    "Pantallas": {"\\\\.\\DISPLAY2": {"Orden": ["z"]}}})");
+  Expect(parsed.order.size() == 1 && parsed.removed.size() == 1 && parsed.profile == L"juegos" &&
+             parsed.screens.contains(L"\\\\.\\DISPLAY2") && parsed.screens.at(L"\\\\.\\DISPLAY2").order[0] == L"z",
+         "dock.local.json con claves en mayúscula");
+
+  DockConfig config = ParseConfig(R"({
+    "apps": [{"name": "A", "target": "shell:AppsFolder/A!App"}],
+    "pantallas": {"\\\\.\\DISPLAY3": {"apps": [{"name": "B", "target": "shell:AppsFolder/B!App"}]}},
+    "perfiles": {"juegos": {"apps": [{"name": "C", "target": "https://c.example"}],
+                            "pantallas": {"\\\\.\\DISPLAY3": {"apps": [{"name": "D", "target": "https://d.example"}]}}}}
+  })");
+  LocalOverlay none;
+  auto one = ResolveFor(config, none, L"\\\\.\\DISPLAY1");
+  Expect(one.apps.size() == 2 && one.apps[0].name == L"A" && one.apps[1].target == kTrashTarget,
+         "resolver: lista de siempre y la papelera al final");
+  Expect(ResolveFor(config, none, L"\\\\.\\DISPLAY3").apps[0].name == L"B", "resolver: la pantalla con lista propia");
+  LocalOverlay games;
+  games.profile = L"juegos";
+  Expect(ResolveFor(config, games, L"\\\\.\\DISPLAY1").apps[0].name == L"C", "resolver: el perfil sustituye");
+  Expect(ResolveFor(config, games, L"\\\\.\\DISPLAY3").apps[0].name == L"D",
+         "resolver: la pantalla dentro del perfil");
+  // Una pantalla con lista propia no hereda la superposición de por defecto.
+  LocalOverlay rootOnly;
+  rootOnly.removed = {L"shell:AppsFolder\\B!App", L"shell:AppsFolder\\A!App"};
+  Expect(ResolveFor(config, rootOnly, L"\\\\.\\DISPLAY3").apps[0].name == L"B",
+         "resolver: la pantalla propia no hereda la superposición raíz");
+  Expect(ResolveFor(config, rootOnly, L"\\\\.\\DISPLAY1").apps.size() == 1, "resolver: la raíz sí se aplica");
+  config.trash = false;
+  Expect(ResolveFor(config, none, L"\\\\.\\DISPLAY1").apps.size() == 1, "resolver: trash false sin papelera");
 }
 
 // A propósito con ranuras de anchos DISTINTOS: el caso general desde que hay separadores.
@@ -169,18 +228,24 @@ void CheckExpressions() {
 // de Steam: con .exe, carpetas y elementos del shell MTA y STA dan lo mismo. Así que se
 // compara cada icono con el genérico de verdad, el de una extensión que nadie tiene asociada.
 void CheckExtraction(const std::filesystem::path& configPath) {
-  const DockConfig config = LoadConfig(configPath);
+  // Lo que ve la pantalla principal, resuelto como lo resuelve el dock (dock.local.json incluido).
+  MONITORINFOEXW primary{};
+  primary.cbSize = sizeof(primary);
+  GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &primary);
+  const std::vector<DockApp> apps =
+      ResolveFor(LoadConfig(configPath), LoadLocal(configPath.parent_path() / L"dock.local.json"), primary.szDevice).apps;
+  std::printf("[check] %ls: %zu entradas\n", primary.szDevice, apps.size());
   const std::filesystem::path unknown = std::filesystem::temp_directory_path() / L"dock-check.sin-asociar";
   { FILE* f = nullptr; _wfopen_s(&f, unknown.c_str(), L"wb"); if (f) fclose(f); }
   // Por el mismo camino que el dock: el proceso hijo.
   std::vector<std::wstring> keys{unknown.wstring()};
-  for (const DockApp& app : config.apps)
+  for (const DockApp& app : apps)
     if (!app.separator) keys.push_back(app.IconSource());
   const IconSet icons = ExtractIconsOutOfProcess(keys);
   {
     const auto found = icons.find(unknown.wstring());
     const IconBitmap* generic = found == icons.end() ? nullptr : &found->second;
-    for (const DockApp& app : config.apps) {
+    for (const DockApp& app : apps) {
       if (app.separator) continue;
       const auto it = icons.find(app.IconSource());
       const IconBitmap* icon = it == icons.end() ? nullptr : &it->second;
@@ -211,6 +276,7 @@ void CheckExtraction(const std::filesystem::path& configPath) {
 int RunChecks(const std::filesystem::path& configPath) {
   CheckJsonc();
   CheckConfig();
+  CheckOverlay();
   CheckMagnify();
   CheckIcons();
   CheckExpressions();

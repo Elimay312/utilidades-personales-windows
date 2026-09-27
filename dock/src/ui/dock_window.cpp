@@ -47,8 +47,23 @@ bool Same(const std::vector<RECT>& a, const std::vector<RECT>& b) {
 
 }  // namespace
 
-DockWindow::DockWindow(App& app, const Monitor& monitor, const DockConfig& config)
-    : app_(app), monitor_(monitor), config_(config) {}
+DockWindow::DockWindow(App& app, const Monitor& monitor, const DockConfig& config, std::vector<DockApp> apps)
+    : app_(app), monitor_(monitor), config_(config), apps_(std::move(apps)) {}
+
+void DockWindow::Apply(const DockConfig& config, std::vector<DockApp> apps) {
+  const bool autoHideChanged = config.autoHide != config_.autoHide;
+  config_ = config;
+  apps_ = std::move(apps);
+  // Pasar de reservar la franja a autoocultar (o al revés) no se deshace con ABM_SETPOS:
+  // se da de baja la appbar y se vuelve a registrar limpia.
+  if (autoHideChanged && registered_) {
+    AppBarRemove(hwnd_);
+    registered_ = AppBarRegister(hwnd_);
+  }
+  if (!config_.autoHide) revealed_ = true;
+  if (!Reposition()) BuildVisuals({});
+  visuals_->Slide(!revealed_, /*instant=*/true);
+}
 
 DockWindow::~DockWindow() {
   if (!hwnd_) return;
@@ -143,7 +158,7 @@ Curve DockWindow::CurveFor() const {
   const float spacing = config_.iconSpacing * s;
   const float separator = std::max(2.0f, spacing * 0.2f);
   std::vector<Slot> slots;
-  for (const DockApp& app : config_.apps)
+  for (const DockApp& app : apps_)
     slots.push_back(app.separator ? Slot{separator + spacing, separator} : Slot{icon + spacing, icon});
   // Sin nada configurado la ventana necesita igualmente un tamaño con sentido.
   if (slots.empty()) slots.push_back(Slot{icon + spacing, icon});
@@ -154,7 +169,13 @@ Curve DockWindow::CurveFor() const {
 void DockWindow::BuildVisuals(const IconSet& icons) {
   curve_ = CurveFor();
   std::vector<DockItem> items;
-  for (const DockApp& app : config_.apps) items.push_back({app.name, app.IconSource(), app.separator});
+  std::wstring names;
+  for (const DockApp& app : apps_) {
+    items.push_back({app.name, app.IconSource(), app.separator});
+    names += (names.empty() ? L"" : L", ") + (app.separator ? std::wstring(L"|") : app.name);
+  }
+  // La lista que se ve, por pantalla: la señal de texto para comparar con el dock de C#.
+  if (icons.empty()) LogInfo(L"[dock] {}: {}", monitor_.device, names);
   const float s = dpi_ / 96.0f;
   try {
     visuals_->Build(curve_, items, icons, static_cast<float>(width_), static_cast<float>(height_), kPadding * s,
@@ -169,7 +190,7 @@ void DockWindow::BuildVisuals(const IconSet& icons) {
 
 void DockWindow::ShowIcons(const IconSet& icons) { BuildVisuals(icons); }
 
-void DockWindow::Reposition() {
+bool DockWindow::Reposition() {
   const int barHeight = Px(config_.iconSize + 2 * kPadding);
   const int oldWidth = width_, oldHeight = height_;
   width_ = monitor_.work.right - monitor_.work.left;
@@ -190,7 +211,9 @@ void DockWindow::Reposition() {
   if (oldWidth && (oldWidth != width_ || oldHeight != height_)) {
     BuildVisuals({});
     app_.RequestIcons();
+    return true;
   }
+  return false;
 }
 
 RECT DockWindow::BarRect(bool tall) const {

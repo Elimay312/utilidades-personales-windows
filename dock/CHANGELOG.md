@@ -38,12 +38,25 @@ abajo.
     tamaño máximo de dibujo, en vez de 256×256 por icono y pantalla.
   - El reducido es `MULTI_SAMPLE_LINEAR`: con `HIGH_QUALITY_CUBIC` WARP compilaba sombreadores
     y el dock subía a 32,7 MB, para una diferencia de 27 píxeles de 30800.
+- **La config completa en C++**: `dock.local.json` (orden, añadidas, quitadas, por pantalla
+  y por perfil), `pantallas`, `perfiles`, la papelera y las apps que se actualizan de
+  carpeta (Discord `app-1.0.9258` → `9259`). Con la config real del usuario las tres
+  pantallas salen con la misma lista que el de C#.
+- **Recarga en caliente de verdad**: cambiar `magnification` de 1,3 a 1,6 reajusta la
+  ventana (287 → 301 px de alto) en 44 ms, y cambiar el orden en `dock.local.json` en 32 ms.
+  En C# la altura, el atajo y el autoarranque solo se leían al arrancar. Los docks de las
+  otras pantallas se enteran solos de un cambio en `dock.local.json`.
+- **El autoarranque solo lo toca la copia instalada**, para que una build de desarrollo no
+  se registre en el inicio de sesión del usuario.
 - **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.
   Extraer desde MTA no da error, da la hoja en blanco (35789 píxeles opacos), y solo se nota
   con manejadores como los `.url` de Steam.
 
 ### Arreglado
 
+- **Ya no falta un icono al azar**: extrayendo en paralelo, la caché de iconos del shell
+  contestaba `E_PENDING` a alguno (6 de 6 pasadas con el Explorador o Brave sin icono). Se
+  reintenta; 8 de 8 pasadas completas.
 - **Un `dock.json` con comas finales ya no se lee mal en C++**: `nlohmann_json` 3.12 no las
   admite (no existe `ignore_trailing_commas`), así que se limpian antes, respetando las
   cadenas. `--check` lo cubre.

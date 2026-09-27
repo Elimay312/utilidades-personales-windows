@@ -22,19 +22,29 @@ namespace dock {
 class App {
  public:
   explicit App(std::filesystem::path configPath);
+  ~App();
   int Run();
   void Quit();
-  // Extrae otra vez los iconos de la config vigente y se los da a todos los docks.
+  // Extrae otra vez los iconos de lo que enseñan los docks y se los da a todos.
   void RequestIcons();
 
  private:
   static LRESULT CALLBACK HostProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
   LRESULT HandleHost(UINT message, WPARAM wparam, LPARAM lparam);
+  void LoadFiles();
+  // Un dock nuevo por monitor: al arrancar y cuando cambian las pantallas.
   void Rebuild();
+  // La config releída sobre los docks que ya hay, sin destruir sus ventanas.
+  void Apply();
+  void CheckFilesChanged();
   void OnIcons(struct IconResult* result);
 
   std::filesystem::path configPath_;
+  std::filesystem::path localPath_;
   DockConfig config_;
+  LocalOverlay local_;
+  FILETIME configStamp_{}, localStamp_{};
+  HANDLE watch_ = INVALID_HANDLE_VALUE;
   Worker worker_;
   // Cada petición lleva su número: la respuesta de una config que ya no está se tira.
   unsigned iconRound_ = 0;

@@ -70,7 +70,16 @@ std::optional<IconBitmap> Image(IShellItemImageFactory* factory, int size) {
   HBITMAP hbmp = nullptr;
   // ICONONLY es obligatorio: por defecto GetImage da la MINIATURA, y un .exe con vista
   // previa saldría como esa vista. BIGGERSIZEOK evita que el shell estire con StretchBlt.
-  if (FAILED(factory->GetImage(SIZE{size, size}, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK, &hbmp))) return std::nullopt;
+  //
+  // Con varias extracciones a la vez la caché de iconos del shell contesta E_PENDING
+  // ("todavía no") a alguna: medido, en 6 de 6 pasadas faltaba un icono, el Explorador o
+  // Brave. No es un fallo del icono: se reintenta con una espera corta.
+  HRESULT hr = E_PENDING;
+  for (int attempt = 0; attempt < 20 && hr == E_PENDING; attempt++) {
+    if (attempt > 0) Sleep(25);
+    hr = factory->GetImage(SIZE{size, size}, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK, &hbmp);
+  }
+  if (FAILED(hr)) return std::nullopt;
   auto icon = ReadPixels(hbmp);
   DeleteObject(hbmp);
   return icon;

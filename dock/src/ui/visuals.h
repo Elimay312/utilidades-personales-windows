@@ -6,6 +6,7 @@
 #include <winrt/Windows.UI.Composition.Desktop.h>
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -42,13 +43,17 @@ class Visuals {
   // seguir al puntero sin retraso).
   void SetHover(bool hovering);
   void SetLabel(int index);
+  // El puntito de "abierta" de cada ranura, en su orden.
+  void SetRunning(const std::vector<bool>& running);
 
   // Esconder desliza el árbol hacia abajo con un muelle; la ventana no se mueve nunca.
   void Slide(bool hidden, bool instant);
 
-  // Las superficies de icono se comparten entre docks por (clave, px). Se vacía al empezar
-  // cada tanda de iconos, para no arrastrar las de apps que ya no están.
-  static void ClearIconCache();
+  // Las superficies de icono se comparten entre docks por (clave, px) y sobreviven a las
+  // reconstrucciones: abrir una app sin anclar, o recargar la config, no vuelve a extraer los
+  // iconos que ya están. Después de cada tanda se poda lo que ya no usa nadie.
+  static bool HasIcon(const std::wstring& key, int px);
+  static void KeepOnlyIcons(const std::set<std::pair<std::wstring, int>>& used);
 
  private:
   winrt::Windows::UI::Composition::Compositor compositor_{nullptr};
@@ -56,6 +61,8 @@ class Visuals {
   winrt::Windows::UI::Composition::ContainerVisual root_{nullptr};
   winrt::Windows::UI::Composition::CompositionPropertySet props_{nullptr};
   std::vector<winrt::Windows::UI::Composition::SpriteVisual> labels_;  // nullptr en separadores
+  std::vector<winrt::Windows::UI::Composition::SpriteVisual> dots_;    // nullptr en separadores
+  std::vector<bool> running_;
   int labelShown_ = -1;
   float hiddenOffset_ = 0;
 };

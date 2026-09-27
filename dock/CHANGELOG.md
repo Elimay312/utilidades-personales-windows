@@ -46,6 +46,16 @@ abajo.
   ventana (287 → 301 px de alto) en 44 ms, y cambiar el orden en `dock.local.json` en 32 ms.
   En C# la altura, el atajo y el autoarranque solo se leían al arrancar. Los docks de las
   otras pantallas se enteran solos de un cambio en `dock.local.json`.
+- **Las apps abiertas en C++**: puntitos, las abiertas sin anclar detrás de un separador (la
+  papelera siempre la última) y el autoocultar inteligente (sin nada debajo el dock no se
+  esconde). Por avisos del shell con una red de seguridad de 10 s; abrir y cerrar una
+  ventana ajena se refleja en menos de un segundo.
+  - **El barrido baja de 13-16 ms a 1,7 ms** en release: el de C# (y la primera versión de
+    este) recorría los ~430 procesos del sistema para usar los ~13 que tienen ventana.
+  - **Abrir una app sin anclar solo extrae su icono** (2 iconos en 83 ms), no los de todo el
+    dock: las superficies sobreviven a las reconstrucciones y se podan en vez de vaciarse.
+    Lo mismo vale para la recarga en caliente.
+  - Con trece apps abiertas en tres pantallas: 25,3 MB privados y 18 hilos.
 - **El autoarranque solo lo toca la copia instalada**, para que una build de desarrollo no
   se registre en el inicio de sesión del usuario.
 - **`--check` detecta iconos genéricos**: los compara con el de una extensión sin asociar.
@@ -54,6 +64,9 @@ abajo.
 
 ### Arreglado
 
+- **Una app UWP minimizada desde antes de arrancar el dock ya no sale como
+  «ApplicationFrameHost»** entre las abiertas: sin su ventana real no se sabe qué app es. La
+  identificación buena, por AppUserModelID, llega en F9.
 - **Ya no falta un icono al azar**: extrayendo en paralelo, la caché de iconos del shell
   contestaba `E_PENDING` a alguno (6 de 6 pasadas con el Explorador o Brave sin icono). Se
   reintenta; 8 de 8 pasadas completas.

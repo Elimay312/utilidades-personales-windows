@@ -6,6 +6,7 @@
 #include "core/log.h"
 #include "system/autostart.h"
 #include "system/icons.h"
+#include "system/inventory.h"
 
 namespace dock {
 
@@ -20,6 +21,14 @@ constexpr wchar_t kHostClass[] = L"DockHost";
 constexpr UINT kIconsReady = WM_APP + 1;
 constexpr UINT_PTR kDisplayTimer = 1;
 constexpr UINT_PTR kReloadTimer = 2;
+constexpr UINT_PTR kRunningTimer = 3;
+constexpr UINT_PTR kSafetyTimer = 4;
+// Al abrir una app los avisos del shell llegan a rachas: se barre una vez al acabar.
+constexpr UINT kRunningDebounceMs = 400;
+// Red de seguridad para lo que los avisos no cubren: una ventana que nace sin título, se
+// titula después y nadie la activa. Medido en C#: del reloj a 3 barridos por segundo a
+// avisos, de 5,07 a 1,90% de un núcleo en reposo.
+constexpr UINT kSafetyMs = 10000;
 // Enchufar una pantalla manda varios WM_DISPLAYCHANGE seguidos; se reconstruye una vez.
 constexpr UINT kDisplayDebounceMs = 400;
 // Los editores no guardan de una vez: varios avisos por guardado, y a veces truncan antes de
@@ -92,6 +101,7 @@ int App::Run() {
   worker_.Start();
   Rebuild();
   SyncAutoStart(config_.autoStart);
+  SetTimer(host_, kSafetyTimer, kSafetyMs, nullptr);
 
   MSG message{};
   for (;;) {
@@ -136,7 +146,21 @@ void App::Rebuild() {
     if (window->Create()) docks_.push_back(std::move(window));
   }
   LogInfo(L"[dock] {} monitor(es)", docks_.size());
+  RefreshRunning();
   RequestIcons();
+}
+
+bool App::RefreshRunning() {
+  const auto start = std::chrono::steady_clock::now();
+  // El barrido va en el hilo de UI: en C# iba al pool y escribía el estado sin sincronizar.
+  // ponytail: cabe porque cuesta poco (medido en release: ~1-2 ms con 13 ventanas); si
+  // pasara de unos 5 ms tocaría llevar la foto al worker.
+  Snapshot snapshot = TakeSnapshot();
+  bool newApps = false;
+  for (auto& dockWindow : docks_) newApps |= dockWindow->UpdateRunning(snapshot, config_.showRunning);
+  LogTrace(L"[barrido] {} procesos con ventana, {} ventanas en {:.1f} ms", snapshot.names.size(), snapshot.windows.size(),
+           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+  return newApps;
 }
 
 void App::Apply() {
@@ -146,6 +170,7 @@ void App::Apply() {
   // altura de la ventana solo se leían al arrancar.
   SyncAutoStart(config_.autoStart);
   for (auto& dockWindow : docks_) dockWindow->Apply(config_, ResolveFor(config_, local_, dockWindow->Device()).apps);
+  RefreshRunning();
   RequestIcons();
   LogInfo(L"[config] recargado en {:.0f} ms",
           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
@@ -162,11 +187,21 @@ void App::CheckFilesChanged() {
 }
 
 void App::RequestIcons() {
+  // Solo lo que no esté ya subido a ese tamaño: abrir una app sin anclar o recargar la
+  // config no vuelve a extraer los iconos de siempre.
   std::set<std::wstring> keys;
+  std::set<std::pair<std::wstring, int>> used;
   for (const auto& dockWindow : docks_)
-    for (const DockApp& app : dockWindow->Apps())
-      if (!app.separator) keys.insert(app.IconSource());
+    for (const DockApp& app : dockWindow->Apps()) {
+      if (app.separator) continue;
+      used.emplace(app.IconSource(), dockWindow->IconPx());
+      if (!Visuals::HasIcon(app.IconSource(), dockWindow->IconPx())) keys.insert(app.IconSource());
+    }
   const unsigned round = ++iconRound_;
+  if (keys.empty()) {
+    Visuals::KeepOnlyIcons(used);
+    return;
+  }
   const HWND host = host_;
   worker_.Post([keys = std::vector<std::wstring>(keys.begin(), keys.end()), round, host] {
     const auto start = std::chrono::steady_clock::now();
@@ -183,9 +218,14 @@ void App::RequestIcons() {
 void App::OnIcons(IconResult* raw) {
   std::unique_ptr<IconResult> result(raw);
   if (result->round != iconRound_) return;  // la config cambió mientras se extraían
-  Visuals::ClearIconCache();
-  for (auto& dockWindow : docks_) dockWindow->ShowIcons(result->icons);
-  LogInfo(L"[iconos] {} en pantalla ({:.0f} ms desde el arranque)", result->icons.size(), MsSinceStart());
+  std::set<std::pair<std::wstring, int>> used;
+  for (auto& dockWindow : docks_) {
+    dockWindow->ShowIcons(result->icons);
+    for (const DockApp& app : dockWindow->Apps())
+      if (!app.separator) used.emplace(app.IconSource(), dockWindow->IconPx());
+  }
+  Visuals::KeepOnlyIcons(used);
+  LogInfo(L"[iconos] {} nuevos en pantalla ({:.0f} ms desde el arranque)", result->icons.size(), MsSinceStart());
   // Aquí se sueltan los píxeles: las superficies ya tienen su copia.
 }
 
@@ -202,8 +242,14 @@ LRESULT CALLBACK App::HostProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lp
 LRESULT App::HandleHost(UINT message, WPARAM wparam, LPARAM lparam) {
   if (message == shellHookMessage_ && shellHookMessage_) {
     // El bit 0x8000 es "RUDEAPPACTIVATED": a efectos del dock, una activación más.
-    if ((wparam & 0x7FFF) == HSHELL_WINDOWACTIVATED)
+    const WPARAM code = wparam & 0x7FFF;
+    if (code == HSHELL_WINDOWACTIVATED)
       for (auto& dockWindow : docks_) dockWindow->OnWindowActivated();
+    // Creada, destruida, activada o reemplazada: puede haber cambiado qué está abierto. Se
+    // reprograma el mismo temporizador, que es el rebote de toda la vida.
+    if (code == HSHELL_WINDOWCREATED || code == HSHELL_WINDOWDESTROYED || code == HSHELL_WINDOWACTIVATED ||
+        code == HSHELL_WINDOWREPLACED)
+      SetTimer(host_, kRunningTimer, kRunningDebounceMs, nullptr);
     return 0;
   }
   if (message == taskbarCreatedMessage_ && taskbarCreatedMessage_) {
@@ -221,8 +267,14 @@ LRESULT App::HandleHost(UINT message, WPARAM wparam, LPARAM lparam) {
       return 0;
 
     case WM_TIMER:
+      if (wparam == kSafetyTimer) {
+        if (RefreshRunning()) RequestIcons();
+        return 0;
+      }
       KillTimer(host_, wparam);
-      if (wparam == kDisplayTimer) {
+      if (wparam == kRunningTimer) {
+        if (RefreshRunning()) RequestIcons();
+      } else if (wparam == kDisplayTimer) {
         LogInfo(L"[dock] cambiaron las pantallas, reconstruyendo");
         Rebuild();
       } else if (wparam == kReloadTimer) {

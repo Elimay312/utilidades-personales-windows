@@ -37,6 +37,9 @@ class App {
   // La config releída sobre los docks que ya hay, sin destruir sus ventanas.
   void Apply();
   void CheckFilesChanged();
+  // Un barrido de ventanas para todos los docks: puntitos, apps sin anclar, autoocultar.
+  // true si apareció o se fue alguna app sin anclar (hay iconos que pedir).
+  bool RefreshRunning();
   void OnIcons(struct IconResult* result);
 
   std::filesystem::path configPath_;

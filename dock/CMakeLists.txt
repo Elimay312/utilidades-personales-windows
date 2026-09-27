@@ -51,6 +51,8 @@ add_executable(Dock WIN32
   src/model/config.cpp
   src/system/appbar.cpp
   src/system/icons.cpp
+  src/system/inventory.cpp
+  src/system/steam.cpp
   src/system/worker.cpp
   src/ui/dock_window.cpp
   src/ui/text.cpp

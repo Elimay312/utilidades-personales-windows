@@ -35,7 +35,13 @@ class DockWindow {
 
   bool Create();
   const std::wstring& Device() const { return monitor_.device; }
-  const std::vector<DockApp>& Apps() const { return apps_; }
+  // Lo que se dibuja: lo anclado más las apps abiertas sin anclar.
+  const std::vector<DockApp>& Apps() const { return drawn_; }
+  // Tamaño de las superficies de icono de este dock (icono × magnificación, en px).
+  int IconPx() const;
+  // Estado de las ventanas tras un barrido. true si cambió el juego de apps abiertas sin
+  // anclar y hay iconos nuevos que pedir.
+  bool UpdateRunning(struct Snapshot& snapshot, bool showRunning);
   // Los píxeles de los iconos, recién extraídos por el worker.
   void ShowIcons(const IconSet& icons);
   // Config nueva sin destruir la ventana: geometría, appbar y visuals. Los iconos los vuelve
@@ -58,15 +64,23 @@ class DockWindow {
   bool Reposition();
   RECT BarRect(bool tall) const;
   void ApplyRegion();
+  void Compose();
+  RECT BarOnScreen() const;
+  void UpdateSmartHide();
   void Reveal();
-  void Hide();
+  // force: esconderse aunque no haya nada debajo (el autoocultar inteligente ya lo decidió).
+  void Hide(bool force = false);
   void CheckFullscreen();
   void ReassertTopmost();
 
   App& app_;
   Monitor monitor_;
   DockConfig config_;
-  std::vector<DockApp> apps_;  // ya resueltas para esta pantalla
+  std::vector<DockApp> apps_;    // ancladas, ya resueltas para esta pantalla
+  std::vector<DockApp> extras_;  // abiertas sin anclar
+  std::vector<DockApp> drawn_;   // lo que se ve: apps_ + separador + extras_ + papelera
+  std::vector<bool> running_;    // un puntito por entrada de drawn_
+  std::wstring lastRunningTrace_;
   HWND hwnd_ = nullptr;
   std::unique_ptr<Visuals> visuals_;
   Curve curve_;  // en px físicos

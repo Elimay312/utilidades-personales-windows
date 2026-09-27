@@ -91,10 +91,14 @@ std::map<std::pair<std::wstring, int>, wuc::CompositionSurfaceBrush>& IconCache(
 
 // Superficie del icono a su tamaño máximo de dibujo (icono × magnificación), no a 256: el de
 // C# subía 256x256 por icono y por pantalla, 256 KB cada una. Se comparte entre docks.
+// La de la caché si ya está; si no, se sube desde los píxeles, o nada si no los hay (el icono
+// de esa app aún no ha llegado del proceso hijo).
 wuc::CompositionSurfaceBrush IconBrush(const wuc::Compositor& compositor, const std::wstring& key, int px,
-                                       const IconBitmap& icon) {
+                                       const IconBitmap* pixels) {
   auto& cache = IconCache();
   if (auto found = cache.find({key, px}); found != cache.end()) return found->second;
+  if (!pixels) return nullptr;
+  const IconBitmap& icon = *pixels;
   auto surface = Surface(static_cast<float>(px), static_cast<float>(px), [&](ID2D1DeviceContext* context, POINT at) {
     ComPtr<ID2D1Bitmap1> bitmap;
     const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
@@ -204,12 +208,17 @@ Visuals::Visuals(HWND hwnd) : compositor_(SharedCompositor()) {
   props_.InsertScalar(L"Amount", 0);
 }
 
-void Visuals::ClearIconCache() { IconCache().clear(); }
+bool Visuals::HasIcon(const std::wstring& key, int px) { return IconCache().contains({key, px}); }
+
+void Visuals::KeepOnlyIcons(const std::set<std::pair<std::wstring, int>>& used) {
+  std::erase_if(IconCache(), [&](const auto& entry) { return !used.contains(entry.first); });
+}
 
 void Visuals::Build(const Curve& curve, const std::vector<DockItem>& items, const IconSet& icons, float windowWidth,
                     float windowHeight, float padding, float iconSize, float scale) {
   root_.Children().RemoveAll();
   labels_.clear();
+  dots_.clear();
   labelShown_ = -1;
 
   props_.InsertScalar(L"G0", 0);
@@ -245,6 +254,8 @@ void Visuals::Build(const Curve& curve, const std::vector<DockItem>& items, cons
 
   const int iconPx = static_cast<int>(std::ceil(iconSize * curve.MaxScale()));
   const float iconTop = windowHeight - padding - iconSize;
+  const float dotSize = std::max(4.0f, padding * 0.4f);
+  const float dotTop = windowHeight - padding + (padding - dotSize) * 0.5f;
   for (int i = 0; i < curve.Count() && i < static_cast<int>(items.size()); i++) {
     const DockItem& item = items[i];
     auto visual = compositor_.CreateSpriteVisual();
@@ -255,8 +266,9 @@ void Visuals::Build(const Curve& curve, const std::vector<DockItem>& items, cons
       visual.Size({curve.At(i).content, iconSize * 0.55f});
       top = windowHeight - padding - iconSize * 0.55f;
     } else {
-      if (auto found = icons.find(item.iconKey); found != icons.end())
-        visual.Brush(IconBrush(compositor_, item.iconKey, iconPx, found->second));
+      const auto found = icons.find(item.iconKey);
+      if (auto brush = IconBrush(compositor_, item.iconKey, iconPx, found != icons.end() ? &found->second : nullptr))
+        visual.Brush(brush);
       visual.Size({curve.At(i).content, iconSize});
     }
     // CenterPoint en el borde INFERIOR izquierdo: crece hacia arriba y a la derecha.
@@ -267,7 +279,27 @@ void Visuals::Build(const Curve& curve, const std::vector<DockItem>& items, cons
     Animate(compositor_, visual, L"Scale", IconScale(curve, i), props_);
     root_.Children().InsertAtTop(visual);
 
-    if (item.separator || item.name.empty()) {
+    if (item.separator) {
+      dots_.push_back(nullptr);
+      labels_.push_back(nullptr);
+      continue;
+    }
+    // El puntito de "abierta": nace con el estado que ya se conocía, para que reconstruir
+    // (una app sin anclar que se abre) no los apague todos un instante.
+    auto dot = compositor_.CreateSpriteVisual();
+    dot.Size({dotSize, dotSize});
+    dot.Brush(compositor_.CreateColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(235, 255, 255, 255)));
+    dot.Opacity(i < static_cast<int>(running_.size()) && running_[i] ? 1.0f : 0.0f);
+    auto round = compositor_.CreateRoundedRectangleGeometry();
+    round.Size({dotSize, dotSize});
+    round.CornerRadius({dotSize / 2, dotSize / 2});
+    dot.Clip(compositor_.CreateGeometricClip(round));
+    // Mismo Shift que el icono: al arrastrarlo, el punto no se queda huérfano en el hueco.
+    Animate(compositor_, dot, L"Offset", ItemCenter(curve, i, dotSize, dotTop), props_, visual);
+    root_.Children().InsertAtTop(dot);
+    dots_.push_back(dot);
+
+    if (item.name.empty()) {
       labels_.push_back(nullptr);
       continue;
     }
@@ -290,6 +322,18 @@ void Visuals::Build(const Curve& curve, const std::vector<DockItem>& items, cons
 }
 
 void Visuals::SetCursor(float rest) { props_.InsertScalar(L"C", rest); }
+
+void Visuals::SetRunning(const std::vector<bool>& running) {
+  for (size_t i = 0; i < dots_.size() && i < running.size(); i++) {
+    const bool was = i < running_.size() && running_[i];
+    if (!dots_[i] || was == running[i]) continue;
+    auto fade = compositor_.CreateScalarKeyFrameAnimation();
+    fade.InsertKeyFrame(1, running[i] ? 1.0f : 0.0f);
+    fade.Duration(std::chrono::milliseconds(180));
+    dots_[i].StartAnimation(L"Opacity", fade);
+  }
+  running_ = running;
+}
 
 void Visuals::SetHover(bool hovering) {
   auto spring = compositor_.CreateSpringScalarAnimation();

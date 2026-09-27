@@ -6,10 +6,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
+#include <optional>
 
 #include "app.h"
 #include "core/log.h"
 #include "system/appbar.h"
+#include "system/inventory.h"
 
 namespace dock {
 namespace {
@@ -48,12 +51,88 @@ bool Same(const std::vector<RECT>& a, const std::vector<RECT>& b) {
 }  // namespace
 
 DockWindow::DockWindow(App& app, const Monitor& monitor, const DockConfig& config, std::vector<DockApp> apps)
-    : app_(app), monitor_(monitor), config_(config), apps_(std::move(apps)) {}
+    : app_(app), monitor_(monitor), config_(config), apps_(std::move(apps)) {
+  Compose();
+}
+
+int DockWindow::IconPx() const {
+  return static_cast<int>(std::ceil(config_.iconSize * dpi_ / 96.0f * config_.magnification));
+}
+
+// Lo anclado, un separador, lo abierto sin anclar, y la papelera siempre la última, como en
+// macOS. El separador de las abiertas no es del usuario: nunca se guarda.
+void DockWindow::Compose() {
+  if (extras_.empty()) {
+    drawn_ = apps_;
+    return;
+  }
+  drawn_.clear();
+  std::optional<DockApp> trash;
+  for (const DockApp& app : apps_) {
+    if (!app.separator && app.target == kTrashTarget) trash = app;
+    else drawn_.push_back(app);
+  }
+  drawn_.push_back(DockApp{L"|abiertas|", L"", L"", L"", true});
+  drawn_.insert(drawn_.end(), extras_.begin(), extras_.end());
+  if (trash) drawn_.push_back(*trash);
+}
+
+bool DockWindow::UpdateRunning(Snapshot& snapshot, bool showRunning) {
+  // Las abiertas sin anclar salen de las ANCLADAS, no de lo dibujado: si no, las de la vuelta
+  // anterior contarían como presentes y la lista no menguaría nunca.
+  std::vector<DockApp> extras = showRunning ? UnpinnedApps(apps_, snapshot) : std::vector<DockApp>{};
+  const bool changed = extras.size() != extras_.size() ||
+                       !std::equal(extras.begin(), extras.end(), extras_.begin(), [](const DockApp& a, const DockApp& b) {
+                         return _wcsicmp(a.target.c_str(), b.target.c_str()) == 0;
+                       });
+  if (changed) {
+    // Rehacer la barra es caro y se ve: solo cuando cambia el juego de apps abiertas.
+    extras_ = std::move(extras);
+    Compose();
+    BuildVisuals({});
+  }
+
+  const std::vector<AppState> states = CheckApps(drawn_, snapshot);
+  running_.assign(states.size(), false);
+  std::wstring trace;
+  for (size_t i = 0; i < states.size(); i++) {
+    running_[i] = states[i].Open();
+    if (running_[i]) trace += std::format(L"{}{}:{}", trace.empty() ? L"" : L" ", drawn_[i].name, states[i].windows.size());
+  }
+  visuals_->SetRunning(running_);
+  // Solo cuando cambia: es la señal de texto de que los avisos del shell llegan.
+  if (trace != lastRunningTrace_) {
+    lastRunningTrace_ = trace;
+    LogInfo(L"[abiertas] {}: {}", monitor_.device, trace.empty() ? L"ninguna" : trace);
+  }
+  UpdateSmartHide();
+  return changed;
+}
+
+RECT DockWindow::BarOnScreen() const {
+  RECT bar = BarRect(false);
+  RECT window{};
+  GetWindowRect(hwnd_, &window);
+  OffsetRect(&bar, window.left, window.top);
+  return bar;
+}
+
+// Sin nada debajo no hay de qué esconderse: con el escritorio a la vista el dock se queda.
+// Se reevalúa en cada barrido, porque abrir, cerrar o activar ventanas es justo cuando cambia.
+void DockWindow::UpdateSmartHide() {
+  if (!config_.autoHide || hovering_ || fullscreen_) return;
+  const bool covered = AnythingOver(BarOnScreen());
+  if (covered == !revealed_) return;
+  if (covered) Hide(/*force=*/true);
+  else Reveal();
+  LogInfo(L"[autoocultar] {}: {}", monitor_.device, covered ? L"escondido, hay algo debajo" : L"a la vista, no hay nada debajo");
+}
 
 void DockWindow::Apply(const DockConfig& config, std::vector<DockApp> apps) {
   const bool autoHideChanged = config.autoHide != config_.autoHide;
   config_ = config;
   apps_ = std::move(apps);
+  Compose();
   // Pasar de reservar la franja a autoocultar (o al revés) no se deshace con ABM_SETPOS:
   // se da de baja la appbar y se vuelve a registrar limpia.
   if (autoHideChanged && registered_) {
@@ -158,7 +237,7 @@ Curve DockWindow::CurveFor() const {
   const float spacing = config_.iconSpacing * s;
   const float separator = std::max(2.0f, spacing * 0.2f);
   std::vector<Slot> slots;
-  for (const DockApp& app : apps_)
+  for (const DockApp& app : drawn_)
     slots.push_back(app.separator ? Slot{separator + spacing, separator} : Slot{icon + spacing, icon});
   // Sin nada configurado la ventana necesita igualmente un tamaño con sentido.
   if (slots.empty()) slots.push_back(Slot{icon + spacing, icon});
@@ -170,7 +249,7 @@ void DockWindow::BuildVisuals(const IconSet& icons) {
   curve_ = CurveFor();
   std::vector<DockItem> items;
   std::wstring names;
-  for (const DockApp& app : apps_) {
+  for (const DockApp& app : drawn_) {
     items.push_back({app.name, app.IconSource(), app.separator});
     names += (names.empty() ? L"" : L", ") + (app.separator ? std::wstring(L"|") : app.name);
   }
@@ -255,8 +334,9 @@ void DockWindow::Reveal() {
   LogTrace(L"[visible] {}", monitor_.device);
 }
 
-void DockWindow::Hide() {
+void DockWindow::Hide(bool force) {
   if (!revealed_ || !config_.autoHide) return;
+  if (!force && !AnythingOver(BarOnScreen())) return;
   revealed_ = false;
   sliding_ = true;
   visuals_->Slide(true, false);

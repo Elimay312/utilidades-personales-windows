@@ -12,6 +12,8 @@
 #include "model/config.h"
 #include "model/magnify.h"
 #include "system/icons.h"
+#include "system/inventory.h"
+#include "system/steam.h"
 #include "ui/visuals.h"
 
 namespace dock {
@@ -129,6 +131,27 @@ void CheckOverlay() {
   Expect(ResolveFor(config, rootOnly, L"\\\\.\\DISPLAY1").apps.size() == 1, "resolver: la raíz sí se aplica");
   config.trash = false;
   Expect(ResolveFor(config, none, L"\\\\.\\DISPLAY1").apps.size() == 1, "resolver: trash false sin papelera");
+}
+
+void CheckSteamAndApps() {
+  Expect(SteamAppIdOf(L"steam://rungameid/19680") == 19680u, "steam: rungameid");
+  Expect(!SteamAppIdOf(L"C:\\juego.exe") && !SteamAppIdOf(L"steam://open/games"), "steam: lo que no es juego");
+  // Un atajo que el usuario metió a mano en Steam lleva un id de 64 bits: no hay manifiesto.
+  Expect(!SteamAppIdOf(L"steam://rungameid/12345678901234567890"), "steam: id de 64 bits");
+  const std::string vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n"
+                          "\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t}\n}\n";
+  const auto paths = VdfValues(vdf, "path");
+  Expect(paths.size() == 2 && paths[0] == L"C:\\Program Files (x86)\\Steam" && paths[1] == L"D:\\SteamLibrary",
+         "steam: rutas del VDF sin barras dobladas");
+  Expect(VdfValues("\"AppState\"\n{\n\t\"installdir\"\t\t\"Half-Life\"\n}\n", "installdir")[0] == L"Half-Life",
+         "steam: installdir del manifiesto");
+  Expect(!SteamMissExpired(true, 0, 999999999) && !SteamMissExpired(false, 0, 29999) && SteamMissExpired(false, 0, 30000),
+         "steam: un acierto no caduca; un fallo, a los 30 s");
+
+  Expect(IsApp(DockApp{L"", L"C:\\x\\app.exe"}) && IsApp(DockApp{L"", L"shell:AppsFolder\\A!App"}), "IsApp: .exe y shell");
+  Expect(!IsApp(DockApp{L"", L"C:\\notas.txt"}) && !IsApp(DockApp{L"", L"https://x.com"}) &&
+             !IsApp(DockApp{L"", kTrashTarget}),
+         "IsApp: documento, URL y papelera no");
 }
 
 // A propósito con ranuras de anchos DISTINTOS: el caso general desde que hay separadores.
@@ -277,6 +300,7 @@ int RunChecks(const std::filesystem::path& configPath) {
   CheckJsonc();
   CheckConfig();
   CheckOverlay();
+  CheckSteamAndApps();
   CheckMagnify();
   CheckIcons();
   CheckExpressions();

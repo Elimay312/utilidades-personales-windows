@@ -11,6 +11,7 @@
 #include "core/zones.h"
 #include "data/model.h"
 #include "nlp/parser.h"
+#include "sync/weather.h"
 #include "ui/layout.h"
 #include "ui/paint.h"
 #include "ui/text_input.h"
@@ -55,6 +56,9 @@ struct PopupModel {
   // The zone the preview's hour is in, said small at the card's right end: "Colombia", or
   // "España · 08:00 aquí" when the text named another one (phase 13). Empty for a task.
   std::wstring zoneNote;
+  // Phase 13: the days Open-Meteo has answered for, empty while there is nothing (no spinner:
+  // no weather simply draws nothing).
+  std::vector<DayWeather> weather;
 
   // Search (phase 10): while the capsule starts with "?", what it found -- each as its card,
   // dated on the day it stands for -- and the one the arrows and the pointer are on.

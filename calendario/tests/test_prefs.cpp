@@ -143,3 +143,10 @@ TEST_CASE("templates survive the config, and a name with a space is refused") {
   CHECK(read.templates[0].first == L"1:1");
   CHECK(read.templates[0].second == L"e: 1:1 con ana@x.com");
 }
+
+TEST_CASE("the weather is on by default and its city is kept by name") {
+  CHECK(ReadPreferences(nlohmann::json::object()).weather);
+  const Preferences read = ReadPreferences({{"weather", false}, {"weatherCity", "Medellín"}});
+  CHECK_FALSE(read.weather);
+  CHECK(read.weatherCity == L"Medellín");
+}

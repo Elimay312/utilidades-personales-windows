@@ -74,6 +74,11 @@ class PopupWindow final : public A11ySource {
   void ApplySet(int chip);
   void SaveCurrentSet();
   void RemoveSet(int set);
+  // The days Open-Meteo answered for (phase 13); empty takes the weather off the screen.
+  void SetWeather(std::vector<DayWeather> days) {
+    model_.weather = std::move(days);
+    Invalidate();
+  }
   // Ctrl+, from the popup or the app; main knows where the settings window lives.
   void SetOpenSettings(std::function<void()> open) { openSettings_ = std::move(open); }
   // The settings window changed something: the theme is resolved again and everything redrawn

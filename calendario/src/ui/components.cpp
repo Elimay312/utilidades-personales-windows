@@ -296,6 +296,101 @@ void DrawEventCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
   StrikeThrough(target, fonts, theme, layout, brush, titleRect, title, strike);
 }
 
+namespace {
+
+// A cloud: three circles on a flat base, `width` wide, its base at `base`.
+void FillCloud(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, float left, float base,
+               float width) {
+  const float r = width / 4.0f;
+  FillCircle(target, D2D1_POINT_2F{left + r, base - r}, r, brush);
+  FillCircle(target, D2D1_POINT_2F{left + width / 2.0f, base - 1.5f * r}, 1.4f * r, brush);
+  FillCircle(target, D2D1_POINT_2F{left + width - r, base - r}, r, brush);
+  target->FillRectangle(D2D1_RECT_F{left + r, base - r, left + width - r, base}, brush);
+}
+
+// The icon, `side` square with its top left at `at`. Four shapes -- sun, cloud, drops, bolt --
+// make the seven skies, in the theme's own colours: the sun is the orange of the second
+// calendar, the rain the accent.
+void DrawSky(ID2D1RenderTarget* target, const Theme& theme, ID2D1SolidColorBrush* brush,
+             D2D1_POINT_2F at, float side, Sky sky, float type) {
+  const float stroke = (std::max)(1.0f, 1.25f * type);
+  const auto sun = [&](D2D1_POINT_2F c, float r) {
+    brush->SetColor(theme.alt);
+    FillCircle(target, c, r, brush);
+    for (int i = 0; i < 8; ++i) {
+      const float angle = static_cast<float>(i) * 3.14159265f / 4.0f;
+      const float dx = std::cos(angle);
+      const float dy = std::sin(angle);
+      target->DrawLine(D2D1_POINT_2F{c.x + dx * r * 1.45f, c.y + dy * r * 1.45f},
+                       D2D1_POINT_2F{c.x + dx * r * 1.9f, c.y + dy * r * 1.9f}, brush, stroke);
+    }
+  };
+  const float base = at.y + side * 0.72f;
+  switch (sky) {
+    case Sky::Clear:
+      sun(D2D1_POINT_2F{at.x + side / 2.0f, at.y + side / 2.0f}, side * 0.22f);
+      return;
+    case Sky::PartlyCloudy:
+      sun(D2D1_POINT_2F{at.x + side * 0.62f, at.y + side * 0.36f}, side * 0.17f);
+      brush->SetColor(theme.textSecondary);
+      FillCloud(target, brush, at.x + side * 0.05f, base + side * 0.08f, side * 0.7f);
+      return;
+    case Sky::Fog:
+      brush->SetColor(theme.textSecondary);
+      for (int i = 0; i < 3; ++i) {
+        const float y = at.y + side * (0.35f + 0.18f * static_cast<float>(i));
+        target->DrawLine(D2D1_POINT_2F{at.x + side * 0.15f, y},
+                         D2D1_POINT_2F{at.x + side * 0.85f, y}, brush, stroke * 1.3f);
+      }
+      return;
+    default:
+      break;
+  }
+  brush->SetColor(theme.textSecondary);
+  FillCloud(target, brush, at.x + side * 0.1f, sky == Sky::Cloudy ? base + side * 0.08f : base,
+            side * 0.8f);
+  if (sky == Sky::Rain || sky == Sky::Snow) {
+    brush->SetColor(sky == Sky::Rain ? theme.accent : theme.textPrimary);
+    for (int i = 0; i < 3; ++i) {
+      const float x = at.x + side * (0.3f + 0.2f * static_cast<float>(i));
+      if (sky == Sky::Rain) {
+        target->DrawLine(D2D1_POINT_2F{x, base + side * 0.08f},
+                         D2D1_POINT_2F{x - side * 0.06f, base + side * 0.24f}, brush, stroke);
+      } else {
+        FillCircle(target, D2D1_POINT_2F{x, base + side * 0.16f}, stroke, brush);
+      }
+    }
+  } else if (sky == Sky::Storm) {
+    brush->SetColor(theme.alt);
+    const float x = at.x + side * 0.5f;
+    target->DrawLine(D2D1_POINT_2F{x + side * 0.06f, base + side * 0.02f},
+                     D2D1_POINT_2F{x - side * 0.06f, base + side * 0.15f}, brush, stroke * 1.2f);
+    target->DrawLine(D2D1_POINT_2F{x - side * 0.06f, base + side * 0.15f},
+                     D2D1_POINT_2F{x + side * 0.04f, base + side * 0.15f}, brush, stroke * 1.2f);
+    target->DrawLine(D2D1_POINT_2F{x + side * 0.04f, base + side * 0.15f},
+                     D2D1_POINT_2F{x - side * 0.08f, base + side * 0.28f}, brush, stroke * 1.2f);
+  }
+}
+
+}  // namespace
+
+float DrawWeather(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                  ID2D1SolidColorBrush* brush, const D2D1_RECT_F& rect, const DayWeather& weather,
+                  float type, bool alignRight) {
+  const float side = std::round(16.0f * type);
+  const float textWidth = std::round(28.0f * type);
+  const float width = side + std::round(2.0f * type) + textWidth;
+  const float left = alignRight ? rect.right - width : rect.left;
+  const float middle = (rect.top + rect.bottom) / 2.0f;
+  DrawSky(target, theme, brush, D2D1_POINT_2F{left, std::round(middle - side / 2.0f)}, side,
+          weather.sky, type);
+  brush->SetColor(theme.textSecondary);
+  DrawTextIn(target, fonts.label.Get(), std::format(L"{}°", weather.high),
+             D2D1_RECT_F{left + side + std::round(2.0f * type), rect.top, left + width, rect.bottom},
+             brush);
+  return width;
+}
+
 void DrawCallIcon(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, const D2D1_RECT_F& rect,
                   float type) {
   // A body and, to its right, the lens: 14 x 10 DIP in all, drawn with two rounded shapes so it

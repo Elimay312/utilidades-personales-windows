@@ -207,6 +207,14 @@ void DrawDayHeaders(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& 
     brush->SetColor(today ? theme.onAccent : theme.textPrimary);
     DrawTextIn(target, fonts.title.Get(), std::to_wstring(static_cast<unsigned>(date.day())),
                number, brush, Align::Center);
+    // The day's weather in the header's top right, where it does not touch the number.
+    if (const DayWeather* weather = WeatherOn(model.weather, date);
+        weather != nullptr && cell.right - cell.left > std::round(110.0f * app.type)) {
+      DrawWeather(target, fonts, theme, brush,
+                  D2D1_RECT_F{cell.left, cell.top, cell.right - app.gap,
+                              cell.top + half - app.gap / 2.0f},
+                  *weather, app.type, /*alignRight=*/true);
+    }
   }
 }
 
@@ -592,6 +600,13 @@ void DrawListView(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& th
                              row.rect.left + std::round(100.0f * app.type),
                              top + std::round(40.0f * app.type)},
                  brush);
+      if (const DayWeather* weather = WeatherOn(model.weather, row.day)) {
+        DrawWeather(target, fonts, theme, brush,
+                    D2D1_RECT_F{row.rect.left, top + std::round(42.0f * app.type),
+                                row.rect.left + std::round(100.0f * app.type),
+                                top + std::round(60.0f * app.type)},
+                    *weather, app.type, /*alignRight=*/false);
+      }
       continue;
     }
     const DayItem& item =

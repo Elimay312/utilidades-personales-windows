@@ -20,7 +20,9 @@
 #include "core/log.h"
 #include "core/paths.h"
 #include "data/store.h"
+#include "core/zones.h"
 #include "sync/google.h"
+#include "sync/weather.h"
 #include "ui/popup_window.h"
 #include "ui/settings_window.h"
 #include "ui/snapshot.h"
@@ -50,12 +52,31 @@ struct App {
   Preferences prefs;
   // The island next door (isla/), when it is running; the toast when it is not.
   Isla isla;
+  // Phase 13: Open-Meteo, when the settings say so, and the city it was started for.
+  Weather weather;
+  int weatherCity = -1;
   // Snoozed from the island: said again at `first`, by whichever of the two is there then.
   std::vector<std::pair<long long, Reminder>> snoozed;
   HWND hwnd = nullptr;
   HMONITOR monitor = nullptr;
   long long remindedUpTo = 0;  // the WallMinute the reminders have been checked up to
 };
+
+// The weather thread as the settings want it: on for the chosen city, or off. Restarted only
+// when the city changed, so moving other settings does not ask Open-Meteo again.
+void ApplyWeather(App& app) {
+  if (!app.prefs.weather) {
+    app.weather.Stop();
+    app.weatherCity = -1;
+    app.popup.SetWeather({});
+    return;
+  }
+  const int city = WeatherCityIndex(app.prefs.weatherCity, LocalZone());
+  if (city == app.weatherCity) return;
+  app.weatherCity = city;
+  app.popup.SetWeather({});
+  app.weather.Start(app.hwnd, kWeatherCities[city]);
+}
 
 // Shortcut names and config keys are ASCII, so widening them is this and nothing more.
 std::wstring Widen(std::string_view ascii) { return std::wstring(ascii.begin(), ascii.end()); }
@@ -273,6 +294,10 @@ LRESULT CALLBACK AppWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
       OnIslaAnswers(*app);
       return 0;
 
+    case kWeatherMessage:
+      app->popup.SetWeather(app->weather.Days());
+      return 0;
+
     case kReminderOpenMessage:
       app->popup.ShowDay(DayOfWall(static_cast<long long>(wparam) * 1440));
       return 0;
@@ -462,7 +487,10 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             UnregisterHotKey(app.hwnd, kHotkeyId);
             if (!paused) RegisterShortcut(app, app.prefs.hotkey);
           },
-          [&app] { app.popup.PreferencesChanged(); },
+          [&app] {
+            app.popup.PreferencesChanged();
+            ApplyWeather(app);
+          },
           [&app](HWND owner) { ConnectToGoogle(owner, app); }});
 
   if (!ParseHotkey(app.prefs.hotkey)) {
@@ -486,6 +514,8 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     LogInfo(L"hotkey: {} registered", Widen(app.prefs.hotkey));
   }
 
+  ApplyWeather(app);
+
   // One minute back, so something due the minute Agenda starts -- at logon, say -- is not
   // missed by starting a few seconds too late.
   app.remindedUpTo = NowWall() - 1;
@@ -500,6 +530,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   // The network goes first. Cancelling closes the request handle from this thread, so quitting
   // in the middle of a pass is a moment and not the thirty seconds of a receive timeout.
   if (app.sync) app.sync->Stop();
+  app.weather.Stop();
   app.isla.Stop();
   UnregisterHotKey(hwnd, kHotkeyId);
   app.tray.Remove();

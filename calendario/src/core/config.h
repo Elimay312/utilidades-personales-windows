@@ -43,6 +43,10 @@ struct Preferences {
   // Phase 13: "/name" in the capsule stands for `text`. Kept as nlp::Template's two strings so
   // the config does not have to know the parser.
   std::vector<std::pair<std::wstring, std::wstring>> templates;
+  // Phase 13: the weather next to each day, from Open-Meteo, and the city it is asked for (a
+  // name of kWeatherCities; empty is the first city in this machine's zone).
+  bool weather = true;
+  std::wstring weatherCity;
 };
 
 // [{"name": "1:1", "text": "e: 1:1 con ana@x.com por 30 min"}], in the order they were saved.

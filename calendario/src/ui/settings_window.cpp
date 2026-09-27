@@ -11,6 +11,7 @@
 #include "core/hr.h"
 #include "core/log.h"
 #include "core/zones.h"
+#include "sync/weather.h"
 #include "data/store.h"
 #include "sync/google.h"
 #include "ui/components.h"
@@ -39,6 +40,8 @@ enum Control {
   kLanguage,
   kTheme,
   kStartup,
+  kWeather,      // phase 13: a switch, like kStartup
+  kWeatherCity,  // phase 13: a stepper, "‹ Medellín ›"
   kCalendar,
   kDuration,
   kSecondZone,  // phase 13: a stepper, "‹ Madrid ›"
@@ -49,13 +52,18 @@ enum Control {
 // fixed ones, kControls + the account's place.
 constexpr int kMaxAccounts = 6;
 constexpr float kAccountButtonDip = 100.0f;
-constexpr int kSectionOf[kControls] = {0, 0, 0, 0, 1, 1, 1, 2};
-constexpr float kControlWidth[kControls] = {180.0f, 200.0f, 264.0f, 44.0f,
-                                            220.0f, 300.0f, 220.0f, 140.0f};
+constexpr int kSectionOf[kControls] = {0, 0, 0, 0, 0, 0, 1, 1, 1, 2};
+constexpr float kControlWidth[kControls] = {180.0f, 200.0f, 264.0f, 44.0f, 44.0f,
+                                            220.0f, 220.0f, 300.0f, 220.0f, 140.0f};
 
-// The steppers: one value between two chevrons, and each half of the control steps its way.
-bool IsStepper(int control) { return control == kSecondZone; }
+// The switches, and the steppers: one value between two chevrons, and each half of the
+// control steps its way.
+bool IsSwitch(int control) { return control == kStartup || control == kWeather; }
+bool IsStepper(int control) { return control == kSecondZone || control == kWeatherCity; }
 constexpr int kSecondZoneCount = static_cast<int>(std::size(kSecondZoneChoices)) + 1;
+int StepperCount(int control) {
+  return control == kWeatherCity ? kWeatherCityCount : kSecondZoneCount;
+}
 
 // Ids UIA sees: a control is its index plus one, an option of a segmented one is 100 + ten per
 // control + its position, and an entry of the open calendar list is 200 + its position.
@@ -97,7 +105,7 @@ SettingsLayout MakeSettingsLayout(int accounts) {
       y += kSectionDip + 4.0f;
     }
     out.cards[c] = D2D1_RECT_F{kPadDip, y, kWidthDip - kPadDip, y + kRowDip};
-    const float height = c == kStartup ? 22.0f : kControlDip;
+    const float height = IsSwitch(c) ? 22.0f : kControlDip;
     const float middle = y + kRowDip / 2.0f;
     const float right = out.cards[c].right - kInsideDip;
     out.controls[c] = D2D1_RECT_F{right - kControlWidth[c], middle - height / 2.0f, right,
@@ -146,7 +154,7 @@ D2D1_RECT_F ListRect(int index) {
 int ControlAt(float x, float y, int accounts) {
   const SettingsLayout& layout = Layout(accounts);
   for (int c = 0; c < kControls; ++c) {
-    const D2D1_RECT_F& hit = c == kStartup ? layout.cards[c] : layout.controls[c];
+    const D2D1_RECT_F& hit = IsSwitch(c) ? layout.cards[c] : layout.controls[c];
     if (Inside(hit, x, y)) return c;
   }
   for (int i = 0; i < layout.accounts; ++i) {
@@ -189,11 +197,24 @@ std::wstring_view Label(int control) {
       return T(L"Duración por defecto", L"Default duration");
     case kSecondZone:
       return T(L"Segunda zona horaria", L"Second time zone");
+    case kWeather:
+      return T(L"Clima", L"Weather");
+    case kWeatherCity:
+      return T(L"Ciudad del clima", L"Weather city");
     case kGoogle:
       return L"Google Calendar · Google Tasks";
     default:
       return {};
   }
+}
+
+// What a stepper says at `index`: the weather's city, or the second zone.
+std::wstring SecondZoneText(int index);
+std::wstring StepperText(int control, int index) {
+  if (control == kWeatherCity) {
+    return std::wstring(kWeatherCities[std::clamp(index, 0, kWeatherCityCount - 1)].name);
+  }
+  return SecondZoneText(index);
 }
 
 // What the stepper at `index` says: "Ninguna" and then each zone by its place's name.
@@ -284,8 +305,7 @@ void SettingsWindow::Show(HMONITOR monitor) {
   ApplyTheme();
   Refresh();  // the accounts, which the height depends on
 
-  RECT frame{0, 0, ScaleDip(kWidthDip, dpi_),
-             ScaleDip(Layout(static_cast<int>(accounts_.size())).height, dpi_)};
+  RECT frame{0, 0, ScaleDip(kWidthDip, dpi_), ScaleDip(FittingHeight(), dpi_)};
   AdjustWindowRectExForDpi(&frame, kStyle, FALSE, 0, dpi_);
   const int width = frame.right - frame.left;
   const int height = frame.bottom - frame.top;
@@ -310,12 +330,14 @@ void SettingsWindow::Show(HMONITOR monitor) {
   }
 
   a11y_.Attach(hwnd_, this);
+  scroll_ = 0.0f;
   focus_ = 0;
   focusVisible_ = false;
   listOpen_ = false;
   hotkeyError_.clear();
   Refresh();
   toggleT_ = startup_ ? 1.0f : 0.0f;
+  weatherT_ = prefs_->weather ? 1.0f : 0.0f;
   SetTimer(hwnd_, kRefreshTimer, kRefreshMs, nullptr);
   ShowWindow(hwnd_, SW_SHOW);
   SetForegroundWindow(hwnd_);
@@ -353,6 +375,13 @@ LRESULT SettingsWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
 
     case WM_SIZE:
       Resize();
+      ScrollTo(scroll_);  // taller now: less of it can be scrolled
+      return 0;
+
+    case WM_MOUSEWHEEL:
+      // Two cards a notch, the way a settings page scrolls.
+      ScrollTo(scroll_ - static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) / WHEEL_DELTA *
+                             2.0f * (kRowDip + kRowGapDip));
       return 0;
 
     case WM_DPICHANGED: {
@@ -489,6 +518,53 @@ void SettingsWindow::Resize() {
   InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+// As tall as its cards, but never taller than nine tenths of the monitor it is on: with the
+// weather, the zones and a few accounts, it outgrows a laptop at 125 %, and then it scrolls.
+float SettingsWindow::FittingHeight() const {
+  const float content = Layout(static_cast<int>(accounts_.size())).height;
+  if (hwnd_ == nullptr) return content;
+  MONITORINFO info{sizeof(info)};
+  if (!GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &info)) return content;
+  const float work = static_cast<float>(info.rcWork.bottom - info.rcWork.top) *
+                     static_cast<float>(USER_DEFAULT_SCREEN_DPI) / static_cast<float>(dpi_);
+  // The caption takes its share of the work area too.
+  return (std::min)(content, std::floor(work * 0.9f) - 40.0f);
+}
+
+float SettingsWindow::MaxScroll() const {
+  if (hwnd_ == nullptr) return 0.0f;
+  RECT client{};
+  GetClientRect(hwnd_, &client);
+  const float visible = static_cast<float>(client.bottom) *
+                        static_cast<float>(USER_DEFAULT_SCREEN_DPI) / static_cast<float>(dpi_);
+  return (std::max)(0.0f, Layout(static_cast<int>(accounts_.size())).height - visible);
+}
+
+void SettingsWindow::ScrollTo(float y) {
+  const float clamped = std::clamp(y, 0.0f, MaxScroll());
+  if (clamped == scroll_) return;
+  scroll_ = clamped;
+  if (hwnd_ != nullptr) InvalidateRect(hwnd_, nullptr, FALSE);
+  a11y_.Changed();
+}
+
+// The card of the control with the keyboard, brought into view when Tab reaches it.
+void SettingsWindow::Reveal(int control) {
+  if (hwnd_ == nullptr || control < 0 || control >= Controls()) return;
+  const SettingsLayout& layout = Layout(static_cast<int>(accounts_.size()));
+  const D2D1_RECT_F card = control < kControls ? layout.cards[control]
+                                               : layout.accountCards[control - kControls];
+  RECT client{};
+  GetClientRect(hwnd_, &client);
+  const float visible = static_cast<float>(client.bottom) *
+                        static_cast<float>(USER_DEFAULT_SCREEN_DPI) / static_cast<float>(dpi_);
+  if (card.top - kRowGapDip < scroll_) {
+    ScrollTo(card.top - kSectionDip);
+  } else if (card.bottom + kRowGapDip > scroll_ + visible) {
+    ScrollTo(card.bottom + kRowGapDip - visible);
+  }
+}
+
 int SettingsWindow::Controls() const {
   return kControls + static_cast<int>((std::min)(accounts_.size(), size_t{kMaxAccounts}));
 }
@@ -496,8 +572,7 @@ int SettingsWindow::Controls() const {
 void SettingsWindow::FitHeight() {
   if (hwnd_ == nullptr) return;
   constexpr DWORD kStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-  RECT frame{0, 0, ScaleDip(kWidthDip, dpi_),
-             ScaleDip(Layout(static_cast<int>(accounts_.size())).height, dpi_)};
+  RECT frame{0, 0, ScaleDip(kWidthDip, dpi_), ScaleDip(FittingHeight(), dpi_)};
   AdjustWindowRectExForDpi(&frame, kStyle, FALSE, 0, dpi_);
   SetWindowPos(hwnd_, nullptr, 0, 0, frame.right - frame.left, frame.bottom - frame.top,
                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -557,6 +632,8 @@ int SettingsWindow::Selected(int control) const {
         if (prefs_->secondZone == kSecondZoneChoices[i - 1]) return i;
       }
       return 0;
+    case kWeatherCity:
+      return WeatherCityIndex(prefs_->weatherCity, LocalZone());
     default:
       return -1;
   }
@@ -564,8 +641,9 @@ int SettingsWindow::Selected(int control) const {
 
 D2D1_POINT_2F SettingsWindow::ToDip(LPARAM lparam) const {
   const float scale = static_cast<float>(USER_DEFAULT_SCREEN_DPI) / static_cast<float>(dpi_);
+  // In the content's coordinates, which start above the window once it has scrolled.
   return D2D1_POINT_2F{static_cast<float>(GET_X_LPARAM(lparam)) * scale,
-                       static_cast<float>(GET_Y_LPARAM(lparam)) * scale};
+                       static_cast<float>(GET_Y_LPARAM(lparam)) * scale + scroll_};
 }
 
 void SettingsWindow::StartTicking() {
@@ -585,6 +663,7 @@ bool SettingsWindow::Tick(float ms) {
   }
   // The knob travels in the 160 ms everything that arrives takes.
   if (Settle(toggleT_, startup_, animations ? ms / kCardEnterMs : 1.0f)) moving = true;
+  if (Settle(weatherT_, prefs_->weather, animations ? ms / kCardEnterMs : 1.0f)) moving = true;
   return moving;
 }
 
@@ -610,6 +689,7 @@ bool SettingsWindow::PaintForSnapshot(ID2D1RenderTarget* target, const Theme& th
   connected_ = true;
   startup_ = true;
   toggleT_ = 1.0f;
+  weatherT_ = prefs_->weather ? 1.0f : 0.0f;
   accounts_ = {AccountRow{1, L"ana.garcia@gmail.com", true},
                AccountRow{2, L"ana@estudio-norte.co", true}};
   Paint(target);
@@ -625,6 +705,16 @@ void SettingsWindow::Paint(ID2D1RenderTarget* target) {
   target->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
   target->Clear(theme.panelOpaque);
   if (FAILED(target->CreateSolidColorBrush(theme.textPrimary, &brush))) return;
+  // Everything below is drawn in the content's coordinates, moved up by what has scrolled.
+  D2D1_MATRIX_3X2_F before{};
+  target->GetTransform(&before);
+  target->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, -scroll_) *
+                       *D2D1::Matrix3x2F::ReinterpretBaseType(&before));
+  const struct Restore {
+    ID2D1RenderTarget* target;
+    D2D1_MATRIX_3X2_F transform;
+    ~Restore() { target->SetTransform(transform); }
+  } restore{target, before};
   Microsoft::WRL::ComPtr<ID2D1StrokeStyle> rounded = RoundedStroke(target);
   ID2D1SolidColorBrush* b = brush.Get();
   const float radius = kRadiusCard;
@@ -677,6 +767,13 @@ void SettingsWindow::Paint(ID2D1RenderTarget* target) {
       case kSecondZone:
         detail = T(L"Otra columna de horas en el día y la semana",
                    L"Another column of hours in the day and week views");
+        break;
+      case kWeather:
+        detail = T(L"Junto a cada día, de Open-Meteo: solo sale la ciudad",
+                   L"Next to each day, from Open-Meteo: only the city leaves this PC");
+        break;
+      case kWeatherCity:
+        detail = T(L"Para dónde se pide el pronóstico", L"Where the forecast is for");
         break;
       case kGoogle:
         detail = !configured_ ? T(L"Faltan las credenciales: mira docs/google-setup.md",
@@ -751,8 +848,9 @@ void SettingsWindow::Paint(ID2D1RenderTarget* target) {
         }
         break;
       }
-      case kStartup: {
-        const float t = EaseOutCubic(toggleT_);
+      case kStartup:
+      case kWeather: {
+        const float t = EaseOutCubic(c == kWeather ? weatherT_ : toggleT_);
         const float capsule = (control.bottom - control.top) / 2.0f;
         const float knob = capsule - 5.0f + t;
         if (t > 0.0f) {
@@ -804,7 +902,10 @@ void SettingsWindow::Paint(ID2D1RenderTarget* target) {
                          b, 1.5f, rounded.Get());
         break;
       }
-      case kSecondZone: {
+      case kSecondZone:
+      case kWeatherCity: {
+        // The city means nothing with the weather off: shown, but quiet.
+        const bool off = c == kWeatherCity && !prefs_->weather;
         b->SetColor(theme.panelOpaque);
         FillRound(target, control, radius, b);
         if (hover > 0.0f) {
@@ -823,8 +924,9 @@ void SettingsWindow::Paint(ID2D1RenderTarget* target) {
           target->DrawLine(D2D1_POINT_2F{x - reach, middle}, D2D1_POINT_2F{x + reach, middle + 5.0f},
                            b, 1.5f, rounded.Get());
         }
-        b->SetColor(Selected(c) == 0 ? theme.textSecondary : theme.textPrimary);
-        DrawTextIn(target, fonts_.event.Get(), SecondZoneText(Selected(c)),
+        b->SetColor(off || (c == kSecondZone && Selected(c) == 0) ? theme.textSecondary
+                                                                  : theme.textPrimary);
+        DrawTextIn(target, fonts_.event.Get(), StepperText(c, Selected(c)),
                    D2D1_RECT_F{control.left + 28.0f, control.top, control.right - 28.0f,
                                control.bottom},
                    b, Align::Center);
@@ -906,7 +1008,7 @@ void SettingsWindow::Paint(ID2D1RenderTarget* target) {
     D2D1_RECT_F ring = layout.controls[focus_];
     const int count = Options(focus_);
     if (count > 0) ring = OptionRect(ring, count, (std::max)(0, Selected(focus_)));
-    const float round = focus_ == kStartup || count > 0 ? (ring.bottom - ring.top) / 2.0f + 3.0f
+    const float round = IsSwitch(focus_) || count > 0 ? (ring.bottom - ring.top) / 2.0f + 3.0f
                                                         : radius + 3.0f;
     b->SetColor(theme.textPrimary);
     StrokeRound(target, Inset(ring, -3.0f), round, b, 2.0f);
@@ -965,6 +1067,7 @@ void SettingsWindow::OnKeyDown(WPARAM key) {
   switch (key) {
     case VK_TAB:
       focus_ = (focus_ + (shift ? Controls() - 1 : 1)) % Controls();
+      Reveal(focus_);
       break;
     case VK_ESCAPE:
       DestroyWindow(hwnd_);
@@ -1075,7 +1178,14 @@ void SettingsWindow::Activate(int control) {
     case kTheme:
     case kDuration:
     case kSecondZone:
+    case kWeatherCity:
       Step(control, 1);
+      break;
+    case kWeather:
+      prefs_->weather = !prefs_->weather;
+      SaveSetting("weather", prefs_->weather);
+      if (hooks_.changed) hooks_.changed();
+      StartTicking();
       break;
     case kStartup:
       if (!SetStartWithWindows(!startup_)) LogError(L"settings: no se pudo cambiar el arranque");
@@ -1136,7 +1246,8 @@ void SettingsWindow::Step(int control, int direction) {
     PickCalendar((current + direction + count) % count);
     return;
   }
-  const int count = IsStepper(control) ? kSecondZoneCount : Options(control);
+  if (control == kWeatherCity && !prefs_->weather) return;
+  const int count = IsStepper(control) ? StepperCount(control) : Options(control);
   if (count == 0) return;
   Choose(control, (Selected(control) + direction + count) % count);
 }
@@ -1164,6 +1275,18 @@ void SettingsWindow::Choose(int control, int option) {
       prefs_->secondZone = option <= 0 ? std::string() : kSecondZoneChoices[option - 1];
       SaveSetting("secondZone", prefs_->secondZone);
       break;
+    case kWeatherCity: {
+      prefs_->weatherCity = std::wstring(kWeatherCities[option].name);
+      const int length = WideCharToMultiByte(CP_UTF8, 0, prefs_->weatherCity.data(),
+                                             static_cast<int>(prefs_->weatherCity.size()),
+                                             nullptr, 0, nullptr, nullptr);
+      std::string utf8(static_cast<size_t>((std::max)(length, 0)), '\0');
+      WideCharToMultiByte(CP_UTF8, 0, prefs_->weatherCity.data(),
+                          static_cast<int>(prefs_->weatherCity.size()), utf8.data(), length,
+                          nullptr, nullptr);
+      SaveSetting("weatherCity", utf8);
+      break;
+    }
     default:
       return;
   }
@@ -1264,6 +1387,17 @@ std::vector<A11yNode> SettingsWindow::A11yNodes() {
         node.type = UIA_CheckBoxControlTypeId;
         node.toggle = startup_ ? 1 : 0;
         break;
+      case kWeather:
+        node.type = UIA_CheckBoxControlTypeId;
+        node.toggle = prefs_->weather ? 1 : 0;
+        node.invokable = true;
+        break;
+      case kWeatherCity:
+        node.type = UIA_ComboBoxControlTypeId;
+        node.name += L": " + StepperText(c, Selected(c));
+        node.invokable = true;
+        node.enabled = prefs_->weather;
+        break;
       case kCalendar:
         node.type = UIA_ComboBoxControlTypeId;
         for (const CalendarInfo& calendar : calendars_) {
@@ -1331,6 +1465,11 @@ std::vector<A11yNode> SettingsWindow::A11yNodes() {
       item.focused = i == listIndex_;
       nodes.push_back(std::move(item));
     }
+  }
+  // Where each one is on screen now, not in the content.
+  for (A11yNode& node : nodes) {
+    node.rect.top -= scroll_;
+    node.rect.bottom -= scroll_;
   }
   return nodes;
 }

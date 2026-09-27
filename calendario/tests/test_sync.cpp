@@ -5,6 +5,7 @@
 #include <string>
 
 #include "sync/map.h"
+#include "sync/weather.h"
 
 using namespace agenda;
 using namespace agenda::sync;
@@ -586,4 +587,31 @@ TEST_CASE("the zone an event was written in is kept only when it is not this one
   const nlohmann::json body = WriteEvent(row, "");
   CHECK(body["start"]["timeZone"] == other);
   CHECK(body["end"]["timeZone"] == other);
+}
+
+TEST_CASE("Open-Meteo's daily block is read into days, and what does not read is left out") {
+  const char* body = R"({"daily":{
+      "time":["2026-09-22","2026-09-23","not a day","2026-09-25"],
+      "weather_code":[0,61,3,95],
+      "temperature_2m_max":[21.4,17.6,18,16.5],
+      "temperature_2m_min":[9.1,8.8,8,7.4]}})";
+  const std::vector<DayWeather> days = ReadWeather(body);
+  REQUIRE(days.size() == 3);
+  CHECK(days[0].sky == Sky::Clear);
+  CHECK(days[0].high == 21);
+  CHECK(days[1].sky == Sky::Rain);
+  CHECK(days[1].high == 18);
+  CHECK(days[2].sky == Sky::Storm);
+  CHECK(WeatherOn(days, days[1].day) == &days[1]);
+  CHECK(ReadWeather("{}").empty());
+  CHECK(ReadWeather("nonsense").empty());
+
+  CHECK(SkyOf(2) == Sky::PartlyCloudy);
+  CHECK(SkyOf(45) == Sky::Fog);
+  CHECK(SkyOf(73) == Sky::Snow);
+  CHECK(SkyOf(81) == Sky::Rain);
+  // The city by its name, else the first one in the zone, else Bogotá.
+  CHECK(kWeatherCities[WeatherCityIndex(L"Medellín", "America/Bogota")].name == L"Medellín");
+  CHECK(kWeatherCities[WeatherCityIndex(L"", "Europe/Madrid")].name == L"Madrid");
+  CHECK(WeatherCityIndex(L"", "Nowhere/Nothing") == 0);
 }

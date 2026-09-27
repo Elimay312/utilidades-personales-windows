@@ -35,6 +35,12 @@ void DrawEventCard(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& t
                    const PanelLayout& layout, ID2D1SolidColorBrush* brush,
                    const D2D1_RECT_F& rect, const DayItem& item, int more, float strike);
 
+// The sky of a day and its highest temperature, "☀ 24°", fitted into `rect` from the left (or
+// ending at its right edge with `alignRight`). Returns the width it took.
+float DrawWeather(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
+                  ID2D1SolidColorBrush* brush, const D2D1_RECT_F& rect, const DayWeather& weather,
+                  float type, bool alignRight);
+
 // A small video camera, centred in `rect`, for an event with a call to join.
 void DrawCallIcon(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, const D2D1_RECT_F& rect,
                   float type);

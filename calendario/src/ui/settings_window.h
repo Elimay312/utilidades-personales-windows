@@ -99,6 +99,11 @@ class SettingsWindow final : public A11ySource {
   // The window's height follows the number of accounts, one card each.
   void FitHeight();
   int Controls() const;
+  // Scrolling (phase 13), for when the cards outgrow the screen.
+  float FittingHeight() const;
+  float MaxScroll() const;
+  void ScrollTo(float y);
+  void Reveal(int control);
   void StartCapture();
   void StopCapture();
 
@@ -129,8 +134,10 @@ class SettingsWindow final : public A11ySource {
   bool tracking_ = false;
   bool ticking_ = false;
   ULONGLONG lastTick_ = 0;
-  float hoverT_[16] = {};  // the fixed controls, then one per account
+  float hoverT_[24] = {};  // the fixed controls, then one per account
   float toggleT_ = 0.0f;
+  float weatherT_ = 0.0f;
+  float scroll_ = 0.0f;  // DIP of content above the top of the window  // the weather's switch, walked like the startup one (phase 13)
 
   std::wstring hotkeyError_;
   std::vector<CalendarInfo> calendars_;

@@ -357,6 +357,13 @@ letras y formas que el resto de Agenda. Todo se aplica al momento, sin botón de
 - **Tema.** Oscuro, claro o el de Windows. El alto contraste de Windows manda sobre los tres.
 - **Iniciar con Windows.** Escribe o borra el valor `Agenda` de
   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, y nada más en el registro.
+- **Clima** y **Ciudad del clima.** El cielo y la máxima de cada día junto a él: en la cabecera
+  del popup (el día seleccionado), en las cabeceras de día y semana y en la vista Lista. Viene
+  de [Open-Meteo](https://open-meteo.com/), sin clave ni cuenta, cada tres horas; **lo único
+  que sale del equipo es la latitud y la longitud de la ciudad elegida**. Por defecto está
+  encendido y la ciudad es la primera de la zona horaria del equipo (Bogotá en Colombia); hay
+  25 para elegir, ocho de ellas colombianas. Sin respuesta, simplemente no se ve el clima.
+- **Segunda zona horaria.** Ver «Dos zonas horarias» más arriba.
 - **Calendario por defecto.** Dónde cae lo que se crea; el mismo que el submenú de la bandeja.
 - **Duración por defecto.** Cuánto dura un evento escrito con hora y sin duración: 30 min,
   45 min, 1 h, 1 h 30 o 2 h.
@@ -369,7 +376,9 @@ letras y formas que el resto de Agenda. Todo se aplica al momento, sin botón de
   por cuenta: se puede ocultar una con su interruptor.
 
 Se guarda en `%LOCALAPPDATA%\Agenda\config.local.json`, fusionado con lo que ya hubiera, así
-que las credenciales de Google que viven en ese mismo archivo no se tocan.
+que las credenciales de Google que viven en ese mismo archivo no se tocan. Si la ventana no
+cabe en la pantalla (nueve décimas de su alto como mucho), se desplaza con la rueda y `Tab`
+lleva a la vista el control que recibe el teclado.
 
 ### Recordatorios
 
@@ -655,6 +664,8 @@ PowerShell conviene lanzarlo con `Start-Process ... -Wait` si hace falta esperar
   (esquema v3), después las repeticiones que Google aparta de su serie (esquema v4) y las
   cuentas de Google (esquema v5). Se crea sola la primera vez y se migra con
   `PRAGMA user_version`; una base escrita por una versión más nueva de Agenda no se toca.
+- Clima: `%LOCALAPPDATA%\Agenda\weather.json`, la última respuesta de Open-Meteo con su ciudad
+  y su hora, para enseñar algo al arrancar sin esperar a la red. Se puede borrar sin perder nada.
 - Token de Google: `%LOCALAPPDATA%\Agenda\token.bin` para la primera cuenta y
   `token-2.bin`, `token-3.bin`… para las siguientes: el *refresh token* cifrado con
   **DPAPI**. Va atado a la cuenta de Windows: copiarlo a otro equipo o a otro usuario no sirve

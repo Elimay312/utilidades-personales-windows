@@ -161,6 +161,12 @@ Preferences ReadPreferences(const nlohmann::json& config) {
       if (!set.name.empty()) out.calendarSets.push_back(std::move(set));
     }
   }
+  if (const auto found = config.find("weather"); found != config.end() && found->is_boolean()) {
+    out.weather = found->get<bool>();
+  }
+  if (const auto found = config.find("weatherCity"); found != config.end() && found->is_string()) {
+    out.weatherCity = Wide(found->get<std::string>());
+  }
   if (const auto found = config.find("templates"); found != config.end() && found->is_array()) {
     for (const nlohmann::json& item : *found) {
       if (!item.is_object()) continue;

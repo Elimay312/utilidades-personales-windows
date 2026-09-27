@@ -125,6 +125,7 @@ add_executable(Agenda WIN32
   src/sync/google.cpp
   src/sync/http.cpp
   src/sync/oauth.cpp
+  src/sync/weather.cpp
   src/ui/accessibility.cpp
   src/ui/app_view.cpp
   src/ui/components.cpp

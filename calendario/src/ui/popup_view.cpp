@@ -32,6 +32,15 @@ void DrawHeader(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& them
   // is wrong -- what was written is in the cache and goes up by itself when the network is
   // back. Something louder would be asking the user to do something about it, and there is
   // nothing to do.
+  // The weather of the day the list shows, left of the arrows (and of the offline dot).
+  if (const DayWeather* weather = WeatherOn(model.weather, model.selected)) {
+    const D2D1_RECT_F arrow = layout.prevArrow();
+    const float right = arrow.left - layout.gap * (model.offline ? 3.0f : 1.0f);
+    DrawWeather(target, fonts, theme, brush,
+                D2D1_RECT_F{right - std::round(60.0f * layout.type), layout.headerTop, right,
+                            layout.headerTop + layout.headerHeight},
+                *weather, layout.type, /*alignRight=*/true);
+  }
   if (model.offline) {
     const D2D1_RECT_F arrow = layout.prevArrow();
     const float radius = std::round(2.0f * layout.type);

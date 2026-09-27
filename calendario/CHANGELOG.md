@@ -42,6 +42,10 @@ sigue [SemVer](https://semver.org/lang/es/).
   laborables (`?libre mañana 2h`, `?libre esta semana 30 min`). Enter los copia en una frase
   lista para pegar, y un clic en uno lo escribe en el campo para crear el evento ahí. Captura
   `popup-libre`.
+- **Clima** (fase 13.9). El cielo y la máxima de cada día, de Open-Meteo, en la cabecera del
+  popup, en las cabeceras de día y semana y en la Lista. Solo sale del equipo la latitud y la
+  longitud de la ciudad, que se elige en la configuración (**Clima** y **Ciudad del clima**).
+  Se guarda una copia en `weather.json` para enseñarlo al arrancar.
 
 - **Varias cuentas de Google** (fase 12.3). La configuración tiene una sección **Cuentas de
   Google** con **Añadir…** otra cuenta, **Reconectar…** la que perdió el permiso y una tarjeta
@@ -78,6 +82,8 @@ sigue [SemVer](https://semver.org/lang/es/).
 
 ### Cambiado
 
+- **La configuración se desplaza** cuando no cabe en la pantalla (fase 13.9): con el clima, la
+  segunda zona y varias cuentas ya no entraba en un portátil al 125 %.
 - **Esquema v5, el primer paso para varias cuentas de Google** (fase 12.1). Una tabla de
   cuentas, y cada calendario dice de cuál es. La cuenta que ya estaba conectada pasa a ser la
   primera y sigue con su `token.bin`: no hay que volver a conectarla. Todavía no se puede añadir

@@ -91,6 +91,18 @@ inline void FillSampleData(PopupModel& model) {
       break;  // one dot per day, and it belongs to whatever comes first
     }
   }
+
+  // Two weeks of Bogotá weather from the Monday of the sample week: every sky at least once.
+  constexpr Sky kSkies[] = {Sky::PartlyCloudy, Sky::Rain,   Sky::Clear, Sky::Cloudy,
+                            Sky::Storm,        Sky::Clear,  Sky::Rain,  Sky::Fog,
+                            Sky::PartlyCloudy, Sky::Cloudy, Sky::Rain,  Sky::Clear,
+                            Sky::Snow,         Sky::PartlyCloudy};
+  constexpr int kHighs[] = {19, 17, 21, 18, 16, 22, 18, 15, 20, 19, 17, 21, 12, 20};
+  model.weather.clear();
+  const Date monday = Date{std::chrono::year{2026}, std::chrono::September, std::chrono::day{21}};
+  for (int i = 0; i < static_cast<int>(std::size(kSkies)); ++i) {
+    model.weather.push_back(DayWeather{AddDays(monday, i), kSkies[i], kHighs[i], kHighs[i] - 9});
+  }
 }
 
 // --- The expanded app -------------------------------------------------------------------

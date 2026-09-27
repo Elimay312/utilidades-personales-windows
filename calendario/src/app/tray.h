@@ -21,6 +21,8 @@ enum TrayCommand : UINT {
   kTrayConnect = 3,
   kTrayDisconnect = 4,
   kTraySettings = 5,
+  // The calendar sets (phase 13): "Todos" and then each set, from here up.
+  kTraySetFirst = 80,
   // And one per calendar, from here up: the command that comes back is this plus the position
   // in the list that was handed in. A range instead of a name, because the entries are whatever
   // Google last said there was.
@@ -35,6 +37,9 @@ struct TrayState {
   std::vector<CalendarInfo> calendars;
   // With more than one, the calendars are grouped under each account's address (phase 12).
   std::vector<AccountInfo> accounts;
+  // Phase 13: the calendar sets' names and which one is on (0 "Todos", -1 none).
+  std::vector<std::wstring> sets;
+  int activeSet = 0;
 };
 
 class Tray {

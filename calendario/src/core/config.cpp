@@ -75,6 +75,20 @@ bool SaveSetting(const char* key, const nlohmann::json& value) {
   return true;
 }
 
+nlohmann::json WriteCalendarSets(const std::vector<CalendarSet>& sets) {
+  nlohmann::json out = nlohmann::json::array();
+  for (const CalendarSet& set : sets) {
+    const int length = WideCharToMultiByte(CP_UTF8, 0, set.name.data(),
+                                           static_cast<int>(set.name.size()), nullptr, 0, nullptr,
+                                           nullptr);
+    std::string name(static_cast<size_t>((std::max)(length, 0)), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, set.name.data(), static_cast<int>(set.name.size()),
+                        name.data(), length, nullptr, nullptr);
+    out.push_back({{"name", name}, {"hidden", set.hidden}});
+  }
+  return out;
+}
+
 Preferences ReadPreferences(const nlohmann::json& config) {
   Preferences out;
   // nlohmann throws when value() meets the wrong type, and a hand-edited config is exactly
@@ -95,6 +109,28 @@ Preferences ReadPreferences(const nlohmann::json& config) {
   out.lang = text("language") == "en" ? Lang::En : Lang::Es;
   if (const std::string theme = text("theme"); theme == "dark" || theme == "light") {
     out.theme = std::wstring(theme.begin(), theme.end());
+  }
+  if (const auto found = config.find("calendarSets"); found != config.end() && found->is_array()) {
+    for (const nlohmann::json& item : *found) {
+      if (!item.is_object() || out.calendarSets.size() >= kMaxCalendarSets) continue;
+      const auto name = item.find("name");
+      const auto hidden = item.find("hidden");
+      if (name == item.end() || !name->is_string() || hidden == item.end() ||
+          !hidden->is_array()) {
+        continue;
+      }
+      CalendarSet set;
+      const std::string utf8 = name->get<std::string>();
+      const int length = MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
+                                             static_cast<int>(utf8.size()), nullptr, 0);
+      set.name.resize(static_cast<size_t>((std::max)(length, 0)));
+      MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), set.name.data(),
+                          length);
+      for (const nlohmann::json& id : *hidden) {
+        if (id.is_string()) set.hidden.push_back(id.get<std::string>());
+      }
+      if (!set.name.empty()) out.calendarSets.push_back(std::move(set));
+    }
   }
   // An IANA name has a slash ("Europe/Madrid") or is UTC; anything else is a typo, not a zone.
   if (const std::string zone = text("secondZone");

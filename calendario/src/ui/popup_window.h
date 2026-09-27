@@ -67,7 +67,13 @@ class PopupWindow final : public A11ySource {
   void SetSync(sync::GoogleSync* sync) { sync_ = sync; }
   // The settings the popup reads -- theme, language through the global, the length of a new
   // event -- owned by the app and changed by the settings window.
-  void SetPreferences(const Preferences* prefs) { prefs_ = prefs; }
+  void SetPreferences(Preferences* prefs) { prefs_ = prefs; }
+  // Calendar sets (phase 13): switch every calendar on or off as chip `chip` says (0 is all of
+  // them), save the switches as they are as a new set, or forget set `set`. The tray calls the
+  // first one too, so it works with the popup closed.
+  void ApplySet(int chip);
+  void SaveCurrentSet();
+  void RemoveSet(int set);
   // Ctrl+, from the popup or the app; main knows where the settings window lives.
   void SetOpenSettings(std::function<void()> open) { openSettings_ = std::move(open); }
   // The settings window changed something: the theme is resolved again and everything redrawn
@@ -359,7 +365,7 @@ class PopupWindow final : public A11ySource {
   std::optional<Undone> undo_;
   Store* store_ = nullptr;
   sync::GoogleSync* sync_ = nullptr;
-  const Preferences* prefs_ = nullptr;
+  Preferences* prefs_ = nullptr;
   std::function<void()> openSettings_;
   ULONGLONG lastTick_ = 0;
   std::wstring parsed_;  // the text the preview in the model was built from

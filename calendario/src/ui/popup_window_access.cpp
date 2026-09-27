@@ -55,6 +55,7 @@ constexpr int kReminderIds = 5300;
 constexpr int kJoinId = 5102;
 constexpr int kGuestsId = 5103;
 constexpr int kResponseIds = 5400;
+constexpr int kSetIds = 5500;  // "Todos", each calendar set, and "+" after them (phase 13)
 
 bool Within(int id, int base, int count) { return id >= base && id < base + count; }
 
@@ -871,6 +872,31 @@ std::vector<A11yNode> PopupWindow::A11yNodes() {
   }
 
   A11yNode calendars;
+  // The calendar sets: a radio button each, and the button that saves the switches as one.
+  {
+    const int chips = 1 + static_cast<int>(app_.setNames.size());
+    for (int i = 0; i < chips; ++i) {
+      A11yNode set;
+      set.id = kSetIds + i;
+      set.type = UIA_RadioButtonControlTypeId;
+      set.name = std::wstring(T(L"Conjunto: ", L"Set: ")) +
+                 (i == 0 ? std::wstring(T(L"Todos", L"All")) : app_.setNames[static_cast<size_t>(i - 1)]);
+      set.rect = appLayout_.setChip(i, chips);
+      set.selected = app_.activeSet == i ? 1 : 0;
+      set.invokable = true;
+      nodes.push_back(std::move(set));
+    }
+    if (app_.activeSet < 0 && chips - 1 < kMaxCalendarSets) {
+      A11yNode add;
+      add.id = kSetIds + chips;
+      add.type = UIA_ButtonControlTypeId;
+      add.name = T(L"Guardar estos calendarios como conjunto", L"Save these calendars as a set");
+      add.rect = appLayout_.setAdd(chips);
+      add.invokable = true;
+      nodes.push_back(std::move(add));
+    }
+  }
+
   calendars.id = kCalendarsId;
   calendars.type = UIA_ListControlTypeId;
   calendars.name = T(L"Calendarios", L"Calendars");
@@ -1170,6 +1196,10 @@ void PopupWindow::A11yFocus(int id) {
   } else if (Within(id, kResponseIds, kResponseChoices)) {
     FocusDetailStop(kDetailFields + kControlResponse);
     ChooseResponse(id - kResponseIds);
+  } else if (Within(id, kSetIds, 1 + static_cast<int>(app_.setNames.size()))) {
+    ApplySet(id - kSetIds);
+  } else if (id == kSetIds + 1 + static_cast<int>(app_.setNames.size())) {
+    SaveCurrentSet();
   }
   Invalidate();
 }

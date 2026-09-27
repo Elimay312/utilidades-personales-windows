@@ -122,6 +122,21 @@ UINT Tray::ShowMenu(POINT at, const TrayState& state) const {
     }
   }
 
+  // The calendar sets, once there is one to pick besides "Todos".
+  if (!state.sets.empty()) {
+    if (HMENU sets = CreatePopupMenu()) {
+      for (int i = 0; i <= static_cast<int>(state.sets.size()); ++i) {
+        const UINT flags = MF_STRING | (state.activeSet == i ? MF_CHECKED : MF_UNCHECKED);
+        const std::wstring name =
+            i == 0 ? std::wstring(T(L"Todos", L"All")) : state.sets[static_cast<size_t>(i - 1)];
+        AppendMenuW(sets, flags, kTraySetFirst + static_cast<UINT>(i), name.c_str());
+      }
+      AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+      AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sets),
+                  T(L"Conjunto de calendarios", L"Calendar set").data());
+    }
+  }
+
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, kTraySettings, T(L"Configuración…", L"Settings…").data());
   AppendMenuW(menu, MF_STRING, kTrayExit, T(L"Salir", L"Exit").data());

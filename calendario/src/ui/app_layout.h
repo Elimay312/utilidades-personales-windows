@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/config.h"
 #include "data/model.h"
 #include "ui/layout.h"
 #include "ui/paint.h"
@@ -64,6 +65,8 @@ inline constexpr float kCapsuleMaxDip = 460.0f;
 inline constexpr float kCapsuleMinDip = 220.0f;
 inline constexpr float kSectionLabelDip = 24.0f;  // "Calendarios", "Sin fecha"
 inline constexpr float kCalendarRowDip = 28.0f;
+inline constexpr float kSetsRowDip = 26.0f;       // the calendar sets' chips (phase 13)
+inline constexpr float kSetChipMaxDip = 96.0f;
 inline constexpr float kMonthLabelsDip = 24.0f;
 inline constexpr float kMonthLineDip = 20.0f;     // one event in a month cell
 inline constexpr float kDetailDip = 320.0f;      // the detail panel on the right
@@ -124,6 +127,8 @@ struct AppLayout {
   float sidebarRight = 0.0f;
   float sideLeft = 0.0f;
   float sideRight = 0.0f;
+  float setsTop = 0.0f;  // phase 13: the row of calendar sets, over "Calendarios"
+  float setsHeight = 0.0f;
   float sectionTop = 0.0f;
   float sectionLabel = 0.0f;
   float calendarRow = 0.0f;
@@ -192,6 +197,27 @@ struct AppLayout {
     return D2D1_RECT_F{left, top, left + monthCellWidth, top + monthCellHeight};
   }
 
+  // The sets' chips: "Todos" and each set (`chips` of them in all), then the "+" that saves
+  // the calendars as they are now. Equal widths, never wider than kSetChipMaxDip.
+  float setChipWidth(int chips) const {
+    const float room = sideRight - sideLeft - setsHeight - static_cast<float>(chips) * gap;
+    return (std::min)(std::round(kSetChipMaxDip * type),
+                      std::floor(room / static_cast<float>((std::max)(chips, 1))));
+  }
+  D2D1_RECT_F setChip(int index, int chips) const {
+    const float left = sideLeft + static_cast<float>(index) * (setChipWidth(chips) + gap);
+    return D2D1_RECT_F{left, setsTop, left + setChipWidth(chips), setsTop + setsHeight};
+  }
+  D2D1_RECT_F setAdd(int chips) const {
+    const float left = setChip(chips, chips).left;
+    return D2D1_RECT_F{left, setsTop, left + setsHeight, setsTop + setsHeight};
+  }
+  // The cross that takes a set away, at the right end of its chip while the pointer is on it.
+  D2D1_RECT_F setRemove(int index, int chips) const {
+    const D2D1_RECT_F chip = setChip(index, chips);
+    return D2D1_RECT_F{chip.right - setsHeight, chip.top, chip.right, chip.bottom};
+  }
+
   D2D1_RECT_F calendarsLabel() const {
     return D2D1_RECT_F{sideLeft, sectionTop, sideRight, sectionTop + sectionLabel};
   }
@@ -242,7 +268,9 @@ inline AppLayout MakeAppLayout(D2D1_SIZE_F size, const PanelLayout& popup, AppVi
   out.sidebarRight = popup.width;
   out.sideLeft = popup.contentLeft;
   out.sideRight = popup.contentRight;
-  out.sectionTop = popup.listTop;
+  out.setsTop = popup.listTop;
+  out.setsHeight = at(kSetsRowDip);
+  out.sectionTop = out.setsTop + out.setsHeight + out.gap;
   out.sectionLabel = at(kSectionLabelDip);
   out.calendarRow = at(kCalendarRowDip);
   out.cardHeight = popup.cardHeight;
@@ -432,6 +460,43 @@ inline float ListMaxScroll(const AppLayout& app, const PanelLayout& popup, Date 
   float bottom = app.main.top;
   for (const ListRow& row : rows) bottom = (std::max)(bottom, row.rect.bottom);
   return (std::max)(0.0f, bottom - app.main.bottom + 2.0f * app.gap);
+}
+
+// --- Calendar sets (phase 13) ---------------------------------------------------------------
+
+// Which chip the calendars' switches match: 0 when nothing is off ("Todos"), a set's place plus
+// one when exactly its calendars are, and -1 for none of them.
+// What a set saved from the calendars as they are is called: the ones that are on, by name,
+// "Personal + Trabajo". Nobody has to type anything, and the settings file can rename it.
+inline int ActiveSet(const std::vector<CalendarSet>& sets, const std::vector<CalendarInfo>& calendars) {
+  std::vector<std::string> off;
+  for (const CalendarInfo& calendar : calendars) {
+    if (calendar.hidden) off.push_back(calendar.id);
+  }
+  if (off.empty()) return 0;
+  std::sort(off.begin(), off.end());
+  for (size_t i = 0; i < sets.size(); ++i) {
+    // Only the calendars that exist count: one Google no longer lists does not break a match.
+    std::vector<std::string> hidden;
+    for (const std::string& id : sets[i].hidden) {
+      const bool exists = std::any_of(calendars.begin(), calendars.end(),
+                                      [&id](const CalendarInfo& c) { return c.id == id; });
+      if (exists) hidden.push_back(id);
+    }
+    std::sort(hidden.begin(), hidden.end());
+    if (hidden == off) return static_cast<int>(i) + 1;
+  }
+  return -1;
+}
+
+inline std::wstring NameForSet(const std::vector<CalendarInfo>& calendars) {
+  std::wstring name;
+  for (const CalendarInfo& calendar : calendars) {
+    if (calendar.hidden || calendar.isTaskList) continue;
+    if (!name.empty()) name += L" + ";
+    name += calendar.title;
+  }
+  return name.empty() ? std::wstring(T(L"Solo tareas", L"Tasks only")) : name;
 }
 
 // --- The detail panel ---------------------------------------------------------------------

@@ -31,6 +31,10 @@ sigue [SemVer](https://semver.org/lang/es/).
   **Trimestre** (las catorce semanas del trimestre con sus eventos), **Año** (los doce meses con
   sus puntos) y **Lista** (los próximos treinta días, sin los vacíos). Teclas `R`, `A` y `L`.
   En trimestre y año un clic abre el día. Capturas `app-trimestre`, `app-anio` y `app-lista`.
+- **Conjuntos de calendarios** (fase 13.6). Una fila de fichas encima de los calendarios —Todos,
+  cada conjunto y **+**— enciende de un clic solo los calendarios de un conjunto. **+** guarda
+  los interruptores como están, con el nombre de lo que está encendido, y la × de cada ficha lo
+  quita. También desde la bandeja, en **Conjunto de calendarios**.
 
 - **Varias cuentas de Google** (fase 12.3). La configuración tiene una sección **Cuentas de
   Google** con **Añadir…** otra cuenta, **Reconectar…** la que perdió el permiso y una tarjeta

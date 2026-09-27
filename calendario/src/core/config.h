@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <vector>
 
 #include "core/i18n.h"
 
@@ -19,6 +20,14 @@ nlohmann::json LoadConfig();
 // hand elsewhere. False when it could not be written; the caller says so.
 bool SaveSetting(const char* key, const nlohmann::json& value);
 
+// A calendar set (phase 13): a name and which calendars it switches off. Applying it is setting
+// every calendar's `hidden` to whether it is in the list, so it is nothing the cache has to know.
+struct CalendarSet {
+  std::wstring name;
+  std::vector<std::string> hidden;  // calendar ids
+};
+inline constexpr int kMaxCalendarSets = 4;  // what fits in one row of the sidebar
+
 // What the settings window changes and the rest of the app reads. The default calendar is not
 // here -- it is the is_primary column, as it has been since phase 5 -- and neither is starting
 // with Windows, whose only truth is the Run key.
@@ -29,7 +38,11 @@ struct Preferences {
   std::wstring theme;          // "dark", "light", or empty to follow Windows
   // Phase 13: a second column of hours on the timeline, as an IANA zone; empty is none.
   std::string secondZone;
+  std::vector<CalendarSet> calendarSets;
 };
+
+// The sets as config.local.json keeps them: [{"name": "Trabajo", "hidden": ["id", ...]}].
+nlohmann::json WriteCalendarSets(const std::vector<CalendarSet>& sets);
 
 // What the second-zone chooser steps through, after "Ninguna": the zones a person in Colombia
 // most often has a meeting in. Any IANA name typed into the config by hand is honoured too.

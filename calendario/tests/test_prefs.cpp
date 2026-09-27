@@ -122,3 +122,16 @@ TEST_CASE("the second zone is an IANA name or nothing") {
   CHECK(ReadPreferences({{"secondZone", "madrid"}}).secondZone.empty());
   CHECK(ReadPreferences({{"secondZone", 5}}).secondZone.empty());
 }
+
+TEST_CASE("calendar sets survive the trip through the config, accents and all") {
+  const std::vector<CalendarSet> sets = {{L"Año nuevo", {"a", "b"}}, {L"Trabajo", {}}};
+  const Preferences read = ReadPreferences({{"calendarSets", WriteCalendarSets(sets)}});
+  REQUIRE(read.calendarSets.size() == 2);
+  CHECK(read.calendarSets[0].name == L"Año nuevo");
+  CHECK(read.calendarSets[0].hidden == std::vector<std::string>{"a", "b"});
+  CHECK(read.calendarSets[1].hidden.empty());
+  // Nameless or malformed ones are left out.
+  CHECK(ReadPreferences({{"calendarSets", {{{"name", ""}, {"hidden", nlohmann::json::array()}},
+                                            {{"hidden", 3}}}}})
+            .calendarSets.empty());
+}

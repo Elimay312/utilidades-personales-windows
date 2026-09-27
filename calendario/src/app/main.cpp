@@ -214,7 +214,14 @@ LRESULT CALLBACK AppWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
             }
           }
 
+          for (const CalendarSet& set : app->prefs.calendarSets) state.sets.push_back(set.name);
+          state.activeSet = ActiveSet(app->prefs.calendarSets, app->store.AllCalendars());
+
           const UINT command = app->tray.ShowMenu(at, state);
+          if (command >= kTraySetFirst && command < kTrayCalendarFirst) {
+            app->popup.ApplySet(static_cast<int>(command - kTraySetFirst));
+            return 0;
+          }
           if (command >= kTrayCalendarFirst) {
             const size_t index = command - kTrayCalendarFirst;
             if (index < state.calendars.size()) {

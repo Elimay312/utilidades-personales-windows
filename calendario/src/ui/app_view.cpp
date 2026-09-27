@@ -608,12 +608,62 @@ void DrawListView(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& th
 
 // --- Sidebar --------------------------------------------------------------------------------
 
+void DrawCross(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, D2D1_POINT_2F c,
+               float reach, float stroke, ID2D1StrokeStyle* style);
+
 void DrawSidebar(ID2D1RenderTarget* target, const Fonts& fonts, const Theme& theme,
                  const PanelLayout& popup, const AppLayout& app, const AppModel& appModel,
                  ID2D1SolidColorBrush* brush, ID2D1StrokeStyle* style) {
   brush->SetColor(theme.border);
   target->FillRectangle(
       D2D1_RECT_F{app.sidebarRight, 0.0f, app.sidebarRight + 1.0f, app.height}, brush);
+
+  // The sets (phase 13): "Todos", each saved set, and "+" when what is on is not one of them.
+  {
+    const int chips = 1 + static_cast<int>(appModel.setNames.size());
+    const float radius = app.setsHeight / 2.0f;
+    for (int i = 0; i < chips; ++i) {
+      const D2D1_RECT_F chip = app.setChip(i, chips);
+      const bool on = appModel.activeSet == i;
+      const bool hover = appModel.setHover == i;
+      brush->SetColor(on ? (theme.highContrast ? theme.accent
+                                               : Fade(theme.textPrimary, theme.light ? 0.08f : 0.12f))
+                         : (hover ? theme.hover : theme.surface));
+      FillRound(target, chip, radius, brush);
+      if (!on) {
+        brush->SetColor(theme.border);
+        StrokeRound(target, chip, radius, brush, 1.0f);
+      }
+      const bool cross = hover && i > 0;
+      brush->SetColor(on ? (theme.highContrast ? theme.onAccent : theme.textPrimary)
+                         : theme.textSecondary);
+      DrawTextIn(target, fonts.label.Get(),
+                 i == 0 ? std::wstring(T(L"Todos", L"All")) : appModel.setNames[static_cast<size_t>(i - 1)],
+                 D2D1_RECT_F{chip.left + radius / 2.0f, chip.top,
+                             cross ? chip.right - app.setsHeight : chip.right - radius / 2.0f,
+                             chip.bottom},
+                 brush, Align::Center);
+      if (cross) {
+        brush->SetColor(theme.textSecondary);
+        DrawCross(target, brush, Center(app.setRemove(i, chips)), std::round(3.0f * app.type),
+                  (std::max)(1.0f, 1.5f * app.type), style);
+      }
+    }
+    if (appModel.activeSet < 0 && chips - 1 < kMaxCalendarSets) {
+      const D2D1_RECT_F add = app.setAdd(chips);
+      brush->SetColor(appModel.setHover == chips ? theme.hover : theme.surface);
+      FillRound(target, add, radius, brush);
+      brush->SetColor(theme.border);
+      StrokeRound(target, add, radius, brush, 1.0f);
+      const D2D1_POINT_2F c = Center(add);
+      const float reach = std::round(4.5f * app.type);
+      brush->SetColor(theme.textSecondary);
+      target->DrawLine(D2D1_POINT_2F{c.x - reach, c.y}, D2D1_POINT_2F{c.x + reach, c.y}, brush,
+                       (std::max)(1.0f, 1.5f * app.type), style);
+      target->DrawLine(D2D1_POINT_2F{c.x, c.y - reach}, D2D1_POINT_2F{c.x, c.y + reach}, brush,
+                       (std::max)(1.0f, 1.5f * app.type), style);
+    }
+  }
 
   brush->SetColor(theme.textSecondary);
   DrawTextIn(target, fonts.label.Get(), T(L"Calendarios", L"Calendars"), app.calendarsLabel(), brush);

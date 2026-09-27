@@ -234,7 +234,57 @@ void PopupWindow::ReloadApp() {
     DropPending(app_.undated);
   }
   app_.calendarHover.resize(app_.calendars.size(), 0.0f);
+  app_.setNames.clear();
+  if (prefs_ != nullptr) {
+    for (const CalendarSet& set : prefs_->calendarSets) app_.setNames.push_back(set.name);
+    app_.activeSet = ActiveSet(prefs_->calendarSets, app_.calendars);
+  }
   Relayout();
+}
+
+void PopupWindow::ApplySet(int chip) {
+  if (store_ == nullptr || prefs_ == nullptr || chip < 0 ||
+      chip > static_cast<int>(prefs_->calendarSets.size())) {
+    return;
+  }
+  const std::vector<std::string> none;
+  const std::vector<std::string>& hidden =
+      chip == 0 ? none : prefs_->calendarSets[static_cast<size_t>(chip - 1)].hidden;
+  for (const CalendarInfo& calendar : store_->AllCalendars()) {
+    const bool off = std::find(hidden.begin(), hidden.end(), calendar.id) != hidden.end();
+    if (off != calendar.hidden) store_->SetCalendarHidden(calendar.id, off);
+  }
+  // The switches flip now, as a click on one does; the days follow the worker.
+  for (CalendarInfo& calendar : app_.calendars) {
+    calendar.hidden = std::find(hidden.begin(), hidden.end(), calendar.id) != hidden.end();
+  }
+  app_.activeSet = chip;
+  Invalidate();
+}
+
+void PopupWindow::SaveCurrentSet() {
+  if (prefs_ == nullptr || prefs_->calendarSets.size() >= kMaxCalendarSets) return;
+  CalendarSet set;
+  set.name = NameForSet(app_.calendars);
+  for (const CalendarInfo& calendar : app_.calendars) {
+    if (calendar.hidden) set.hidden.push_back(calendar.id);
+  }
+  prefs_->calendarSets.push_back(std::move(set));
+  SaveSetting("calendarSets", WriteCalendarSets(prefs_->calendarSets));
+  app_.setNames.push_back(prefs_->calendarSets.back().name);
+  app_.activeSet = static_cast<int>(prefs_->calendarSets.size());
+  a11y_.Announce(std::wstring(T(L"Conjunto guardado: ", L"Set saved: ")) + app_.setNames.back());
+  Invalidate();
+}
+
+void PopupWindow::RemoveSet(int set) {
+  if (prefs_ == nullptr || set < 0 || set >= static_cast<int>(prefs_->calendarSets.size())) return;
+  prefs_->calendarSets.erase(prefs_->calendarSets.begin() + set);
+  SaveSetting("calendarSets", WriteCalendarSets(prefs_->calendarSets));
+  app_.setNames.erase(app_.setNames.begin() + set);
+  app_.activeSet = ActiveSet(prefs_->calendarSets, app_.calendars);
+  app_.setHover = -1;
+  Invalidate();
 }
 
 void PopupWindow::SetView(AppView view) {
@@ -419,6 +469,24 @@ bool PopupWindow::OnAppLeftDown(float x, float y) {
 
   if (OnDetailLeftDown(x, y)) return true;
 
+  {
+    const int chips = 1 + static_cast<int>(app_.setNames.size());
+    for (int i = 0; i < chips; ++i) {
+      if (!Inside(appLayout_.setChip(i, chips), x, y)) continue;
+      if (i > 0 && Inside(appLayout_.setRemove(i, chips), x, y)) {
+        RemoveSet(i - 1);
+      } else {
+        ApplySet(i);
+      }
+      return true;
+    }
+    if (app_.activeSet < 0 && chips - 1 < kMaxCalendarSets &&
+        Inside(appLayout_.setAdd(chips), x, y)) {
+      SaveCurrentSet();
+      return true;
+    }
+  }
+
   const int calendars = static_cast<int>(app_.calendars.size());
   for (int i = 0; i < calendars; ++i) {
     if (!Inside(appLayout_.calendarRowRect(i), x, y)) continue;
@@ -507,6 +575,7 @@ void PopupWindow::ToggleCalendar(int index) {
   CalendarInfo& calendar = app_.calendars[static_cast<size_t>(index)];
   calendar.hidden = !calendar.hidden;  // the switch flips now; the days follow the worker
   if (store_ != nullptr) store_->SetCalendarHidden(calendar.id, calendar.hidden);
+  if (prefs_ != nullptr) app_.activeSet = ActiveSet(prefs_->calendarSets, app_.calendars);
   Invalidate();
 }
 
@@ -538,11 +607,22 @@ bool PopupWindow::OnAppMouseMove(float x, float y) {
   for (int i = 0; i < static_cast<int>(app_.calendars.size()); ++i) {
     if (Inside(appLayout_.calendarRowRect(i), x, y)) calendar = i;
   }
+  // The sets' chips, and "+" after them (its number is the count of chips).
+  int set = -1;
+  {
+    const int chips = 1 + static_cast<int>(app_.setNames.size());
+    for (int i = 0; i < chips; ++i) {
+      if (Inside(appLayout_.setChip(i, chips), x, y)) set = i;
+    }
+    if (app_.activeSet < 0 && Inside(appLayout_.setAdd(chips), x, y)) set = chips;
+  }
+  const bool setChanged = set != app_.setHover;
+  app_.setHover = set;
   const bool collapse = Inside(appLayout_.collapse, x, y);
   const bool prev = Inside(appLayout_.prev, x, y);
   const bool next = Inside(appLayout_.next, x, y);
 
-  const bool changed = tab != hoverTab_ || calendar != hoverCalendar_ ||
+  const bool changed = setChanged || tab != hoverTab_ || calendar != hoverCalendar_ ||
                        collapse != hoverCollapse_ || prev != hoverPeriodPrev_ ||
                        next != hoverPeriodNext_;
   hoverTab_ = tab;

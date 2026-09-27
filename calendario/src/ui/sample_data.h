@@ -213,6 +213,9 @@ inline void FillSampleApp(PopupModel& model, AppModel& app) {
 
   app.calendars = SampleCalendars();
   app.calendarHover.assign(app.calendars.size(), 0.0f);
+  // One set saved, and the birthdays switched off, which is none of them: "+" is on offer.
+  app.setNames = {L"Trabajo"};
+  app.activeSet = -1;
 
   const auto task = [](const wchar_t* uid, const wchar_t* title, bool done) {
     DayItem item;

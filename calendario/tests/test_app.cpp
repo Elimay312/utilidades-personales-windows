@@ -60,7 +60,8 @@ TEST_CASE("the sidebar is the popup, and the top row fits beside it") {
   const AppLayout app = BaseApp(AppView::Week);
 
   CHECK(app.sidebarRight == popup.width);
-  CHECK(app.sectionTop == popup.listTop);  // the calendars take the day list's place
+  CHECK(app.setsTop == popup.listTop);  // the calendar sets, then the calendars (phase 13)
+  CHECK(app.sectionTop > app.setsTop + app.setsHeight);
   CHECK(app.main.left > app.sidebarRight);
   CHECK(app.main.right == Approx(app.width - app.padding));
 
@@ -243,4 +244,22 @@ TEST_CASE("the list leaves out the days with nothing on them") {
   CHECK(rows[3].day == Day(2026, 9, 27));
   CHECK(rows[2].rect.top > rows[1].rect.top);
   CHECK(ListMaxScroll(app, BaseLayout(), Day(2026, 9, 22), days) == 0.0f);
+}
+
+TEST_CASE("a calendar set is on when exactly its calendars are off") {
+  std::vector<CalendarInfo> calendars = {{"a", L"Personal"}, {"b", L"Trabajo"}, {"c", L"Cumples"}};
+  const std::vector<CalendarSet> sets = {{L"Trabajo", {"a", "c"}}, {L"Sin cumples", {"c"}}};
+  CHECK(ActiveSet(sets, calendars) == 0);  // nothing off: "Todos"
+  calendars[2].hidden = true;
+  CHECK(ActiveSet(sets, calendars) == 2);
+  calendars[0].hidden = true;
+  CHECK(ActiveSet(sets, calendars) == 1);
+  calendars[1].hidden = true;
+  CHECK(ActiveSet(sets, calendars) == -1);
+  // A calendar Google no longer lists does not stop a set from matching.
+  calendars[0].hidden = false;
+  calendars[1].hidden = false;
+  CHECK(ActiveSet({{L"Viejo", {"c", "gone"}}}, calendars) == 1);
+
+  CHECK(NameForSet(calendars) == L"Personal + Trabajo");
 }

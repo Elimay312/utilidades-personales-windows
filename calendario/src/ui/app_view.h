@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "core/config.h"
 #include "core/dates.h"
 #include "core/recurrence.h"
 #include "data/model.h"
@@ -82,6 +83,11 @@ struct AppModel {
   // pixels from its top.
   std::vector<DayDot> yearDots;
   float listScroll = 0.0f;
+  // The calendar sets' chips: their names, which one the switches match right now (0 is
+  // "Todos", -1 is none, which is when "+" shows), and the one under the pointer.
+  std::vector<std::wstring> setNames;
+  int activeSet = 0;
+  int setHover = -1;
 
   // Hover, walked like the popup's: the tabs, the collapse button, the period arrows and the
   // calendar rows.

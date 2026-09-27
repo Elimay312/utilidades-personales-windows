@@ -172,6 +172,12 @@ La ventana crece hasta el 80 % del área de trabajo, centrada, y tiene tres part
   dos, un clic en un día abre ese día. **Lista** es lo de los próximos treinta días, un día
   detrás de otro y sin los días vacíos; la rueda la desplaza, un clic abre el detalle y la
   casilla de una tarea la marca.
+- **Conjuntos de calendarios:** encima de «Calendarios», una fila de fichas: **Todos** y cada
+  conjunto guardado. Un clic en una enciende exactamente sus calendarios y apaga los demás.
+  Cuando los interruptores no coinciden con ningún conjunto aparece **+**, que los guarda como
+  uno nuevo con el nombre de lo que está encendido («Personal + Trabajo»; se puede renombrar en
+  `config.local.json`). La × que sale al pasar el ratón por una ficha la quita. Caben cuatro, y
+  también se eligen desde el menú de la bandeja, en **Conjunto de calendarios**.
 - **Barra de arriba:** las flechas y el periodo, el mismo campo de lenguaje natural del popup
   y el botón de contraer.
 

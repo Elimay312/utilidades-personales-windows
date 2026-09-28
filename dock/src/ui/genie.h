@@ -18,7 +18,8 @@ namespace dock {
 // Con miniaturas DWM y no con una captura: cada una de las 40 franjas es una miniatura de la
 // ventana de verdad (rcSource = su franja) y en cada fotograma se le cambia el rectángulo de
 // destino. No copia píxeles: el de C# capturaba la ventana entera 3-4 veces por genio (8-11 MB
-// cada vez). Y la miniatura de una ventana ya minimizada sigue enseñando su contenido (medido
+// cada vez). La única copia es al acabar de vuelta, y dura 120 ms: ver Freeze en genie.cpp.
+// Y la miniatura de una ventana ya minimizada sigue enseñando su contenido (medido
 // en F1, 10 de 10), así que minimizar no espera a la animación: se minimiza ya, y el genio
 // juega encima.
 //
@@ -48,13 +49,14 @@ class Genie {
   bool Start(std::optional<RECT> known);
   RECT Origin(std::optional<RECT> known) const;
   void Step();
-  void Finish();
+  void Finish(bool played);  // played: acabó el recorrido (false: lo cortó el plazo)
 
   HWND window_;
   RECT to_;
   bool reverse_;
   std::function<void()> done_;
   bool finished_ = false;
+  RECT from_{};  // la ventana entera, en pantalla: lo que se congela al acabar de vuelta
   RECT area_{};  // lo que cubre la ventana del genio, en pantalla
   std::optional<GenieCurve> curve_;
   HWND overlay_ = nullptr;

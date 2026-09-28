@@ -117,6 +117,19 @@ abajo.
 
 ### Arreglado
 
+- **Abrir desde el dock una app de Chromium ya no parpadea en negro al final del genio**
+  (Brave, Discord, Spotify, VS Code…): **de 6 de 10 aperturas a 0 de 35**, con Edge
+  maximizado. Sin la animación de Windows, Chromium enseña 1-3 fotogramas negros mientras
+  vuelve a pintar, y la miniatura del genio también, porque es la ventana en vivo. Ahora, al
+  acabar el genio, lo que hay en pantalla se copia y se queda encima como imagen quieta hasta
+  120 ms después de restaurar; los docks van recortados y siguen vivos encima. Cuesta 53-60 ms
+  en una pantalla de 1920×1080 y 68-88 ms en una de 2560×1080 (la ventana viva llega eso más
+  tarde), y una copia de 2560×1080×4 = 11 MB (calculado; el pico no se midió) que se suelta en
+  cuanto la imagen está en su ventana: en el programa de prueba que compila el mismo
+  `genie.cpp`, tras 10-15 aperturas, de 1,2 a 1,3 MB privados y GDI quieto en 3. Las apps normales
+  (GDI) no lo hacían: 0 de 5 sin nada.
+  - Límite: restaurar por otro camino (Alt+Tab, la propia app) sigue sin genio y sin la
+    animación de Windows, así que Chromium también parpadea ahí.
 - **Un dock con `autoStart` apagado ya no borra el arranque de otro**: el valor Run «Dock» lo
   comparten el de C# y el de C++, y apagarlo en uno borraba el del otro. Ahora solo se borra
   si apunta a ese mismo dock.

@@ -20,6 +20,112 @@ constexpr UINT kDeadlineMs = 700;
 // siendo la ventana entera apelmazada encima, y desaparecer de golpe se ve como un corte.
 constexpr double kFadeFrom = 0.7;
 
+constexpr wchar_t kFrozenClass[] = L"DockGenieFrozen";
+constexpr UINT_PTR kHoldTimer = 1;
+// Lo que se queda la imagen quieta después de que vuelva SW_RESTORE. Medido con Edge
+// maximizado: el negro dura 1-3 fotogramas y el más largo acabó ~150 ms después de llamar
+// a ShowWindow, que tarda ~35 ms en volver; 120 cubre eso con margen.
+constexpr UINT kHoldMs = 120;
+
+LRESULT CALLBACK FrozenProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+  switch (message) {
+    case WM_NCHITTEST:
+      return HTTRANSPARENT;
+    case WM_MOUSEACTIVATE:
+      return MA_NOACTIVATE;
+    case WM_TIMER:
+      DestroyWindow(hwnd);  // se va sola: el genio ya no existe cuando vence el plazo
+      return 0;
+  }
+  return DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+// Resta a la región de la imagen congelada la de cada dock de este hilo: así el dock sigue vivo
+// encima (la lupa no se congela y su acrílico no difumina una foto de sí mismo).
+struct Cut {
+  HRGN region;
+  POINT origin;  // esquina de la imagen en pantalla: la región va en coordenadas de ventana
+};
+
+BOOL CALLBACK CutDock(HWND hwnd, LPARAM lparam) {
+  wchar_t name[32];
+  // La clase de dock_window.cpp: el genio no ve esa constante.
+  if (!IsWindowVisible(hwnd) || GetClassNameW(hwnd, name, 32) == 0 || wcscmp(name, L"DockWindowClass") != 0)
+    return TRUE;
+  const auto& cut = *reinterpret_cast<Cut*>(lparam);
+  RECT rect;
+  GetWindowRect(hwnd, &rect);
+  HRGN dock = CreateRectRgn(0, 0, 0, 0);
+  if (GetWindowRgn(hwnd, dock) == ERROR) SetRectRgn(dock, 0, 0, rect.right - rect.left, rect.bottom - rect.top);
+  OffsetRgn(dock, rect.left - cut.origin.x, rect.top - cut.origin.y);
+  CombineRgn(cut.region, cut.region, dock, RGN_DIFF);
+  DeleteObject(dock);
+  return TRUE;
+}
+
+// Copia lo que hay en pantalla en `area` y lo deja encima como imagen quieta. Al acabar el
+// genio de vuelta lo que hay ahí ES la ventana, dibujada por las miniaturas; al restaurarla,
+// Chromium (Brave, Discord, Spotify...) enseña 1-3 fotogramas negros mientras pinta, y la
+// miniatura también, porque es la ventana en vivo (medido: 5 de 5). La animación de Windows lo
+// tapa reteniendo la ventana, pero una ventana ajena no se puede esconder (DWMWA_CLOAK da
+// E_ACCESSDENIED): lo único que no cambia es una copia. Con ella: 0 de 10.
+//
+// ponytail: plazo fijo, no se detecta el primer fotograma bueno (una app de tema oscuro no se
+// distingue de una sin pintar); y solo se recortan los docks, no otras ventanas topmost que
+// estuvieran encima. Cuesta ~50 ms y ~11 MB en una pantalla de 2560x1080, que se sueltan en
+// cuanto UpdateLayeredWindow ha copiado.
+HWND Freeze(const RECT& area) {
+  const auto start = std::chrono::steady_clock::now();
+  const int width = area.right - area.left, height = area.bottom - area.top;
+  if (width <= 0 || height <= 0) return nullptr;
+  static bool registered = false;
+  const HINSTANCE instance = GetModuleHandleW(nullptr);
+  if (!registered) {
+    WNDCLASSEXW wc{sizeof(wc)};
+    wc.lpfnWndProc = FrozenProc;
+    wc.hInstance = instance;
+    wc.lpszClassName = kFrozenClass;
+    registered = RegisterClassExW(&wc) != 0;
+  }
+  HDC screen = GetDC(nullptr);
+  BITMAPINFO info{};
+  info.bmiHeader = {sizeof(BITMAPINFOHEADER), width, -height, 1, 32, BI_RGB};
+  void* bits = nullptr;
+  HBITMAP shot = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+  HDC memory = CreateCompatibleDC(screen);
+  HWND frozen = nullptr;
+  if (shot && memory) {
+    const HGDIOBJ old = SelectObject(memory, shot);
+    if (BitBlt(memory, 0, 0, width, height, screen, area.left, area.top, SRCCOPY)) {
+      frozen = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED,
+                               kFrozenClass, L"Genie", WS_POPUP, area.left, area.top, width, height, nullptr, nullptr,
+                               instance, nullptr);
+      POINT from{0, 0}, to{area.left, area.top};
+      SIZE size{width, height};
+      if (frozen && !UpdateLayeredWindow(frozen, screen, &to, &size, memory, &from, 0, nullptr, ULW_OPAQUE)) {
+        DestroyWindow(frozen);
+        frozen = nullptr;
+      }
+    }
+    SelectObject(memory, old);
+  }
+  if (memory) DeleteDC(memory);
+  if (shot) DeleteObject(shot);
+  ReleaseDC(nullptr, screen);
+  if (!frozen) {
+    LogError(L"[genio] no se pudo congelar la imagen ({}x{}); se restaura sin ella", width, height);
+    return nullptr;
+  }
+  Cut cut{CreateRectRgn(0, 0, width, height), POINT{area.left, area.top}};
+  EnumThreadWindows(GetCurrentThreadId(), CutDock, reinterpret_cast<LPARAM>(&cut));
+  SetWindowRgn(frozen, cut.region, FALSE);  // la región pasa a ser del sistema
+  ShowWindow(frozen, SW_SHOWNOACTIVATE);
+  DwmFlush();  // en pantalla ANTES de restaurar la de verdad
+  LogTrace(L"[genio] congelada {}x{} en {:.1f} ms, fuera a los {} ms de restaurar", width, height,
+           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), kHoldMs);
+  return frozen;
+}
+
 }  // namespace
 
 bool Genie::Play(HWND window, std::optional<RECT> known, RECT to, bool reverse, std::function<void()> done) {
@@ -99,7 +205,7 @@ bool Genie::Start(std::optional<RECT> known) {
     LogError(L"[genio] la ventana no tiene tamaño de miniatura");
     return fail();
   }
-  const RECT from = Origin(known);
+  const RECT from = from_ = Origin(known);
   const auto box = [](const RECT& r) {
     return Box{static_cast<float>(r.left), static_cast<float>(r.top), static_cast<float>(r.right),
                static_cast<float>(r.bottom)};
@@ -152,10 +258,10 @@ void Genie::Step() {
     props.fSourceClientAreaOnly = FALSE;
     DwmUpdateThumbnailProperties(slices_[i], &props);
   }
-  if (t >= 1) Finish();
+  if (t >= 1) Finish(/*played=*/true);
 }
 
-void Genie::Finish() {
+void Genie::Finish(bool played) {
   if (finished_) return;
   finished_ = true;
   clock_.Pause();
@@ -163,9 +269,18 @@ void Genie::Finish() {
   LogTrace(L"[genio] {}{} fotogramas, {} tarde (>25 ms), peor {:.1f} ms", reverse_ ? L"de vuelta, " : L"", frames_,
            late_, worst_);
   if (done_) {
+    // De vuelta, la imagen quieta tapa los fotogramas negros de la ventana recién restaurada.
+    // Solo si el genio acabó: cortado por el plazo, lo que hay en pantalla puede no ser la
+    // ventana entera. El DwmFlush de antes deja en pantalla el último Step (p=0) para copiarlo.
+    HWND frozen = nullptr;
+    if (reverse_ && played) {
+      DwmFlush();
+      frozen = Freeze(from_);
+    }
     // Primero la ventana de verdad y un fotograma compuesto, luego el desmontaje: así no hay
     // ni un fotograma sin ninguna de las dos.
     done_();
+    if (frozen) SetTimer(frozen, kHoldTimer, kHoldMs, nullptr);  // cuenta desde que ya está restaurada
     DwmFlush();
   }
   DestroyWindow(overlay_);  // WM_NCDESTROY borra el objeto
@@ -191,7 +306,7 @@ LRESULT CALLBACK Genie::WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
     case WM_TIMER:
       if (self && wparam == kDeadlineTimer) {
         LogError(L"[genio] plazo cumplido sin acabar ({} fotogramas): se desmonta", self->frames_);
-        self->Finish();
+        self->Finish(/*played=*/false);
       }
       return 0;
     case WM_NCDESTROY:

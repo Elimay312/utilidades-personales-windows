@@ -146,13 +146,17 @@ RECT Genie::Origin(std::optional<RECT> known) const {
   const auto fits = [&](const RECT& r) {
     return std::abs((r.right - r.left) - source_.cx) <= 2 && std::abs((r.bottom - r.top) - source_.cy) <= 2;
   };
-  if (known && fits(*known)) return *known;
   WINDOWPLACEMENT placement{sizeof(placement)};
   GetWindowPlacement(window_, &placement);
+  const bool maximized = (placement.flags & WPF_RESTORETOMAXIMIZED) != 0;
+  // De vuelta manda dónde la va a poner Windows: si vuelve maximizada y lo recordado es su
+  // tamaño normal (se maximizó estando minimizada), la imagen congelada cubriría solo un
+  // trozo y el resto saldría sin pintar alrededor.
+  if (known && fits(*known) && !(reverse_ && maximized)) return *known;
   const RECT normal = placement.rcNormalPosition;
-  if (placement.flags & WPF_RESTORETOMAXIMIZED) {
+  if (maximized) {
     MONITORINFO info{sizeof(info)};
-    GetMonitorInfoW(MonitorFromRect(&normal, MONITOR_DEFAULTTONEAREST), &info);
+    GetMonitorInfoW(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST), &info);
     LogTrace(L"[genio] origen: maximizada (área de trabajo)");
     return info.rcWork;
   }

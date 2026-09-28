@@ -135,6 +135,15 @@ abajo.
   se quita otra vez al verse, porque minimizar es el genio, y el clic del dock la quita justo
   antes de restaurar. El cambio se hace 600 ms después de minimizar o restaurar: abrirla
   antes todavía puede salir en negro (5 de 10 a los 150 ms).
+- **El genio ya no sale de la pantalla vieja tras mover una ventana con Win+Mayús+flecha.**
+  El dock recordaba dónde estaba cada ventana al arrastrarla o en cada barrido (hasta 10 s), y
+  moverla por teclado no avisa. Ahora lo recordado no vale si no está en la pantalla de la
+  ventana. Medido moviendo una ventana de DISPLAY2 a DISPLAY3 sin arrastrarla y minimizándola
+  en seguida: el genio iba al dock de DISPLAY2 y ahora sale de DISPLAY3 y va a su dock.
+- **Abrir una ventana que vuelve maximizada ya no deja un marco sin pintar**: si se maximizó
+  estando minimizada, el genio y la imagen congelada iban a su tamaño normal (609×430) y la
+  ventana salía maximizada, en negro alrededor. Ahora, de vuelta, manda dónde la va a poner
+  Windows: la imagen cubre 1920×1080 y el rectángulo del dock pasa de +97 % de oscuro a +9 %.
 - **Ya no sale un cuadro oscuro sobre el dock al abrir una app maximizada.** El genio iba en
   una ventana encima de todo, dock incluido; tapado 400 ms, el dock tardaba un fotograma en
   volver a dibujarse y ese fotograma salía como un rectángulo negro (gris con Brave) del tamaño
@@ -181,6 +190,10 @@ abajo.
 
 ### Cambiado
 
+- **La rueda también sirve con apps de una sola ventana**: abre la lista de una fila con su
+  miniatura en vivo y la ✕ para cerrarla, sin abrir la ventana. Antes solo respondía con dos o
+  más ventanas, así que no había forma de ver la miniatura de una app con una. Medido con una
+  ventana de prueba: de ninguna línea `[rueda]` a «ventana 1 de 1» y la miniatura de 283×190.
 - **El log dice por qué no hubo genio**, sin `DOCK_HOVER_LOG`: la ventana no estaba en ningún
   dock (p. ej. minimizada antes del primer barrido: medido con una ventana minimizada a los
   ~5 ms de nacer), o ningún dock tenía su icono; y una línea por genio hecho y por imagen

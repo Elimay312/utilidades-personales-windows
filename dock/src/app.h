@@ -48,6 +48,9 @@ class App {
     const auto found = rects_.find(window);
     return found != rects_.end() ? std::optional(found->second) : std::nullopt;
   }
+  // El dock va a restaurarla con su genio: fuera la animación de Windows, que mientras está
+  // minimizada vuelve a estar puesta (ver SyncTransitions).
+  void SilenceNow(HWND window) { SetTransitions(window, /*off=*/true); }
 
  private:
   static LRESULT CALLBACK HostProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
@@ -69,9 +72,13 @@ class App {
   void OnMinimizeStart(HWND window);
   static void CALLBACK OnWinEvent(HWINEVENTHOOK hook, DWORD event, HWND window, LONG object, LONG child, DWORD thread,
                                   DWORD time);
-  // Sin la animación propia de Windows en las ventanas que enseña algún dock: el genio la
-  // sustituye, y las dos a la vez se pisarían.
+  // La animación propia de Windows en las ventanas que enseña algún dock: apagada mientras se
+  // ven, porque minimizar es el genio y las dos a la vez se pisarían; puesta mientras están
+  // minimizadas, porque restaurar por otro camino (Alt+Tab, la propia app) no tiene genio y
+  // sin ella Chromium enseña fotogramas negros (medido: 10 de 10 sin ella, 0 de 10 con ella).
   void QuietTransitions();
+  void SyncTransitions();
+  void SetTransitions(HWND window, bool off);
 
   std::filesystem::path configPath_;
   std::filesystem::path localPath_;
@@ -86,7 +93,7 @@ class App {
   HWND lastForeign_ = nullptr;
   std::wstring hotkey_;  // el texto registrado ahora, o vacío
   HWINEVENTHOOK minimizeHook_ = nullptr, moveHook_ = nullptr;
-  std::set<HWND> quiet_;  // ventanas con las transiciones de DWM apagadas por el dock
+  std::map<HWND, bool> quiet_;  // ventanas de algún dock -> si tienen ahora la animación de DWM apagada
   std::map<HWND, RECT> rects_;  // dónde estaba cada una la última vez que se miró
   std::chrono::steady_clock::time_point lastMinimize_{};
   UINT shellHookMessage_ = 0;

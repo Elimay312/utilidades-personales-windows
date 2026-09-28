@@ -124,12 +124,20 @@ abajo.
   acabar el genio, lo que hay en pantalla se copia y se queda encima como imagen quieta hasta
   120 ms después de restaurar; los docks van recortados y siguen vivos encima. Cuesta 53-60 ms
   en una pantalla de 1920×1080 y 68-88 ms en una de 2560×1080 (la ventana viva llega eso más
-  tarde), y una copia de 2560×1080×4 = 11 MB (calculado; el pico no se midió) que se suelta en
-  cuanto la imagen está en su ventana: en el programa de prueba que compila el mismo
-  `genie.cpp`, tras 10-15 aperturas, de 1,2 a 1,3 MB privados y GDI quieto en 3. Las apps normales
-  (GDI) no lo hacían: 0 de 5 sin nada.
-  - Límite: restaurar por otro camino (Alt+Tab, la propia app) sigue sin genio y sin la
-    animación de Windows, así que Chromium también parpadea ahí.
+  tarde), y la copia: el pico de privados sube de 1,2 a 12,0 MB a 2560×1080 y vuelve a 1,3 en
+  cuanto la imagen está en su ventana (en el programa de prueba que compila el mismo
+  `genie.cpp`; GDI quieto en 3 tras 10-15 aperturas). Con el dock instalado, 10 de 10
+  aperturas por clic en el icono sin negro, y la imagen vive ~120 ms. Las apps normales (GDI)
+  no lo hacían: 0 de 5 sin nada.
+- **Abrir una minimizada por otro camino (Alt+Tab, la propia app) tampoco parpadea**: de 10
+  de 10 aperturas en negro a 0 de 10, con el dock instalado. Mientras una ventana está
+  minimizada vuelve a tener la animación de Windows, que retiene la ventana hasta que pinta;
+  se quita otra vez al verse, porque minimizar es el genio, y el clic del dock la quita justo
+  antes de restaurar. El cambio se hace 600 ms después de minimizar o restaurar: abrirla
+  antes todavía puede salir en negro (5 de 10 a los 150 ms).
+- **Un clic en el icono de una app minimizada sin activar otra ventana ya la abre**: si se
+  minimizaba con `SW_SHOWMINNOACTIVE` seguía siendo la de primer plano, y el clic la volvía a
+  minimizar (9 de 10 clics sin efecto; ahora 10 de 10).
 - **Un dock con `autoStart` apagado ya no borra el arranque de otro**: el valor Run «Dock» lo
   comparten el de C# y el de C++, y apagarlo en uno borraba el del otro. Ahora solo se borra
   si apunta a ese mismo dock.

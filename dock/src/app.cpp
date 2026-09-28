@@ -29,6 +29,12 @@ constexpr UINT_PTR kDisplayTimer = 1;
 constexpr UINT_PTR kReloadTimer = 2;
 constexpr UINT_PTR kRunningTimer = 3;
 constexpr UINT_PTR kSafetyTimer = 4;
+constexpr UINT_PTR kTransitionsTimer = 5;
+// Tras minimizar o restaurar, lo que tarda en cambiarse la animación de Windows de esa ventana:
+// que la de minimizar ya haya decidido (el genio dura 400 ms) y que la de restaurar no se corte
+// a mitad. ponytail: restaurar por Alt+Tab antes de esto sale sin animación (y Chromium en
+// negro), y minimizar justo tras restaurar, con las dos; seguir cada transición si se ve.
+constexpr UINT kTransitionsDelayMs = 600;
 // Al abrir una app los avisos del shell llegan a rachas: se barre una vez al acabar.
 constexpr UINT kRunningDebounceMs = 400;
 // Red de seguridad para lo que los avisos no cubren: una ventana que nace sin título, se
@@ -274,6 +280,8 @@ void CALLBACK App::OnWinEvent(HWINEVENTHOOK, DWORD event, HWND window, LONG obje
   // Acabó de moverla o redimensionarla, o volvió de minimizada: su sitio nuevo, para el
   // próximo genio.
   else if (g_app->quiet_.contains(window)) g_app->Remember(window);
+  if ((event == EVENT_SYSTEM_MINIMIZESTART || event == EVENT_SYSTEM_MINIMIZEEND) && g_app->quiet_.contains(window))
+    SetTimer(g_app->host_, kTransitionsTimer, kTransitionsDelayMs, nullptr);
 }
 
 void App::Remember(HWND window) {
@@ -308,16 +316,27 @@ void App::OnMinimizeStart(HWND window) {
 }
 
 void App::QuietTransitions() {
-  std::erase_if(quiet_, [](HWND window) { return !IsWindow(window); });
+  std::erase_if(quiet_, [](const auto& entry) { return !IsWindow(entry.first); });
   std::erase_if(rects_, [](const auto& entry) { return !IsWindow(entry.first); });
-  const BOOL on = TRUE;
   for (auto& dockWindow : docks_)
     for (const auto& windows : dockWindow->Windows())
       for (HWND window : windows) {
-        if (quiet_.insert(window).second)
-          DwmSetWindowAttribute(window, DWMWA_TRANSITIONS_FORCEDISABLED, &on, sizeof(on));
+        SetTransitions(window, /*off=*/!IsIconic(window));
         Remember(window);
       }
+}
+
+void App::SyncTransitions() {
+  for (const auto& [window, off] : quiet_)
+    if (IsWindow(window)) SetTransitions(window, /*off=*/!IsIconic(window));
+}
+
+void App::SetTransitions(HWND window, bool off) {
+  const auto [it, added] = quiet_.try_emplace(window, off);
+  if (!added && it->second == off) return;
+  it->second = off;
+  const BOOL value = off;
+  DwmSetWindowAttribute(window, DWMWA_TRANSITIONS_FORCEDISABLED, &value, sizeof(value));
 }
 
 void App::SyncHotkey() {
@@ -408,6 +427,8 @@ LRESULT App::HandleHost(UINT message, WPARAM wparam, LPARAM lparam) {
         Rebuild();
       } else if (wparam == kReloadTimer) {
         CheckFilesChanged();
+      } else if (wparam == kTransitionsTimer) {
+        SyncTransitions();
       }
       return 0;
 
@@ -421,8 +442,9 @@ LRESULT App::HandleHost(UINT message, WPARAM wparam, LPARAM lparam) {
       if (moveHook_) UnhookWinEvent(moveHook_);
       // Las ventanas ajenas recuperan su animación de Windows: sin el dock, nadie hace el genio.
       const BOOL off = FALSE;
-      for (HWND window : quiet_)
-        if (IsWindow(window)) DwmSetWindowAttribute(window, DWMWA_TRANSITIONS_FORCEDISABLED, &off, sizeof(off));
+      for (const auto& [window, silenced] : quiet_)
+        if (silenced && IsWindow(window))
+          DwmSetWindowAttribute(window, DWMWA_TRANSITIONS_FORCEDISABLED, &off, sizeof(off));
       quiet_.clear();
       worker_.Stop();  // lo que responda ya no encuentra anfitriona y se borra solo
       docks_.clear();

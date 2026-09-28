@@ -656,7 +656,9 @@ void DockWindow::OnClick(bool middle) {
     // ventana visible costaba dos clics.
     const HWND root = GetAncestor(foreground, GA_ROOT);
     for (HWND window : windows) {
-      if (window == foreground || window == root) {
+      // Minimizada no está al frente aunque siga siendo la de primer plano: pasa si se
+      // minimiza sin activar otra (SW_SHOWMINNOACTIVE), y el clic la volvía a minimizar.
+      if ((window == foreground || window == root) && !IsIconic(window)) {
         app_.Remember(window);  // el genio sale de donde está AHORA, no de la última foto
         Minimize(window);
         LogInfo(L"[dock] minimizada '{}'", app.name);
@@ -688,8 +690,15 @@ void DockWindow::Activate(HWND window) {
       // ventana), y restaurar al acabar: restaurada al empezar aparecería entera debajo del
       // genio. Si el genio se corta, el plazo restaura igual.
       ::dock::Activate(window);  // la de launch.h, no este método
-      if (Genie::Play(window, app_.Remembered(window), *to, /*reverse=*/true,
-                      [window] { ShowWindow(window, SW_RESTORE); }))
+      // Minimizada tiene puesta la animación de Windows (para Alt+Tab); aquí la sustituye el
+      // genio, así que se apaga justo antes de restaurar, no al empezar: un barrido a mitad
+      // del genio la volvería a poner. El App y no este dock: un cambio de pantallas puede
+      // destruir el dock antes de que acabe el genio.
+      App& app = app_;
+      if (Genie::Play(window, app_.Remembered(window), *to, /*reverse=*/true, [&app, window] {
+            app.SilenceNow(window);
+            ShowWindow(window, SW_RESTORE);
+          }))
         return;
     }
   }

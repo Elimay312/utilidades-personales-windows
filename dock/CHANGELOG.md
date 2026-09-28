@@ -168,6 +168,10 @@ abajo.
 
 ### Cambiado
 
+- **El log dice por qué no hubo genio**, sin `DOCK_HOVER_LOG`: la ventana no estaba en ningún
+  dock (p. ej. minimizada antes del primer barrido: medido con una ventana minimizada a los
+  ~5 ms de nacer), o ningún dock tenía su icono; y una línea por genio hecho y por imagen
+  congelada. De 0 líneas a 1 por minimizado o apertura, para cazar el «a veces no sale».
 - **El dock de C# sale del repo**: pasa a `legacy/` (ignorada por git) y queda entero en el
   tag `dock-csharp-final`. Lo que se midió antes de decidirlo: 46 MB privados al arrancar,
   una meseta nativa de ~62 MB que en C++ sería igual, y 107 MB comprometidos por el GC a

@@ -700,6 +700,8 @@ void DockWindow::Activate(HWND window) {
             ShowWindow(window, SW_RESTORE);
           }))
         return;
+    } else {
+      LogInfo(L"[genio] sin genio de vuelta: {:#x} no tiene icono en este dock", reinterpret_cast<uintptr_t>(window));
     }
   }
   BringToFront(window);

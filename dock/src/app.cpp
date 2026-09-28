@@ -301,7 +301,17 @@ void App::OnMinimizeStart(HWND window) {
     LogInfo(L"[genio] varias a la vez: sin genio");
     return;
   }
-  if (!quiet_.contains(window)) return;  // no es de ningún dock: Windows la anima como siempre
+  // Por qué no hay genio, en el log de siempre: el usuario lo nota "a veces" y sin esto no se
+  // sabe si la ventana no era de ningún dock o si no había icono al que ir.
+  wchar_t cls[64]{};
+  GetClassNameW(window, cls, 64);
+  DWORD pid = 0;
+  GetWindowThreadProcessId(window, &pid);
+  if (!quiet_.contains(window)) {  // no es de ningún dock: Windows la anima como siempre
+    if (IsWindowVisible(window) && !GetWindow(window, GW_OWNER))
+      LogInfo(L"[genio] sin genio: {:#x} ({}, pid {}) no está en ningún dock", reinterpret_cast<uintptr_t>(window), cls, pid);
+    return;
+  }
   const std::optional<RECT> known = Remembered(window);
   // El icono del dock de la pantalla donde estaba la ventana; si ahí no está, el de cualquiera.
   WINDOWPLACEMENT placement{sizeof(placement)};
@@ -311,7 +321,10 @@ void App::OnMinimizeStart(HWND window) {
   for (auto& dockWindow : docks_)
     if (dockWindow->MonitorHandle() == monitor) to = dockWindow->IconFor(window);
   for (auto it = docks_.begin(); !to && it != docks_.end(); ++it) to = (*it)->IconFor(window);
-  if (!to) return;
+  if (!to) {
+    LogInfo(L"[genio] sin genio: {:#x} ({}, pid {}) sin icono en ningún dock", reinterpret_cast<uintptr_t>(window), cls, pid);
+    return;
+  }
   if (!Genie::Play(window, known, *to)) LogError(L"[genio] no se pudo montar; minimizada sin animación");
 }
 

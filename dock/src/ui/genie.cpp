@@ -121,7 +121,7 @@ HWND Freeze(const RECT& area) {
   SetWindowRgn(frozen, cut.region, FALSE);  // la región pasa a ser del sistema
   ShowWindow(frozen, SW_SHOWNOACTIVATE);
   DwmFlush();  // en pantalla ANTES de restaurar la de verdad
-  LogTrace(L"[genio] congelada {}x{} en {:.1f} ms, fuera a los {} ms de restaurar", width, height,
+  LogInfo(L"[genio] congelada {}x{} en {:.1f} ms, fuera a los {} ms de restaurar", width, height,
            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), kHoldMs);
   return frozen;
 }
@@ -266,7 +266,7 @@ void Genie::Finish(bool played) {
   finished_ = true;
   clock_.Pause();
   KillTimer(overlay_, kDeadlineTimer);
-  LogTrace(L"[genio] {}{} fotogramas, {} tarde (>25 ms), peor {:.1f} ms", reverse_ ? L"de vuelta, " : L"", frames_,
+  LogInfo(L"[genio] {}{} fotogramas, {} tarde (>25 ms), peor {:.1f} ms", reverse_ ? L"de vuelta, " : L"", frames_,
            late_, worst_);
   if (done_) {
     // De vuelta, la imagen quieta tapa los fotogramas negros de la ventana recién restaurada.

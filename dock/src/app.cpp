@@ -291,6 +291,18 @@ void App::Remember(HWND window) {
     rects_[window] = bounds;
 }
 
+std::optional<RECT> App::Remembered(HWND window) const {
+  const auto found = rects_.find(window);
+  if (found == rects_.end()) return std::nullopt;
+  // Minimizada, MonitorFromWindow mira el rect de ANTES de minimizarse: la pantalla de verdad.
+  if (MonitorFromRect(&found->second, MONITOR_DEFAULTTONEAREST) != MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST)) {
+    LogInfo(L"[genio] {:#x} cambió de pantalla sin arrastrarla: lo recordado no vale",
+            reinterpret_cast<uintptr_t>(window));
+    return std::nullopt;
+  }
+  return found->second;
+}
+
 void App::OnMinimizeStart(HWND window) {
   const auto now = std::chrono::steady_clock::now();
   // Win+D, o "minimizar todo": muchas en ráfaga. Un genio por ventana a la vez sería un
@@ -319,10 +331,9 @@ void App::OnMinimizeStart(HWND window) {
   if (pendingMinimize_.window == window && now - pendingMinimize_.at < std::chrono::milliseconds(500))
     to = pendingMinimize_.icon;
   pendingMinimize_.window = nullptr;
-  // Si no, el icono del dock de la pantalla donde estaba la ventana; si ahí no está, el de cualquiera.
-  WINDOWPLACEMENT placement{sizeof(placement)};
-  GetWindowPlacement(window, &placement);
-  const HMONITOR monitor = MonitorFromRect(known ? &*known : &placement.rcNormalPosition, MONITOR_DEFAULTTONEAREST);
+  // Si no, el icono del dock de la pantalla donde estaba la ventana (ya icono, MonitorFromWindow
+  // mira su rect de antes de minimizarse); si ahí no está, el de cualquiera.
+  const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
   for (auto& dockWindow : docks_)
     if (!to && dockWindow->MonitorHandle() == monitor) to = dockWindow->IconFor(window);
   for (auto it = docks_.begin(); !to && it != docks_.end(); ++it) to = (*it)->IconFor(window);

@@ -44,10 +44,9 @@ class App {
   // Apunta dónde está ahora una ventana (sus bordes visibles), para el genio: cuando llega el
   // aviso de minimizar ya es un icono en -32000.
   void Remember(HWND window);
-  std::optional<RECT> Remembered(HWND window) const {
-    const auto found = rects_.find(window);
-    return found != rects_.end() ? std::optional(found->second) : std::nullopt;
-  }
+  // Nada si lo recordado ya no está en su pantalla: moverla sin arrastrar (Win+Mayús+flecha)
+  // no da aviso, y el genio saldría de la pantalla vieja.
+  std::optional<RECT> Remembered(HWND window) const;
   // El dock va a restaurarla con su genio: fuera la animación de Windows, que mientras está
   // minimizada vuelve a estar puesta (ver SyncTransitions).
   void SilenceNow(HWND window) { SetTransitions(window, /*off=*/true); }

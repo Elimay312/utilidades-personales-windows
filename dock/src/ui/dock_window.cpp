@@ -1148,6 +1148,14 @@ LRESULT DockWindow::Handle(UINT message, WPARAM wparam, LPARAM lparam) {
           visuals_->SetHover(true);
         }
         const int slot = curve_.SlotAt(rest);
+        // La lista de la rueda es de SU icono: al pasar a otro icono (y no a sus filas) se cierra
+        // con su miniatura y el dock vuelve a ser el de siempre, como una vista previa al pasar.
+        // Subir del icono a la lista no la cierra: es la misma columna.
+        if (visuals_->MenuOpen() && wheelIndex_ >= 0 && slot != wheelIndex_ &&
+            visuals_->MenuHitTest(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam))) < 0) {
+          LogInfo(L"[rueda] fuera de '{}': se cierra", drawn_[wheelIndex_].name);
+          CloseMenu();
+        }
         if (visuals_->MenuOpen()) {
           int hot = visuals_->MenuHitTest(static_cast<float>(GET_X_LPARAM(lparam)), static_cast<float>(GET_Y_LPARAM(lparam)));
           // Fuera de las filas, en la lista de la rueda sigue resaltada la elegida.

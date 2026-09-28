@@ -194,6 +194,10 @@ abajo.
   miniatura en vivo y la ✕ para cerrarla, sin abrir la ventana. Antes solo respondía con dos o
   más ventanas, así que no había forma de ver la miniatura de una app con una. Medido con una
   ventana de prueba: de ninguna línea `[rueda]` a «ventana 1 de 1» y la miniatura de 283×190.
+- **La lista de la rueda y su miniatura se cierran al pasar a otro icono**, no solo al salir
+  del dock: son la vista previa de ESE icono. Subir del icono a sus filas no la cierra.
+  Medido por mensajes: abierta, sigue abierta al subir 60 px por su columna, y al ir 160 px a
+  un lado, «fuera de 'quieta': se cierra» y sin miniatura.
 - **El log dice por qué no hubo genio**, sin `DOCK_HOVER_LOG`: la ventana no estaba en ningún
   dock (p. ej. minimizada antes del primer barrido: medido con una ventana minimizada a los
   ~5 ms de nacer), o ningún dock tenía su icono; y una línea por genio hecho y por imagen

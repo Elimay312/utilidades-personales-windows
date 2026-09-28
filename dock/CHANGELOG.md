@@ -135,6 +135,11 @@ abajo.
   se quita otra vez al verse, porque minimizar es el genio, y el clic del dock la quita justo
   antes de restaurar. El cambio se hace 600 ms después de minimizar o restaurar: abrirla
   antes todavía puede salir en negro (5 de 10 a los 150 ms).
+- **Minimizar desde el dock devuelve la ventana al icono clicado**, no al dock de la pantalla
+  donde está: abrir ya salía del dock clicado y cerrar se iba a otro. Medido con una ventana
+  en DISPLAY3 y un clic en su icono del dock de DISPLAY2: el genio iba a 5600,975 (dock de
+  DISPLAY3) y ahora va a 1403,1020 (el icono clicado). Minimizar con el botón de la ventana
+  sigue yendo al dock de su pantalla.
 - **Un clic en el icono de una app minimizada sin activar otra ventana ya la abre**: si se
   minimizaba con `SW_SHOWMINNOACTIVE` seguía siendo la de primer plano, y el clic la volvía a
   minimizar (9 de 10 clics sin efecto; ahora 10 de 10).

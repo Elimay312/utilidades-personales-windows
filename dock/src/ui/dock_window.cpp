@@ -660,6 +660,7 @@ void DockWindow::OnClick(bool middle) {
       // minimiza sin activar otra (SW_SHOWMINNOACTIVE), y el clic la volvía a minimizar.
       if ((window == foreground || window == root) && !IsIconic(window)) {
         app_.Remember(window);  // el genio sale de donde está AHORA, no de la última foto
+        if (const auto icon = IconFor(window)) app_.MinimizeTo(window, *icon);
         Minimize(window);
         LogInfo(L"[dock] minimizada '{}'", app.name);
         return;

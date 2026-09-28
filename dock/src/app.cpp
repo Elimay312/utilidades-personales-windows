@@ -313,13 +313,18 @@ void App::OnMinimizeStart(HWND window) {
     return;
   }
   const std::optional<RECT> known = Remembered(window);
-  // El icono del dock de la pantalla donde estaba la ventana; si ahí no está, el de cualquiera.
+  std::optional<RECT> to;
+  // La minimizó un clic en un dock: a ese icono. El plazo cubre lo que tarda el aviso en llegar
+  // (medido en F1: mediana 4,6 ms, máx. 11); pasado, sería otro minimizado.
+  if (pendingMinimize_.window == window && now - pendingMinimize_.at < std::chrono::milliseconds(500))
+    to = pendingMinimize_.icon;
+  pendingMinimize_.window = nullptr;
+  // Si no, el icono del dock de la pantalla donde estaba la ventana; si ahí no está, el de cualquiera.
   WINDOWPLACEMENT placement{sizeof(placement)};
   GetWindowPlacement(window, &placement);
   const HMONITOR monitor = MonitorFromRect(known ? &*known : &placement.rcNormalPosition, MONITOR_DEFAULTTONEAREST);
-  std::optional<RECT> to;
   for (auto& dockWindow : docks_)
-    if (dockWindow->MonitorHandle() == monitor) to = dockWindow->IconFor(window);
+    if (!to && dockWindow->MonitorHandle() == monitor) to = dockWindow->IconFor(window);
   for (auto it = docks_.begin(); !to && it != docks_.end(); ++it) to = (*it)->IconFor(window);
   if (!to) {
     LogInfo(L"[genio] sin genio: {:#x} ({}, pid {}) sin icono en ningún dock", reinterpret_cast<uintptr_t>(window), cls, pid);

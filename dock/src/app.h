@@ -51,6 +51,9 @@ class App {
   // El dock va a restaurarla con su genio: fuera la animación de Windows, que mientras está
   // minimizada vuelve a estar puesta (ver SyncTransitions).
   void SilenceNow(HWND window) { SetTransitions(window, /*off=*/true); }
+  // El dock clicado va a minimizarla: su genio va a SU icono, no al del dock de la pantalla de
+  // la ventana (abrir ya sale del clicado; minimizar tiene que volver al mismo sitio).
+  void MinimizeTo(HWND window, RECT icon) { pendingMinimize_ = {window, icon, std::chrono::steady_clock::now()}; }
 
  private:
   static LRESULT CALLBACK HostProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
@@ -96,6 +99,11 @@ class App {
   std::map<HWND, bool> quiet_;  // ventanas de algún dock -> si tienen ahora la animación de DWM apagada
   std::map<HWND, RECT> rects_;  // dónde estaba cada una la última vez que se miró
   std::chrono::steady_clock::time_point lastMinimize_{};
+  struct PendingMinimize {
+    HWND window = nullptr;
+    RECT icon{};
+    std::chrono::steady_clock::time_point at{};
+  } pendingMinimize_;
   UINT shellHookMessage_ = 0;
   UINT taskbarCreatedMessage_ = 0;
   std::vector<std::unique_ptr<DockWindow>> docks_;

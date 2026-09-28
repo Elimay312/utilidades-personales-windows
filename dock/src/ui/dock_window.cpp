@@ -339,7 +339,9 @@ void DockWindow::OnWheel(int delta, POINT screen) {
   RECT window{};
   GetWindowRect(hwnd_, &window);
   const int index = curve_.SlotAt(curve_.Invert(static_cast<float>(screen.x - window.left), static_cast<float>(width_)));
-  if (index < 0 || index >= static_cast<int>(windows_.size()) || windows_[index].size() < 2) return;
+  // Con una sola ventana también: la lista de una fila es la forma de ver su miniatura (y la ✕
+  // para cerrarla) sin abrirla; antes la rueda solo servía a apps con varias.
+  if (index < 0 || index >= static_cast<int>(windows_.size()) || windows_[index].empty()) return;
   if (wheelIndex_ != index || !visuals_->MenuOpen()) {
     CloseMenu();
     wheelIndex_ = index;
@@ -399,7 +401,7 @@ void DockWindow::OnCloseWindow(int row) {
   // La fila se va ya aunque la app tarde o acabe negándose (la siguiente vuelta de rueda la
   // vuelve a enseñar): esperar dejaría una fila muerta durante todo el "¿guardar cambios?".
   wheelWindows_.erase(wheelWindows_.begin() + at);
-  if (wheelWindows_.size() < 2) {
+  if (wheelWindows_.empty()) {
     CloseMenu();
     return;
   }

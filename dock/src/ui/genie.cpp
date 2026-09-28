@@ -40,27 +40,30 @@ LRESULT CALLBACK FrozenProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
   return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
-// Resta a la región de la imagen congelada la de cada dock de este hilo: así el dock sigue vivo
-// encima (la lupa no se congela y su acrílico no difumina una foto de sí mismo).
-struct Cut {
-  HRGN region;
-  POINT origin;  // esquina de la imagen en pantalla: la región va en coordenadas de ventana
-};
-
-BOOL CALLBACK CutDock(HWND hwnd, LPARAM lparam) {
+// El dock de este proceso más abajo en el orden Z (EnumWindows va de arriba abajo): la imagen
+// congelada se pone justo debajo, así todos los docks siguen vivos encima.
+//
+// Antes se le recortaba un hueco con la región de cada dock, y era peor: al abrir una ventana
+// maximizada el dock se esconde (ya hay algo debajo) y el hueco dejaba ver la ventana de verdad
+// sin pintar, un rectángulo gris oscuro del tamaño de la barra (medido con el Brave del dueño:
+// +14 % de oscuro en el rectángulo del dock, 3 de 3). Debajo del dock, lo que queda al irse el
+// dock es la imagen de la página.
+BOOL CALLBACK FindLowestDock(HWND hwnd, LPARAM lparam) {
   wchar_t name[32];
+  DWORD pid = 0;
+  GetWindowThreadProcessId(hwnd, &pid);
   // La clase de dock_window.cpp: el genio no ve esa constante.
-  if (!IsWindowVisible(hwnd) || GetClassNameW(hwnd, name, 32) == 0 || wcscmp(name, L"DockWindowClass") != 0)
-    return TRUE;
-  const auto& cut = *reinterpret_cast<Cut*>(lparam);
-  RECT rect;
-  GetWindowRect(hwnd, &rect);
-  HRGN dock = CreateRectRgn(0, 0, 0, 0);
-  if (GetWindowRgn(hwnd, dock) == ERROR) SetRectRgn(dock, 0, 0, rect.right - rect.left, rect.bottom - rect.top);
-  OffsetRgn(dock, rect.left - cut.origin.x, rect.top - cut.origin.y);
-  CombineRgn(cut.region, cut.region, dock, RGN_DIFF);
-  DeleteObject(dock);
+  if (pid == GetCurrentProcessId() && GetClassNameW(hwnd, name, 32) && wcscmp(name, L"DockWindowClass") == 0)
+    *reinterpret_cast<HWND*>(lparam) = hwnd;
   return TRUE;
+}
+
+// Dónde meter una ventana del genio en el orden Z: justo debajo del último dock (sigue siendo
+// topmost, por encima de las ventanas normales), o arriba del todo si no hay docks.
+HWND BelowDocks() {
+  HWND lowest = nullptr;
+  EnumWindows(FindLowestDock, reinterpret_cast<LPARAM>(&lowest));
+  return lowest ? lowest : HWND_TOPMOST;
 }
 
 // Copia lo que hay en pantalla en `area` y lo deja encima como imagen quieta. Al acabar el
@@ -71,8 +74,8 @@ BOOL CALLBACK CutDock(HWND hwnd, LPARAM lparam) {
 // E_ACCESSDENIED): lo único que no cambia es una copia. Con ella: 0 de 10.
 //
 // ponytail: plazo fijo, no se detecta el primer fotograma bueno (una app de tema oscuro no se
-// distingue de una sin pintar); y solo se recortan los docks, no otras ventanas topmost que
-// estuvieran encima. Cuesta ~50 ms y ~11 MB en una pantalla de 2560x1080, que se sueltan en
+// distingue de una sin pintar); y solo los docks quedan por encima, no otras ventanas topmost
+// que estuvieran encima. Cuesta ~50 ms y ~11 MB en una pantalla de 2560x1080, que se sueltan en
 // cuanto UpdateLayeredWindow ha copiado.
 HWND Freeze(const RECT& area) {
   const auto start = std::chrono::steady_clock::now();
@@ -116,10 +119,8 @@ HWND Freeze(const RECT& area) {
     LogError(L"[genio] no se pudo congelar la imagen ({}x{}); se restaura sin ella", width, height);
     return nullptr;
   }
-  Cut cut{CreateRectRgn(0, 0, width, height), POINT{area.left, area.top}};
-  EnumThreadWindows(GetCurrentThreadId(), CutDock, reinterpret_cast<LPARAM>(&cut));
-  SetWindowRgn(frozen, cut.region, FALSE);  // la región pasa a ser del sistema
-  ShowWindow(frozen, SW_SHOWNOACTIVATE);
+  // Se enseña en la misma llamada: un ShowWindow aparte podría subirla otra vez encima de todo.
+  SetWindowPos(frozen, BelowDocks(), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
   DwmFlush();  // en pantalla ANTES de restaurar la de verdad
   LogInfo(L"[genio] congelada {}x{} en {:.1f} ms, fuera a los {} ms de restaurar", width, height,
            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), kHoldMs);
@@ -214,13 +215,18 @@ bool Genie::Start(std::optional<RECT> known) {
   // Lo que cubre la animación: de la ventana al icono. Una ventana de otra pantalla también:
   // el genio cruza de un monitor a otro.
   UnionRect(&area_, &from, &to_);
-  SetWindowPos(overlay_, HWND_TOPMOST, area_.left, area_.top, area_.right - area_.left, area_.bottom - area_.top,
+  // Debajo de los docks, no encima de todo: tapado 400 ms, el dock tarda un fotograma en volver
+  // a dibujarse al destaparlo y ese fotograma sale como un rectángulo negro (gris con Brave) del
+  // tamaño de su región. Era el "cuadro que tapa el dock" del dueño: medido fotograma a
+  // fotograma, a los ~500 ms, justo al quitar el genio. Así la ventana se funde bajo el dock.
+  SetWindowPos(overlay_, BelowDocks(), area_.left, area_.top, area_.right - area_.left, area_.bottom - area_.top,
                SWP_NOACTIVATE);
   LogTrace(L"[genio] de {},{} {}x{} a {},{} {}x{}", from.left, from.top, from.right - from.left, from.bottom - from.top,
            to_.left, to_.top, to_.right - to_.left, to_.bottom - to_.top);
   start_ = lastFrame_ = std::chrono::steady_clock::now();
   Step();  // en p=0 la malla ES la ventana: aparece encima sin que se note
-  ShowWindow(overlay_, SW_SHOWNOACTIVATE);
+  // Se enseña sin mover en el orden Z: un ShowWindow aparte podría subirla encima de los docks.
+  SetWindowPos(overlay_, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
   SetTimer(overlay_, kDeadlineTimer, kDeadlineMs, nullptr);
   clock_.Run(overlay_, kFrame);
   return true;
@@ -276,6 +282,14 @@ void Genie::Finish(bool played) {
     if (reverse_ && played) {
       DwmFlush();
       frozen = Freeze(from_);
+    }
+    // Con la imagen ya en pantalla, fuera las miniaturas: van en vivo y se ponen negras en cuanto
+    // se restaura, y la imagen está debajo de ellas (debajo de los docks, y el genio se creó
+    // encima de todo). Enseñan lo mismo que la imagen, así que el cambio no se ve. Medido: sin
+    // esto, negro en el centro de la pantalla a ~500 ms en 5 de 8 aperturas.
+    if (frozen) {
+      ShowWindow(overlay_, SW_HIDE);
+      DwmFlush();
     }
     // Primero la ventana de verdad y un fotograma compuesto, luego el desmontaje: así no hay
     // ni un fotograma sin ninguna de las dos.

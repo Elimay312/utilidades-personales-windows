@@ -135,6 +135,14 @@ abajo.
   se quita otra vez al verse, porque minimizar es el genio, y el clic del dock la quita justo
   antes de restaurar. El cambio se hace 600 ms después de minimizar o restaurar: abrirla
   antes todavía puede salir en negro (5 de 10 a los 150 ms).
+- **Ya no sale un cuadro oscuro sobre el dock al abrir una app maximizada.** El genio iba en
+  una ventana encima de todo, dock incluido; tapado 400 ms, el dock tardaba un fotograma en
+  volver a dibujarse y ese fotograma salía como un rectángulo negro (gris con Brave) del tamaño
+  de su región. Ahora el genio y la imagen congelada van justo debajo de los docks: la ventana
+  se funde bajo el dock y el dock no deja de dibujarse. Medido con el rectángulo del dock
+  fotograma a fotograma: con el Brave del dueño maximizado en DISPLAY1, de +14 % de oscuro
+  (8 de 8 aperturas) a +9 %, lo que ocupan sus iconos al bajar (3 de 3); con un Edge de prueba
+  que tarda en pintar, de +12-19 % a +9 % (7 de 7).
 - **Minimizar desde el dock devuelve la ventana al icono clicado**, no al dock de la pantalla
   donde está: abrir ya salía del dock clicado y cerrar se iba a otro. Medido con una ventana
   en DISPLAY3 y un clic en su icono del dock de DISPLAY2: el genio iba a 5600,975 (dock de
